@@ -52,7 +52,7 @@ interface ReaderRecordAskMessageRequestDto {
    * only grants turn capability; it never forces a search.
    */
   web_search_mode?: WebSearchModeDto;
-  /** ASK-RETRY-CONTRACT-R2 — idempotent client submission identity. */
+  /** Idempotent client submission identity. */
   client_submission_id?: string | null;
 }
 

@@ -1,4 +1,4 @@
-"""``parse_eval`` — Task 5A-R1 split package.
+"""``parse_eval`` — - split package.
 
 This package replaces the previous monolithic
 ``parse_eval_artifact.py`` / ``parse_eval_gate.py`` with a

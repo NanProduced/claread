@@ -1,5 +1,5 @@
 /**
- * R4-A6-T3: single source of truth for user-facing Ask Claread error copy.
+ * Single source of truth for user-facing Ask Claread error copy.
  *
  * Everything the user may see on the agentic Ask error path is a fixed
  * Chinese string defined here:
@@ -30,7 +30,7 @@ export const NETWORK_ERROR_MESSAGE = "网络连接失败，请检查网络后重
 export const WEB_SEARCH_UNAVAILABLE_MESSAGE = "当前模型暂不支持联网搜索。";
 
 /**
- * ASK-RETRY-CONTRACT-R1 — pending/optimistic submission never reached a
+ * A pending/optimistic submission never reached a
  * canonical assistant id. CTA is 重新发送, not 重新生成.
  */
 export const PENDING_SUBMISSION_RESEND_MESSAGE =

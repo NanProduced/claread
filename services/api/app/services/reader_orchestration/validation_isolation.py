@@ -1,4 +1,4 @@
-"""Real-LLM validation isolation helpers (T4.2a-O2-V1 SOP).
+"""Real-LLM validation isolation helpers (SOP).
 
 Before a gated real-LLM diagnostic run, the harness must not share the
 database queue with background enhancement workers. Concurrent claimers

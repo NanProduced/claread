@@ -1,4 +1,4 @@
-# task-history: D6-I3M (renamed from test_d6_i3m_text_artifact_extraction_provider.py)
+# task-history: (renamed from test_d6_i3m_text_artifact_extraction_provider.py)
 """Tests for the TextArtifactExtractionProvider and worker integration.
 
 Provider unit tests construct :class:`ArtifactExtractionJobContext` directly

@@ -24,7 +24,7 @@ Medium/long articles use deterministic unit selection with a strict
 character budget — no keyword matching, no LLM-decided budget, no new
 full-text RAG strategy in this slice.
 
-Strict invariants (R4-A1 rework)
+Strict invariants
 --------------------------------
 1. The total character length of all ``ModelContextChunk.text`` values
    that enter the model is ``<= MEDIUM_LONG_ARTICLE_BUDGET_CHARS`` for
@@ -580,7 +580,7 @@ class BaselineContextAssembler:
                 "baseline serialized budget could not accommodate any text",
             )
 
-        # P0-1: snippet derived from the (possibly truncated) chunk text.
+        # Snippet derived from the (possibly truncated) chunk text.
         snippet = _build_snippet_from_text(truncated)
         first_unit = units[0]
         handle_ref = self._register_article_seed(
@@ -641,11 +641,11 @@ class BaselineContextAssembler:
         to fit (raw first, then serialized); if even a minimal chunk
         can't fit, iteration stops deterministically.
 
-        P0-1 invariant: the Registry snippet is derived from the
+         invariant: the Registry snippet is derived from the
         **truncated chunk text** (the text the model actually sees),
         not from the full unit text.
 
-        P0-2 invariant: no chunk without a handle, no handle without a
+         invariant: no chunk without a handle, no handle without a
         chunk — 1:1 binding maintained at all times.
         """
         remaining_raw = MEDIUM_LONG_ARTICLE_BUDGET_CHARS
@@ -694,7 +694,7 @@ class BaselineContextAssembler:
             if not truncated:
                 break
 
-            # P0-1: snippet derived from truncated chunk text, not full
+            # Snippet derived from truncated chunk text, not full
             # unit text. The snippet is the evidence the model/user can
             # point at — it must come from the text the model actually saw.
             handle_ref = self._register_article_seed(

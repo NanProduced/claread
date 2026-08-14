@@ -1,8 +1,8 @@
-"""Shared lease-heartbeat management for reader orchestration workers (R7-3).
+"""Shared lease-heartbeat management for reader orchestration workers.
 
 Long-running model phases (grammar batch generate + publish, grammar
 window LLM call) must hold their job lease for the whole processing
-duration. Before R7-3 each worker carried its own renewal loop — and
+duration. Before each worker carried its own renewal loop — and
 the grammar batch path had none at all: a ``generate_batch`` call
 longer than the lease let ``recover_stale_leases`` requeue the job
 (``heartbeat_lost``), after which the worker's publish/transition
@@ -117,7 +117,7 @@ class LeaseHeartbeat:
             raise self._error
 
     async def verify_ownership(self) -> None:
-        """R7-3b: actively probe ownership RIGHT NOW.
+        """Actively probe ownership RIGHT NOW.
 
         Raises the captured error if the renewal loop already failed;
         otherwise performs an immediate renewal, which raises when the

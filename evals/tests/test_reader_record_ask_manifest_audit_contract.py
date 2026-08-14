@@ -285,7 +285,7 @@ class TestScenario4V2IdentityMapStrictness:
         V3 string is NOT silently treated as V1 or V2.
         """
         d = _base_valid_v2_manifest_dict()
-        d["audit_contract_version"] = "r4-a4-2r4"  # unknown future version
+        d["audit_contract_version"] = "unknown-future-version"  # unknown future version
         with pytest.raises(RunManifestError, match="corrupt_manifest"):
             _serialize_and_parse(d)
 

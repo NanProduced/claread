@@ -1,4 +1,4 @@
-"""Unit tests for the shared spaCy model registry (R7-1 rework).
+"""Unit tests for the shared spaCy model registry.
 
 Covers the module-state contract of ``nlp_model_registry`` with mocks
 only - these tests never touch the real spaCy installation:
@@ -6,7 +6,7 @@ only - these tests never touch the real spaCy installation:
 - model/package unavailable -> ``None``, no load attempt;
 - load failure -> ``None``;
 - negative cache: a failed load is NOT retried within the retry
-  interval (the missing ``global`` regression from the R7-1 review);
+  interval (the missing ``global`` regression from the review);
 - ``reset_registry_for_tests`` clears the negative cache so the next
   call retries;
 - successful loads are cached and reused per pipe configuration.

@@ -1,4 +1,4 @@
-"""Host-owned model-visible turn budget and renderer (R4-A5-1 / A5-1R).
+"""Host-owned model-visible turn budget and renderer.
 
 Authority (design TMP §18.1)
 ----------------------------
@@ -24,12 +24,12 @@ exception text. Mapping/container traversal exceptions are converted the same
 way. Content safety of projections / ModelToolView remains the responsibility
 of their typed schemas (no field-name or semantic scanning here).
 
-A5-1 scope
+ scope
 ----------
 Foundation modules + unit tests only. Does **not**:
 
 - replace ``build_production_agent_user_prompt``;
-- switch selection injection (A5-2);
+- switch selection injection;
 - wire expand / map / RAG model-view into the agent loop;
 - call embedding / vector I/O;
 - raise ``ModelRetry`` on budget exhaustion.
@@ -48,7 +48,7 @@ from xml.sax.saxutils import escape as _xml_escape
 # ---------------------------------------------------------------------------
 # Cap + nine-account reserves (sum == MODEL_VISIBLE_TURN_PAYLOAD_CAP)
 # ---------------------------------------------------------------------------
-# Text-only Ask R2: keep one character ledger (no parallel token ledger).
+# Text-only Ask keep one character ledger (no parallel token ledger).
 # The 128K cap leaves the tool/document reserves unchanged while giving
 # conversation memory a 40K recent window and 8K compacted-memory window.
 # For Claread's bilingual text-only workload this delays normal compaction
@@ -112,7 +112,7 @@ SerializationErrorCode = Literal[
 # surface docs; identity-checked only. Not a hostile-code sandbox.
 _RENDERER_ORIGIN: object = object()
 
-# Map-entry cursor shape (R4-A5-4): server-minted opaque continuation token.
+# Map-entry cursor shape: server-minted opaque continuation token.
 _MAP_CURSOR_PATTERN = re.compile(r"^cur_[0-9a-f]{32}$")
 
 _CHARGE_REQUIRES_RENDERER_VIEW = (
@@ -513,7 +513,7 @@ class ModelViewRenderer:
         *,
         entries: Sequence[Mapping[str, str]],
     ) -> RenderedModelView:
-        """Render the untrusted article-map block (R4-A5-4, design §18.2).
+        """Render the untrusted article-map block (design §18.2).
 
         Each entry carries exactly ``cursor`` (``cur_<32 hex>``), ``kind``
         (``heading`` | ``window`` | ``ordinal``) and ``label``

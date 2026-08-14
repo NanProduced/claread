@@ -1,4 +1,4 @@
-"""Tests for ``grammar_candidate_policy`` 中立模块（T1.2）。
+"""Tests for ``grammar_candidate_policy`` 中立模块（）。
 
 覆盖：
   - ``normalize_dedup_hint``：折叠空白、大小写归一化

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Learner-facing “思路摘要” surface (ASK-LEARNER-REASONING-PROJECTOR-R1.1).
+ * Learner-facing “思路摘要” surface.
  *
  * Sibling of ChainOfThought. Pure text — no Markdown/Streamdown.
  * First valid snapshot only; live auto-expand; settle one-shot auto-close;

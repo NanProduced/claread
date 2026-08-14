@@ -22,7 +22,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
 }));
 
-// C1: Plate WYSIWYG 编辑器在 jsdom 下渲染为 contenteditable，无法用
+// Plate WYSIWYG 编辑器在 jsdom 下渲染为 contenteditable，无法用
 // `fireEvent.change(textarea, { target: { value } })` 驱动，且 placeholder
 // 由父组件 overlay 渲染而非 textarea 属性。
 // 这里把 `./MarkdownTextInput` 桩成原生 `<textarea>`，保留 placeholder 属性

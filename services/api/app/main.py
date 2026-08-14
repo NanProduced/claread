@@ -124,7 +124,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("Dict cache warmup failed (non-blocking): %s", e)
 
-    # ASK-TURN-LIFECYCLE R4-5d: reconcile orphan streaming rows from a
+    # Reconcile orphan streaming rows from a
     # previous process lifetime. If this process crashed/restarted while
     # a ``reader_ask_turn_runs`` row was still ``streaming``, that row is
     # now orphaned — no route ``finally`` will ever run for it. The

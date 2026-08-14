@@ -1,4 +1,4 @@
-# task-history: D6-I2 (renamed from test_d6_i2_stable_document_freeze_persistence.py)
+# task-history: (renamed from test_d6_i2_stable_document_freeze_persistence.py)
 """Focused tests for stable document freeze persistence.
 
 These tests use a fake asyncpg connection recorder to assert SQL order
@@ -451,7 +451,7 @@ class TestHappyPath:
         assert length_param == utf16_code_unit_length(plan.canonical_text)
 
     def test_reading_bases_navigation_json_has_non_empty_units(self) -> None:
-        """D6-I2C: navigation_json must come from the build result's
+        """Navigation_json must come from the build result's
         navigation_units, NOT the placeholder {"units": []}."""
         conn = FakeConn()
         conn.queue_fetchrow(None)
@@ -556,11 +556,11 @@ class TestBlockInsertParams:
 
         # heading -> main_reading
         assert policies_by_block_id["h1"]["default_route"] == "main_reading"
-        # table -> main_reading (Markdown ecosystem refactor D2 / A1),
+        # table -> main_reading (Markdown ecosystem refactor),
         # still not rag_eligible (structural wrapper, no text_content).
         assert policies_by_block_id["t1"]["default_route"] == "main_reading"
         assert policies_by_block_id["t1"]["rag_eligible"] is False
-        # table_cell -> main_reading (Markdown ecosystem refactor D2 / A1)
+        # table_cell -> main_reading (Markdown ecosystem refactor)
         assert policies_by_block_id["t1_c1"]["default_route"] == "main_reading"
         # paragraph -> main_reading
         assert policies_by_block_id["p1"]["default_route"] == "main_reading"
@@ -1363,7 +1363,7 @@ class TestIdempotentBranchCandidateConfirmation:
     Fix 3: If reading_records.active_base_id is NULL in this branch,
     fail closed (interrupted prior freeze).
 
-    D6-I2C review fix: Completeness validation must pass BEFORE
+     review fix: Completeness validation must pass BEFORE
     candidate confirmation. If the freeze state is incomplete, the
     candidate must NOT be confirmed.
     """
@@ -1531,7 +1531,7 @@ class TestIdempotentBranchCandidateConfirmation:
 
 
 # --------------------------------------------------------------------
-# D6-I2C: Reading Units / Anchor Segments / navigation_json
+# Reading Units / Anchor Segments / navigation_json
 # --------------------------------------------------------------------
 
 
@@ -1578,7 +1578,7 @@ def _build_plan_with_list() -> Any:
 
 
 class TestReadingUnitsInsert:
-    """D6-I2C: reading_units rows are inserted with correct params and
+    """Reading_units rows are inserted with correct params and
     UTF-16 offsets that round-trip to the canonical text."""
 
     def test_reading_units_count_matches_built_units(self) -> None:
@@ -1627,7 +1627,7 @@ class TestReadingUnitsInsert:
             # code_block) is carried by the separate
             # ``stable_block_type`` column — it MUST NOT be written to
             # ``unit_type``. Only ``heading`` overrides the heuristic
-            # (downstream A6 skip / B4 outline key off
+            # (downstream skip outline key off
             # ``unit_type == "heading"``).
             assert unit_type in (
                 "body",
@@ -1646,7 +1646,7 @@ class TestReadingUnitsInsert:
             assert isinstance(text_hash, str)
             assert len(text_hash) == 8  # fnv1a32-utf16
             metadata = call.args[9]
-            # R7-1: metadata_json records the actual sentence provider
+            # Metadata_json records the actual sentence provider
             # for sentence-stage units (spaCy main path, named regex v2
             # fallback, or pinned regex v1); it stays empty for units
             # built by the clause / fallback-window stage.
@@ -1707,8 +1707,8 @@ class TestReadingUnitsInsert:
         the separate ``stable_block_type`` column on the navigation unit
         and the snapshot payload's ``stableBlockType`` field.
 
-        A5: only ``heading`` overrides ``unit_type`` (because downstream
-        A6 skip / B4 outline key off ``unit_type == "heading"``); all
+        Only ``heading`` overrides ``unit_type`` (because downstream
+         skip outline key off ``unit_type == "heading"``); all
         other stable block types keep the heuristic ``unit_type``."""
         conn = FakeConn()
         conn.queue_fetchrow(None)
@@ -1727,7 +1727,7 @@ class TestReadingUnitsInsert:
 
 
 class TestAnchorSegmentsInsert:
-    """D6-I2C: anchor_segments rows are inserted with correct params
+    """Anchor_segments rows are inserted with correct params
     and unit-local offsets that round-trip to the segment text."""
 
     def test_anchor_segments_count_matches_built_segments(self) -> None:
@@ -1855,9 +1855,9 @@ class TestAnchorSegmentsInsert:
 
 
 class TestExactCanonicalTextNotRecanonicalized:
-    """D6-I2C: The canonical text passed to reading_bases.text must be
+    """The canonical text passed to reading_bases.text must be
     the EXACT plan.canonical_text, NOT recanonicalized by the base
-    builder. D6 block offsets are bound to the exact text.
+    builder. block offsets are bound to the exact text.
 
     Fixtures cover: double newlines (block separator), emoji (surrogate
     pairs in UTF-16), heading/list markers.
@@ -1967,7 +1967,7 @@ class TestExactCanonicalTextNotRecanonicalized:
 
 
 class TestNavigationJsonFromBuildResult:
-    """D6-I2C: navigation_json comes from the build result's
+    """Navigation_json comes from the build result's
     navigation_units, with the full set of required fields."""
 
     def test_navigation_json_units_have_all_required_fields(self) -> None:
@@ -2063,7 +2063,7 @@ class TestNavigationJsonFromBuildResult:
 
 
 class TestFreezePersistenceSqlOrder:
-    """D6-I2C: Full SQL order including reading_units and
+    """Full SQL order including reading_units and
     anchor_segments inserts.
 
     Order: reading_bases supersede -> reading_bases insert ->
@@ -2121,7 +2121,7 @@ class TestFreezePersistenceSqlOrder:
 
 
 # --------------------------------------------------------------------
-# D6-I2C review fix: Idempotent freeze completeness validation
+# Review fix: Idempotent freeze completeness validation
 # --------------------------------------------------------------------
 
 
@@ -2180,7 +2180,7 @@ def _build_complete_active_base_row(
 
 
 class TestIdempotentFreezeCompletenessValidation:
-    """D6-I2C review fix: The same-hash idempotent branch must validate
+    """Review fix: The same-hash idempotent branch must validate
     that the prior freeze completed ALL steps before returning
     idempotent_noop=True. If ANY completeness check fails, fail closed
     WITHOUT confirming the candidate.
@@ -2418,12 +2418,12 @@ class TestIdempotentFreezeCompletenessValidation:
 
 
 # --------------------------------------------------------------------
-# D6-I2C-H hardening: tighten idempotency completeness validation
+# Hardening: tighten idempotency completeness validation
 # --------------------------------------------------------------------
 
 
 class TestIdempotentFreezeHardening:
-    """D6-I2C-H hardening tests:
+    """Hardening tests:
 
     1. existing stable_reading_documents row with same hash but
        status != 'active' must fail-closed (no candidate confirmation,
@@ -2601,12 +2601,12 @@ class TestIdempotentFreezeHardening:
 
 
 # --------------------------------------------------------------------
-# D6-I2C review fix: canonicalizer_version alignment
+# Review fix: canonicalizer_version alignment
 # --------------------------------------------------------------------
 
 
 class TestCanonicalizerVersionAlignment:
-    """D6-I2C review fix: canonicalizer_version must be aligned between
+    """Review fix: canonicalizer_version must be aligned between
     the builder's ReadingBaseBuildResult.base.canonicalizer_version and
     the reading_bases DB insert.
 

@@ -1,4 +1,4 @@
-"""Artifact materialization worker execution shell (D6-I3O).
+"""Artifact materialization worker execution shell.
 
 Claims ``extracted_artifact_materialization`` reader_jobs (enqueued after the
 extraction worker persists the confirmed-source document), loads the job
@@ -51,7 +51,7 @@ from .job_runtime import (
 )
 
 DEFAULT_MATERIALIZATION_RETRY_DELAY = timedelta(minutes=5)
-MATERIALIZATION_WORKFLOW_VERSION = "d6-i3o-materialization-worker"
+MATERIALIZATION_WORKFLOW_VERSION = "artifact-materialization-worker"
 
 FAILURE_CODE_INPUT_JSON_INVALID = "input_json_invalid"
 FAILURE_CODE_MATERIALIZE_FAILED = "materialize_failed"

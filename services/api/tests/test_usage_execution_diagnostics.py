@@ -1,4 +1,4 @@
-"""T4.2a-O2 / O2-R1: execution correlation + usage presence diagnostics."""
+"""/ O2-execution correlation + usage presence diagnostics."""
 
 from __future__ import annotations
 
@@ -938,7 +938,7 @@ async def test_run_reader_scoped_agent_without_scope_is_plain_run() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-O3 duration provenance
+# Duration provenance
 # ---------------------------------------------------------------------------
 
 
@@ -953,7 +953,7 @@ def test_extract_provider_request_timing_unavailable_by_default() -> None:
 
 
 def test_generic_usage_or_timing_maps_cannot_mark_provider_timing_available() -> None:
-    """P1 negative: same-named fields without adapter envelope stay unavailable."""
+    """Negative: same-named fields without adapter envelope stay unavailable."""
     from app.services.ai_usage.execution_diagnostics import (
         make_provider_response_timing_envelope,
     )
@@ -1676,7 +1676,7 @@ async def test_real_grammar_unit_worker_shares_execution_id() -> None:
             )
 
     worker = GrammarBundleWorkerService(pool=MagicMock(), executor=_FakeGrammar())
-    # R7-3b: the worker now probes the lease (verify_ownership) before
+    # The worker now probes the lease (verify_ownership) before
     # publishing; stub the runtime heartbeat so this correlation-focused
     # test does not need a transactional fake pool.
     worker._job_runtime = MagicMock()  # type: ignore[method-assign]
@@ -1732,7 +1732,7 @@ async def test_real_grammar_batch_worker_shares_execution_id() -> None:
             )
 
     worker = GrammarBundleWorkerService(pool=MagicMock(), batch_executor=_FakeBatch())
-    # R7-3b: the worker now probes the lease (verify_ownership) before
+    # The worker now probes the lease (verify_ownership) before
     # publishing; stub the runtime heartbeat so this correlation-focused
     # test does not need a transactional fake pool.
     worker._job_runtime = MagicMock()  # type: ignore[method-assign]
@@ -1763,7 +1763,7 @@ async def test_real_grammar_batch_worker_shares_execution_id() -> None:
     )
     event_id = uuid4()
     fake_pool = _fake_pool_returning(event_id)
-    # R7-3b: invocation usage persistence is idempotent by invocation
+    # Invocation usage persistence is idempotent by invocation
     # key — it first SELECTs an existing row by request_id. Emulate
     # "no existing row" for that lookup and return event_id for the
     # INSERT ... RETURNING id so the real INSERT (with correlation

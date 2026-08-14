@@ -1,4 +1,4 @@
-"""Deterministic PDF text extraction provider (D6-I3S).
+"""Deterministic PDF text extraction provider.
 
 Wraps an injectable :class:`StorageObjectReader` to download object bytes and
 a :class:`PdfTextExtractor` to extract copyable text from PDF documents.

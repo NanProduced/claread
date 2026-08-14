@@ -1,4 +1,4 @@
-"""D6-I4V: Article RAG Index Auto-Ensure Hook.
+"""Article RAG Index Auto-Ensure Hook.
 
 Fail-soft wrapper around :class:`ArticleRagIndexLifecycleService` that
 ensures an Article RAG index build job exists when a reading record

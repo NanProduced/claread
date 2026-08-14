@@ -1,4 +1,4 @@
-# task-history: D6-I2D (renamed from test_d6_i2d_candidate_document_confirm_service.py)
+# task-history: (renamed from test_d6_i2d_candidate_document_confirm_service.py)
 """Focused tests for the candidate document confirm service.
 
 These tests use a fake asyncpg connection recorder to assert SQL order
@@ -357,7 +357,7 @@ class TestCandidateStatusValidation:
 
 
 class TestCandidateStatusTypedError:
-    """D6-I2D-B-H: non-ready candidates raise a typed
+    """Non-ready candidates raise a typed
     CandidateDocumentStatusError (subclass of
     CandidateDocumentConfirmError) carrying structured fields."""
 
@@ -663,7 +663,7 @@ class TestSourceRefsPreservation:
 
 
 class TestSourceRefsFailClosed:
-    """D6-I2D-A review fix: ``source_refs_json`` / ``quality_json`` must
+    """Review fix: ``source_refs_json`` / ``quality_json`` must
     NOT be silently downgraded to ``{}``. Invalid values fail closed
     with :class:`CandidateDocumentConfirmError` and no persistence
     writes. JSON object strings are accepted for driver compatibility.

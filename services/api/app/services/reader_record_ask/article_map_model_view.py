@@ -1,4 +1,4 @@
-"""Semantic article map model-view (R4-A5-4, offline core).
+"""Semantic article map model-view (offline core).
 
 Deep module for the article map: projection metadata + a single
 renderer-minted ``<untrusted_article_map>`` block + opaque server-bound
@@ -84,7 +84,7 @@ MAP_LABEL_HARD_CAP: int = 120
 MAP_ORDINAL_NAVIGATION_NOTE: str = "ordinal only — limited navigation"
 
 # Request-frame-owned fixed chrome around the map untrusted block (mirrors
-# the selection section chrome; A5-7 request_frame metering must include
+# the selection section chrome; request_frame metering must include
 # these constants). Never unowned model-visible characters.
 MAP_SECTION_HEADER: str = "\n## Article map (untrusted navigation)\n"
 MAP_SECTION_FOOTER: str = "\n"
@@ -255,10 +255,10 @@ class ArticleMapResult:
     prompt capability) plus the metadata projection fields
     ``entry_count`` / ``truncated``.
 
-    ``issue_markers`` (R4-A5-7R): server-only per-cursor ledger markers
+    ``issue_markers``: server-only per-cursor ledger markers
     from this assembly's ``ledger.issue`` calls. Outer turn rollback must
     revoke via :meth:`ExpansionPointerLedger.rollback_transition_by_marker`
-    — never by raw token pop. Order parallels ``entries`` / issued cursors.
+    never by raw token pop. Order parallels ``entries`` / issued cursors.
     Empty when status is not ``ok``.
     """
 

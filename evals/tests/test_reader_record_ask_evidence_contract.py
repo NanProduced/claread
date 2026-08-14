@@ -1,6 +1,6 @@
-"""P0-3: Evidence kind/provenance cross-field invariant tests.
+"""Evidence kind/provenance cross-field invariant tests.
 
-Spec: R4-A3 Eval Harness 最终微补丁——Evidence Kind/Provenance 组合不变量.
+Spec: Eval Harness Evidence Kind/Provenance 组合不变量.
 
 This module locks down the cross-field invariant on
 :class:`RawEvidenceObservation` that was missing in the previous round:
@@ -40,8 +40,8 @@ from claread_eval.reader_record_ask.evaluators.evidence_minimality import (
     evaluate_evidence_minimality,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -100,8 +100,8 @@ assert len(_ALL_PAIRS) == 20, (
 assert len(set(_ALL_PAIRS)) == 20, "duplicate pairs detected"
 
 
-def _make_case() -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+def _make_case() -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-evidence-contract",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -109,7 +109,7 @@ def _make_case() -> ReaderRecordAskR4A3Case:
         baseline_mode="complete",
         question="这篇文章主要说了什么？",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
     )
 
 

@@ -1,4 +1,4 @@
-"""S2: Typed preview projection for Candidate Recovery read model.
+"""Typed preview projection for Candidate Recovery read model.
 
 Pure functions that transform raw ``blocks_json`` + ``quality_json`` +
 ``canonical_text_preview`` from a ``candidate_reading_documents`` row

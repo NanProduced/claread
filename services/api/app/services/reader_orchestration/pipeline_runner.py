@@ -124,19 +124,19 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyWorkerService,
 )
 
-# T3.4a: truncate failure messages stored in diagnostics so output_ref_json
+# Truncate failure messages stored in diagnostics so output_ref_json
 # doesn't grow unbounded. Mirrors the publisher's _DIAGNOSTICS_REASON_MAX_LEN.
 _FAILURE_MESSAGE_MAX_LEN = 240
 
 WorkerType = Literal[
     "display_title",
     "translation",
-    "translation_batch",  # T1.1 short-article batch
+    "translation_batch", # short-article batch
     "vocabulary",
-    "vocabulary_batch",  # T1.1 short-article batch
-    "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
+    "vocabulary_batch", # short-article batch
+    "grammar_bundle", # Batch first, then legacy per-unit
     "grammar_bundle_window",  # grammar-window window
-    "semantic_outline",  # T5.3a: optional, low priority, non-budget
+    "semantic_outline", # Optional, low priority, non-budget
 ]
 PipelineAttemptOutcome = Literal[
     "succeeded",
@@ -155,7 +155,7 @@ PipelineStoppedReason = Literal[
     "partial_budget_exhausted",
 ]
 
-# T1 acceptance: the fake executor baseline showed reuters_bbc_970 needs
+# Acceptance: the fake executor baseline showed reuters_bbc_970 needs
 # 60 ticks (6 workers × 10 rounds) in fake mode and ~70 in 7-worker grammar-window mode.
 # 96 / 48 covers medium samples (≤12 units) in both 6- and 7-worker modes
 # with ~30% margin. Every worker attempt (including ``no_job``) consumes a
@@ -173,15 +173,15 @@ GRAMMAR_WINDOW_OPERATION_FINGERPRINT = GRAMMAR_WINDOW_OPERATION_FINGERPRINT
 def _derive_candidate_contents(
     candidates: list,
 ) -> list[WindowCandidateContent]:
-    """P1-4 bridge: 从 CandidateItem 的 content_* 字段派生 WindowCandidateContent。
+    """Bridge: 从 CandidateItem 的 content_* 字段派生 WindowCandidateContent。
 
     executor 产出的 CandidateItem 携带 grammar_point / note / label /
-    analysis / chunks 等内容字段（P1-3 fix），但 publisher 的
+    analysis / chunks 等内容字段（ fix），但 publisher 的
     ``publish_window_grammar_bundle`` 需要独立的 ``WindowCandidateContent``
     列表来构建合法的 GrammarNoteLayerOutput / SentenceAnalysisLayerOutput。
     本函数完成 dict → Pydantic model 的转换。
 
-    P2-1 (fail closed): 当 candidates 存在但没有 content_* 字段时，raise
+     (fail closed): 当 candidates 存在但没有 content_* 字段时，raise
     ValueError 而不是返回 None 触发 sidecar fallback。生产路径必须产出
     符合 layer contract 的 output_json，不能发布旧 sidecar shape。
 
@@ -199,7 +199,7 @@ def _derive_candidate_contents(
 
     contents: list[WindowCandidateContent] = []
     for c in candidates:
-        # P2-1: fail closed — candidates 必须携带 content_* 字段
+        # Fail closed — candidates 必须携带 content_* 字段
         has_content = bool(
             c.grammar_point or c.note or c.label or c.analysis or c.chunks
         )
@@ -341,7 +341,7 @@ class ReaderPipelineRunSummary:
     stopped_outcome: PipelineAttemptOutcome | None = None
     attention_code: str | None = None
     attempts: tuple[ReaderPipelineWorkerAttempt, ...] = ()
-    # T4.2a-R2-R1: durable budget diagnostics for observability.
+    # Durable budget diagnostics for observability.
     # ``exhausted_layers`` lists layers whose budget was exhausted at
     # pipeline stop time. ``budget_diagnostics`` carries the per-layer
     # planned / max / consumed / remaining snapshot.
@@ -375,7 +375,7 @@ class ReaderEnhancementPipelineRunner:
         settings: Settings | None = None,
     ) -> None:
         self._pool = pool
-        # T5.8d-dev-activation: dev-only auto-activation of semantic outline.
+        # Dev-only auto-activation of semantic outline.
         # activation_ready = semantic_outline_generation_enabled
         # AND reader_semantic_outline_model_profile != "". Committed defaults
         # stay closed; only an explicit settings injection (or env override
@@ -417,7 +417,7 @@ class ReaderEnhancementPipelineRunner:
         self._translation_orchestrator = translation_orchestrator or ReaderOrchestrator(
             pool=pool
         )
-        # T1.1 short-article batch path: bypass the orchestrator and call the
+        # Short-article batch path: bypass the orchestrator and call the
         # batch worker service directly. The batch methods live on the same
         # TranslationWorkerService class; a dedicated instance is wired here so
         # tests can inject a fake batch executor without affecting the
@@ -508,7 +508,7 @@ class ReaderEnhancementPipelineRunner:
             user_id=user_id,
         )
 
-        # T4.2a-R2-R2: Clean up suppressed legacy per-unit grammar jobs
+        # Clean up suppressed legacy per-unit grammar jobs
         # BEFORE entering the worker loop. When the grammar batch path is
         # authoritative (any non-superseded batch job exists), legacy
         # ``build_grammar_bundle/unit`` jobs that are still non-superseded
@@ -522,7 +522,7 @@ class ReaderEnhancementPipelineRunner:
             expected_generation=bootstrap.expected_generation,
         )
 
-        # T4.2a-R2-R1: Load durable budget from DB state
+        # Load durable budget from DB state
         # (``reader_jobs.attempt_count`` / ``max_attempts``). This is the
         # authoritative cross-run budget: multiple ``run()`` calls within
         # the same WorkerLoop cycle see the same consumed count because
@@ -573,36 +573,36 @@ class ReaderEnhancementPipelineRunner:
         # avoid legacy / grammar-window contention. When ``grammar_window_worker`` is not
         # registered (legacy deployments / existing tests), the pipeline keeps
         # the legacy 4-worker order so baseline tick / job counts are
-        # preserved. T1.1 batch workers are dispatched ahead of their per-unit
+        # preserved. batch workers are dispatched ahead of their per-unit
         # counterparts so short-article batch jobs are processed before the
         # per-unit workers (which will find no_job for short articles).
         if self._grammar_window_worker is not None:
             worker_order: tuple[WorkerType, ...] = (
                 "display_title",
-                "translation_batch",  # T1.1 short-article batch
+                "translation_batch", # short-article batch
                 "translation",
-                "vocabulary_batch",  # T1.1 short-article batch
+                "vocabulary_batch", # short-article batch
                 "vocabulary",
                 "grammar_bundle_window",  # grammar-window 优先
-                "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
-                "semantic_outline",  # T5.3a: lowest priority; non-budget
+                "grammar_bundle", # Batch first, then legacy per-unit
+                "semantic_outline", # Lowest priority; non-budget
             )
         else:
             worker_order = (
                 "display_title",
-                "translation_batch",  # T1.1 short-article batch
+                "translation_batch", # short-article batch
                 "translation",
-                "vocabulary_batch",  # T1.1 short-article batch
+                "vocabulary_batch", # short-article batch
                 "vocabulary",
-                "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
-                "semantic_outline",  # T5.3a: lowest priority; non-budget
+                "grammar_bundle", # Batch first, then legacy per-unit
+                "semantic_outline", # Lowest priority; non-budget
             )
 
         while True:
             round_no_job_count = 0
 
             for worker_type in worker_order:
-                # T4.2a-R2-R1: Check execution budget before dispatching
+                # Check execution budget before dispatching
                 # the worker. If the layer's budget is exhausted, record
                 # a ``budget_denied`` outcome (NOT ``no_job``) so the
                 # event is observable in diagnostics/spans. The pipeline
@@ -614,7 +614,7 @@ class ReaderEnhancementPipelineRunner:
                     outcome_counts["budget_denied"] += 1
                     total_ticks += 1
                     tick_counts[worker_type] += 1
-                    # T4.2a-R2-R1: budget_denied counts as "no work for
+                    # Budget_denied counts as "no work for
                     # this worker" — without this, a round where some
                     # workers are budget_denied and others return no_job
                     # would never reach ``round_no_job_count ==
@@ -651,7 +651,7 @@ class ReaderEnhancementPipelineRunner:
                 if attempt.processed_job:
                     total_jobs += 1
 
-                # T4.2a-R2: Consume budget for outcomes that involve an
+                # Consume budget for outcomes that involve an
                 # LLM call (succeeded / retry_later / failed_terminal).
                 # no_job / superseded do not consume budget.
                 if (
@@ -671,7 +671,7 @@ class ReaderEnhancementPipelineRunner:
                     attention_code = attempt.attention_code
                     break
 
-                # T4.2a-R2-R1: If ALL budgeted layers with jobs are
+                # If ALL budgeted layers with jobs are
                 # exhausted, stop with ``budget_exhausted``. If SOME
                 # layers are exhausted but others still have budget,
                 # the pipeline continues; partial exhaustion is handled
@@ -698,7 +698,7 @@ class ReaderEnhancementPipelineRunner:
             if stopped_reason != "all_workers_no_job":
                 break
             if round_no_job_count == len(worker_order):
-                # T4.2a-R2-R1: Before exiting with ``all_workers_no_job``,
+                # Before exiting with ``all_workers_no_job``,
                 # check if some layers are budget-exhausted while others
                 # simply have no jobs. If any layer is exhausted, report
                 # ``partial_budget_exhausted`` instead of
@@ -1180,11 +1180,11 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
-        """T1.1/T3.1 batch dispatch for the translation layer.
+        """ batch dispatch for the translation layer.
 
         Bypasses the orchestrator and calls the batch worker service directly.
         For short articles a single ``translate_article`` batch job covers
-        all units. For non-short articles T3.1 creates multiple
+        all units. For non-short articles creates multiple
         ``translate_article`` window jobs (one per consecutive unit window);
         this method processes whichever window job the worker loop picks up
         next. No ``translate_unit`` per-unit jobs are created for either
@@ -1208,7 +1208,7 @@ class ReaderEnhancementPipelineRunner:
                 retry_delay=retry_delay,
             )
         except FenceViolationError:
-            # T4.2a-R2-R3: The worker service has already performed the
+            # The worker service has already performed the
             # real state transition (job → superseded, run → superseded)
             # in its own ``except FenceViolationError`` handler before
             # re-raising. This block only counts the DB-actual superseded
@@ -1254,7 +1254,7 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
-        """T1.1 short-article batch dispatch for the vocabulary layer.
+        """Short-article batch dispatch for the vocabulary layer.
 
         Reuses the existing ``vocabulary_worker_service`` (the batch methods
         live on the same ``VocabularyWorkerService`` class) and calls
@@ -1321,7 +1321,7 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
-        """T4.1c: try compact grammar batch first, then legacy per-unit.
+        """Try compact grammar batch first, then legacy per-unit.
 
         SHORT_BATCH / STRUCTURED_BATCH articles have a single
         ``build_grammar_bundle`` / ``unit_range`` batch job covering all
@@ -1331,7 +1331,7 @@ class ReaderEnhancementPipelineRunner:
         so the existing ``reader_runtime_spans.worker_type`` CHECK
         constraint is satisfied without a new migration.
         """
-        # --- T4.1c compact grammar batch (SHORT_BATCH / STRUCTURED_BATCH) ---
+        # --- compact grammar batch (SHORT_BATCH / STRUCTURED_BATCH) ---
         # Count superseded jobs across both route fingerprint bases so a
         # route flip (short -> structured) is fully observable in
         # ``superseded_jobs`` / ``outcome_counts.superseded``.
@@ -1391,12 +1391,12 @@ class ReaderEnhancementPipelineRunner:
                 result=batch_result,
             )
 
-        # T4.2a-R2: Fallback safety guard. Before falling back to the
+        # Fallback safety guard. Before falling back to the
         # per-unit grammar path, check if there are any non-terminal
         # batch jobs for this record/base/generation. If non-terminal
-        # T4.2a-R2-R1: Fail-closed fallback guard. Per-unit grammar
+        # Fail-closed fallback guard. Per-unit grammar
         # fallback is suppressed whenever any non-superseded batch job
-        # exists. This includes ``succeeded`` (P1-2 fix: batch published,
+        # exists. This includes ``succeeded`` ( fix: batch published,
         # per-unit would duplicate), ``queued`` / ``claimed`` /
         # ``retry_later`` (batch in progress), and ``failed_terminal``
         # (no explicit fallback authorization policy; fail closed).
@@ -1495,7 +1495,7 @@ class ReaderEnhancementPipelineRunner:
           - ``GrammarWindowExecutionError``: routes via ``exc.retryable`` —
             config / validation errors go to ``failed_terminal``, provider
             errors go to ``retry_later`` (requirement 2).
-          - ``ValueError`` (P2-1 fail-closed contract violation): ``failed_terminal``.
+          - ``ValueError`` (fail-closed contract violation): ``failed_terminal``.
           - Generic ``Exception``: ``failed_terminal`` (defensive).
           - ``FenceViolationError`` from publisher: transition job →
             ``superseded``, mark run ``superseded``, end worker span as
@@ -1560,7 +1560,7 @@ class ReaderEnhancementPipelineRunner:
         # process_window_job raises before returning candidates_ready.
         plan_id, window_id = await self._load_window_ids_from_job(claim.job_id)
 
-        # T4.2a-O2-R1a: one execution_id for the full claimed attempt —
+        # One execution_id for the full claimed attempt —
         # process_window_job + publish + usage event + terminal span/transition.
         # process_window_job itself must NOT open a nested correlation scope.
         with bind_execution_from_claim(
@@ -1742,7 +1742,7 @@ class ReaderEnhancementPipelineRunner:
             )
 
         candidates: list = result.get("candidates", [])
-        # P1-4 bridge: derive WindowCandidateContent from CandidateItem's
+        # Bridge: derive WindowCandidateContent from CandidateItem's
         # content_* fields so publisher can build proper layer output
         # (GrammarNoteLayerOutput / SentenceAnalysisLayerOutput) instead
         # of falling back to selector-sidecar output_json shape.
@@ -1769,7 +1769,7 @@ class ReaderEnhancementPipelineRunner:
             # as fence violation. Do NOT just return superseded and leave
             # the job/run in claimed/running.
             #
-            # T3.4a (P1): build failure diagnostics so the superseded /
+            # Build failure diagnostics so the superseded
             # failed window is diagnosable from output_ref_json and
             # coverage. Without this, analysis_windows.status='failed' had
             # an empty coverage.diagnostics, leaving the fence-violation
@@ -1786,7 +1786,7 @@ class ReaderEnhancementPipelineRunner:
                 # has them available for raw_candidate_count_by_type.
                 raw_candidates=candidates,
             )
-            # T4.2a-R2-R2: transition the job to superseded in the
+            # Transition the job to superseded in the
             # worker/service layer (not inside the publisher transaction).
             # If the transition fails (lease race / already superseded),
             # the summary must reflect the real DB state — not a
@@ -1798,7 +1798,7 @@ class ReaderEnhancementPipelineRunner:
                     target_status="superseded",
                     lease_token=claim.lease_token,
                     rationale_code="publish_fence_failed",
-                    # T3.4a (P1): persist diagnostics to output_ref_json so
+                    # Persist diagnostics to output_ref_json so
                     # the superseded job's failure cause is queryable.
                     output_ref={"diagnostics": fence_diagnostics},
                 )
@@ -1826,7 +1826,7 @@ class ReaderEnhancementPipelineRunner:
                 job_id=claim.job_id,
                 run_id=claim.run_id,
                 attention_code="publish_fence_failed",
-                # T4.2a-R2-R2: report the real transition result, not a
+                # Report the real transition result, not a
                 # synthetic 1. If the transition failed (lease race),
                 # superseded_jobs=0 so the summary is truthful.
                 superseded_jobs=1 if transitioned else 0,
@@ -1937,7 +1937,7 @@ class ReaderEnhancementPipelineRunner:
         via ``end_worker_span_execution_error`` or
         ``end_worker_span_generic_exception``.
 
-        T3.4a: builds failure diagnostics (window_meta / strategy / budgets /
+        Builds failure diagnostics (window_meta / strategy budgets
         raw_candidate_count_by_type / no_op_cause=execution_failed / failure
         sub-dict) and persists to ``reader_jobs.output_ref_json.diagnostics``
         (via transition's ``output_ref``) and
@@ -1951,7 +1951,7 @@ class ReaderEnhancementPipelineRunner:
         target_status = "retry_later" if retryable else "failed_terminal"
         run_status = "failed_retryable" if retryable else "failed_terminal"
 
-        # T3.4a: build failure diagnostics so the window's no-op/failed
+        # Build failure diagnostics so the window's no-op/failed
         # cause is queryable from output_ref_json + analysis_windows.coverage.
         diagnostics = await self._build_failure_diagnostics(
             claim=claim,
@@ -1971,7 +1971,7 @@ class ReaderEnhancementPipelineRunner:
             "failure_code": failure_code,
             "failure_message": message,
             "rationale_code": rationale_code,
-            # T3.4a: persist diagnostics to reader_jobs.output_ref_json
+            # Persist diagnostics to reader_jobs.output_ref_json
             "output_ref": {"diagnostics": diagnostics},
         }
         if retryable:
@@ -1998,7 +1998,7 @@ class ReaderEnhancementPipelineRunner:
 
         # Requirement 3: mark analysis_window failed only on non-retryable
         # failures. Retryable failures leave the window in running so the
-        # same job retry can resume. T3.4a: also write failure diagnostics
+        # same job retry can resume. Also write failure diagnostics
         # to coverage so the cause is queryable without reader_jobs join.
         if window_id is not None and not retryable:
             await self._mark_analysis_window_failed(
@@ -2138,7 +2138,7 @@ class ReaderEnhancementPipelineRunner:
         failure_message: str,
         raw_candidates: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """T3.4a: Build failure diagnostics for a grammar-window window job failure.
+        """Build failure diagnostics for a grammar-window window job failure.
 
         Loads window_meta (window_id / window_index / plan_id /
         target_unit_ids / target_anchor_count), strategy metadata
@@ -2439,7 +2439,7 @@ class ReaderEnhancementPipelineRunner:
         terminal. Already-terminal windows (``completed`` / ``no_op`` /
         ``failed``) are left untouched.
 
-        T3.4a: when ``diagnostics`` is provided, merge it into the existing
+        When ``diagnostics`` is provided, merge it into the existing
         ``coverage`` JSONB so failed windows are queryable by no_op_cause /
         failure_class without joining reader_jobs. The merge is a
         ``jsonb ||`` so existing ``covered_unit_ids`` is preserved.
@@ -2576,7 +2576,7 @@ class ReaderEnhancementPipelineRunner:
     ) -> int:
         """Count superseded grammar batch jobs across both route fingerprint bases.
 
-        T4.1c compact grammar batch uses two route-specific fingerprint bases:
+         compact grammar batch uses two route-specific fingerprint bases:
         ``GRAMMAR_BATCH_OPERATION_FINGERPRINT`` (SHORT_BATCH) and
         ``GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT`` (STRUCTURED_BATCH).
         A route flip (short -> structured on a rebuilt base) can supersede
@@ -2608,10 +2608,10 @@ class ReaderEnhancementPipelineRunner:
         base_id: UUID,
         expected_generation: int,
     ) -> bool:
-        """T4.2a-R2-R1: Decide whether legacy per-unit grammar fallback
+        """Decide whether legacy per-unit grammar fallback
         should be suppressed.
 
-        P1-2 fix: ``succeeded`` batch permanently blocks fallback. The
+         fix: ``succeeded`` batch permanently blocks fallback. The
         previous check only blocked ``queued`` / ``claimed`` /
         ``retry_later``, allowing fallback when a batch had succeeded
         but per-unit jobs still existed (dangerous state from route
@@ -2661,7 +2661,7 @@ class ReaderEnhancementPipelineRunner:
         base_id: UUID,
         expected_generation: int,
     ) -> int:
-        """T4.2a-R2-R2: Supersede legacy per-unit grammar jobs when the
+        """Supersede legacy per-unit grammar jobs when the
         batch path is authoritative.
 
         Runs once at the start of ``run()``, after bootstrap. If any
@@ -2683,7 +2683,7 @@ class ReaderEnhancementPipelineRunner:
         Returns the number of legacy jobs superseded.
         """
         async with self.get_pool().acquire() as conn:
-            # T4.2a-R2-R3: wrap the batch status check, legacy job
+            # Wrap the batch status check, legacy job
             # SELECT FOR UPDATE, UPDATE, and event INSERT in a single
             # explicit transaction so the FOR UPDATE lock covers the
             # entire cleanup and a crash cannot leave jobs superseded
@@ -2740,7 +2740,7 @@ class ReaderEnhancementPipelineRunner:
         base_id: UUID,
         expected_generation: int,
     ) -> dict[str, int]:
-        """T4.2a-R2: Count non-terminal jobs per budget layer.
+        """Count non-terminal jobs per budget layer.
 
         Used by the budget initialization to account for ALL non-terminal
         jobs, including those created by ``GrammarWindowBootstrapService`` (window

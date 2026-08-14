@@ -1,6 +1,6 @@
 """Shared contract for the ``context_support`` classification tag.
 
-R4-A4-0 final gate closure — P1 contract de-duplication.
+Context-support contract de-duplication.
 
 This module is the SINGLE source of truth for the
 ``context_support`` classification vocabulary. Three call sites

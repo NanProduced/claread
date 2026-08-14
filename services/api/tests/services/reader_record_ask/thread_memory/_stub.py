@@ -1,17 +1,17 @@
-"""A1 stub: 待 A1 完成后移除.
+"""stub: 待 完成后移除.
 
 This module provides fallback Pydantic models and mapping helpers that
-mirror the contracts A1 will deliver in
+mirror the contracts the orchestration layer will deliver in
 ``app/services/reader_record_ask/thread_memory/schema.py`` and
 ``app/services/reader_record_ask/thread_memory/mapping.py``.
 
-A2's production modules (emergency.py / allowlist.py / fence.py /
+ production modules (emergency.py / allowlist.py fence.py /
 render.py / redaction.py) import the real schema/mapping modules by the
-agreed interface. When A1's modules are not yet on disk, the test
-conftest injects this stub into ``sys.modules`` so A2's tests can run
+agreed interface. When modules are not yet on disk, the test
+conftest injects this stub into ``sys.modules`` so tests can run
 independently.
 
-Once A1 lands ``schema.py`` and ``mapping.py``, the conftest injection
+Once the base contracts land ``schema.py`` and ``mapping.py``, the conftest injection
 becomes a no-op (real imports win) and this stub can be deleted.
 """
 
@@ -22,7 +22,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
-# Schema mirror (R0.1 §6)
+# Schema mirror (§6)
 # ---------------------------------------------------------------------------
 
 
@@ -47,7 +47,7 @@ class StructuredFact(BaseModel):
     supersedes: list[str] | None = None
     protected: bool = False
     # Mark facts that must survive budget shrinking (user_correction /
-    # unresolved_question). R0.1 §4.2(f): protected facts are never
+    # unresolved_question). §4.2(f): protected facts are never
     # evicted; only ``prior_context`` and ``medium`` facts participate.
 
 
@@ -97,7 +97,7 @@ class ThreadMemorySnapshot(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Mapping mirror (R0.1 §4.2(d) step 3, H6/H7)
+# Mapping mirror (§4.2(d) step 3, H6/H7)
 # ---------------------------------------------------------------------------
 
 
@@ -106,9 +106,9 @@ def derive_source_bindings(
 ) -> list[SourceBinding]:
     """Stub: turn InternalCitationBinding-like dicts into SourceBindings.
 
-    A1 will implement the real mapping from ``resolved_evidence_json``
+     this module implements the real mapping from ``resolved_evidence_json``
     structures (``InternalCitationBinding`` + ``ArticleRagCitationEvidence``
-    fields). This stub covers the minimum field set A2's emergency
+    fields). This stub covers the minimum field set emergency
     extractor and allowlist builder consume.
 
     ``turn_run_bindings`` items may be Pydantic models with ``model_dump``
@@ -192,7 +192,7 @@ def degrade_web_citation_to_hint(binding: Any) -> dict[str, Any]:
 
     Returns a dict (not a SourceBinding) so callers can render the hint
     inline without elevating it to citation-truth status. ``A_bind``
-    allowlist must NOT include degraded hints (R0.1 H7).
+    allowlist must NOT include degraded hints (H7).
     """
     if hasattr(binding, "model_dump"):
         b = binding.model_dump()

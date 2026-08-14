@@ -1,4 +1,4 @@
-# task-history: R4-A5-7 (renamed from test_reader_record_ask_a5_7_production_wiring.py)
+# task-history: (renamed from test_reader_record_ask_a5_7_production_wiring.py)
 """Production Ask model-view wiring.
 
 FunctionModel only — no real LLM / RAG / embedding / vector I/O.
@@ -447,14 +447,14 @@ async def test_rag_port_none_zero_io_via_runtime():
 
 
 # ---------------------------------------------------------------------------
-# SSE expand_evidence article-evidence activity (R2.1 process contract)
+# SSE expand_evidence article-evidence activity (process contract)
 # ---------------------------------------------------------------------------
 
 
 def test_expand_progress_projects_first_class_article_evidence_activity():
     """expand_evidence is a public article-evidence lifecycle step.
 
-    R2.1 process contract: article tools (read_range / search_current_article
+     process contract: article tools (read_range search_current_article
     / expand_evidence) share one stable ``article_evidence`` activity so the
     learner sees a single "查找文章依据" step with typed outcomes, instead of
     a generic agent_running row. Tool args (pointer) never reach the summary.

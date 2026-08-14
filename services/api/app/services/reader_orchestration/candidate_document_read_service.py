@@ -1,4 +1,4 @@
-"""S2: Candidate Recovery read-only application service.
+"""Candidate Recovery read-only application service.
 
 Loads the current ``(record_id, generation)`` ready candidate and
 projects it into a safe typed read model for the

@@ -1,4 +1,4 @@
-# task-history: P2B-R1.1 (renamed from test_grammar_window_fence_strict_fence_rollback.py)
+# task-history: (renamed from test_grammar_window_fence_strict_fence_rollback.py)
 """grammar-window strict fence rollback closure.
 
 Proves ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan()`` delegates

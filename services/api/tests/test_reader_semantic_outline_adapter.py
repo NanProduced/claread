@@ -1,4 +1,4 @@
-# task-history: T5.8b (renamed from test_reader_semantic_outline_t58b_adapter.py)
+# task-history: (renamed from test_reader_semantic_outline_t58b_adapter.py)
 """Controlled real semantic-outline adapter, policy pre-call, usage/provenance wiring."""
 
 from __future__ import annotations

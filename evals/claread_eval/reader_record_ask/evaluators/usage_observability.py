@@ -18,13 +18,13 @@ from __future__ import annotations
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "usage_observability"
 
 
 def evaluate_usage_observability(
-    case: ReaderRecordAskR4A3Case,  # noqa: ARG001 — signature contract
+    case: ReaderRecordAskCase,  # noqa: ARG001 — signature contract
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     failures: list[str] = []

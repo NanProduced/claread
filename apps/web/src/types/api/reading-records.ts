@@ -34,14 +34,14 @@ export interface ReadingRecordListItemDto {
   last_event_sequence: number;
   last_opened_at: string | null;
   /**
-   * S2.5: Backend-decided stable display title. The UI should prefer this
+   * Backend-decided stable display title. The UI should prefer this
    * over `title`. Priority chain:
    * succeeded generated_title_zh → record.title → ready candidate title →
    * filename → source-type label → "未命名解读".
    */
   display_title: string;
   /**
-   * S2.5: Backend-controlled friendly source label (e.g. "粘贴文本",
+   * Backend-controlled friendly source label (e.g. "粘贴文本",
    * "上传文件 · report.pdf"). Raw metadata_json is never exposed.
    */
   source_label: string;

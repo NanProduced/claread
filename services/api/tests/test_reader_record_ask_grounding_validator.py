@@ -1,11 +1,11 @@
 """Tests for the Reading Record Ask grounding output_validator.
 
-Covers R4-A2 must-test scenarios 1–3, 5, 7, 11–13, 15, 17 (scenarios 8–10,
+Covers must-test scenarios 1–3, 5, 7, 11–13, 15, 17 (scenarios 8–10,
 16 live in test_reader_record_ask_baseline_context.py and
 test_reader_record_ask_production_stream.py). The former ``unavailable``
 scenarios (4, 6) were removed when ``response_kind="unavailable"`` and the
 host-owned outcome were deleted; the former AnswerCorrectnessPolicy tests
-(T1–T10) were removed when the correctness policy module was deleted.
+(–) were removed when the correctness policy module was deleted.
 
 The validator is invoked directly with a lightweight ``RunContext`` mock
 (``SimpleNamespace``) — no LLM calls, no ``agent.run``. This keeps the
@@ -272,7 +272,7 @@ async def test_grounded_answer_cross_registry_handle_triggers_model_retry() -> N
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3: over evidence limit → no longer ModelRetry (ASK-WEB-R4)
+# Scenario 3: over evidence limit → no longer ModelRetry (ASK-WEB-)
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +280,7 @@ async def test_grounded_answer_cross_registry_handle_triggers_model_retry() -> N
 async def test_grounded_answer_over_limit_passes_without_retry() -> None:
     """Citing more than the former 6-handle cap no longer ModelRetries.
 
-    ASK-WEB-R4-R1: the hard cap (formerly ``MAX_CITED_EVIDENCE_HANDLES=6``)
+    ASK-WEB-the hard cap (formerly ``MAX_CITED_EVIDENCE_HANDLES=6``)
     has been removed entirely. Tool output and the model-view budget
     control how many handles the model can see; the validator keeps all
     cited handles.
@@ -374,7 +374,7 @@ async def test_validator_is_deterministic_on_repeated_invalid_draft() -> None:
     # Call the validator N times directly; it must raise ModelRetry every
     # time and never silently start passing. This proves the validator
     # won't degenerate into a no-op after repeated failures.
-    # ASK-WEB-R4-R1: the former handle cap was removed; use a fixed
+    # ASK-WEB-the former handle cap was removed; use a fixed
     # iteration count independent of any cap constant.
     for _ in range(11):
         with pytest.raises(ModelRetry):
@@ -611,7 +611,7 @@ async def test_validator_does_not_mutate_draft() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 17: duplicate handles → silently deduped (ASK-WEB-R4, no ModelRetry)
+# Scenario 17: duplicate handles → silently deduped (ASK-WEB-, no ModelRetry)
 # ---------------------------------------------------------------------------
 
 
@@ -619,7 +619,7 @@ async def test_validator_does_not_mutate_draft() -> None:
 async def test_grounded_answer_duplicate_handle_is_silently_deduped() -> None:
     """grounded_answer with a duplicate handle is silently deduped (no ModelRetry).
 
-    ASK-WEB-R4: duplicate handles are deduped at the draft boundary
+    ASK-WEB-duplicate handles are deduped at the draft boundary
     preserving first-seen order. The same evidence may support multiple
     claims. Unknown / foreign / wrong-kind handles still fail-closed
     inside ``validate_answer_blocks``. The model-facing draft is not
@@ -674,7 +674,7 @@ async def test_multiple_unique_handles_pass_without_duplicate_error() -> None:
     """Multiple distinct, valid handles must pass the duplicate check.
 
     This guards against false positives where the duplicate helper
-    incorrectly flags unique handles. ASK-WEB-R4-R1: any number of
+    incorrectly flags unique handles. ASK-WEB-any number of
     unique handles from the registry must pass cleanly — the former
     6-handle cap was removed; 8 unique handles (exceeding the former
     cap) must pass without retry.
@@ -702,7 +702,7 @@ async def test_duplicate_handles_silently_deduped_before_registry_resolution() -
     """Duplicate handles are silently deduped; the remaining handle is
     then checked against the registry.
 
-    ASK-WEB-R4: duplicates no longer trigger ``ModelRetry``. They are
+    ASK-WEB-duplicates no longer trigger ``ModelRetry``. They are
     deduped in ``to_block_draft`` preserving first-seen order, then the
     unique handle is resolved against the registry. With an empty
     registry the deduped handle is unknown → ``ModelRetry`` for the

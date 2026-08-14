@@ -1,4 +1,4 @@
-"""T5.6b — lane classifier + SQL null-safety."""
+"""lane classifier + SQL null-safety."""
 
 from __future__ import annotations
 

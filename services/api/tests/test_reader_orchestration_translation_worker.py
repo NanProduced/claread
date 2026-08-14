@@ -15,7 +15,7 @@ from pydantic_ai.agent import AgentRunResult
 # installed version is older (e.g. 1.75 in CI/local), the symbol is absent and no
 # such warning can be emitted, so the deprecation-absence assertion below degrades
 # to vacuously true. This guard only unblocks test collection; it does not alter
-# T1.1a translation-group semantics.
+# Translation-group semantics.
 try:  # pragma: no cover - version-dependent import
     from pydantic_ai._warnings import PydanticAIDeprecationWarning  # type: ignore[attr-defined]
 except ImportError:  # pragma: no cover - older pydantic_ai without the submodule
@@ -297,7 +297,7 @@ def _build_context_with_segments(
     reading_goal: str = "daily_reading",
     reading_variant: str = "intermediate_reading",
 ) -> TranslationJobContext:
-    """Build a TranslationJobContext with valid T6 strategy metadata.
+    """Build a TranslationJobContext with valid strategy metadata.
 
     Uses the real resolver against the default daily_reading /
     intermediate_reading pair so that _build_translation_prompt produces a
@@ -1359,7 +1359,7 @@ def test_translation_worker_module_does_not_reference_render_scene_json() -> Non
 
 
 # ---------------------------------------------------------------------------#
-# T6: variant-first strategy integration into translation worker
+# Variant-first strategy integration into translation worker
 # ---------------------------------------------------------------------------#
 
 
@@ -2058,7 +2058,7 @@ def test_hydrate_translation_layer_output_rejects_unknown_anchor_segment_id() ->
 
 
 # ---------------------------------------------------------------------------#
-# T6: _validate_translation_strategy_metadata fail-closed unit tests
+# _validate_translation_strategy_metadata fail-closed unit tests
 # ---------------------------------------------------------------------------#
 
 
@@ -2582,7 +2582,7 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 
 
 # ---------------------------------------------------------------------------#
-# T1.1 batch deterministic-grouping alignment fix
+# Batch deterministic-grouping alignment fix
 #
 # Regression coverage for the short-article batch translation misalignment
 # bug (record a1812e99...: the s17 translation was anchored to s15 because
@@ -3216,7 +3216,7 @@ def test_build_translation_batch_prompt_emits_multi_anchor_group() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# T1.1a semantic translation group planner tests.
+# Semantic translation group planner tests.
 #
 # The batch path must NOT mechanically collapse to one-anchor-one-group,
 # one-sentence-one-group, or one-unit-one-group. The planner produces
@@ -3356,7 +3356,7 @@ def test_plan_translation_groups_never_one_unit_one_group_for_multi_paragraph() 
 
 
 def test_plan_translation_groups_merges_six_single_sentence_paragraphs() -> None:
-    """Regression assertion (P1 fix): 6 short single-sentence "paragraphs"
+    """Regression assertion (fix): 6 short single-sentence "paragraphs"
     joined by ``\\n\\n`` must NOT produce 6 per-sentence groups. Newlines
     are a SOFT hint only. The planner merges consecutive short
     single-sentence paragraphs into 2-3-anchor reading groups so
@@ -3697,7 +3697,7 @@ async def test_batch_path_with_fake_planner_translator_produces_semantic_groups(
 
 @pytest.mark.anyio
 async def test_batch_window_output_preserves_translation_group_contract() -> None:
-    """T3.1 Translation Group contract regression: a multi-unit batch window
+    """Translation Group contract regression: a multi-unit batch window
     (the shape a non-short ``translate_article`` window job produces) must
     NOT degrade to one-unit-one-group, one-anchor-one-group, or
     one-sentence-one-group. The ``$2.13 per hour`` decimal boundary must

@@ -65,13 +65,13 @@ GRAMMAR_POLICY_VERSION = "reader_grammar_bundle_bootstrap_v1"
 GRAMMAR_OPERATION_FINGERPRINT = "grammar_bundle_unit_v1"
 DEFAULT_GRAMMAR_MAX_ATTEMPTS = 3
 
-# T4.1c compact grammar batch path: SHORT_BATCH and STRUCTURED_BATCH
+# Compact grammar batch path: SHORT_BATCH and STRUCTURED_BATCH
 # articles use a single whole-article grammar batch job instead of the
 # heavy grammar-window analysis-window path. One LLM call covers all unpublished
 # units; the publisher splits the output back into per-unit grammar_note
 # / sentence_analysis layers. GROUPED_WINDOWED keeps the grammar-window path.
 #
-# Route-specific fingerprints (T4.1b pattern): STRUCTURED_BATCH gets a
+# Route-specific fingerprints (pattern): STRUCTURED_BATCH gets a
 # distinct fingerprint base + policy_version so a route change (short ->
 # structured on a rebuilt base) triggers _supersede_stale_fingerprint_jobs.
 # SHORT_BATCH keeps the shared ``*_v1`` base.
@@ -102,7 +102,7 @@ DISPLAY_TITLE_OPERATION_FINGERPRINT = "display_title_zh_v1"
 DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS = 5
 _BOOTSTRAP_READY_PRODUCT_STATES = frozenset({"readable_enhancing", "processing"})
 
-# T5.3a semantic outline (optional, request-eligible only; not a budget layer).
+# Semantic outline (optional, request-eligible only; not a budget layer).
 SEMANTIC_OUTLINE_RUN_TYPE = "semantic_outline_layer"
 SEMANTIC_OUTLINE_JOB_TYPE = "build_semantic_outline"
 SEMANTIC_OUTLINE_TARGET_SCOPE = "record"
@@ -116,10 +116,10 @@ _ARTICLE_READY_READINESS_STATES = frozenset(
     {"article_ready", "initial_enhancement_ready", "coverage_complete"}
 )
 
-# A6 (D3) — Semantic outline content-sufficiency short-circuit.
+# Semantic outline content-sufficiency short-circuit.
 # When the stable document already carries at least this many ``heading``
 # reading_units, the backend skips semantic outline job creation: the
-# Markdown headings already form a usable outline (D3). The threshold is
+# Markdown headings already form a usable outline. The threshold is
 # frozen as a module-level constant (not a Settings flag) per the plan:
 # this is a content-type eligibility short-circuit, NOT a third runtime
 # activation flag. The existing ``generation_enabled AND profile_configured``
@@ -129,7 +129,7 @@ SEMANTIC_OUTLINE_SKIP_DIAGNOSTIC = "skipped_markdown_headings_sufficient"
 
 _logger = logging.getLogger(__name__)
 
-# T1.1 Short-article batch path: whole-article batch compute, per-unit publish.
+# Short-article batch path: whole-article batch compute, per-unit publish.
 # When the active base text is below the short-article char threshold, the
 # bootstrap creates a single batch job per layer (translation / vocabulary)
 # instead of N per-unit jobs. The batch worker makes one LLM call covering all
@@ -148,7 +148,7 @@ VOCABULARY_BATCH_TARGET_SCOPE = "unit_range"
 VOCABULARY_BATCH_OPERATION_FINGERPRINT = "vocabulary_article_v1"
 VOCABULARY_BATCH_POLICY_VERSION = "reader_vocabulary_batch_bootstrap_v1"
 
-# T4.1b structured article batch: STRUCTURED_BATCH gets its own
+# Structured article batch: STRUCTURED_BATCH gets its own
 # operation_fingerprint base and policy_version so the route is auditable
 # at the ``reader_jobs.operation_fingerprint`` / ``reader_runs.policy_version``
 # column level, and a route change (short -> structured or vice versa on a
@@ -172,7 +172,7 @@ VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION = (
 
 # Legacy short-article char threshold. Retained as an observability /
 # documentation constant (existing tests reference it for fixture sanity
-# asserts). T4.1a route hardening replaced it as the sole short/non-short
+# asserts). Route hardening replaced it as the sole short/non-short
 # discriminator: routing now uses ``estimated_word_count`` as the primary
 # signal (see ``document_feature_extractor.SHORT_ARTICLE_MAX_WORD_COUNT``)
 # with ``content_utf16_length`` only surviving as a coarse structured-tier
@@ -180,7 +180,7 @@ VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION = (
 # stays on the short batch path under the new word-based router.
 SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
 
-# T3.2b non-short vocabulary grouped execution: when the active base text
+# Non-short vocabulary grouped execution: when the active base text
 # exceeds SHORT_ARTICLE_MAX_CHAR_COUNT, vocabulary bootstrap splits the
 # unpublished units into consecutive windows and creates one
 # ``build_vocabulary_layer_article`` batch job per window. Each window is
@@ -190,7 +190,7 @@ SHORT_ARTICLE_MAX_CHAR_COUNT = 6000
 VOCABULARY_WINDOW_TARGET_CHAR_COUNT = 3000
 VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT = 5000
 
-# T3.1 non-short translation grouped execution: when the active base text
+# Non-short translation grouped execution: when the active base text
 # exceeds SHORT_ARTICLE_MAX_CHAR_COUNT, translation bootstrap splits the
 # unpublished units into consecutive windows and creates one
 # ``translate_article`` batch job per window. Windows are bounded by a
@@ -199,7 +199,7 @@ VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT = 5000
 # window. The unit is the minimum boundary — units are never split.
 #
 # Translation windows are intentionally larger than vocabulary windows
-# (T3.2b): translation output is per-group translated_text and needs more
+# Translation output is per-group translated_text and needs more
 # source context for coherent group planning/hydration. A target of 6000
 # chars (one short-article equivalent) yields ~5 LLM calls on a 30k-char
 # article instead of ~30 per-unit calls, matching the short-article
@@ -209,8 +209,8 @@ TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT = 10000
 
 # Maps each enhancement job_type to the variant policy layer name it belongs
 # to. ``generate_display_title_zh`` has no entry because the display title job
-# does not consume a per-layer prompt policy; T5 only records strategy metadata
-# and fingerprint coverage. T6/T7/T8 will wire layer prompts into the workers.
+# does not consume a per-layer prompt policy; only records strategy metadata
+# and fingerprint coverage. Layer prompts are wired into the workers.
 _LAYER_NAME_BY_JOB_TYPE: dict[str, str] = {
     TRANSLATION_JOB_TYPE: "translation",
     TRANSLATION_BATCH_JOB_TYPE: "translation",
@@ -377,8 +377,8 @@ def _build_strategy_metadata(
 ) -> dict[str, Any]:
     """Build the strategy metadata block recorded on job input/envelope JSON.
 
-    T5 only persists metadata for audit and fingerprinting. It does NOT inject
-    ``prompt_lines`` into worker prompts; T6/T7/T8 will read this block to
+     only persists metadata for audit and fingerprinting. It does NOT inject
+    ``prompt_lines`` into worker prompts; will read this block to
     resolve the per-layer prompt policy.
     """
     layer_policy_hash: str | None
@@ -408,7 +408,7 @@ def _fingerprint_matches_base(fingerprint: str, base: str) -> bool:
 
     Boundary-aware matching: ``v1`` must NOT match ``v10`` or ``v1abc``.
     Only an exact match (legacy constant fingerprint) or a ``base:hash``
-    composed fingerprint (T5 strategy-aware) is accepted.
+    composed fingerprint (strategy-aware) is accepted.
     """
     return fingerprint == base or fingerprint.startswith(base + ":")
 
@@ -418,8 +418,8 @@ def _build_document_features_metadata(
 ) -> dict[str, Any]:
     """Build a compact document-features block for ``envelope_json``.
 
-    T4.1b: records the deterministic profile signals that drove the route
-    decision so the route is auditable and T4.1c (compact grammar path)
+    Records the deterministic profile signals that drove the route
+    decision so the route is auditable and (compact grammar path)
     can read them from ``reader_runs.envelope_json.document_features``
     without re-computing. Only observability-relevant fields are included;
     the full ``DocumentFeatureProfile`` stays in the extractor module.
@@ -443,7 +443,7 @@ def _build_document_features_metadata(
 def _route_document_features(state: _LockedActiveBaseState) -> dict[str, Any] | None:
     """Return the cached document-features block, or ``None`` if no profile.
 
-    T4.1b: the defensive missing-base path caches no profile, so
+    The defensive missing-base path caches no profile, so
     ``envelope_json.document_features`` is ``None`` for that branch. The
     normal path (SHORT_BATCH / STRUCTURED_BATCH / GROUPED_WINDOWED) always
     has a cached profile because ``_load_article_route`` populates
@@ -455,14 +455,14 @@ def _route_document_features(state: _LockedActiveBaseState) -> dict[str, Any] | 
 
 
 # ---------------------------------------------------------------------------#
-# T3.2b: Non-short vocabulary batch window planner
+# Non-short vocabulary batch window planner
 # ---------------------------------------------------------------------------#
 # Pure dataclasses + function. No DB access, no side effects. The bootstrap
 # method loads unit metadata (unit_id, order_index, text_length) and calls
 # ``plan_vocabulary_windows`` to get a list of consecutive, non-overlapping
 # windows. Each window becomes one ``build_vocabulary_layer_article`` job.
 #
-# Design constraints (see implementation-plan.md T3.2b):
+# Design constraints (see implementation-plan.md):
 # - Unit is the minimum boundary; never split a unit across windows.
 # - Windows must be consecutive and non-overlapping, ordered by reading order.
 # - A single unit larger than safety max becomes its own window.
@@ -556,14 +556,14 @@ def plan_vocabulary_windows(
 
 
 # ---------------------------------------------------------------------------#
-# T3.1: Non-short translation batch window planner
+# Non-short translation batch window planner
 # ---------------------------------------------------------------------------#
 # Pure dataclasses + function. No DB access, no side effects. The bootstrap
 # method loads unit metadata (unit_id, order_index, text_length) and calls
 # ``plan_translation_windows`` to get a list of consecutive, non-overlapping
 # windows. Each window becomes one ``translate_article`` batch job.
 #
-# Design constraints (see implementation-plan.md T3.1):
+# Design constraints (see implementation-plan.md):
 # - Unit is the minimum boundary; never split a unit across windows.
 # - Windows must be consecutive and non-overlapping, ordered by reading order.
 # - A single unit larger than safety max becomes its own window.
@@ -665,7 +665,7 @@ _STRATEGY_FINGERPRINT_SUPERSEDED_RATIONALE = "strategy_fingerprint_superseded"
 
 # rationale_code written when a queued/retry_later/paused legacy per-unit
 # ``translate_unit`` job is superseded because the record has switched to the
-# T3.1 grouped/window ``translate_article`` path. Without this supersede the
+# Grouped window ``translate_article`` path. Without this supersede the
 # worker loop would still dispatch the old per-unit job alongside the new
 # window jobs, causing duplicate LLM calls or publish-fence conflicts.
 _LEGACY_TRANSLATION_PER_UNIT_SUPERSEDED_RATIONALE = (
@@ -692,7 +692,7 @@ async def _supersede_stale_fingerprint_jobs(
     ``superseded`` with rationale_code
     ``strategy_fingerprint_superseded``.
 
-    T5.6b: only the **ordinary** translation lane is superseded
+    Only the **ordinary** translation lane is superseded
     (``request_origin IS DISTINCT FROM 'section_v1'``). Section jobs must
     never be cancelled by ordinary bootstrap fingerprint rotation.
 
@@ -744,10 +744,10 @@ async def _supersede_legacy_translation_per_unit_jobs(
     base_id: UUID,
     expected_generation: int,
 ) -> int:
-    """T3.1 cutover: supersede active legacy ``translate_unit`` per-unit jobs.
+    """Cutover: supersede active legacy ``translate_unit`` per-unit jobs.
 
     When a record switches from the legacy per-unit translation path to the
-    T3.1 grouped/window ``translate_article`` path, any pre-existing
+    grouped/window ``translate_article`` path, any pre-existing
     ``queued`` / ``retry_later`` / ``paused`` ``translate_unit`` jobs are
     marked ``superseded`` with rationale
     ``legacy_per_unit_translation_superseded`` so the worker loop no longer
@@ -896,7 +896,7 @@ def allow_semantic_outline_request_eligibility(
 def settings_aware_semantic_outline_request_eligibility(
     settings: Settings,
 ) -> SemanticOutlineRequestEligibility:
-    """T5.8d-dev-activation: build a request-eligibility predicate from settings.
+    """Build a request-eligibility predicate from settings.
 
     Dev-only freeze: ``activation_ready = semantic_outline_generation_enabled
     AND reader_semantic_outline_model_profile != ""``. When ``activation_ready``
@@ -915,7 +915,7 @@ def settings_aware_semantic_outline_request_eligibility(
     False under default settings; the production composition root is the
     only caller that wires it.
 
-    A6 (D3) content-sufficiency short-circuit: when ``activation_ready`` is
+     content-sufficiency short-circuit: when ``activation_ready`` is
     True AND ``state.unit_types`` is populated with at least
     :data:`SEMANTIC_OUTLINE_HEADINGS_SUFFICIENT_THRESHOLD` ``heading``
     units, the predicate returns False (skip outline job) and emits a
@@ -934,7 +934,7 @@ def settings_aware_semantic_outline_request_eligibility(
     def _predicate(state: _LockedActiveBaseState) -> bool:
         if not activation_ready:
             return False
-        # A6: fail-closed when unit_types is not loaded — preserve existing
+        # Fail-closed when unit_types is not loaded — preserve existing
         # behavior (do not skip) on code paths that did not pre-load units.
         if state.unit_types is None:
             return True
@@ -967,19 +967,19 @@ class _LockedActiveBaseState:
     last_event_sequence: int
     strategy: ReaderVariantStrategy
     readiness_state: str = "submitted"
-    # T1.1 short-article batch path: cached active base text. Populated
+    # Short-article batch path: cached active base text. Populated
     # lazily by ``_load_article_route`` so the per-article route classifier
     # does not issue a second ``reading_bases.text`` SELECT when both the
     # translation and vocabulary bootstrap checks run for the same record.
     # ``None`` means "not loaded yet"; an empty string is a valid text.
     base_text: str | None = None
-    # T4.1 deterministic document feature extractor: cached ordered
+    # Deterministic document feature extractor: cached ordered
     # ``reading_units.unit_type`` sequence for the active base. Populated
     # lazily by ``_load_article_route`` and reused across the translation
     # and vocabulary route checks. ``None`` means "not loaded yet"; an
     # empty tuple is a valid (defensive) value for a base with no units.
     unit_types: tuple[str, ...] | None = None
-    # T4.1a: cached route decision. Once computed by
+    # Cached route decision. Once computed by
     # ``_load_article_route``, reused for the second call (vocabulary
     # after translation) so the route is stable within one
     # ``bootstrap_missing_jobs`` invocation. This also fixes the
@@ -988,7 +988,7 @@ class _LockedActiveBaseState:
     # non-None ``base_text=""`` / ``unit_types=()`` and re-evaluate an
     # empty profile, misclassifying it as ``SHORT_BATCH``.
     cached_route: ArticleRoute | None = None
-    # T4.1b: cached document feature profile. Populated alongside
+    # Cached document feature profile. Populated alongside
     # ``cached_route`` so the batch bootstrap methods can record
     # ``article_route`` (in ``envelope_json`` + ``input_json``) and
     # ``document_features`` (in ``envelope_json`` only) without
@@ -1004,7 +1004,7 @@ async def _load_article_route(
     state: _LockedActiveBaseState,
 ) -> ArticleRoute:
     """Classify the active base into its routing mode via deterministic
-    document features (T4.1 / T4.1a).
+    document features.
 
     Replaces the legacy ``_is_short_article`` raw-``content_utf16_length``
     boolean. The base text and the ordered ``reading_units.unit_type``
@@ -1804,11 +1804,11 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
-        # T4.1a route hardening: classify via deterministic document
+        # Route hardening: classify via deterministic document
         # features (estimated_word_count primary, content_utf16_length as a
         # coarse structured-tier guardrail) instead of the legacy raw
         # ``content_utf16_length`` boolean.
-        # T4.1b: SHORT_BATCH and STRUCTURED_BATCH both execute via the
+        # SHORT_BATCH and STRUCTURED_BATCH both execute via the
         # whole-article batch job, but with distinct operation_fingerprint
         # / policy_version / input_json.article_route so the route is
         # auditable and a route change supersedes old jobs.
@@ -1818,7 +1818,7 @@ class EnhancementJobBootstrapService:
             return await self._bootstrap_translation_batch_job(
                 conn, state=state, route=route, trace_id=trace_id
             )
-        # T3.1 non-short grouped path: split unpublished units into
+        # Non-short grouped path: split unpublished units into
         # consecutive windows and create one ``translate_article`` batch
         # job per window. Replaces the legacy per-unit ``translate_unit``
         # path which caused 50+ LLM calls on ~30k-char articles.
@@ -1833,9 +1833,9 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
-        # T4.1a route hardening: classify via deterministic document
+        # Route hardening: classify via deterministic document
         # features (see ``_bootstrap_translation_jobs``).
-        # T4.1b: SHORT_BATCH and STRUCTURED_BATCH both execute via the
+        # SHORT_BATCH and STRUCTURED_BATCH both execute via the
         # whole-article vocabulary batch job, but with distinct
         # operation_fingerprint / policy_version / input_json.article_route.
         # GROUPED_WINDOWED splits into per-window batch jobs.
@@ -1844,7 +1844,7 @@ class EnhancementJobBootstrapService:
             return await self._bootstrap_vocabulary_batch_job(
                 conn, state=state, route=route, trace_id=trace_id
             )
-        # T3.2b non-short grouped path: split unpublished units into
+        # Non-short grouped path: split unpublished units into
         # consecutive windows and create one batch job per window.
         return await self._bootstrap_vocabulary_grouped_jobs(
             conn, state=state, route=route, trace_id=trace_id
@@ -1858,7 +1858,7 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
-        """T3.2b: non-short vocabulary grouped/window execution.
+        """Non-short vocabulary grouped/window execution.
 
         Queries unpublished units (ordered by ``order_index``), plans
         consecutive windows via :func:`plan_vocabulary_windows`, and
@@ -1867,7 +1867,7 @@ class EnhancementJobBootstrapService:
         ``idempotency_key`` / ``input_hash`` so multiple windows on the
         same record do not collide.
 
-        T4.1b route identity: ``route`` is recorded as ``article_route``
+         route identity: ``route`` is recorded as ``article_route``
         in ``envelope_json`` / ``input_json`` for audit consistency with
         the batch path. GROUPED_WINDOWED keeps its existing
         ``vocabulary_article_v1`` fingerprint base (shared with
@@ -1878,7 +1878,7 @@ class EnhancementJobBootstrapService:
         Cross-window duplicate headword policy (v1): each window may
         independently highlight the same headword once. Cross-window
         dedup is NOT performed; this is acceptable for v1 and is locked
-        by tests. See implementation-plan.md T3.2b risk A.
+        by tests. See implementation-plan.md risk A.
         """
         if trace_id is None:
             trace_id = uuid4()
@@ -2144,7 +2144,7 @@ class EnhancementJobBootstrapService:
         trace_id: UUID | None = None,
         force_legacy_grammar: bool = False,
     ) -> tuple[list[GrammarBootstrapResult], bool]:
-        """Route-aware grammar bootstrap routing (T4.1c).
+        """Route-aware grammar bootstrap routing.
 
         Three-way split:
 
@@ -2171,7 +2171,7 @@ class EnhancementJobBootstrapService:
                 trace_id=trace_id,
             )
             return results, False
-        # T4.1c: route-aware split. GROUPED_WINDOWED keeps the grammar-window path;
+        # Route-aware split. GROUPED_WINDOWED keeps the grammar-window path;
         # SHORT_BATCH / STRUCTURED_BATCH use the compact batch path.
         route = await _load_article_route(conn, state=state)
         if route is ArticleRoute.GROUPED_WINDOWED:
@@ -2195,7 +2195,7 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[GrammarBootstrapResult]:
-        """T4.1c: compact grammar batch bootstrap for short/structured articles.
+        """Compact grammar batch bootstrap for short/structured articles.
 
         Creates a single ``build_grammar_bundle`` / ``unit_range``
         reader job whose ``input_json.target_unit_ids`` lists every unit
@@ -2203,7 +2203,7 @@ class EnhancementJobBootstrapService:
         call covering all units; the batch publisher splits the output
         back into per-unit ``enhancement_layers`` rows.
 
-        T4.1c route identity: ``route`` selects the operation_fingerprint
+         route identity: ``route`` selects the operation_fingerprint
         base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
         fingerprint so a route change (short -> structured on a rebuilt
         base) triggers ``_supersede_stale_fingerprint_jobs``. Both
@@ -2358,7 +2358,7 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
-        """T1.1 / T4.1b: whole-article translation batch bootstrap.
+        """ whole-article translation batch bootstrap.
 
         Creates a single ``translate_article`` / ``unit_range`` reader job
         whose ``input_json.target_unit_ids`` lists every unit that still
@@ -2366,14 +2366,14 @@ class EnhancementJobBootstrapService:
         covering all units; the batch publisher splits the output back
         into per-unit ``enhancement_layers`` rows.
 
-        T4.1b route identity: ``route`` selects the operation_fingerprint
+         route identity: ``route`` selects the operation_fingerprint
         base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
         fingerprint so a route change (short -> structured on a rebuilt
         base) triggers ``_supersede_stale_fingerprint_jobs``. Both
         ``SHORT_BATCH`` and ``STRUCTURED_BATCH`` record ``article_route``
         in ``envelope_json`` and ``input_json``; ``document_features``
         is recorded in ``envelope_json`` only (workers needing the
-        profile read it from the run envelope). This is the T4.1c
+        profile read it from the run envelope). This is the
         grammar compact path hook.
 
         Idempotent: if a batch job already exists for this record / base /
@@ -2537,7 +2537,7 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[TranslationBootstrapResult]:
-        """T3.1: non-short translation grouped/window execution.
+        """Non-short translation grouped/window execution.
 
         Queries unpublished units (ordered by ``order_index``), plans
         consecutive windows via :func:`plan_translation_windows`, and
@@ -2549,12 +2549,12 @@ class EnhancementJobBootstrapService:
         The batch worker and publisher are window-agnostic: they read
         ``input_json.target_unit_ids`` and only process/publish that
         subset. Each unit's ``output_json.groups`` is still produced by
-        :func:`build_deterministic_translation_groups` (T1.1a), preserving
+        :func:`build_deterministic_translation_groups`, preserving
         the Translation Group semantic contract regardless of how many
         units a window covers. No parallel job type or migration is
         introduced.
 
-        T4.1b route identity: ``route`` is recorded as ``article_route``
+         route identity: ``route`` is recorded as ``article_route``
         in ``envelope_json`` / ``input_json`` for audit consistency with
         the batch path. GROUPED_WINDOWED keeps its existing
         ``translation_article_v1`` fingerprint base (shared with
@@ -2562,7 +2562,7 @@ class EnhancementJobBootstrapService:
         three-way distinction is completed by ``article_route`` in
         ``input_json``.
 
-        Cutover safety (review P1):
+        Cutover safety (review):
 
         - Legacy ``translate_unit`` per-unit jobs in ``queued`` /
           ``retry_later`` / ``paused`` are superseded before planning
@@ -2614,7 +2614,7 @@ class EnhancementJobBootstrapService:
             target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
             current_fingerprint=operation_fingerprint,
         )
-        # T3.1 cutover: supersede legacy per-unit ``translate_unit`` jobs
+        # Cutover: supersede legacy per-unit ``translate_unit`` jobs
         # that are still queued/retry_later/paused so the worker loop does
         # not dispatch them alongside the new window jobs. ``claimed`` jobs
         # are left untouched (see docstring on the helper).
@@ -2812,20 +2812,20 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
     ) -> list[VocabularyBootstrapResult]:
-        """T1.1 / T4.1b: whole-article vocabulary batch bootstrap.
+        """ whole-article vocabulary batch bootstrap.
 
         Mirrors :meth:`_bootstrap_translation_batch_job` for the vocabulary
         layer. Same idempotency contract; ``target_unit_ids`` lists every
         unit that still needs a vocabulary layer.
 
-        T4.1b route identity: ``route`` selects the operation_fingerprint
+         route identity: ``route`` selects the operation_fingerprint
         base and policy_version. ``STRUCTURED_BATCH`` gets a distinct
         fingerprint so a route change (short -> structured on a rebuilt
         base) triggers ``_supersede_stale_fingerprint_jobs``. Both
         ``SHORT_BATCH`` and ``STRUCTURED_BATCH`` record ``article_route``
         in ``envelope_json`` and ``input_json``; ``document_features``
         is recorded in ``envelope_json`` only (workers needing the
-        profile read it from the run envelope). This is the T4.1c
+        profile read it from the run envelope). This is the
         grammar compact path hook.
         """
         if trace_id is None:
@@ -3020,7 +3020,7 @@ async def _load_locked_active_base_state(
         raise ValueError("enhancement bootstrap requires status='active' base")
 
     # Resolve the variant-first strategy from the reading record's first-class
-    # reading_goal / reading_variant columns. These are persisted facts (T1 +
+    # reading_goal / reading_variant columns. These are persisted facts (
     # migration 0012), NOT inferred from source_metadata. The resolver fails
     # closed on missing/illegal pairs (including academic / academic_general);
     # there is no default fallback here. Historical records use the DB default
@@ -3056,7 +3056,7 @@ async def _bootstrap_semantic_outline_job(
     - injected request eligibility returns True
     - stale fingerprint jobs superseded (queued/retry_later/paused only)
 
-    A6 (D3): before invoking ``request_eligibility``, lazily load
+    : before invoking ``request_eligibility``, lazily load
     ``state.unit_types`` when not already cached so the settings-aware
     predicate can apply the content-sufficiency short-circuit (heading
     count ≥ threshold). Code paths that already populated ``unit_types``
@@ -3065,7 +3065,7 @@ async def _bootstrap_semantic_outline_job(
     """
     if state.readiness_state not in _ARTICLE_READY_READINESS_STATES:
         return []
-    # A6: ensure unit_types is loaded so the predicate can inspect heading
+    # Ensure unit_types is loaded so the predicate can inspect heading
     # count for the content-sufficiency short-circuit. Fail-closed: if the
     # load returns no rows, ``unit_types`` becomes ``()`` (not ``None``),
     # which the predicate treats as "no headings" → no skip.
@@ -3490,14 +3490,14 @@ async def _insert_unit_range_job(
     target_key_override: str | None = None,
     idempotency_key_suffix: str = "batch",
 ) -> tuple[UUID, UUID]:
-    """T1.1 short-article batch path: insert one record-level batch job.
+    """Short-article batch path: insert one record-level batch job.
 
     Mirrors :func:`_insert_unit_job` but covers a range of units in a single
     job. Differences from the per-unit helper:
 
     - ``target_key`` defaults to ``str(state.record_id)`` (record-level,
       like the display-title job), not a single ``unit_id``.
-      ``target_key_override`` (T3.2b) lets the caller set a window-specific
+      ``target_key_override`` lets the caller set a window-specific
       target_key for non-short grouped vocabulary jobs.
     - ``input_json`` carries ``target_scope: "unit_range"`` and
       ``target_unit_ids: [...]`` (list of every unit id covered by the
@@ -3507,7 +3507,7 @@ async def _insert_unit_range_job(
       strategy metadata block.
     - ``idempotency_key`` is suffixed with ``idempotency_key_suffix``
       (default ``:batch``) so the per-unit and per-article idempotency
-      spaces do not collide. T3.2b passes ``window:{window_id}`` to keep
+      spaces do not collide. passes ``window:{window_id}`` to keep
       multiple window jobs on the same record distinct.
     - ``input_hash`` is derived from the record-level signature
       (``base_id:record_id:input_signature_suffix:strategy_hash``) so the

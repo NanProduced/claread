@@ -1,6 +1,6 @@
 """Deterministic document feature extractor + article route classifier.
 
-This is the T4.1 small Module that turns a stable reading base's text +
+This is the small Module that turns a stable reading base's text +
 ``reading_units`` unit-type sequence + resolved ``ReaderVariantStrategy``
 into a deterministic, replayable feature profile, and then classifies the
 article into one of three routing modes:
@@ -73,7 +73,7 @@ SHORT_ARTICLE_MAX_WORD_COUNT: Final[int] = 1100
 #
 # The cap is chosen so the existing long-article fixtures -- 8 paragraphs of
 # 40 placeholder sentences (~2240 words / ~18k chars) -- stay on the
-# grouped/windowed path with margin, preserving the T3.1 / T3.2b window
+# grouped/windowed path with margin, preserving the window
 # contracts.
 STRUCTURED_ARTICLE_MAX_WORD_COUNT: Final[int] = 2000
 
@@ -109,7 +109,7 @@ _CJK_RANGES_IN_CLASS = (
 # A "word" character for non-CJK scripts: any Unicode letter or digit
 # (``\w`` minus ``_``), EXCLUDING CJK/Hangul/Kana so those ideographs are
 # only counted via ``_CJK_CHAR_PATTERN``. This covers Latin, Cyrillic,
-# Arabic, Greek, Devanagari, Thai, etc. -- fixing the P1 regression where
+# Arabic, Greek, Devanagari, Thai, etc. -- fixing the regression where
 # a long Cyrillic/Arabic article was counted as 0 words and misrouted to
 # SHORT_BATCH.
 _NON_CJK_WORD_CHAR = re.compile(rf"[^\W_{_CJK_RANGES_IN_CLASS}]")

@@ -1,6 +1,6 @@
-"""D6-I2B Stable Document Freeze Persistence Transaction.
+"""Stable Document Freeze Persistence Transaction.
 
-Consumes a D6-I2A ``StableDocumentFreezePlan`` and commits the stable
+Consumes a ``StableDocumentFreezePlan`` and commits the stable
 document + canonical text layer + (optional) candidate confirmation in
 a single caller-managed DB transaction.
 
@@ -47,7 +47,7 @@ In-transaction steps (in order):
     6. Build Reading Units / Anchor Segments / navigation_json from
        ``plan.canonical_text`` via
        :func:`build_reading_base_from_canonical_text`. The text is
-       NOT recanonicalized — D6 block offsets are bound to the exact
+       NOT recanonicalized — block offsets are bound to the exact
        canonical text. Any validation failure raises
        :class:`StableDocumentFreezePersistenceError`.
     7. Insert ``reading_bases`` row as the V1 Canonical Text Layer
@@ -69,7 +69,7 @@ In-transaction steps (in order):
         Guarded by ``(reading_record_id, record_generation)`` and
         ``user_id`` (when provided).
 
-Out of scope (D6-I2D follow-up):
+Out of scope (follow-up):
     * API route / BFF / Web integration.
     * Reader event publication (the caller may publish a
       ``stable_document_frozen`` event after commit if desired).
@@ -253,7 +253,7 @@ async def persist_stable_document_freeze_plan(
     if existing_row is not None:
         existing_sha = str(existing_row["content_sha256"])
         if existing_sha == content_sha256:
-            # D6-I2C-H hardening: the existing stable document must be
+            # Hardening: the existing stable document must be
             # in status='active'. A same-hash match against a
             # 'superseded' or 'rejected' row means the active document
             # for this generation was already replaced or discarded;
@@ -412,7 +412,7 @@ async def persist_stable_document_freeze_plan(
     # (6) Build Reading Units / Anchor Segments / navigation_json from
     # the EXACT canonical text.
     #
-    # The text is NOT recanonicalized — D6 block offsets are bound to
+    # The text is NOT recanonicalized — block offsets are bound to
     # plan.canonical_text. We reuse base_builder's private split /
     # segment / hash helpers via the public
     # ``build_reading_base_from_canonical_text`` entry point. Any
@@ -497,7 +497,7 @@ async def persist_stable_document_freeze_plan(
         canonical_text_utf16_length,
         canonicalizer_version,
         builder_version,
-        # R7-1: persist the RESOLVED segmenter identity (spaCy main
+        # Persist the RESOLVED segmenter identity (spaCy main
         # path vs named regex v2 fallback), not the requested auto
         # policy label, so reading_bases.segmenter_version reflects
         # the segmenter that actually ran. Caller-pinned labels are
@@ -871,7 +871,7 @@ async def _validate_idempotent_freeze_completeness(
 
     # (5) navigation_json.units must be a non-empty list. asyncpg's
     # JSONB codec returns a parsed dict; handle str fallback for
-    # safety. D6-I2C-H hardening: a truthy but non-list value (dict,
+    # safety. hardening: a truthy but non-list value (dict,
     # string, object) must fail-closed — only a non-empty list is
     # acceptable. json.loads failures are wrapped as
     # StableDocumentFreezePersistenceError rather than leaking
@@ -960,7 +960,7 @@ async def _insert_stable_document_block(
     """
     # Materialize the interpretation policy. This is the critical
     # step: an empty '{}' would silently route the block as
-    # main_reading / main_reading_text and contradict the D6
+    # main_reading / main_reading_text and contradict the freeze plan
     # projection rules (tables / images / footnotes / code blocks
     # would leak into the main grammar pass).
     policy_json = block.interpretation_policy.model_dump(mode="json")
@@ -1029,7 +1029,7 @@ def _navigation_json_from_build_result(
 def _stable_block_annotations_from_plan(
     plan: StableDocumentFreezePlan,
 ) -> list[StableBlockAnnotation]:
-    """A5: derive ``StableBlockAnnotation`` intervals from a freeze plan.
+    """Derive ``StableBlockAnnotation`` intervals from a freeze plan.
 
     Each ``StableDocumentBlock`` whose ``canonical_text_start_utf16`` /
     ``canonical_text_end_utf16`` are both set (i.e. the block
@@ -1081,7 +1081,7 @@ async def _insert_reading_unit(
 
     The SQL column order mirrors the existing
     ``repository.insert_reading_units`` so behavior and params stay
-    consistent. ``metadata_json`` carries the R7-1 ``sentence_provider``
+    consistent. ``metadata_json`` carries the ``sentence_provider``
     tag and, for new generations with a semantic contract, the versioned
     automatic layer policy projection.
     """

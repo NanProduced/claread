@@ -1,4 +1,4 @@
-# task-history: D6-I3J (renamed from test_d6_i3j_artifact_input_application_service.py)
+# task-history: (renamed from test_d6_i3j_artifact_input_application_service.py)
 from __future__ import annotations
 
 import asyncio

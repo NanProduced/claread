@@ -1,4 +1,4 @@
-"""R7-1 rework: extracted artifact materialization language propagation.
+"""Extracted artifact materialization language propagation.
 
 Hermetic (no-DB) regression proving that the stable-document
 materialization path resolves the record's authoritative language and

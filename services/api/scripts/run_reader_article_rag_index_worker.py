@@ -1,7 +1,7 @@
-"""Reader Article RAG index worker entry point (D6-I4U).
+"""Reader Article RAG index worker entry point.
 
 Drives :class:`ArticleRagIndexWorkerService` in a standalone loop so
-``article_rag_index_build`` jobs (enqueued by D6-I4B bootstrap) can be
+``article_rag_index_build`` jobs (enqueued by bootstrap) can be
 processed independently of the enhancement / artifact pipeline workers.
 
 Provider wiring (fail-closed by default):

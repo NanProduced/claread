@@ -1,10 +1,10 @@
-"""R4 Ask thinking transport spine (R4-A5-8A1 / A5-8A1R / A5-8A1R2).
+"""Ask thinking transport spine.
 
 Internal-only: captures provider reasoning for a bounded in-memory observer
 and emits **safe** analysis-phase runtime events. Never writes raw
 reasoning text, length, hash, or provider payloads into SSE/DTO/DB/logs.
 
-Learner reasoning (ASK-LEARNER-REASONING-PROJECTOR-R1)
+Learner reasoning (ASK-LEARNER-REASONING-PROJECTOR-)
 -----------------------------------------------------
 The observer injection point is the only structural path by which provider
 reasoning can leave this module. The default production path discards at
@@ -15,7 +15,7 @@ Raw reasoning remains forbidden from SSE/DTO/DB/logs/telemetry.
 
 Does **not** import legacy ``reader_ask`` agent_runner.
 
-Multi-turn completeness (A5-8A1R / A5-8A1R2)
+Multi-turn completeness
 -------------------------------------------
 Reasoning collection is deduplicated **per streamed part index lifecycle**,
 not with a single global ``saw_reasoning`` flag. The lifecycle set is
@@ -177,7 +177,7 @@ def _notify_observer_from_messages(
 
 @dataclass
 class ThinkingPartLifecycle:
-    """Per-index lifecycle for one model response stream (A5-8A1R).
+    """Per-index lifecycle for one model response stream.
 
     Indices restart after tool results; clear via :meth:`reset_stream`.
     Only non-empty content marks an index as streamed so PartEnd-only
@@ -211,7 +211,7 @@ class ThinkingPartLifecycle:
 
 
 class _AnswerTextStreamer:
-    """Incremental answer-block text streamer (R4-A6 / ASK-TURN-LIFECYCLE R3).
+    """Incremental answer-block text streamer (ASK-TURN-LIFECYCLE).
 
     Accumulates streamed structured-output JSON text and extracts the
     resolved semantic block text via ``pydantic_core.from_json`` with
@@ -221,7 +221,7 @@ class _AnswerTextStreamer:
     Fed exclusively from ``TextPart`` content: reasoning text and
     tool payloads never enter the buffer.
 
-    R3 optimization: block-aware incremental extraction. Instead of
+     optimization: block-aware incremental extraction. Instead of
     re-joining all block texts with ``\\n\\n`` on every chunk (O(n) per
     chunk → O(n²) total), the scanner tracks per-block emission state and
     only emits deltas from the last (growing) block. Earlier blocks are
@@ -236,7 +236,7 @@ class _AnswerTextStreamer:
         # Total emitted character count (monotonic; backward-compat with
         # existing tests that introspect ``_emitted_len``).
         self._emitted_len = 0
-        # Block-aware incremental state (R3).
+        # Block-aware incremental state.
         # _emitted_block_texts: texts of blocks already fully emitted.
         # _last_block_emitted_len: char count emitted from the current
         #   (last) block. When a new block appears, the previous last
@@ -310,7 +310,7 @@ class _AnswerTextStreamer:
         return delta
 
     def _emit_blocks(self, block_texts: list[str]) -> str | None:
-        """Block-aware incremental emission (R3).
+        """Block-aware incremental emission.
 
         - New blocks beyond ``_emitted_block_texts``: emit ``\\n\\n``
           separator + full block text.
@@ -378,7 +378,7 @@ async def run_agent_with_thinking_transport(
     snapshot ThinkingPart from the completed message history.
 
     Emits only safe ``AnalysisStartedEvent`` / ``AnalysisFinishedEvent``
-    plus token-level ``AnswerDeltaEvent`` answer-block text increments (R4-A6,
+    plus token-level ``AnswerDeltaEvent`` answer-block text increments (,
     streamed TextPart content only) — never raw reasoning on the event
     sink. Tool calling, validators, and structured output use the same
     agent configuration as ``run()``.
@@ -395,7 +395,7 @@ async def run_agent_with_thinking_transport(
     lifecycle = ThinkingPartLifecycle()
     answer_streamer = _AnswerTextStreamer()
     answer_streamed_indices: set[int] = set()
-    # R4-2: generation_id tracks the current model-response generation.
+    # Generation_id tracks the current model-response generation.
     # Starts at 0 (first generation). Incremented on every tool-result /
     # ModelRetry boundary BEFORE the new generation begins. Each
     # AnswerDeltaEvent carries the current value so the client can
@@ -432,7 +432,7 @@ async def run_agent_with_thinking_transport(
     def _emit_answer_delta(delta: str | None) -> None:
         # Answer text is user-visible output — safe on the event sink.
         # Never derived from ThinkingPart content (isolated feed path).
-        # R4-2: tag with the current generation_id so the client can
+        # Tag with the current generation_id so the client can
         # discard deltas from a stale generation after a tool-result /
         # ModelRetry boundary reset.
         if not delta:
@@ -449,7 +449,7 @@ async def run_agent_with_thinking_transport(
             | Literal["output_validator_model_retry"]
         ),
     ) -> None:
-        """R4-2: emit a preview-reset signal at a generation boundary.
+        """Emit a preview-reset signal at a generation boundary.
 
         Fired after a tool-result / ModelRetry boundary is detected and
         BEFORE the new model-response stream begins. The new
@@ -513,7 +513,7 @@ async def run_agent_with_thinking_transport(
                         final_output = getattr(run_result, "output", run_result)
                     continue
 
-                # R4-2 / R4-6: use isinstance type guards (not event_kind
+                # use isinstance type guards (not event_kind
                 # string matching) so mypy narrows the union type and the
                 # reset boundary is detected robustly across pydantic-ai
                 # versions. Each tool-result boundary starts a NEW model
@@ -619,7 +619,7 @@ async def run_agent_with_thinking_transport(
                             advance_fn("normal_tool_result")
                     continue
 
-                # R4-6: isinstance type guards for PartStart/Delta/End so
+                # Isinstance type guards for PartStart/Delta/End so
                 # mypy narrows the union — no more event_kind string check
                 # followed by unsafe union-attribute access.
                 if isinstance(event, PartStartEvent) and isinstance(
@@ -666,7 +666,7 @@ async def run_agent_with_thinking_transport(
                             segment_end()
                     continue
 
-                # R4-A6: answer-block text streaming. TextPart carries
+                # Answer-block text streaming. TextPart carries
                 # streamed structured-output JSON; feed content into the
                 # partial parser and emit AnswerDeltaEvent prefix
                 # increments. Fully isolated from the ThinkingPart path

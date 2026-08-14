@@ -256,7 +256,7 @@ class DeepseekAnthropicWebSearchBackend:
 
         See the module docstring for the full outcome mapping.
         """
-        # ASK-WEB-R4: inject Host current UTC date into the system prompt
+        # ASK-WEB-inject Host current UTC date into the system prompt
         # so the search engine has freshness context. The date is
         # server-owned (never provider-supplied) and carries no user
         # content. Format: YYYY-MM-DD.
@@ -405,7 +405,7 @@ async def _extract_sources_from_sse(
     saw_any_line = False
     saw_any_data_line = False
 
-    # G3-R1 §IV: the httpx stream context (caller's ``client.stream(...)``)
+    # G3- §IV: the httpx stream context (caller's ``client.stream(...)``)
     # owns the response lifecycle. We iterate ``aiter_bytes()`` directly
     # (the bottom of httpx's async iterator chain) and decode + split
     # lines ourselves. Using ``aiter_lines()`` or ``aiter_text()``
@@ -582,7 +582,7 @@ def _process_sse_payload(raw: str) -> _BlockResult | None:
             title: str = (
                 title_raw if isinstance(title_raw, str) else ""
             )
-            # ASK-WEB-R4: extract optional provider-supplied page_age
+            # ASK-WEB-extract optional provider-supplied page_age
             # freshness hint. DeepSeek Anthropic-compat may surface a
             # ``page_age`` string (e.g. "2 days ago") on
             # ``web_search_result`` entries. Untrusted provider text —
@@ -697,7 +697,7 @@ def _detail_for_http_status(status_code: int) -> str:
 def _host_utc_date_iso() -> str:
     """Return the current UTC date as a ``YYYY-MM-DD`` string.
 
-    ASK-WEB-R4: injected into the search-request system prompt so the
+    ASK-WEB-injected into the search-request system prompt so the
     provider has freshness context. Server-owned (never
     provider-supplied); carries no user content.
     """

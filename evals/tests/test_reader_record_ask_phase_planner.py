@@ -2,8 +2,8 @@
 evaluator-based failure selection + budget stop.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirements: PhasePlanner 深模块 + 固定重复（P0-2, P0-5）, evaluator-based
-Phase 2/3 失败选择（P0-3）.
+Requirements: PhasePlanner 深模块 + 固定重复, evaluator-based
+failure-stage selection.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from claread_eval.reader_record_ask.phase_planner import (
     PhasePlanner,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -39,8 +39,8 @@ def _make_case(
     question_category: str = "main_idea",
     phase_tags: list[str] | None = None,
     source_metadata: str = "unknown",
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="bbc_record",
         record_id="bbc-test-001",
@@ -53,13 +53,13 @@ def _make_case(
         baseline_mode="complete",
         question="测试问题。",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         phase_tags=phase_tags or [],
     )
 
 
-def _make_dataset(cases: list[ReaderRecordAskR4A3Case]) -> ReaderRecordAskR4A3Dataset:
-    return ReaderRecordAskR4A3Dataset(cases=cases)
+def _make_dataset(cases: list[ReaderRecordAskCase]) -> ReaderRecordAskDataset:
+    return ReaderRecordAskDataset(cases=cases)
 
 
 def _make_dim(dimension: str, passed: bool) -> EvalDimensionResult:
@@ -143,7 +143,7 @@ def test_phase2_requires_prior_eval_results() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: explicit case manifest (P0-5)
+# Initial pass: explicit case manifest
 # ---------------------------------------------------------------------------
 
 
@@ -162,7 +162,7 @@ def test_phase1_selects_only_real_phase1_tagged_cases() -> None:
 def test_phase1_excludes_offline_only_cases() -> None:
     """``known_bbc`` cases tagged ``offline_only`` must NOT be selected
     for real-model runs (spec: "known cases 应标记为 offline_only /
-    future R4-A4 contract，或从真实运行集合移除").
+    future trusted-source contract，或从真实运行集合移除").
     """
     dataset = _make_dataset(
         [
@@ -192,7 +192,7 @@ def test_phase1_preserves_dataset_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: independent run cap (P0-2)
+# Initial pass: independent run cap
 # ---------------------------------------------------------------------------
 
 
@@ -239,14 +239,14 @@ def test_phase1_no_truncation_when_under_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: evaluator-based failure selection (P0-3)
+# Rerun: evaluator-based failure selection
 # ---------------------------------------------------------------------------
 
 
 def test_phase2_selects_cases_with_content_failure() -> None:
     """A case whose prior evaluator results include a content-quality
     failure (e.g. ``unsupported_temporal_claims`` failed due to ``2025``)
-    must be selected for Phase 2 — even if ``finalized_status='ok'``.
+    must be selected for rerun — even if ``finalized_status='ok'``.
     """
     dataset = _make_dataset(
         [
@@ -286,7 +286,7 @@ def test_phase2_does_not_select_usage_gap_only_cases() -> None:
     """Spec: "默认不要仅因 usage 缺失升级模型".
 
     A case whose ONLY failing dimension is ``usage_observability`` must
-    NOT be selected for Phase 2.
+    NOT be selected for rerun.
     """
     dataset = _make_dataset(
         [
@@ -315,7 +315,7 @@ def test_phase2_does_not_select_usage_gap_only_cases() -> None:
 def test_phase2_selects_terminal_failures_via_answer_success() -> None:
     """Terminal failures (finalized_status != ok, empty final_text) are
     captured by ``answer_success.passed=False``, which is a content
-    failure → selected for Phase 2.
+    failure → selected for rerun.
     """
     dataset = _make_dataset(
         [
@@ -362,7 +362,7 @@ def test_phase2_preserves_dataset_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: same selection rule, different prior
+# Follow-up pass: same selection rule, different prior
 # ---------------------------------------------------------------------------
 
 
@@ -389,7 +389,7 @@ def test_phase3_uses_phase2_prior_results() -> None:
 
 
 # ---------------------------------------------------------------------------
-# BudgetStopResult (P0-2)
+# BudgetStopResult
 # ---------------------------------------------------------------------------
 
 
@@ -433,7 +433,7 @@ def test_budget_stop_result_does_not_default_when_not_exhausted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Repetitions contract (P0-2 core)
+# Repetitions contract
 # ---------------------------------------------------------------------------
 
 
@@ -459,7 +459,7 @@ def test_repetitions_is_independent_of_output_retry() -> None:
 
 
 def test_phase2_default_repetitions_is_1() -> None:
-    """Phase 2/3 default to a single re-run (not 3) — the upgraded model
+    """Later stages default to a single re-run (not 3) — the upgraded model
     is meant to fix the failure, not to measure hallucination rate.
     """
     dataset = _make_dataset(
@@ -474,12 +474,12 @@ def test_phase2_default_repetitions_is_1() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-1 regression: exact-cap false positive
+# Regression: exact-cap false positive
 # ---------------------------------------------------------------------------
 
 
 def test_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
-    """P0-1: 10 cases × 3 reps = 30 (exactly equals max) must NOT trigger
+    """Ten cases × 3 reps = 30 (exactly equals max) must NOT trigger
     budget_exhausted.
 
     Prior bug: the planner checked the hypothetical 11th case AFTER
@@ -504,7 +504,7 @@ def test_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
         "exact cap 10×3=30 must select all 10 cases (no truncation)"
     )
     assert [c.id for c in selected] == [f"c{i}" for i in range(10)]
-    # P0-1 core assertion: NO BudgetStopResult when cap is exactly met.
+    # Core assertion: NO BudgetStopResult when cap is exactly met.
     assert planner.budget_stop_result is None, (
         "10×3=30 must NOT set budget_stop_result — the prior bug falsely "
         "marked the 10th case as triggering phase1_independent_run_cap"
@@ -512,7 +512,7 @@ def test_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
 
 
 def test_over_cap_11_cases_3_reps_30_max_only_11th_remains() -> None:
-    """P0-1: 11 cases × 3 reps = 33 > 30 → only the 11th case is remaining.
+    """Eleven cases × 3 reps = 33 > 30 → only the 11th case is remaining.
     """
     cases = [
         _make_case(case_id=f"c{i}", phase_tags=[PHASE_TAG_REAL_PHASE1])
@@ -539,7 +539,7 @@ def test_over_cap_11_cases_3_reps_30_max_only_11th_remains() -> None:
 
 
 def test_offline_only_never_enters_remaining() -> None:
-    """P0-1: ``offline_only`` cases are excluded BEFORE the cap is applied,
+    """``offline_only`` cases are excluded BEFORE the cap is applied,
     so they never enter ``selected`` or ``remaining`` — even when the
     eligible count exceeds the cap.
     """
@@ -583,7 +583,7 @@ def test_offline_only_never_enters_remaining() -> None:
 
 
 def test_under_cap_no_truncation() -> None:
-    """P0-1: under cap → all eligible selected, no BudgetStopResult."""
+    """Under cap → all eligible selected, no BudgetStopResult."""
     cases = [
         _make_case(case_id=f"c{i}", phase_tags=[PHASE_TAG_REAL_PHASE1])
         for i in range(5)
@@ -601,7 +601,7 @@ def test_under_cap_no_truncation() -> None:
 
 
 def test_cases_to_run_multiple_reads_stable() -> None:
-    """P0-1: ``cases_to_run`` is idempotent — multiple reads must return
+    """``cases_to_run`` is idempotent — multiple reads must return
     the same list with no side effects (no extra BudgetStopResult, no
     mutation of selected/remaining).
 
@@ -628,17 +628,17 @@ def test_cases_to_run_multiple_reads_stable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-2 regression: multi-repetition failure aggregation
+# Regression: multi-repetition failure aggregation
 # ---------------------------------------------------------------------------
 
 
 def test_fail_then_pass_then_pass_enters_phase2() -> None:
-    """P0-2: a case whose first rep fails content checks but subsequent
-    reps pass must STILL enter Phase 2.
+    """A case whose first rep fails content checks but subsequent
+    reps pass must STILL enter rerun.
 
     Prior bug: ``eval_results[case_id] = evaluate_artifact(...)`` kept
     only the last rep's result, so fail→pass→pass looked like a pass
-    and the case was NOT selected for Phase 2 — masking intermittent
+    and the case was NOT selected for rerun — masking intermittent
     hallucination failures.
     """
     dataset = _make_dataset(
@@ -672,14 +672,14 @@ def test_fail_then_pass_then_pass_enters_phase2() -> None:
         prior_eval_results=prior_evals,
     )
     assert [c.id for c in planner.cases_to_run] == ["bbc-flicker"], (
-        "fail→pass→pass must enter Phase 2 — any failing rep triggers "
+        "fail→pass→pass must enter stage 2 — any failing rep triggers "
         "selection (no more last-rep-wins masking)"
     )
 
 
 def test_pass_then_pass_then_fail_enters_phase2() -> None:
-    """P0-2: a case whose last rep fails but first two pass must enter
-    Phase 2. The prior implementation would have caught this (last rep
+    """A case whose last rep fails but first two pass must enter
+    rerun. The prior implementation would have caught this (last rep
     wins), but the new implementation must also catch it via the
     ``any_repetition_content_failure`` OR-across-reps logic.
     """
@@ -714,8 +714,8 @@ def test_pass_then_pass_then_fail_enters_phase2() -> None:
 
 
 def test_three_passes_does_not_enter_phase2() -> None:
-    """P0-2: a case where all 3 reps pass content checks must NOT enter
-    Phase 2.
+    """A case where all 3 reps pass content checks must NOT enter
+    rerun.
     """
     dataset = _make_dataset(
         [_make_case(case_id="bbc-clean", phase_tags=[PHASE_TAG_REAL_PHASE1])]
@@ -745,9 +745,9 @@ def test_three_passes_does_not_enter_phase2() -> None:
 
 
 def test_shuffled_artifacts_same_selection() -> None:
-    """P0-2: aggregation must be order-invariant. The same set of
+    """Aggregation must be order-invariant. The same set of
     per-repetition results, passed in different orders, must produce
-    the same Phase 2 selection.
+    the same rerun selection.
 
     The implementation sorts artifacts by ``run_index`` before building
     ``PriorEvalResults``, so input order does not affect selection.
@@ -778,16 +778,16 @@ def test_shuffled_artifacts_same_selection() -> None:
             prior_eval_results={"bbc-shuffle": ordering},
         )
         assert [c.id for c in planner.cases_to_run] == ["bbc-shuffle"], (
-            "any rep with content failure must trigger Phase 2 selection "
+            "any rep with content failure must trigger stage 2 selection "
             "regardless of rep ordering"
         )
 
 
 def test_terminal_ok_plus_deterministic_hallucination_enters_phase2() -> None:
-    """P0-2: a case with ``finalized_status='ok'`` but a deterministic
-    hallucination failure (e.g. ``2025`` year token) must enter Phase 2.
+    """A case with ``finalized_status='ok'`` but a deterministic
+    hallucination failure (e.g. ``2025`` year token) must enter rerun.
 
-    This is the core P0-2/P0-3 scenario: terminal status is OK, but
+    This is the core terminal-status scenario: status is OK, but
     content-quality evaluation catches the hallucination. The prior
     implementation only checked terminal status and missed this.
     """
@@ -810,14 +810,14 @@ def test_terminal_ok_plus_deterministic_hallucination_enters_phase2() -> None:
         prior_eval_results=prior_evals,
     )
     assert [c.id for c in planner.cases_to_run] == ["bbc-hallucination"], (
-        "terminal ok + deterministic hallucination must enter Phase 2 — "
+        "terminal ok + deterministic hallucination must enter stage 2 — "
         "content-quality failure is NOT masked by terminal status"
     )
 
 
 def test_usage_gap_only_across_reps_does_not_enter_phase2() -> None:
-    """P0-2: a case where the ONLY failure across ALL reps is
-    ``usage_observability`` must NOT enter Phase 2.
+    """A case where the ONLY failure across ALL reps is
+    ``usage_observability`` must NOT enter rerun.
 
     Spec: "默认不要仅因 usage 缺失升级模型" applies per-repetition and
     across repetitions — a usage-only gap never triggers model upgrade.

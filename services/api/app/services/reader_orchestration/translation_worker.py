@@ -148,8 +148,8 @@ _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
     "- <strategy> 策略行仅作轻量语体/用户背景提示；不得推翻上述质量合同。\n"
 )
 
-# Strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.
-# T6 reads them back and validates against the live resolver output. Missing
+# Strategy metadata keys that bootstrap writes into reader_jobs.input_json.
+# Reads them back and validates against the live resolver output. Missing
 # keys or hash mismatch fail closed; legacy bare-fingerprint jobs without
 # strategy metadata are rejected as validation errors, never silently
 # downgraded to a default strategy.
@@ -214,8 +214,8 @@ class TranslationJobContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[TranslationAnchorSegmentTarget, ...]
-    # T6 strategy fields. Populated by _load_job_context from
-    # reader_jobs.input_json (written by T5 bootstrap) and cross-validated
+    # Strategy fields. Populated by _load_job_context from
+    # reader_jobs.input_json (written by bootstrap) and cross-validated
     # against resolve_reader_variant_strategy(). Fail-closed contract:
     # missing metadata or hash mismatch never falls back to a default.
     reading_goal: str
@@ -339,7 +339,7 @@ class PydanticAITranslationExecutor:
 
 
 # ---------------------------------------------------------------------------#
-# T1.1 short-article batch path: batch compute, unit publish.
+# Short-article batch path: batch compute, unit publish.
 # ---------------------------------------------------------------------------#
 
 
@@ -784,7 +784,7 @@ class TranslationBatchJobContext:
     target_language: str
     target_unit_ids: tuple[str, ...]
     units: tuple[TranslationBatchUnitContext, ...]
-    # T6 strategy fields (same contract as TranslationJobContext).
+    # Strategy fields (same contract as TranslationJobContext).
     reading_goal: str
     reading_variant: str
     strategy_version: str
@@ -1689,7 +1689,7 @@ class TranslationWorkerService:
             await heartbeat.stop()
 
     # ------------------------------------------------------------------#
-    # T1.1 short-article batch path: claim / process / context loading.
+    # Short-article batch path: claim / process context loading.
     # ------------------------------------------------------------------#
 
     async def claim_translation_batch_job_for_record(
@@ -3100,7 +3100,7 @@ class TranslationWorkerService:
                 failure_code="anchor_segments_missing",
             )
 
-        # T6: read strategy metadata written by T5 bootstrap from
+        # Read strategy metadata written by bootstrap from
         # input_json and cross-validate against the live resolver. Missing
         # metadata or hash mismatch fail closed; legacy bare-fingerprint
         # jobs without strategy metadata are rejected, never silently

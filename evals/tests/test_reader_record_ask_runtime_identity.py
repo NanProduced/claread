@@ -1,9 +1,9 @@
-"""R4-A4-2R P0-Identity: runtime fixture identity contract tests.
+"""Runtime fixture identity contract tests.
 
-Spec: R4-A4-2R — Real Eval Fixture Identity / Path Contract Repair.
+Spec: Real Eval Fixture Identity / Path Contract Repair.
 Task contract:
 
-- ``expected_envelope_fingerprint`` on :class:`ReaderRecordAskR4A3Case`
+- ``expected_envelope_fingerprint`` on the case schema
   is an explicit, auditable model-visible fixture identity for real-BBC
   cases. When present, the harness preflight verifies that the runtime
   envelope's ``envelope_fingerprint`` matches EXACTLY before any model
@@ -53,8 +53,8 @@ from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.run_manifest import CoverageAuditResult
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -162,9 +162,9 @@ def _make_synthetic_case(
     *,
     case_id: str = "case-syn",
     expected_envelope_fingerprint: str | None = None,
-) -> ReaderRecordAskR4A3Case:
+) -> ReaderRecordAskCase:
     """Build a minimal synthetic case for runtime identity tests."""
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         record_id=None,
@@ -177,7 +177,7 @@ def _make_synthetic_case(
         baseline_mode="complete",
         question="测试问题。",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         phase_tags=[],
         expected_envelope_fingerprint=expected_envelope_fingerprint,
     )
@@ -210,11 +210,11 @@ def _make_artifact(
 
 
 class TestSchemaExpectedEnvelopeFingerprint:
-    """R4-A4-2R P0-Identity: schema contract for
+    """Schema contract for
     ``expected_envelope_fingerprint``."""
 
     def test_none_default_preserves_backwards_compat(self) -> None:
-        """Cases authored before R4-A4-2R do not declare the field —
+        """Older cases do not declare the field —
         schema must default to ``None`` and load without error."""
         case = _make_synthetic_case()
         assert case.expected_envelope_fingerprint is None
@@ -255,7 +255,7 @@ class TestSchemaExpectedEnvelopeFingerprint:
 
 
 class TestRuntimeIdentityMismatchesHelper:
-    """R4-A4-2R P0-Identity: :func:`_runtime_identity_mismatches` branch
+    """:func:`_runtime_identity_mismatches` branch
     coverage.
 
     Returns ``True`` when:
@@ -339,7 +339,7 @@ class TestRuntimeIdentityMismatchesHelper:
         False. This is handled separately as
         ``unknown_artifact_case_count`` in the readiness audit."""
         artifact = _make_artifact(case_id="foreign-case")
-        cases_by_id: dict[str, ReaderRecordAskR4A3Case] = {}
+        cases_by_id: dict[str, ReaderRecordAskCase] = {}
         assert _RUNNER._runtime_identity_mismatches(
             artifact, cases_by_id
         ) is False
@@ -351,12 +351,12 @@ class TestRuntimeIdentityMismatchesHelper:
 
 
 class TestDecideFinalVerdictRuntimeIdentityPrecedence:
-    """R4-A4-2R P0-Identity: precedence row 5.5 in
+    """Precedence row 5.5 in
     :func:`_decide_final_verdict`.
 
     When ``runtime_identity_mismatch_count > 0``, the verdict MUST fall
     to ``blocked_incomplete_real_model_run`` with
-    ``(allow_r4_a4=False, allow_r4_b1=False)``.
+    both optional gates disabled.
 
     Precedence ordering:
     - 1 (dataset identity mismatch) wins over 5.5 (runtime mismatch).
@@ -497,7 +497,7 @@ class TestDecideFinalVerdictRuntimeIdentityPrecedence:
 
 
 class TestAggregateRuntimeIdentityFence:
-    """R4-A4-2R P0-Identity: end-to-end aggregate behavior when
+    """End-to-end aggregate behavior when
     artifacts' runtime identity mismatches the dataset's declared
     expected identity.
 

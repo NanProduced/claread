@@ -1,4 +1,4 @@
-# task-history: D6-I3A (renamed from test_d6_i3a_input_suitability_gate.py)
+# task-history: (renamed from test_d6_i3a_input_suitability_gate.py)
 from __future__ import annotations
 
 import pytest

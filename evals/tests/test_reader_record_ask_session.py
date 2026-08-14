@@ -1,7 +1,7 @@
 """Tests for RunSessionLayout — single source of truth for run paths.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: RunSessionLayout 深模块（P0-1）.
+Requirement: RunSessionLayout 深模块.
 
 Covers:
 - Path resolver correctness (run_dir / artifact_dir / prior_artifact_dir).
@@ -130,7 +130,7 @@ def test_artifact_path_model_none_uses_none_token(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Path traversal fail-closed (P0-1 core requirement)
+# Path traversal fail-closed (core requirement)
 # ---------------------------------------------------------------------------
 
 
@@ -309,7 +309,7 @@ def test_from_env_rejects_unsafe_prior_run_id(tmp_path: Path) -> None:
 def test_writer_and_reader_resolve_to_same_path(tmp_path: Path) -> None:
     """Harness (writer) and aggregate (reader) must use the same path.
 
-    This is the core P0-1 contract: a single resolver shared by write and
+    This is the core contract: a single resolver shared by write and
     read. If the harness writes via ``RunSessionLayout(run_id=X)`` and the
     aggregate reads via ``RunSessionLayout(run_id=X)``, both must resolve
     to the same artifact path for the same (case, model, thinking, run_index).
@@ -333,7 +333,7 @@ def test_writer_and_reader_resolve_to_same_path(tmp_path: Path) -> None:
 
 
 def test_phase2_uses_prior_artifact_dir_not_root_scan(tmp_path: Path) -> None:
-    """Phase 2 must read prior artifacts via prior_artifact_dir, not by
+    """A rerun must read prior artifacts via prior_artifact_dir, not by
     scanning ``runs_root`` for the "latest" run.
 
     This is the regression test for the prior harness behavior of guessing
@@ -344,7 +344,7 @@ def test_phase2_uses_prior_artifact_dir_not_root_scan(tmp_path: Path) -> None:
     (tmp_path / "phase1-bbb" / "artifacts").mkdir(parents=True)
     (tmp_path / "phase1-ccc" / "artifacts").mkdir(parents=True)
 
-    # Phase 2 explicitly references phase1-bbb (NOT the lexicographically
+    # The rerun explicitly references phase1-bbb (NOT the lexicographically
     # latest, NOT the mtime latest — explicit prior_run_id only).
     layout = RunSessionLayout(
         runs_root=tmp_path,
@@ -386,7 +386,7 @@ def test_construction_calls_validate_implicitly(tmp_path: Path) -> None:
         "phase2-XYZ",
         "phase3_2026",
         "phase1-abc_def-2026",
-        "P1",
+        "short-ok",
         "a",
         "1",
         "-",

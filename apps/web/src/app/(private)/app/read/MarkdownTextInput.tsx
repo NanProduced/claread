@@ -9,7 +9,7 @@
  *
  * 数据模型：
  * - 编辑器内部维护 Markdown AST（非受控）。
- * - R1：value lifecycle 由 `<Plate onChange>`（editor 级、同步）统一驱动。
+ * - value lifecycle 由 `<Plate onChange>`（editor 级、同步）统一驱动。
  *   不再使用 PlateContent 的 DOM onChange —— Slate 拦截所有 beforeinput
  *   （insertText / insertFromPaste）并 preventDefault，React 合成 change
  *   事件从不触发，旧实现导致用户输入/粘贴后父状态永远为空（placeholder
@@ -18,26 +18,26 @@
  *   序列化结果去重后回调父组件，父组件据此同步 text 状态（用于
  *   isReadyToSubmit、charCount、detectMarkdownMarkers、提交）。
  * - 外部恢复/清空通过 ref handle 的 setValue/clear 操作 editor；
- *   R1 起这些程序化变更同样触发 onChange，父页面状态与编辑器始终一致，
+ *   这些程序化变更同样触发 onChange，父页面状态与编辑器始终一致，
  *   不存在两套真相。父组件不会把 text 写回编辑器，因此没有循环。
  *
  * 提交：Cmd/Ctrl+Enter 拦截触发 onSubmit 回调。
  *
- * C1.2 placeholder（R3 修订：中文双行、与正文共用排版坐标）：
+ * placeholder（中文双行、与正文共用排版坐标）：
  * - 移除 PlateContent 自带 placeholder（与父组件 overlay 重叠）。
  * - placeholder / placeholderSub 由 PlateContent 的 before:/after: 伪元素
  *   绘制，定位与正文 padding 原点一致，主文案与首行 caret 同 baseline；
  *   辅助行在 focus 后淡出；两者 pointer-events-none，不拦截点击/选择/
  *   粘贴。表单层不再渲染任何 placeholder overlay。
  *
- * C1.3 可见降级：
+ * 可见降级：
  * - 初值与 setValue 使用 `deserializeMarkdownToBlocksWithStatus`，
  *   失败时通过 `onDegraded` 回调通知父组件，UI 显示"Markdown 解析失败，
  *   已按纯文本处理"提示态，禁止原始标记静默上屏。
  *
- * C1.4 粘贴保真提交：
+ * 粘贴保真提交：
  * - onPaste 记录用户原始粘贴文本、dirty=false，并挂起粘贴批次标记。
- * - 粘贴派生的 editor 变更（R1 起经 editor 级 onChange 到达）消费挂起
+ * - 粘贴派生的 editor 变更（经 editor 级 onChange 到达）消费挂起
  *   标记并延长静默窗口，不置 dirty；窗口内无后续变更视为批次结束。
  *   不再依赖"定时器复位 isPasting"——Plate v53 的 onChange 在 effect
  *   时机触发，时序上必然晚于 setTimeout(0)，旧模型会把粘贴变更稳定地
@@ -46,7 +46,7 @@
  *   消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
  * - 上传 `.md` 路径不经过本组件，维持直接提交文件内容不变。
  *
- * C1.5 serialize 配置：
+ * serialize 配置：
  * - serialize 选项由 MarkdownKit 的 remarkStringifyOptions 统一锁定
  *   （bullet/emphasis/strong/fence/rule/incrementListMarker 等），
  *   本组件调用 `editor.getApi(MarkdownPlugin).markdown.serialize()` 时
@@ -211,7 +211,7 @@ function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
 }
 
 function MarkdownCodeLine({ children, attributes }: PlateElementProps) {
-  // R2R Phase 4: `<code>` 仅接受 phrasing content，`<div>` 是 flow content，
+  // `<code>` 仅接受 phrasing content，`<div>` 是 flow content，
   // `<pre><code><div>…</div></code></pre>` 无效。改用 `<span>` + `block`
   // display 实现逐行换行，DOM 语义有效且不依赖 `<div>`。
   return (
@@ -374,7 +374,7 @@ const markdownTextInputPlugins = [
   createPlatePlugin({ key: "p", node: { isElement: true, component: MarkdownParagraph } }),
 ];
 
-// R1：粘贴静默窗口时长（毫秒）。
+// 粘贴静默窗口时长（毫秒）。
 // - BEFORE_CHANGE：粘贴事件记录后先开 300ms 窗口等粘贴派生变更到达
 //   （Plate v53 的 onChange 走 React passive effect，必然晚于 0ms 宏任务；
 //   浏览器中粘贴插入在事件内同步完成，远早于 300ms）。窗口到期仍无
@@ -452,12 +452,12 @@ function normalizeMarkdownDeserializeResult(
 
 export interface MarkdownTextInputHandle {
   /**
-   * C1.4: 获取提交文本（粘贴保真优先）。
+   * 获取提交文本（粘贴保真优先）。
    *
    * 若用户粘贴后未编辑（dirty=false 且有 lastPastedText），返回原始粘贴文本，
    * 消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
    *
-   * R2 Phase 2: 始终直接读 editor，不依赖 debounced 父状态，
+   * 始终直接读 editor，不依赖 debounced 父状态，
    * 因此 submit 不会拿到陈旧 text。
    */
   getSubmitText: () => string;
@@ -465,9 +465,9 @@ export interface MarkdownTextInputHandle {
   getMarkdown: () => string;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 清空编辑器（R1 起会触发 onChange，父状态随之复位） */
+  /** 清空编辑器（会触发 onChange，父状态随之复位） */
   clear: () => void;
-  /** 用 Markdown 字符串重置编辑器内容（R1 起会触发 onChange，父状态随之同步） */
+  /** 用 Markdown 字符串重置编辑器内容（会触发 onChange，父状态随之同步） */
   setValue: (markdown: string) => void;
   /**
    * 同步吸收 pending debounce，并返回 lint/提交共用的 Markdown 快照。
@@ -487,14 +487,14 @@ export interface MarkdownTextInputProps {
   /** Cmd/Ctrl+Enter 提交回调 */
   onSubmit: () => void;
   /**
-   * 输入端 lint 结果回调（Phase 1 / P0）。
+   * 输入端 lint 结果回调。
    *
    * 每次 onChange 时同步触发，父组件据此显示警告 badge。
    * lint 是预警不阻塞，后端仍是 fail-closed 单一真相源。
    */
   onLintResult?: (result: MarkdownLintResult) => void;
   /**
-   * C1.3: deserialize 降级回调。
+   * deserialize 降级回调。
    *
    * 挂载与 setValue 时触发：status === "degraded" 表示解析失败，
    * blocks 兜底为纯文本段落；调用方应显示可见降级提示，
@@ -513,12 +513,12 @@ export interface MarkdownTextInputProps {
   placeholderSub?: string;
   id?: string;
   /**
-   * R1：contenteditable 不是 labelable 元素，`<label for>` 不能可靠命名它。
+   * contenteditable 不是 labelable 元素，`<label for>` 不能可靠命名它。
    * 父组件应提供可见/程序化标签元素的 id，这里透传为 aria-labelledby。
    */
   ariaLabelledBy?: string;
   /**
-   * R1：程序化帮助关系 id（如输入提示），透传为 aria-describedby。
+   * 程序化帮助关系 id（如输入提示），透传为 aria-describedby。
    */
   ariaDescribedBy?: string;
 }
@@ -542,12 +542,12 @@ export const MarkdownTextInput = forwardRef<
   },
   ref,
 ) {
-  // C1.3 + R2 Phase 3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
+  // 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
   // 并通过 onDegraded 回调通知父组件显示可见降级提示。
   //
   // 修复 refs-during-render：原实现把 deserialize 结果写入 `initialResultRef`
   // 在 useState initializer（render 阶段）中，违反 React 19 render 纯粹性。
-  // R2 改为：deserialize 结果直接作为 useState 状态（initializer 仍是纯计算，
+  // deserialize 结果直接作为 useState 状态（initializer 仍是纯计算，
   // 不写任何 ref），mount effect 通过闭包读取 stable 状态并通知父组件。
   //
   // Strict Mode 安全：React 18+ StrictMode 会模拟 unmount-remount，但 refs
@@ -591,8 +591,8 @@ export const MarkdownTextInput = forwardRef<
     onDegradedRef.current = onDegraded;
   }, [onDegraded]);
 
-  // C1.3: 挂载时通知父组件初始 deserialize 状态（仅一次）。
-  // R2 Phase 3: 改用 stable 状态 + 通知 ref，避免 render 阶段写 ref 与
+  // 挂载时通知父组件初始 deserialize 状态（仅一次）。
+  // 使用 stable 状态 + 通知 ref，避免 render 阶段写 ref 与
   // Strict Mode 下的重复可见错误提示。
   useEffect(() => {
     if (initialDegradedNotifiedRef.current) return;
@@ -600,7 +600,7 @@ export const MarkdownTextInput = forwardRef<
     onDegradedRef.current?.(initialResult);
   }, [initialResult]);
 
-  // C1.4 / R1: 粘贴保真状态。
+  // 粘贴保真状态。
   // - lastPastedTextRef: 用户最后一次"纯 Markdown 整篇粘贴"的原始文本。
   //   富 HTML 粘贴不得保存 companion text/plain，因为它通常是已经摊平的
   //   可访问性表示；此时 Confirmed Source 草稿来自清洗后的 Plate Value。
@@ -617,7 +617,7 @@ export const MarkdownTextInput = forwardRef<
   const pendingPasteRef = useRef(false);
   const pasteChangeSeenRef = useRef(false);
   const pasteQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // R1：上一次处理过的 editor value 引用，用于跳过仅 selection 变化。
+  // 上一次处理过的 editor value 引用，用于跳过仅 selection 变化。
   const lastValueRef = useRef<Value | null>(null);
   // 工作台滚动模型：PlateContent 是桌面端唯一的正文滚动容器（外层卡片
   // 高度被 h-dvh 链锁定）。整篇粘贴后浏览器会 reveal 文末 caret——桌面端
@@ -661,7 +661,7 @@ export const MarkdownTextInput = forwardRef<
     };
   }, []);
 
-  // R1：@platejs/markdown serialize 会为空文本节点输出 U+200B 零宽空格。
+  // @platejs/markdown serialize 会为空文本节点输出 U+200B 零宽空格。
   // 必须用编辑器语义判断空状态，不能全文 replace U+200B：真实正文可能
   // 合法携带零宽空格，删除它会改变 canonical text 与 UTF-16 offset。
   const serializeCurrentMarkdown = useCallback((target: PlateEditor): string => {
@@ -687,13 +687,13 @@ export const MarkdownTextInput = forwardRef<
   }, [editor, serializeCurrentMarkdown]);
 
   // -------------------------------------------------------------------------
-  // R2 Phase 2: 分层状态流 —— serialize + lint 调度
+  // 分层状态流 —— serialize + lint 调度
   //
   // 旧实现每次 onChange 都同步执行 `serializeCurrentMarkdown(editor)` +
   // `lintMarkdownInput(md)` + `onChange(md)`，长文输入（30k–50k 字符）下
   // 每次按键都会触发整文档处理，导致输入卡顿。
   //
-  // R2 分层调度合同：
+  // 分层调度合同：
   // 1. 轻/重分离：空/非空、CTA、placeholder 等父状态通过 `onChange` 同步刷新；
   //    serialize/lint 的结果同样通过 `onChange`/`onLintResult` 回调，但合并
   //    调度：debounce 窗口内多次 edit 最多执行一次回调。
@@ -744,7 +744,7 @@ export const MarkdownTextInput = forwardRef<
     return md;
   }, [fireSerializeCallbacks, readSubmitMarkdown]);
 
-  // R2 Phase 2: unmount 必须取消 pending，避免回调写入已卸载组件的父状态。
+  // unmount 必须取消 pending，避免回调写入已卸载组件的父状态。
   useEffect(() => {
     return () => {
       cancelPendingSerialize();
@@ -752,7 +752,7 @@ export const MarkdownTextInput = forwardRef<
   }, [cancelPendingSerialize]);
 
   /**
-   * R1：粘贴保真窗口的记录侧。
+   * 粘贴保真窗口的记录侧。
    * 仅当编辑器当前"实质为空"（整篇粘贴场景）时记录原始文本并开窗；
    * 增量粘贴（非空编辑器）视为编辑，关闭保真。
    */
@@ -784,8 +784,8 @@ export const MarkdownTextInput = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      // C1.4: 粘贴保真 — 未编辑时返回原始粘贴文本，消除 serialize 往返损耗。
-      // R2 Phase 2: 不依赖 debounced 父状态，始终直接读 editor。
+      // 粘贴保真 — 未编辑时返回原始粘贴文本，消除 serialize 往返损耗。
+      // 不依赖 debounced 父状态，始终直接读 editor。
       getSubmitText: () => {
         if (!editor) return "";
         return readSubmitMarkdown();
@@ -805,12 +805,12 @@ export const MarkdownTextInput = forwardRef<
       },
       clear: () => {
         if (!editor) return;
-        // R2 Phase 2: 取消 pending debounce（避免 stale 内容写回父状态），
+        // 取消 pending debounce（避免 stale 内容写回父状态），
         // 然后同步 fire 空态回调，保证父状态立即与 editor 一致。
         cancelPendingSerialize();
         editor.tf.setValue([]);
         setIsEmpty(true);
-        // C1.4: 清空时重置粘贴保真状态
+        // 清空时重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
         endPasteWindow();
@@ -818,18 +818,18 @@ export const MarkdownTextInput = forwardRef<
       },
       setValue: (markdown: string) => {
         if (!editor) return;
-        // R2 Phase 2: 取消 pending debounce，避免 stale 内容覆盖新值。
+        // 取消 pending debounce，避免 stale 内容覆盖新值。
         cancelPendingSerialize();
-        // C1.3: setValue 使用带状态 deserialize，失败时通知父组件。
+        // setValue 使用带状态 deserialize，失败时通知父组件。
         const result = deserializeMarkdownToBlocksWithStatus(markdown);
         editor.tf.setValue(result.blocks as never[]);
         setIsEmpty(!hasTextContent(result.blocks));
         onDegradedRef.current?.(result);
-        // C1.4: programmatic setValue 重置粘贴保真状态
+        // programmatic setValue 重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
         endPasteWindow();
-        // R2 Phase 2: 同步 fire 新值回调，保证父状态与 editor 一致。
+        // 同步 fire 新值回调，保证父状态与 editor 一致。
         // Plate onChange 可能在 passive effect 中再次触发 handleEditorChange,
         // dedup（lastSentMdRef）会吸收那次重复回调。
         fireSerializeCallbacks(serializeCurrentMarkdown(editor));

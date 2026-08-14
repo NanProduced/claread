@@ -4,7 +4,7 @@ Design source:
   docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §9 worker migration (bootstrap routing)
 
-Routing contract (P1-1 修正后):
+Routing contract (修正后):
     - 默认走 grammar-window 路径 (调用 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan``)，
       无论 record 是否已有 grammar-window plan。``GrammarWindowBootstrapService`` 内部幂等。
     - ``force_legacy_grammar=True`` 时回退到 legacy per-unit 路径
@@ -158,7 +158,7 @@ async def test_bootstrap_uses_grammar_window_path_when_plan_exists(
 async def test_bootstrap_uses_grammar_window_path_by_default(
     test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """P1-1: 默认走 grammar-window 路径，无需 pre-create plan。
+    """默认走 grammar-window 路径，无需 pre-create plan。
 
     ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 grammar-window，
     由 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +

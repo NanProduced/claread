@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "answer_success"
 
 
 def evaluate_answer_success(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     reasons: list[str] = []

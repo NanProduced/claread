@@ -1840,7 +1840,7 @@ def test_grammar_modules_do_not_reference_render_scene_json() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# T8: variant-first grammar_bundle strategy prompt + metadata validation
+# Variant-first grammar_bundle strategy prompt + metadata validation
 # ---------------------------------------------------------------------------#
 
 
@@ -2076,7 +2076,7 @@ def test_legacy_agent_instructions_contain_markdown_contract() -> None:
     assert "中英混合" in instructions
     # Frontend deserialization (not backend)
     assert "前端" in instructions
-    # R3 teaching quality: no fixed 2-4 sentence length pressure
+    # Teaching quality: no fixed 2-4 sentence length pressure
     assert "2-4 句" not in instructions
     assert "2–4 句" not in instructions
 
@@ -2123,7 +2123,7 @@ def test_legacy_prompt_injects_gaokao_policy_without_stale_field_names() -> None
     assert "reading_goal: exam" in prompt
     assert "reading_variant: gaokao" in prompt
     assert "高考" in prompt
-    # Soft lens markers (R4): middle-school grammar system, not forced slogans
+    # Soft lens markers: middle-school grammar system, not forced slogans
     assert "中学" in prompt
     assert "显性教学" not in prompt
     # Stale field names from old grammar.yaml must NOT appear
@@ -2132,7 +2132,7 @@ def test_legacy_prompt_injects_gaokao_policy_without_stale_field_names() -> None
 
 
 # ---------------------------------------------------------------------------#
-# R3: grammar teaching quality contract (per-unit / batch / window parity)
+# Grammar teaching quality contract (per-unit / batch window parity)
 # ---------------------------------------------------------------------------#
 
 
@@ -2156,7 +2156,7 @@ _TEACHING_MARKERS = (
 
 
 def test_shared_agent_instructions_contain_teaching_semantics() -> None:
-    """Shared YAML instructions own the R3 teaching contract used by all paths."""
+    """Shared YAML instructions own the teaching contract used by all paths."""
     from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
@@ -2236,12 +2236,12 @@ def test_analysis_field_description_separates_chunks_and_forbids_chunk_restateme
 
 
 # ---------------------------------------------------------------------------#
-# P1-1: sentence_analysis must not re-template "按三步走"
+# Sentence_analysis must not re-template "按三步走"
 # ---------------------------------------------------------------------------#
 
 
 def test_shared_grammar_prompt_drops_fixed_three_step_template() -> None:
-    """P1-1: shared grammar prompt must NOT contain the fixed ``按三步走``
+    """Shared grammar prompt must NOT contain the fixed ``按三步走``
     template that previously forced mechanical sentence_analysis output.
 
     The three reading actions (主干定位 / 暂放修饰 / 跨越障碍) remain
@@ -2272,7 +2272,7 @@ def test_shared_grammar_prompt_drops_fixed_three_step_template() -> None:
 
 
 def test_window_prompt_inherits_de_templated_analysis_contract() -> None:
-    """P1-1: window composed system prompt must inherit the de-templated
+    """Window composed system prompt must inherit the de-templated
     analysis contract from the shared YAML, so per-unit / batch / window
     stay aligned on the same teaching semantics.
     """
@@ -2288,12 +2288,12 @@ def test_window_prompt_inherits_de_templated_analysis_contract() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# P1-2: shared grammar prompt must own the self-rating contract
+# Shared grammar prompt must own the self-rating contract
 # ---------------------------------------------------------------------------#
 
 
 def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
-    """P1-2: the shared grammar YAML must be the single authoritative
+    """The shared grammar YAML must be the single authoritative
     source for the self-rating field contract. The window operational
     rules must NOT duplicate the field-by-field self-rating explanation.
 
@@ -2352,13 +2352,13 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# P1-2: self-rating schema validation (per-unit / batch candidate schemas)
+# Self-rating schema validation (per-unit / batch candidate schemas)
 # ---------------------------------------------------------------------------#
 
 
 def _minimal_grammar_note_kwargs() -> dict:
     """Return the minimum kwargs required to construct a valid
-    GrammarNoteCandidateItem under the tightened P1-2 schema (3
+    GrammarNoteCandidateItem under the tightened schema (3
     self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     return {
         "spans": [GrammarCandidateSpan(anchor_segment_id="s1", selected_text="x")],
@@ -2372,7 +2372,7 @@ def _minimal_grammar_note_kwargs() -> dict:
 
 def _minimal_sentence_analysis_kwargs() -> dict:
     """Return the minimum kwargs required to construct a valid
-    SentenceAnalysisCandidateItem under the tightened P1-2 schema (3
+    SentenceAnalysisCandidateItem under the tightened schema (3
     self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     return {
         "anchor_segment_id": "s1",
@@ -2387,7 +2387,7 @@ def _minimal_sentence_analysis_kwargs() -> dict:
 
 
 def test_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
-    """P1-2: GrammarNoteCandidateItem must reject candidates that omit
+    """GrammarNoteCandidateItem must reject candidates that omit
     any of the three required self-rating fields."""
     from pydantic import ValidationError
 
@@ -2407,7 +2407,7 @@ def test_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
 
 
 def test_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> None:
-    """P1-2: SentenceAnalysisCandidateItem must reject candidates that
+    """SentenceAnalysisCandidateItem must reject candidates that
     omit any of the three required self-rating fields."""
     from pydantic import ValidationError
 
@@ -2427,7 +2427,7 @@ def test_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> Non
 
 
 def test_grammar_note_candidate_rejects_out_of_range_quality_score() -> None:
-    """P1-2: quality_score must be int in [1, 5]. 0, 6, and floats are
+    """Quality_score must be int in [1, 5]. 0, 6, and floats are
     rejected."""
     from pydantic import ValidationError
 
@@ -2438,7 +2438,7 @@ def test_grammar_note_candidate_rejects_out_of_range_quality_score() -> None:
 
 
 def test_sentence_analysis_candidate_rejects_out_of_range_quality_score() -> None:
-    """P1-2: quality_score must be int in [1, 5]."""
+    """Quality_score must be int in [1, 5]."""
     from pydantic import ValidationError
 
     base = _minimal_sentence_analysis_kwargs()
@@ -2448,7 +2448,7 @@ def test_sentence_analysis_candidate_rejects_out_of_range_quality_score() -> Non
 
 
 def test_grammar_note_candidate_rejects_legacy_reason_code_field() -> None:
-    """P1-2: ``reason_code`` was removed from the self-rating contract.
+    """``Reason_code`` was removed from the self-rating contract.
     The candidate schema uses ``ConfigDict(extra="forbid")`` so any
     payload that still carries ``reason_code`` must be rejected at the
     schema boundary — the LLM cannot smuggle the legacy field back in."""
@@ -2461,7 +2461,7 @@ def test_grammar_note_candidate_rejects_legacy_reason_code_field() -> None:
 
 
 def test_sentence_analysis_candidate_rejects_legacy_reason_code_field() -> None:
-    """P1-2: ``reason_code`` was removed from SentenceAnalysisCandidateItem
+    """``Reason_code`` was removed from SentenceAnalysisCandidateItem
     too. ``extra="forbid"`` rejects any legacy payload."""
     from pydantic import ValidationError
 
@@ -2472,7 +2472,7 @@ def test_sentence_analysis_candidate_rejects_legacy_reason_code_field() -> None:
 
 
 def test_grammar_note_candidate_rejects_legacy_confidence_field() -> None:
-    """P1-2: ``confidence`` was removed from the self-rating contract.
+    """``Confidence`` was removed from the self-rating contract.
     ``extra="forbid"`` rejects any payload that still carries it."""
     from pydantic import ValidationError
 
@@ -2483,7 +2483,7 @@ def test_grammar_note_candidate_rejects_legacy_confidence_field() -> None:
 
 
 def test_sentence_analysis_candidate_rejects_legacy_confidence_field() -> None:
-    """P1-2: ``confidence`` was removed from SentenceAnalysisCandidateItem
+    """``Confidence`` was removed from SentenceAnalysisCandidateItem
     too. ``extra="forbid"`` rejects any legacy payload."""
     from pydantic import ValidationError
 
@@ -2494,7 +2494,7 @@ def test_sentence_analysis_candidate_rejects_legacy_confidence_field() -> None:
 
 
 def test_grammar_note_candidate_rejects_empty_dedup_hint() -> None:
-    """P1-2: dedup_hint must be a non-empty canonical key."""
+    """Dedup_hint must be a non-empty canonical key."""
     from pydantic import ValidationError
 
     base = _minimal_grammar_note_kwargs()
@@ -2503,7 +2503,7 @@ def test_grammar_note_candidate_rejects_empty_dedup_hint() -> None:
 
 
 def test_sentence_analysis_candidate_rejects_empty_dedup_hint() -> None:
-    """P1-2: dedup_hint must be a non-empty canonical key."""
+    """Dedup_hint must be a non-empty canonical key."""
     from pydantic import ValidationError
 
     base = _minimal_sentence_analysis_kwargs()
@@ -2512,7 +2512,7 @@ def test_sentence_analysis_candidate_rejects_empty_dedup_hint() -> None:
 
 
 def test_grammar_note_candidate_rejects_overlong_dedup_hint() -> None:
-    """P1-2: dedup_hint must be ≤ MAX_GRAMMAR_DEDUP_HINT_LENGTH chars."""
+    """Dedup_hint must be ≤ MAX_GRAMMAR_DEDUP_HINT_LENGTH chars."""
     from pydantic import ValidationError
 
     from app.services.reader_orchestration.grammar_worker import (
@@ -2548,7 +2548,7 @@ def test_sentence_analysis_candidate_saves_normalized_dedup_hint() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# T8: _validate_grammar_strategy_metadata fail-closed unit tests
+# _validate_grammar_strategy_metadata fail-closed unit tests
 # ---------------------------------------------------------------------------#
 
 
@@ -3022,7 +3022,7 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 
 
 # ---------------------------------------------------------------------------#
-# T4.1c: compact grammar batch path — publish contract tests
+# Compact grammar batch path — publish contract tests
 # ---------------------------------------------------------------------------#
 #
 # These tests verify that the compact grammar batch worker (SHORT_BATCH /
@@ -3041,7 +3041,7 @@ _BATCH_ARTICLE_TEXT = (
 
 
 class _StaticGrammarBatchExecutor:
-    """T4.1c fake batch executor: produces valid grammar_note /
+    """Fake batch executor: produces valid grammar_note /
     sentence_analysis candidates for each unit in the batch context."""
 
     def __init__(self) -> None:
@@ -3095,7 +3095,7 @@ class _StaticGrammarBatchExecutor:
                                 spans=[word_anchor],
                                 grammar_point="core verb",
                                 pattern="SVO",
-                                note="Batch grammar note for T4.1c.",
+                                note="Batch grammar note.",
                             )
                         ],
                         sentence_analyses=[
@@ -3619,7 +3619,7 @@ async def test_captured_batch_valid_receipt_cannot_bypass_reader_fence(
 async def test_batch_worker_publishes_grammar_and_sentence_layers(
     grammar_batch_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c publish contract: the compact grammar batch worker publishes
+    """Publish contract: the compact grammar batch worker publishes
     per-unit ``grammar_note`` and ``sentence_analysis`` layers from a
     single batch LLM call. No per-unit ``build_grammar_bundle`` / ``unit``
     jobs are created."""
@@ -3855,7 +3855,7 @@ async def test_batch_restart_resumes_receipt_without_second_provider_call(
 async def test_batch_worker_no_job_for_long_article(
     grammar_batch_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c: the batch worker returns ``None`` when no grammar batch job
+    """The batch worker returns ``None`` when no grammar batch job
     exists (GROUPED_WINDOWED route creates grammar-window window jobs, not batch jobs).
     The per-unit fallback then finds no per-unit jobs either, so the
     pipeline runner's grammar dispatch returns ``no_job``."""
@@ -3898,12 +3898,12 @@ async def test_batch_worker_no_job_for_long_article(
 
 
 # ---------------------------------------------------------------------------#
-# Phase 5: per-unit sentence_analysis candidates sorted by quality_score
+# Per-unit sentence_analysis candidates sorted by quality_score
 # ---------------------------------------------------------------------------#
 
 
 def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None:
-    """Phase 5: per-unit path must sort sentence_analysis candidates by
+    """Per-unit path must sort sentence_analysis candidates by
     ``quality_score`` descending before resolving, so higher-quality
     candidates are published first.
 
@@ -3911,7 +3911,7 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
     The per-unit path (``_build_grammar_output_from_candidates``) previously
     had no self-rating field on ``SentenceAnalysisCandidateItem`` and no
     sort, so per-unit sentence_analyses were published in LLM-returned
-    order. Phase 5 adds ``quality_score`` (and the rest of the self-rating
+    order. adds ``quality_score`` (and the rest of the self-rating
     family) to ``SentenceAnalysisCandidateItem`` and sorts by it.
     """
     source_text = (
@@ -3926,7 +3926,7 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
 
     # 3 candidates on the same anchor with different quality_score.
     # Input order is deliberately low → high to prove sort, not pass-through.
-    # P1-2: quality_score is now int 1-5 (required), and the full self-rating
+    # Quality_score is now int 1-5 (required), and the full self-rating
     # family (reading_blocker / dedup_hint) is required so the LLM cannot
     # emit bare candidates that degrade sorting.
     candidates = [
@@ -3983,12 +3983,12 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
 
 
 # ---------------------------------------------------------------------------#
-# Phase 5b: grammar_note self-rating + batch path quality_score sorting
+# Grammar_note self-rating + batch path quality_score sorting
 # ---------------------------------------------------------------------------#
 
 
 def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None:
-    """P1-2: GrammarNoteCandidateItem and SentenceAnalysisCandidateItem must
+    """GrammarNoteCandidateItem and SentenceAnalysisCandidateItem must
     carry the same self-rating family, and all three fields must be REQUIRED
     (no permissive defaults) so the LLM cannot emit bare candidates that
     degrade sorting to LLM-returned order.
@@ -4014,7 +4014,7 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
             f"SentenceAnalysisCandidateItem missing self-rating field {field_name!r}"
         )
 
-    # P1-2: all three self-rating fields must be required (is_required=True)
+    # All three self-rating fields must be required (is_required=True)
     # so the schema rejects candidates that omit them. Pydantic marks a
     # field as required when it has no default and no default_factory.
     for field_name in expected_fields:
@@ -4026,7 +4026,7 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
                 f"got is_required=False"
             )
 
-    # P1-2: legacy fields must not be in model_fields at all.
+    # Legacy fields must not be in model_fields at all.
     for legacy in ("reason_code", "confidence"):
         assert legacy not in GrammarNoteCandidateItem.model_fields, (
             f"GrammarNoteCandidateItem must not carry legacy field {legacy!r}"
@@ -4040,7 +4040,7 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
 
 
 def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
-    """Phase 5b: per-unit path must sort grammar_note candidates by
+    """Per-unit path must sort grammar_note candidates by
     ``quality_score`` descending before resolving, so higher-quality
     candidates are published first.
 
@@ -4062,7 +4062,7 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
     # 3 grammar_note candidates on the same anchor with different
     # quality_score. Input order is deliberately low → high to prove
     # sort, not pass-through. ``selected_text`` must be a real substring
-    # of the source text so anchor resolution succeeds. P1-2: the full
+    # of the source text so anchor resolution succeeds. The full
     # self-rating family is required on every candidate.
     candidates = [
         GrammarNoteCandidateItem(
@@ -4121,7 +4121,7 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
 
 
 def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> None:
-    """Phase 5b: batch path ``_split_batch_candidates_by_unit`` must sort
+    """Batch path ``_split_batch_candidates_by_unit`` must sort
     grammar_note candidates by ``quality_score`` descending before
     per-unit budget truncation, so higher-quality candidates win the
     per-unit budget.
@@ -4226,7 +4226,7 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
 
 
 def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() -> None:
-    """Phase 5b: batch path ``_split_batch_candidates_by_unit`` must sort
+    """Batch path ``_split_batch_candidates_by_unit`` must sort
     sentence_analysis candidates by ``quality_score`` descending before
     per-unit budget truncation, mirroring grammar_notes.
 
@@ -4295,12 +4295,12 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
 
 
 # ---------------------------------------------------------------------------#
-# P1-2: per-unit / batch cross-type dedup + reading_blocker tie-break
+# Per-unit / batch cross-type dedup + reading_blocker tie-break
 # ---------------------------------------------------------------------------#
 
 
 def test_per_unit_path_breaks_tie_via_reading_blocker() -> None:
-    """P1-2: per-unit path sort key is
+    """Per-unit path sort key is
     ``(-quality_score, reading_blocker=true first, grammar_note on tie)``.
     Two same-quality candidates: the one with ``reading_blocker=True``
     must be published first, regardless of input order.
@@ -4354,7 +4354,7 @@ def test_per_unit_path_breaks_tie_via_reading_blocker() -> None:
 
 
 def test_batch_path_breaks_tie_via_reading_blocker() -> None:
-    """P1-2: batch path uses the same sort key as per-unit. Two
+    """Batch path uses the same sort key as per-unit. Two
     same-quality candidates: the one with ``reading_blocker=True``
     wins the first slot in the published unit output."""
     source_text = (
@@ -4410,7 +4410,7 @@ def test_batch_path_breaks_tie_via_reading_blocker() -> None:
 
 
 def test_per_unit_path_cross_type_dedup_keeps_grammar_note_on_tie() -> None:
-    """P1-2: when a grammar_note and a sentence_analysis share the same
+    """When a grammar_note and a sentence_analysis share the same
     normalized ``dedup_hint`` AND the same (quality_score, reading_blocker)
     tuple, the grammar_note wins (sentence_analysis is expected to clear
     a higher bar). The loser must be dropped with a
@@ -4483,7 +4483,7 @@ def test_per_unit_path_cross_type_dedup_keeps_grammar_note_on_tie() -> None:
 
 
 def test_per_unit_path_same_type_dedup_emits_diagnostic() -> None:
-    """P1-2: two grammar_notes on the same anchor with the same
+    """Two grammar_notes on the same anchor with the same
     ``dedup_hint`` (after normalization) — the lower-quality one must be
     dropped with a ``dedup_hint_duplicate`` diagnostic, even
     though both are grammar_note type (cross-type dedup covers
@@ -4543,7 +4543,7 @@ def test_per_unit_path_same_type_dedup_emits_diagnostic() -> None:
 
 
 def test_batch_path_cross_type_dedup_emits_diagnostic() -> None:
-    """P1-2: batch path must apply the same cross-type dedup contract
+    """Batch path must apply the same cross-type dedup contract
     per unit. Two candidates with the same normalized ``dedup_hint``
     across grammar_note + sentence_analysis — the lower-priority one
     (sentence_analysis, given the tie-breaker) is dropped with a
@@ -4979,7 +4979,7 @@ def test_three_paths_produce_identical_sort_order() -> None:
 
 
 def test_per_unit_path_empty_candidate_output_is_valid() -> None:
-    """P1-2: an empty candidate output is a legitimate result (the
+    """An empty candidate output is a legitimate result (the
     prompt allows the LLM to return no candidates when no point has
     teaching value). The per-unit path must not raise; it must return
     an empty ``GrammarBundleOutput`` and a zero-skip diagnostic block."""
@@ -5005,7 +5005,7 @@ def test_per_unit_path_empty_candidate_output_is_valid() -> None:
 
 
 def test_batch_path_empty_candidate_output_is_valid() -> None:
-    """P1-2: batch path must also accept an empty candidate output
+    """Batch path must also accept an empty candidate output
     without raising. Returns one (empty) unit output and zero skips."""
     source_text = (
         "Not only did the team revise the plan, "
@@ -5031,7 +5031,7 @@ def test_batch_path_empty_candidate_output_is_valid() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# Phase 5b: grammar mechanical exam-jargon ban (prompt + variant policy)
+# Grammar mechanical exam-jargon ban (prompt + variant policy)
 # ---------------------------------------------------------------------------#
 
 

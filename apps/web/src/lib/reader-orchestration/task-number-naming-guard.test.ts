@@ -1,253 +1,594 @@
-// task-history: TEST-GOVERNANCE-FOUNDATION-LONG-R1
+// task-history: TEST-GOVERNANCE-GATE-A-SAFE-REBUILD-R1 / G0
 /**
- * Naming governance guard — task numbers are historical tracking
- * metadata, not business identity. This guard prevents their *backflow*
- * into Web tests on two fronts:
+ * Syntax-aware task-history governance for tracked TypeScript sources.
  *
- * 1. File names: vitest `*.test.ts(x)` under `src/` and Playwright
- *    `*.spec.ts(x)` under `tests/`. The ratchet allowlist is empty and
- *    its ceiling is 0: new task-numbered file names are forbidden.
- *
- * 2. Source lines (fail-closed): every line of every test file is
- *    scanned for UPPERCASE task-history code shapes: batch/round/phase/
- *    stage/task letters followed by a digit (B/R/P/S/T+n), uppercase
- *    forms of the audited single-digit codes d5/d6 and a3/a4/a5 (a
- *    trailing digit as in d50/a30 is a pseudo-prefix, not a code),
- *    ROUND plus digits, LP-R plus digits, and `ASK-` epic prefixes.
- *    Lowercase fixture ids and regular variables are deliberately not
- *    task codes. Exemption is strip-then-scan: the exact identities in
- *    CODE_IDENTITY_ALLOWLIST are removed from the line FIRST, and the
- *    remainder is scanned — a listed identity never shields a real task
- *    code on the same line. Allowlist staleness is judged against the
- *    scanned files EXCLUDING this guard itself: the guard's own
- *    constants and regression samples are not consumers.
- *
- * Exempt by shape (never matched): product versions (v2), article
- * grades (g5), domain terms such as l1-heading, and representation-
- * event contract names such as G1/G2/G3.
+ * The full-repository assertion intentionally stays RED during rolling cleanup.
+ * Self-tests, parse checks, comment cross-audit, and changed-scope checks must
+ * be GREEN. There is no baseline residual ceiling.
  */
 
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { dirname, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
 
-// Task-number signature in Web test file names. The boundary accepts the
-// start of the name as well as `-` / `_` / `.` separators, so no
-// separator style can bypass the guard.
-const TASK_NUMBER_NAME_RE =
-  /(?:^|[-_.])(?:d[56][-_.]|a[345][-_.]|t[0-9](?:\.[0-9]+)*[a-z]?[-_.]|r[0-9]|p[0-9][a-z]?[-_.]|s[0-9][a-z]?[-_.]|round[0-9]|lp-r[0-9])/;
-
-// RATCHET: only shrink; the stock is empty and the ceiling is 0.
-const TASK_NUMBER_TEST_FILE_ALLOWLIST = [] as const;
-const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 0;
-
-// Uppercase task-history code shapes only; lowercase fixture ids and
-// regular variables are not task codes. The d5/d6 and a3-a5 families
-// are single-digit codes: a trailing digit (d50, a30) is a pseudo-
-// prefix, not a code, hence the negative lookahead.
-const TASK_CODE_LINE_RE =
-  /\b[BRPST][0-9]|\bD[56](?![0-9])|\bA[345](?![0-9])|\bROUND[0-9]+|\bLP-R[0-9]/;
-
-// Epic/project prefixes are matched case-sensitively: lowercase `ask-*`
-// model keys and testids are product identities, not task codes.
-const TASK_CODE_EPIC_RE = /ASK-[A-Z0-9]/;
-
-// This guard's own path: excluded from allowlist-staleness usage, so
-// the guard's constants and regression samples never count as
-// consumers of an identity.
+const GUARD_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = execFileSync(
+  "git",
+  ["-C", GUARD_DIRECTORY, "rev-parse", "--show-toplevel"],
+  { encoding: "utf8" },
+).trim();
+const TYPESCRIPT_RUNTIME =
+  process.env.CLAREAD_TYPESCRIPT_PATH ??
+  resolve(REPO_ROOT, "apps/web/node_modules/typescript/lib/typescript.js");
+const ts = createRequire(import.meta.url)(TYPESCRIPT_RUNTIME);
+const EXPECTED_ROOTS = [
+  "services/api",
+  "evals",
+  "apps/web",
+  "apps/miniprogram",
+  "apps/directus",
+  "packages",
+  "infra",
+] as const;
 const GUARD_SELF =
-  "src/lib/reader-orchestration/task-number-naming-guard.test.ts";
+  "apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts";
 
-// Formal identities that legitimately carry an uppercase task-code shape
-// inside a test source line. Stripped from the line before scanning.
-// RATCHET: only shrink; every entry must still appear in a scanned line
-// of some test file other than this guard.
-const CODE_IDENTITY_ALLOWLIST = [
-  // Library record stub display titles.
-  '"P1"',
-  '"P2"',
-  '"P3"',
-  '"P4"',
-  '"A3"',
-  // Article difficulty grades (product identity, same class as g5).
-  '"B1"',
-  '"B2"',
-  // Fixture record titles.
-  '"R1 submit"',
-  '"R1 Inline Marks Fixture"',
+const KEEP_WIRE_TOKENS = [
+  "ask_retry_contract_r5",
+  "CLAREAD_R4_A3_BBC_RECORD_ID",
+  "CLAREAD_R4_A3_DATASET_DIR",
+  "CLAREAD_R4_A3_MAX_REQUESTS",
+  "CLAREAD_R4_A3_MAX_TOKENS",
+  "CLAREAD_R4_A3_PRIOR_RUN_ID",
+  "CLAREAD_R4_A3_PRO_PROFILE",
+  "CLAREAD_R4_A3_RUN",
+  "CLAREAD_R4_A3_RUN_ID",
+  "CLAREAD_R4_A3_RUNS_DIR",
+  "CLAREAD_R4_A3_THINKING_VIA_PROFILE",
+  "d4-p1-translation-worker",
+  "d4-p2-translation-parsed",
+  "d5-v3-vocabulary-worker",
+  "d5-v6-grammar-worker",
+  "d6_i3b_structured_source_v1",
+  "full_snapshot_until_pux_r4",
+  "r4-a3-dataset-v1",
+  "r4-a4-2r2",
+  "r4-a4-2r3",
+  "reader_d5_attribution_schema_drift",
+  "reader_d6_anchor_migration_missing",
+  "reader-record-ask-r4-a3",
+  "reading_base_builder_d3_p2_v1",
+  "t1-1-translation-batch-worker",
+  "t1-1-vocabulary-batch-worker",
+  "zplus_grammar_bundle_v1",
+] as const;
+const KEEP_FIXTURE_TOKENS = [
+  "d6_i3b_plain_text_markdown_v1",
+  "r14_complex",
 ] as const;
 
-const CODE_IDENTITY_ALLOWLIST_CEILING = 9;
+const LABEL_RE =
+  /(?<![A-Za-z0-9])(?:Task|Phase|Wave)\s+\d+(?:\.\d+)?[A-Za-z]?|(?<![A-Za-z0-9])(?:R\d+(?:[._-][A-Za-z0-9]+)*|D\d+(?:[._-][A-Za-z0-9]+)*|P\d+[A-Z]?(?:[._-][A-Za-z0-9]+)*|T\d+(?:\.\d+)?[a-z]?(?:[._-][A-Za-z0-9]+)*|A\d+(?:[._-][A-Za-z0-9]+)*|B\d+(?:[._-][A-Za-z0-9]+)*|C[123]|S\d+(?:\.\d+)?|U\d+)(?![A-Za-z0-9])/g;
+const MACHINE_RE =
+  /(?<![A-Za-z0-9_])(?:d\d+[-_]i\d+[a-z]?|d\d+[-_][pv]\d+|r\d+[-_][ab]\d+|t\d+[-_]\d+)(?:[-_][a-z0-9]+)+(?![A-Za-z0-9_])/g;
+const SPECIAL_IDENTIFIER_RE =
+  /(?:ReaderRecordAskR4A3|load_r4_a3_dataset|allow_r4_a4|allow_r4_b1|task_label|_P1(?:D|F|G)(?:_R1)?_)/g;
+const HEX_COLOR_RE = /#[0-9A-Fa-f]{6}\b/g;
+const ISSUE_RE = /#\d+\b/g;
+const CEFR_RE = /(?<![A-Za-z0-9])(?:A1|A2|B1|B2|C1|C2)(?![A-Za-z0-9])/g;
+const ARTICLE_RAG_RE = /(?<![A-Za-z0-9])B[123](?![A-Za-z0-9])/g;
+const SEGMENT_TOKEN_RE =
+  /(?<=[_-])(?:A|B|C|D|P|R|S|T|U)\d{1,3}(?:\.\d+)?[A-Za-z]?/g;
+const D3_READING_BASE_RE = /(?<![a-z0-9])d3-p[14](?![a-z0-9])/gi;
+const TRACKED_FILENAME_RE = /(?:^|_)d\d+(?:_|\.|$)/i;
 
-const SCAN_ROOTS = ["src", "tests"] as const;
-const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
+// Accepted semantic KEEP ratchet. This is not a residual baseline ceiling.
+const ACCEPTED_SEMANTIC_KEEP_COUNTS = new Map<string, number>([
+  ["apps/directus/scripts/sync-llm-config-metadata.mjs\u001ftypescript_string_literal\u001fD97706", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_identifier\u001fA2", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_identifier\u001fB1", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_identifier\u001fB2", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_identifier\u001fC1", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_string_literal\u001fA2", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_string_literal\u001fB1", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_string_literal\u001fB2", 1],
+  ["apps/miniprogram/src/components/DailyReaderHeader/index.tsx\u001ftypescript_string_literal\u001fC1", 1],
+  ["apps/miniprogram/src/components/LucideIcon/index.tsx\u001ftypescript_string_literal\u001fB45309", 1],
+  ["apps/miniprogram/src/packageA/credit-detail/index.tsx\u001ftypescript_string_literal\u001fD97706", 2],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_identifier\u001fA2", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_identifier\u001fB1", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_identifier\u001fB2", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_identifier\u001fC1", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_string_literal\u001fA2", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_string_literal\u001fB1", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_string_literal\u001fB2", 1],
+  ["apps/miniprogram/src/packageB/daily-reader-archive/index.tsx\u001ftypescript_string_literal\u001fC1", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_identifier\u001fA2", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_identifier\u001fB1", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_identifier\u001fB2", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_identifier\u001fC1", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_string_literal\u001fA2", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_string_literal\u001fB1", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_string_literal\u001fB2", 1],
+  ["apps/miniprogram/src/pages/home/index.tsx\u001ftypescript_string_literal\u001fC1", 1],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fA1", 3],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fA2", 1],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fA3", 1],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fP1", 7],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fP2", 7],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fP3", 6],
+  ["apps/web/src/app/(private)/app/library/reading-record-status.test.tsx\u001ftypescript_string_literal\u001fP4", 6],
+  ["apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.editor-integration.test.tsx\u001ftypescript_string_literal\u001fR1", 1],
+  ["apps/web/src/app/(private)/app/read/page.test.tsx\u001ftypescript_string_literal\u001fB1", 1],
+  ["apps/web/src/app/(private)/app/read/page.test.tsx\u001ftypescript_string_literal\u001fB2", 1],
+  ["apps/web/src/components/ai-elements/streamdown.test.ts\u001ftypescript_string_literal\u001fC1", 2],
+  ["apps/web/src/components/ai-elements/streamdown.test.ts\u001ftypescript_string_literal\u001fC2", 2],
+  ["apps/web/src/components/product-page/hero/HeroCopy.tsx\u001ftypescript_string_literal\u001fS57", 1],
+  ["apps/web/src/components/product-page/hero/HeroCopy.tsx\u001ftypescript_string_literal\u001fS90", 1],
+  ["apps/web/src/components/product-page/ProductStickerWall.tsx\u001ftypescript_string_literal\u001fB45309", 1],
+  ["apps/web/src/components/reader/plate/ReaderRecordNavigationRail.test.tsx\u001ftypescript_string_literal\u001fU1", 1],
+  ["apps/web/src/components/reader/plate/ReaderRecordNavigationRail.test.tsx\u001ftypescript_string_literal\u001fU2", 1],
+  ["apps/web/src/components/reader/plate/ReaderRecordNavigationRail.test.tsx\u001ftypescript_string_literal\u001fU3", 1],
+  ["apps/web/src/lib/reader-plate/markdown/__tests__/fixtures.ts\u001ftypescript_string_literal\u001fr14_complex", 1],
+  ["apps/web/src/lib/reader-plate/projection/__tests__/structured-source-renderer.test.tsx\u001ftypescript_string_literal\u001fr14_complex", 2],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-anchor-draft.test.ts\u001ftypescript_identifier\u001fS1", 27],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-anchor-draft.test.ts\u001ftypescript_identifier\u001fS2", 11],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-anchor-draft.test.ts\u001ftypescript_identifier\u001fU1", 42],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-anchor-draft.test.ts\u001ftypescript_identifier\u001fU2", 20],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-plate-document.test.ts\u001ftypescript_string_literal\u001fR1", 1],
+  ["apps/web/src/lib/reader-plate/projection/reader-record-plate-document.ts\u001ftypescript_comment\u001fB3", 1],
+  ["apps/web/src/lib/source-callout/source-callout-roundtrip.test.ts\u001ftypescript_string_literal\u001fA1", 1],
+  ["apps/web/src/lib/source-callout/source-callout-roundtrip.test.ts\u001ftypescript_string_literal\u001fA2", 1],
+]);
 
-function listTestFiles(rootDir: string): string[] {
-  // vitest runs from the package root (`apps/web`); `rootDir` is relative
-  // to that root. Mirrors listSourceFiles in reader-orchestration-source-guard.
-  const absoluteRoot = resolve(process.cwd(), rootDir);
-  const results: string[] = [];
+interface SyntaxItem {
+  path: string;
+  kind:
+    | "typescript_comment"
+    | "typescript_string_literal"
+    | "typescript_identifier"
+    | "tracked_filename";
+  line: number;
+  text: string;
+  purpose: string;
+}
 
-  let stats;
-  try {
-    stats = statSync(absoluteRoot);
-  } catch {
-    return results;
+interface GuardHit extends SyntaxItem {
+  token: string;
+}
+
+interface ParseResult {
+  path: string;
+  items: SyntaxItem[];
+  diagnostics: string[];
+  scannerCommentRanges: Set<string>;
+  auditedCommentRanges: Set<string>;
+}
+
+interface CompilerSource {
+  parseDiagnostics: Array<{
+    messageText: string | { messageText: string };
+  }>;
+  getLineAndCharacterOfPosition(position: number): { line: number };
+}
+
+interface CompilerNode {
+  parent: CompilerNode;
+  kind: number;
+  pos: number;
+  end: number;
+  name: CompilerNode;
+  expression: CompilerNode;
+  text: string;
+  getStart(source: CompilerSource): number;
+  getText(source: CompilerSource): string;
+  getSourceFile(): CompilerSource;
+}
+
+function trackedPaths(): string[] {
+  return execFileSync(
+    "git",
+    ["-C", REPO_ROOT, "ls-files", "-z", "--", ...EXPECTED_ROOTS],
+    { encoding: "utf8" },
+  )
+    .split("\0")
+    .filter(Boolean);
+}
+
+function stripExact(text: string, tokens: readonly string[]): string {
+  let remainder = text;
+  for (const token of tokens) {
+    remainder = remainder.split(token).join("");
   }
-  if (!stats.isDirectory()) {
-    return results;
+  return remainder;
+}
+
+function stripContextualKeeps(text: string, purpose: string): string {
+  let remainder = text
+    .replace(HEX_COLOR_RE, "")
+    .replace(ISSUE_RE, "");
+  remainder = stripExact(remainder, KEEP_WIRE_TOKENS);
+  remainder = stripExact(remainder, KEEP_FIXTURE_TOKENS);
+
+  const context = text + " " + purpose;
+  if (/\b(?:CEFR|difficulty|reading level)\b/i.test(context)) {
+    remainder = remainder.replace(CEFR_RE, "");
+  }
+  if (/\bArticle RAG\b/i.test(context)) {
+    remainder = remainder.replace(ARTICLE_RAG_RE, "");
+  }
+  if (
+    /(?:SEGMENT_ID|segment_id|unit_id|sentence_id|summary_id|chunk_id|block_id|fixture_identity)/i.test(
+      context,
+    )
+  ) {
+    remainder = remainder.replace(SEGMENT_TOKEN_RE, "");
+  }
+  if (context.includes("reading_bases")) {
+    remainder = remainder.replace(D3_READING_BASE_RE, "");
+  }
+  return remainder;
+}
+
+function taskTokens(
+  text: string,
+  purpose = "",
+  kind: SyntaxItem["kind"] = "typescript_string_literal",
+): string[] {
+  if (kind === "tracked_filename" && TRACKED_FILENAME_RE.test(text)) {
+    return [text];
   }
 
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      const entryStats = statSync(full);
-      if (entryStats.isDirectory()) {
-        walk(full);
-      } else if (TEST_FILE_RE.test(entry)) {
-        results.push(relative(process.cwd(), full).replaceAll("\\", "/"));
-      }
+  const remainder = stripContextualKeeps(text, purpose);
+  const matches: Array<{ index: number; token: string }> = [];
+  for (const pattern of [
+    LABEL_RE,
+    MACHINE_RE,
+    SPECIAL_IDENTIFIER_RE,
+  ]) {
+    pattern.lastIndex = 0;
+    for (const match of remainder.matchAll(pattern)) {
+      matches.push({ index: match.index, token: match[0] });
     }
-  };
-
-  walk(absoluteRoot);
-  return results;
-}
-
-function stripIdentities(text: string): string {
-  let rest = text;
-  for (const identity of CODE_IDENTITY_ALLOWLIST) {
-    rest = rest.split(identity).join("");
   }
-  return rest;
+  const seen = new Set<string>();
+  return matches
+    .sort((left, right) => left.index - right.index)
+    .map(({ token }) => token)
+    .filter((token) => {
+      if (seen.has(token)) return false;
+      seen.add(token);
+      return true;
+    });
 }
 
-function hasTaskCode(text: string): boolean {
-  return TASK_CODE_LINE_RE.test(text) || TASK_CODE_EPIC_RE.test(text);
+function scriptKind(path: string): number {
+  if (path.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (path.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (path.endsWith(".js") || path.endsWith(".mjs")) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
 }
 
-describe("Naming governance guard: task numbers stay out of Web test names and sources", () => {
-  const scannedFiles: string[] = [];
-  for (const root of SCAN_ROOTS) {
-    scannedFiles.push(...listTestFiles(root));
+function lineOf(source: CompilerSource, position: number): number {
+  return source.getLineAndCharacterOfPosition(position).line + 1;
+}
+
+function nodePurpose(node: CompilerNode): string {
+  const parent = node.parent;
+  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+    return "variable:" + parent.name.text;
   }
+  if (ts.isPropertyAssignment(parent)) {
+    return "property:" + parent.name.getText(parent.getSourceFile());
+  }
+  if (ts.isJsxAttribute(parent)) {
+    return "jsx-attribute:" + parent.name.getText(parent.getSourceFile());
+  }
+  if (ts.isCallExpression(parent)) {
+    return "call:" + parent.expression.getText(parent.getSourceFile());
+  }
+  return ts.SyntaxKind[parent.kind] ?? "unknown";
+}
 
-  const actual = scannedFiles.filter((file) =>
-    TASK_NUMBER_NAME_RE.test(file.split("/").at(-1) ?? ""),
+function isStringNode(node: CompilerNode): boolean {
+  return (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    node.kind === ts.SyntaxKind.TemplateHead ||
+    node.kind === ts.SyntaxKind.TemplateMiddle ||
+    node.kind === ts.SyntaxKind.TemplateTail ||
+    node.kind === ts.SyntaxKind.JsxText
   );
+}
 
-  it("scanned at least one Web test file (guard is not vacuous)", () => {
-    expect(scannedFiles.length).toBeGreaterThan(0);
-  });
+function stringNodeText(node: CompilerNode, source: CompilerSource): string {
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    node.kind === ts.SyntaxKind.TemplateHead ||
+    node.kind === ts.SyntaxKind.TemplateMiddle ||
+    node.kind === ts.SyntaxKind.TemplateTail
+  ) {
+    return node.text;
+  }
+  return node.getText(source);
+}
 
-  it("matchers reject task-numbered samples and accept business identities", () => {
-    const nameMustMatch = [
-      "r1-example.test.ts",
-      "feature.p2c.test.ts",
-      "feature_t4.2a.test.ts",
-    ];
-    const nameMustPass = ["reader-ask-v2", "article-g5", "l1-heading"];
-    for (const name of nameMustMatch) {
-      expect(TASK_NUMBER_NAME_RE.test(name), `${name} must be rejected`).toBe(true);
+function scanTypeScript(relativePath: string): ParseResult {
+  const text = readFileSync(resolve(REPO_ROOT, relativePath), "utf8");
+  const source = ts.createSourceFile(
+    relativePath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(relativePath),
+  );
+  const diagnostics = source.parseDiagnostics.map(
+    (diagnostic: { messageText: string | { messageText: string } }) =>
+      typeof diagnostic.messageText === "string"
+        ? diagnostic.messageText
+        : diagnostic.messageText.messageText,
+  );
+  const items: SyntaxItem[] = [];
+  const scannerCommentRanges = new Set<string>();
+  const auditedCommentRanges = new Set<string>();
+
+  const visit = (node: CompilerNode): void => {
+    for (const range of ts.getLeadingCommentRanges(text, node.pos) ?? []) {
+      const key = range.pos + ":" + range.end;
+      auditedCommentRanges.add(key);
     }
-    for (const name of nameMustPass) {
-      expect(TASK_NUMBER_NAME_RE.test(name), `${name} must pass`).toBe(false);
+    for (const range of ts.getTrailingCommentRanges(text, node.end) ?? []) {
+      const key = range.pos + ":" + range.end;
+      auditedCommentRanges.add(key);
     }
 
-    // Source-line samples. Positive samples are built by concatenation
-    // so the guard's own source stays clean under its own scan.
-    const lineMustMatch = [
-      "B" + "7 batch",
-      "D" + "5 fence",
-      "D" + "6 migration",
-      "A" + "3 audit",
-      "A" + "4 audit",
-      "A" + "5 audit",
-      "ROUND" + "20 rerun",
-      "LP-R" + "3 gate",
-    ];
-    const lineMustPass = [
-      "D50 pseudo-prefix",
-      "A30 pseudo-prefix",
-      "d5 lowercase fixture",
-      "round20 lowercase",
-      "lp-r2 lowercase",
-      "reader-ask-v2",
-      "article-g5",
-      "l1-heading",
-      "G1 representation event",
-    ];
-    for (const sample of lineMustMatch) {
-      expect(hasTaskCode(sample), `${sample} must be rejected`).toBe(true);
+    if (ts.isIdentifier(node)) {
+      items.push({
+        path: relativePath,
+        kind: "typescript_identifier",
+        line: lineOf(source, node.getStart(source)),
+        text: node.text,
+        purpose: nodePurpose(node),
+      });
+    } else if (isStringNode(node)) {
+      items.push({
+        path: relativePath,
+        kind: "typescript_string_literal",
+        line: lineOf(source, node.getStart(source)),
+        text: stringNodeText(node, source),
+        purpose: nodePurpose(node),
+      });
     }
-    for (const sample of lineMustPass) {
-      expect(hasTaskCode(sample), `${sample} must pass`).toBe(false);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    relativePath.endsWith(".tsx") || relativePath.endsWith(".jsx")
+      ? ts.LanguageVariant.JSX
+      : ts.LanguageVariant.Standard,
+    text,
+  );
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    if (
+      token !== ts.SyntaxKind.SingleLineCommentTrivia &&
+      token !== ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      continue;
     }
-  });
+    const position = scanner.getTokenPos();
+    const end = scanner.getTextPos();
+    scannerCommentRanges.add(position + ":" + end);
+    const firstLine = lineOf(source, position);
+    for (const [offset, line] of text.slice(position, end).split(/\r?\n/).entries()) {
+      if (!line.trim()) continue;
+      items.push({
+        path: relativePath,
+        kind: "typescript_comment",
+        line: firstLine + offset,
+        text: line,
+        purpose: "comment",
+      });
+    }
+  }
 
-  it("no new task-numbered test file names outside the ratchet allowlist", () => {
-    const allowlist = new Set<string>(TASK_NUMBER_TEST_FILE_ALLOWLIST);
-    const unlisted = actual.filter((file) => !allowlist.has(file));
-    expect(
-      unlisted,
-      "new task-numbered test file names are forbidden; rename to a " +
-        "business name instead of allowlisting",
-    ).toEqual([]);
-  });
+  return {
+    path: relativePath,
+    items,
+    diagnostics,
+    scannerCommentRanges,
+    auditedCommentRanges,
+  };
+}
 
-  it("test-file allowlist size equals its ratchet ceiling", () => {
-    expect(TASK_NUMBER_TEST_FILE_ALLOWLIST.length).toBe(
-      TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING,
-    );
-  });
+function damageHits(items: readonly SyntaxItem[]): string[] {
+  const damage: string[] = [];
+  for (const item of items) {
+    if (/\b(?:pre-|LP-)\s*(?:$|[,.;:])/.test(item.text)) {
+      damage.push(item.path + ":" + item.line + ":dangling-prefix");
+    }
+    if (item.text.includes(String.fromCharCode(96).repeat(4))) {
+      damage.push(item.path + ":" + item.line + ":empty-inline-code");
+    }
+    if (/:[A-Za-z][\w.-]*:\s+\x60/.test(item.text)) {
+      damage.push(item.path + ":" + item.line + ":broken-sphinx-role");
+    }
+    if (/\x60[A-Za-z]/.test(item.text)) {
+      damage.push(item.path + ":" + item.line + ":role-adhesion");
+    }
+  }
+  return damage;
+}
 
-  // --- Fail-closed source line scan (strip-then-scan) ---
-  const scannedLines: { file: string; line: number; text: string }[] = [];
-  for (const file of scannedFiles) {
-    const lines = readFileSync(file, "utf8").split("\n");
-    lines.forEach((text, index) => {
-      scannedLines.push({ file, line: index + 1, text });
+const TRACKED_PATHS = trackedPaths();
+const TYPESCRIPT_PATHS = TRACKED_PATHS.filter((path) =>
+  [".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(
+    extname(path).toLowerCase(),
+  ),
+);
+const PARSE_RESULTS = TYPESCRIPT_PATHS.filter((path) => path !== GUARD_SELF).map(
+  scanTypeScript,
+);
+const ALL_ITEMS = PARSE_RESULTS.flatMap((result) => result.items);
+for (const relativePath of TYPESCRIPT_PATHS) {
+  const name = relativePath.split("/").at(-1) ?? "";
+  if (taskTokens(name, "", "tracked_filename").length > 0) {
+    ALL_ITEMS.push({
+      path: relativePath,
+      kind: "tracked_filename",
+      line: 0,
+      text: name,
+      purpose: "filename",
     });
   }
+}
 
-  const codeLines = scannedLines.filter(
-    ({ text }) =>
-      !text.includes("task-history:") && hasTaskCode(stripIdentities(text)),
-  );
+function residualHits(items: readonly SyntaxItem[]): GuardHit[] {
+  const acceptedSeen = new Map<string, number>();
+  const seenOccurrences = new Set<string>();
+  const hits: GuardHit[] = [];
+  for (const item of items) {
+    for (const token of taskTokens(item.text, item.purpose, item.kind)) {
+      const occurrence = [item.path, item.kind, item.line, token].join("\u001f");
+      if (seenOccurrences.has(occurrence)) continue;
+      seenOccurrences.add(occurrence);
+      const key = [item.path, item.kind, token].join("\u001f");
+      const seen = acceptedSeen.get(key) ?? 0;
+      if (seen < (ACCEPTED_SEMANTIC_KEEP_COUNTS.get(key) ?? 0)) {
+        acceptedSeen.set(key, seen + 1);
+        continue;
+      }
+      hits.push({ ...item, token });
+    }
+  }
+  return hits;
+}
 
-  it("no task codes in test sources outside task-history lines and listed identities", () => {
+describe("Syntax-aware task-history governance", () => {
+  it("scans every expected tracked root and a non-empty TypeScript bucket", () => {
+    for (const root of EXPECTED_ROOTS) {
+      expect(
+        TRACKED_PATHS.some(
+          (path) => path === root || path.startsWith(root + "/"),
+        ),
+        root,
+      ).toBe(true);
+    }
+    expect(TYPESCRIPT_PATHS.length).toBeGreaterThan(0);
+  });
+
+  it("parses every tracked TypeScript source with TypeScript 5.9.3", () => {
+    expect(ts.version).toBe("5.9.3");
+    expect(TYPESCRIPT_PATHS).toHaveLength(729);
+    expect(PARSE_RESULTS.length).toBeGreaterThan(0);
     expect(
-      codeLines.map((hit) => `${hit.file}:${hit.line}: ${hit.text.trim()}`),
-      "uppercase task codes may only survive on task-history lines; a " +
-        "listed identity is stripped before scanning and never shields a " +
-        "real task code on the same line",
+      PARSE_RESULTS.flatMap((result) =>
+        result.diagnostics.map(
+          (diagnostic) => result.path + ": " + diagnostic,
+        ),
+      ),
     ).toEqual([]);
   });
 
-  it("code identity allowlist equals its ratchet ceiling and has no stale entries", () => {
-    // Consumers are the other scanned test files only; this guard's own
-    // constants and regression samples do not count.
-    const externalText = scannedLines
-      .filter(({ file }) => file !== GUARD_SELF)
-      .map(({ text }) => text)
-      .join("\n");
-    const stale = CODE_IDENTITY_ALLOWLIST.filter(
-      (identity) => !externalText.includes(identity),
+  it("cross-audits compiler comment ranges against scanner trivia", () => {
+    const counts = PARSE_RESULTS.reduce(
+      (total, result) => {
+        for (const range of result.scannerCommentRanges) {
+          total[
+            result.auditedCommentRanges.has(range) ? "shared" : "scannerOnly"
+          ] += 1;
+        }
+        for (const range of result.auditedCommentRanges) {
+          if (!result.scannerCommentRanges.has(range)) total.auditOnly += 1;
+        }
+        return total;
+      },
+      { shared: 0, scannerOnly: 0, auditOnly: 0 },
     );
-    expect(stale, "remove stale code identity allowlist entries").toEqual([]);
-    expect(CODE_IDENTITY_ALLOWLIST.length).toBe(CODE_IDENTITY_ALLOWLIST_CEILING);
+    expect(counts.shared).toBeGreaterThan(0);
+    expect(counts.scannerOnly).toBeGreaterThan(0);
+    expect(counts.auditOnly).toBeGreaterThan(0);
   });
 
-  it("identity exemption strips exact identities instead of passing the whole line", () => {
-    // Regression: a listed identity on a line must NOT shield a real task
-    // code on the same line. The code token is built by concatenation so
-    // the guard's own source stays clean under its own scan.
-    const realCode = "R" + "2";
-    const identityOnly = 'record({ readingRecordId: "p1", title: "P1" });';
-    const mixedLine = `record({ title: "P1" }); // ${realCode} follow-up`;
-    const specCase = `const fixture = "s1"; // ${realCode} follow-up`;
-    expect(hasTaskCode(stripIdentities(identityOnly))).toBe(false);
-    expect(hasTaskCode(stripIdentities(mixedLine))).toBe(true);
-    expect(hasTaskCode(stripIdentities(specCase))).toBe(true);
+  it("enforces mandatory ordinary-string boundary samples", () => {
+    const mustFail = [
+      "Phase " + "2 in process prose",
+      "Task " + "5 task-label output",
+      "R" + "4-A3 cleanup",
+      "D" + "6-I3Q",
+      "ReaderRecordAsk" + "R4A3",
+      "load_r4_a3_dataset and " + "task_label",
+    ];
+    const tick = String.fromCharCode(96);
+    const mustPass = [
+      "CEFR A1/A2/B1/B2/C1/C2 business fields",
+      "SEGMENT_ID_U1_S1 and related fixture identities",
+      "Article RAG B1/B2/B3 chunk identities",
+      "d3-p1/d3-p4 reading_bases versions",
+      "d6_i3b_plain_text_markdown_v1",
+      "r14_complex",
+      "#A66445 and #B45309 colors",
+      ":class:" + tick + "ReaderRecord" + tick,
+      "issue #1234 and issue #5678",
+    ];
+    for (const sample of mustFail) {
+      expect(taskTokens(sample), sample).not.toEqual([]);
+    }
+    for (const sample of mustPass) {
+      expect(taskTokens(sample), sample).toEqual([]);
+    }
+  });
+
+  it("rescans the same syntax item after stripping an exact wire token", () => {
+    const wire = KEEP_WIRE_TOKENS[0];
+    expect(taskTokens(wire)).toEqual([]);
+    expect(taskTokens(wire + "; " + "R" + "7 cleanup")).toEqual(["R7"]);
+  });
+
+  it("detects mechanical damage in changed syntax items", () => {
+    const clean: SyntaxItem = {
+      path: "sample.ts",
+      kind: "typescript_comment",
+      line: 1,
+      text: "Business behavior.",
+      purpose: "comment",
+    };
+    expect(damageHits([clean])).toEqual([]);
+    expect(
+      damageHits([{ ...clean, text: "dangling " + "pre" + "-;" }]),
+    ).not.toEqual([]);
+  });
+
+  it("keeps the changed Web guard free of mechanical damage", () => {
+    expect(damageHits(scanTypeScript(GUARD_SELF).items)).toEqual([]);
+  });
+
+  it("has no task-history residuals after the accepted rolling cleanup", () => {
+    const hits = residualHits(ALL_ITEMS);
+    expect(
+      hits
+        .slice(0, 80)
+        .map(
+          (hit) =>
+            hit.path +
+            ":" +
+            hit.line +
+            ":" +
+            hit.kind +
+            ":" +
+            hit.token +
+            ":" +
+            hit.purpose,
+        ),
+      "expected RED until accepted residual inventory reaches zero; " +
+        "total=" +
+        hits.length,
+    ).toEqual([]);
   });
 });

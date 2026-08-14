@@ -19,7 +19,7 @@ from app.services.reader_orchestration.schema_health import (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check Reader D5/D6 schema health for local/dev databases."
+        description="Check Reader schema health for local/dev databases."
     )
     parser.add_argument(
         "--schema-name",
@@ -56,7 +56,7 @@ async def _run() -> int:
     if report.ok:
         print(
             f"Reader schema health OK for schema '{report.schema_name}'. "
-            "D5 attribution objects and D6 user asset anchor objects are present."
+            "attribution objects and user asset anchor objects are present."
         )
         return 0
 

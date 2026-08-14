@@ -1,8 +1,8 @@
-"""R4-A4-2R2 — Runtime fixture identity (model-visible, deterministic).
+"""Runtime fixture identity (model-visible, deterministic).
 
 Purpose
 -------
-Closes the R4-A4-2R audit gap: ``expected_envelope_fingerprint`` bound
+Closes the audit gap: ``expected_envelope_fingerprint`` bound
 the runtime envelope metadata (record_id / base_id / generation /
 base_content_sha256 / visible_range) but did NOT bind the actual
 model-visible baseline chunks. A BBC runtime record's envelope could
@@ -10,7 +10,7 @@ match while its baseline chunks contained a year (``2015``) the
 dataset's ``allowed_temporal_claims`` did not declare — the evaluator
 then misjudged a body-supported year as a hallucination.
 
-R4-A4-2R2 replaces the envelope-only binding with a true
+The current contract replaces the envelope-only binding with a true
 model-visible fixture identity: ``runtime_fixture_fingerprint`` — a
 deterministic SHA-256 over
 
@@ -125,13 +125,13 @@ def compute_runtime_fixture_fingerprint(
     hasher = hashlib.sha256()
     hasher.update(_FRAMING_VERSION_TAG)
 
-    # Phase 1: baseline completeness/status.
+    # Baseline completeness/status.
     status_bytes = baseline_status.encode("utf-8")
     hasher.update(len(status_bytes).to_bytes(8, "big", signed=False))
     hasher.update(status_bytes)
     hasher.update(bytes([1 if is_complete else 0]))
 
-    # Phase 2: ordered model-visible chunk text (NO handle_id, NO
+    # Ordered model-visible chunk text (NO handle_id, NO
     # unit_id, NO base_id, NO record UUID, NO path, NO timestamp).
     sorted_chunks = sorted(chunks, key=lambda c: c[0])
     hasher.update(len(sorted_chunks).to_bytes(8, "big", signed=False))
@@ -150,8 +150,8 @@ def compute_runtime_fixture_fingerprint(
 # ---------------------------------------------------------------------------
 
 # Lightweight atomic-fact view: (fact_id, source_aliases, required).
-# The harness extracts these from ``ReaderRecordAskR4A3Case.expected.
-# atomic_facts`` so this module does NOT import the schema.
+# The harness extracts these from the case's expected atomic facts so
+# this module does NOT import the schema.
 RuntimeFixtureAtomicFactView = tuple[str, tuple[str, ...], bool]
 
 
@@ -160,7 +160,7 @@ def precheck_required_facts_support(
     atomic_facts: Sequence[RuntimeFixtureAtomicFactView],
     chunks: Sequence[RuntimeFixtureChunkView],
 ) -> list[str]:
-    """R4-A4-2R2 P0-3: verify every required atomic fact is supported
+    """Verify every required atomic fact is supported
     by ≥1 model-visible chunk BEFORE any paid provider call.
 
     For each ``required=True`` atomic fact with non-empty

@@ -65,7 +65,7 @@ WebSearchOutcome = Literal[
 
 # Provider-neutral execution truth. ``provider_native`` means the model
 # decides and executes web search inside a single provider call
-# (R4-Ask-Web G2 — not yet wired). ``host_function`` means the agent
+# (G2 — not yet wired). ``host_function`` means the agent
 # calls the host-owned ``search_web`` function tool (G1 vertical slice).
 WebSearchExecutionMode = Literal["provider_native", "host_function"]
 WebSearchDecisionMode = Literal["agent_auto"]
@@ -86,7 +86,7 @@ WEB_DESCRIPTION_MAX_LEN: int = 1_024
 WEB_QUERY_MAX_LEN: int = 1_000
 WEB_MAX_RESULTS_PER_CALL: int = 5
 WEB_MAX_CALLS_PER_TURN: int = 2
-# Frozen R5 latency budget. The host applies the remaining turn deadline to
+# Frozen latency budget. The host applies the remaining turn deadline to
 # every call and providers receive the smaller of these two caps.
 WEB_SEARCH_TURN_DEADLINE_SECONDS: float = 25.0
 WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS: float = 18.0
@@ -330,7 +330,7 @@ class ResolvedWebSearchCapability(BaseModel):
     protocol: WebSearchProtocol
     execution_mode: WebSearchExecutionMode = "host_function"
     decision_mode: WebSearchDecisionMode = "agent_auto"
-    # R5 freezes the lifecycle to two provider attempts. The second can only
+    # Freezes the lifecycle to two provider attempts. The second can only
     # follow an initial ``no_results`` outcome; the coordinator enforces that
     # state transition independently of this declarative capability.
     max_calls: int = Field(default=2, ge=1, le=WEB_MAX_CALLS_PER_TURN)
@@ -375,7 +375,7 @@ class WebEvidence(BaseModel):
         description="Internal-only provider result id; never on public DTO.",
     )
     source_fingerprint: str = Field(pattern=WEB_SOURCE_FINGERPRINT_PATTERN)
-    # R5: retain optional provider freshness metadata internally. Only a
+    # Retain optional provider freshness metadata internally. Only a
     # strict ``YYYY-MM-DD`` provider value becomes ``published_at``;
     # datetimes and malformed values become ``None``. ``page_age`` remains
     # raw provider text for internal use and is never a public freshness claim.
@@ -426,7 +426,7 @@ class WebEvidence(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# ASK-WEB-G1-R3: ``PublicWebCitation`` has been removed. The single
+# ASK-WEB-G1-``PublicWebCitation`` has been removed. The single
 # canonical public citation contract is :class:`PublicCitation` in
 # ``app.services.reader_record_ask.finalizer``. It supports both
 # ``article`` and ``web`` source kinds (discriminated union), enforces

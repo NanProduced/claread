@@ -1,6 +1,6 @@
-"""D6-I2D-B Candidate Document Confirm Application Service.
+"""Candidate Document Confirm Application Service.
 
-Wraps D6-I2D-A's :func:`confirm_candidate_document` in a full
+Wraps the :func:`confirm_candidate_document` in a full
 application service that transitions a candidate document into a
 readable Reader state within a single caller-independent transaction.
 
@@ -8,7 +8,7 @@ Normal transaction flow (strict order):
     1. ``frozen_at = now or datetime.now(UTC)``
     2. ``async with pool.acquire() as conn``
     3. ``async with conn.transaction()``
-    4. Call :func:`confirm_candidate_document` (D6-I2D-A) — freezes the
+    4. Call :func:`confirm_candidate_document` — freezes the
        candidate into a stable document + canonical text layer +
        confirms the candidate row.
     5. Fail closed if ``freeze_result.base_id is None``.
@@ -27,7 +27,7 @@ Normal transaction flow (strict order):
     9. Return a :class:`CandidateDocumentConfirmApplicationResult`
        mapping freeze result + event envelope + snapshot.
 
-Confirmed-candidate recovery path (D6-I2D-B-H):
+Confirmed-candidate recovery path:
     When :func:`confirm_candidate_document` raises
     :class:`CandidateDocumentStatusError` with ``status='confirmed'``
     (i.e. a prior attempt committed the freeze + state + event but
@@ -52,7 +52,7 @@ Confirmed-candidate recovery path (D6-I2D-B-H):
     closed — they do NOT enter recovery.
 
 Error strategy:
-    * :class:`CandidateDocumentConfirmError` from D6-I2D-A is wrapped
+    * :class:`CandidateDocumentConfirmError` is wrapped
       as :class:`CandidateDocumentConfirmApplicationError` with
       ``raise ... from exc``.
     * :class:`CandidateDocumentStatusError` with ``status='confirmed'``
@@ -113,7 +113,7 @@ class CandidateDocumentConfirmApplicationError(ValueError):
     """Raised when the application service cannot complete the
     candidate document confirmation flow.
 
-    Wraps :class:`CandidateDocumentConfirmError` (from D6-I2D-A) and
+    Wraps :class:`CandidateDocumentConfirmError` and
     ``ValueError`` / ``LookupError`` / ``RuntimeError`` /
     ``TypeError`` from the repository / event runtime / snapshot
     service. The original exception is preserved as ``__cause__``.
@@ -144,7 +144,7 @@ class StaleCandidateRevisionApplicationError(
 
 @dataclass(frozen=True, slots=True)
 class CandidateDocumentConfirmApplicationResult:
-    """Application-layer result mapping the D6-I2D-A freeze result,
+    """Application-layer result mapping the freeze result,
     the ``article_ready`` event envelope, and the reloaded snapshot.
     """
 
@@ -187,7 +187,7 @@ class CandidateDocumentConfirmApplicationService:
     transitions the reading record into a readable state.
 
     The service acquires its own pool connection, opens its own
-    transaction, and delegates to D6-I2D-A
+    transaction, and delegates to
     :func:`confirm_candidate_document` for the freeze logic. After
     commit, it reloads the snapshot.
     """
@@ -272,7 +272,7 @@ class CandidateDocumentConfirmApplicationService:
         # ------------------------------------------------------------------
         async with pool.acquire() as conn:
             async with conn.transaction():
-                # (1) Confirm candidate document (D6-I2D-A).
+                # (1) Confirm candidate document.
                 try:
                     freeze_result = await confirm_candidate_document(
                         conn,
@@ -354,7 +354,7 @@ class CandidateDocumentConfirmApplicationService:
                             f"{reading_record_id} as article_ready: {exc}"
                         ) from exc
 
-                    # D6-I4V: Article RAG index auto-ensure (fail-soft).
+                    # Article RAG index auto-ensure (fail-soft).
                     rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
                         conn,
                         reading_record_id=reading_record_id,

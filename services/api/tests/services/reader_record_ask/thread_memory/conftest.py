@@ -1,11 +1,11 @@
 """Conftest for thread_memory tests.
 
-Injects the A1 fallback stub (``_stub.py``) into ``sys.modules`` only
-when A1's real ``schema.py`` / ``mapping.py`` modules are not yet on
-disk. Once A1 lands those modules, the real imports win and the stub
+Injects the fallback stub (``_stub.py``) into ``sys.modules`` only
+when real ``schema.py`` / ``mapping.py`` modules are not yet on
+disk. Once the base contracts land those modules, the real imports win and the stub
 injection becomes a no-op.
 
-A1 stub: 待 A1 完成后移除
+ stub: 待 完成后移除
 """
 
 from __future__ import annotations

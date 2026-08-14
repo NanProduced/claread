@@ -1,4 +1,4 @@
-"""D6-I4F: Article RAG Context Pack Service.
+"""Article RAG Context Pack Service.
 
 Converts the result of :class:`ArticleRagRetrievalService` into a
 deterministic, LLM/Ask-consumable context pack.  No DB writes, no
@@ -421,7 +421,7 @@ def _scrub_provider_metadata(
 ) -> dict[str, Any]:
     """Whitelist ``provider_metadata`` down to safe scalar fields.
 
-    Reviewer P2 fix (round 2): the previous denylist-based scrub
+    A denylist-based scrub is insufficient because it
     only dropped known-bad key names.  Unknown keys with sensitive
     values (e.g. ``{"diagnostic": "SECRET-QUERY..."}`` or
     ``{"provider": ["token=..."]}``) still passed through.  This

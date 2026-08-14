@@ -1,10 +1,10 @@
 """``reader_parse_eval_artifact.v1`` — strict typed artifact contract.
 
 This is the **portable, serializable contract** for the Reader
-parse-eval first vertical slice (Task 5A-R1 of the Reader Agentic
+parse-eval first vertical slice (- of the Reader Agentic
 Orchestration initiative).
 
-R1 changes from the previous monolithic ``parse_eval_artifact.py``:
+ changes from the previous monolithic ``parse_eval_artifact.py``:
 
 1. **Published layers carry reviewable evidence**, not just counts.
    Each non-empty layer carries either a typed
@@ -406,9 +406,9 @@ class VocabularyNormalizedOutput(BaseModel):
     items: list[VocabularyItemFact] = Field(min_length=1)
 
 
-#: Discriminated union over ``layer_type``. V1 covers translation +
-#: vocabulary. Adding a new typed normalized output requires extending
-#: this union and bumping ``PRODUCER_SEMANTIC_VERSION``.
+# Discriminated union over ``layer_type``. V1 covers translation +
+# vocabulary. Adding a new typed normalized output requires extending
+# this union and bumping ``PRODUCER_SEMANTIC_VERSION``.
 NormalizedLayerOutput = Annotated[
     TranslationNormalizedOutput | VocabularyNormalizedOutput,
     Field(discriminator="layer_type"),

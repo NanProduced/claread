@@ -45,7 +45,7 @@ class TestListCanonicalMessages:
         # SQL filters: user message always; assistant only if status='completed'
         # and an ok turn_run exists for the message (H2: not via
         # current_turn_run_id).
-        # R1.6.1 P0-1: repository outputs canonical_turn_run_id from the
+        # Repository outputs canonical_turn_run_id from the
         # LATERAL JOIN (latest ok turn_run id), NOT the message row's
         # current_turn_run_id.
         canonical_run_id = UUID("66666666-6666-4666-8666-666666666666")
@@ -58,7 +58,7 @@ class TestListCanonicalMessages:
                 "content_md": "question",
                 "created_at": "2026-01-01T00:00:00Z",
                 "current_turn_run_id": None,
-                # R1.6.1 P0-1: LATERAL JOIN returns None for user messages
+                # LATERAL JOIN returns None for user messages
                 # (no ok turn_run). Repository outputs canonical_turn_run_id=None.
                 "canonical_turn_run_id": None,
                 "answer_blocks_json": None,
@@ -86,7 +86,7 @@ class TestListCanonicalMessages:
         assert result[0]["role"] == "user"
         assert result[0]["answer_blocks"] == []
         assert result[0]["web_search_summary"] is None
-        # R1.6.1 P0-1: canonical_turn_run_id is an explicit output field.
+        # Canonical_turn_run_id is an explicit output field.
         assert result[0]["canonical_turn_run_id"] is None
         assert result[1]["role"] == "assistant"
         # current_turn_run_id is the message-row field (may differ from canonical).
@@ -111,7 +111,7 @@ class TestListCanonicalMessages:
 
 class TestListOkTurnRuns:
     async def test_returns_latest_ok_run_per_message_distinct_on(self) -> None:
-        # R1.6 P0-3 + R1.6.1 P0-1: DISTINCT ON (message_id) — only the
+        # DISTINCT ON (message_id) — only the
         # LATEST ok run per assistant message is returned. A successful
         # regenerate produces a new ok run (r_new) with a later
         # created_at; the old ok run (r_old) is EXCLUDED so its bindings
@@ -156,7 +156,7 @@ class TestListOkTurnRuns:
         assert conn.fetch.await_args.args[1] == THREAD_ID
 
     async def test_failed_retry_preserves_old_ok_run(self) -> None:
-        # R1.6.1 P0-1: failed/cancelled retry does NOT produce a new ok
+        # Failed/cancelled retry does NOT produce a new ok
         # run. The old ok run remains the latest (and only) ok run for
         # the message → DISTINCT ON returns it → bindings unchanged.
         conn = AsyncMock()

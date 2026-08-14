@@ -1,4 +1,4 @@
-# task-history: T5.6b-P1 (renamed from test_reader_section_seams_t56b.py)
+# task-history: (renamed from test_reader_section_seams_t56b.py)
 """Dynamic seam tests against real PostgreSQL.
 
 Covers CV-02 (coverage count isolation), WL-01/02/03 (worker candidate SQL),
@@ -46,7 +46,7 @@ from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABA
 pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
-# translate_article / unit_range batch job types (T1.1)
+# translate_article / unit_range batch job types
 
 
 @pytest.fixture

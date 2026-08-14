@@ -1,4 +1,4 @@
-"""D6-I1 Stable Document Block domain validator and plain-text composer.
+"""Stable Document Block domain validator and plain-text composer.
 
 Scope: domain-level helpers for StableReadingDocument / StableDocumentBlock.
 This module does NOT depend on asyncpg, the DB connection pool, the web

@@ -71,7 +71,7 @@ READER_ANCHOR_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     READER_NOTES_TABLE: READER_ANCHOR_COLUMNS,
 }
 
-# DATA-SCHEMA-BASELINE D2: legacy dual-contract columns are dropped from the
+# DATA-SCHEMA-BASELINE legacy dual-contract columns are dropped from the
 # baseline, so there are no legacy columns left to require-nullable.
 READER_ANCHOR_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {}
 
@@ -225,7 +225,7 @@ def format_reader_schema_health_failure(
         lines.extend(
             (
                 "",
-                "D6 Reading Record user asset schema is incomplete.",
+                "Reading Record user asset schema is incomplete.",
                 "Required baseline: `infra/migrations/0001_initial.sql`.",
                 "Old Docker volumes do not automatically re-run "
                 "`/docker-entrypoint-initdb.d/` when the baseline changes.",
@@ -243,13 +243,13 @@ def format_reader_schema_health_failure(
         lines.extend(
             (
                 "",
-                "D5 attribution schema is incomplete.",
+                "Attribution schema is incomplete.",
             )
         )
     lines.extend(
         (
-            "The current repo baseline includes these D5 attribution fields, "
-            "indexes, and FKs plus the D6 user asset anchor columns/indexes in "
+            "The current repo baseline includes these attribution fields, "
+            "indexes, and FKs plus the user asset anchor columns/indexes in "
             "`infra/migrations/0001_initial.sql`.",
             "This usually means your local database was created before the current "
             "fresh baseline or was only partially reset.",

@@ -230,7 +230,7 @@ for (const cmd of [
 // deleted; the legacy Eval control-plane tables are simply not part of
 // the single fresh baseline anymore.
 if (existsSync(resolve(REPO_ROOT, INIT_SCRIPT_REL))) {
-  errors.push(`${INIT_SCRIPT_REL} must stay physically deleted after DATA-SCHEMA-BASELINE D2`);
+  errors.push(`${INIT_SCRIPT_REL} must stay physically deleted after the DATA-SCHEMA-BASELINE single-fresh-init contract`);
 }
 
 // reader-orch source must expose the four read-only routes (relative to endpoint name).

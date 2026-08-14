@@ -5,8 +5,8 @@ from claread_eval.reader_record_ask.evaluators.unsupported_temporal_claims impor
     evaluate_unsupported_temporal_claims,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
@@ -14,8 +14,8 @@ def _make_case(
     *,
     allowed: list[str] | None = None,
     must_declare_no_year: bool = False,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-temporal",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -23,7 +23,7 @@ def _make_case(
         baseline_mode="complete",
         question="文章是什么时候发布的？",
         question_category="publish_date",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             allowed_temporal_claims=allowed or [],
             must_declare_no_year=must_declare_no_year,
         ),

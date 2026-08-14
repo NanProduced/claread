@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         WebEvidenceRegistry,
     )
 
-# R4-A4-2R5R3 Issue #1: typed execution-stage evidence. This Literal is
+# Issue #1: typed execution-stage evidence. This Literal is
 # the single source of truth for the runtime's execution-stage state
 # machine. The runtime writes ``RuntimeObservation.execution_stage`` at
 # each transition point; the harness classifier reads it to distinguish
@@ -71,7 +71,7 @@ ExecutionStage = Literal[
 
 @dataclass(slots=True)
 class RuntimeObservation:
-    """R4-A4-2R5R2 + R4-A4-2R5R3: internal-only typed observation seam
+    """internal-only typed observation seam
     with PRECISE retry evidence AND typed execution-stage evidence.
 
     A mutable container written by :func:`run_reading_record_ask` at key
@@ -91,8 +91,8 @@ class RuntimeObservation:
       container so concurrency-safe by construction; the run result is
       structurally unaffected because the runtime never READS from the
       container.
-    - Design B was selected because it satisfies Task 1 (baseline
-      capture) and Task 2 (precise retry evidence) with a single
+    - Design B was selected because it satisfies (baseline
+      capture) and (precise retry evidence) with a single
       internal-only seam, and the "observer failure must not silently
       change the answer" requirement is trivially satisfied: there is
       no callback to fail.
@@ -101,7 +101,7 @@ class RuntimeObservation:
     contract. Never serialised. Never returned from
     :func:`run_reading_record_ask` on the result object.
 
-    R4-A4-2R5R2 Task 1: the single ``output_validation_attempts`` counter
+     The single ``output_validation_attempts`` counter
     has been SPLIT into two PRECISE counters:
 
     - ``output_validation_final_attempts``: incremented ONLY when the
@@ -126,7 +126,7 @@ class RuntimeObservation:
       internal error before retry budget exhausted).
     - Partial-mode calls inflated the old single counter.
 
-    R4-A4-2R5R3 Issue #1: typed execution-stage state machine. The
+     Issue #1: typed execution-stage state machine. The
     ``execution_stage`` field is written by the runtime at each
     transition point and read by the harness classifier to distinguish
     ``ValidationError`` raised DURING ``agent.run`` (where the output
@@ -180,7 +180,7 @@ class RuntimeObservation:
             :func:`grounding_validator` via a try/except wrapper
             around ALL final-mode validation branches — covers every
             raise site without scattering increments.
-        execution_stage: R4-A4-2R5R3 typed execution-stage evidence.
+        execution_stage: typed execution-stage evidence.
             ``None`` until the runtime writes the first transition
             (legacy / pre-agent-run). The harness reads this on the
             exception path to disambiguate ``ValidationError`` source.
@@ -196,7 +196,7 @@ class RuntimeObservation:
     output_validation_object_ids: list[int] = field(default_factory=list)
     validated_artifact_object_ids: list[int] = field(default_factory=list)
     transport_final_output_object_id: int | None = None
-    # R4-A4-2R5R3 Issue #1: typed execution-stage evidence. Written by
+    # Issue #1: typed execution-stage evidence. Written by
     # the runtime at each transition point (see class docstring). Read
     # by the harness classifier on the exception path. ``None`` means
     # either a legacy observation container or an assembly-phase
@@ -223,7 +223,7 @@ class ReaderRecordAskDeps:
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS
     events: list[RuntimeEvent] = field(default_factory=list)
     event_sink: RuntimeEventSink | None = None
-    # R4-A4-2R5R2 Task 1+2: internal-only observation seam. ``None`` in
+    # 2: internal-only observation seam. ``None`` in
     # production and in tests that do not opt into observation. When
     # non-None, the runtime writes ``baseline_context`` after assembly
     # and the grounding output_validator increments
@@ -233,7 +233,7 @@ class ReaderRecordAskDeps:
     # success path and the exception path. Never serialised, never
     # enters public DTO or persistence.
     observation: RuntimeObservation | None = None
-    # R4-A5-7: production turn coordinator (expand / RAG tool paths).
+    # Production turn coordinator (expand / RAG tool paths).
     # ``None`` only for legacy offline tests that never call tools.
     turn_coordinator: TurnCoordinator | None = None
     # G0-b7: web search capability + port + registry + call counter.

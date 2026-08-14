@@ -1,4 +1,4 @@
-"""Bounded semantic outline worker (T5.3a).
+"""Bounded semantic outline worker.
 
 Reads stable base/unit/anchor metadata + bounded previews only.
 Model/executor returns candidate refs; publisher maps to opaque ids.
@@ -106,7 +106,7 @@ class SemanticOutlineExecutionResult:
     worker_failure: bool = False
     model: str | None = None
     usage_data: dict[str, Any] | None = None
-    # T5.8b provenance (optional until real adapter)
+    # Provenance (optional until real adapter)
     prompt_version: str | None = None
     model_route: str | None = None
     model_profile: str | None = None
@@ -152,7 +152,7 @@ class SemanticOutlineGenerationError(Exception):
     errors — worker must fail-closed without blind retry.
     Transient (``retryable=True``): reuses the job's bounded retry path.
 
-    ``provider_call_made`` + optional ``usage_data`` drive T5.8 usage rules:
+    ``provider_call_made`` + optional ``usage_data`` drive usage rules:
     call with usage → one event; zero call / timeout without usage → zero events.
     """
 

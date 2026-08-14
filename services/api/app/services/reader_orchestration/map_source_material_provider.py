@@ -4,7 +4,7 @@ Implements contract docs/initiatives/reader-agentic-orchestration/modules/ask-cl
 v5 sections §3.5.1.1 (唯一规范签名), §3.5.1 (opt-in control plane),
 §3.4 (preflight fence validation), §5.1 6(b) (material fence failure
 fallback), §5.1 26 (provider authorization subject), §4.2 / §5.2
-(B3 heading enrichment).
+(heading enrichment).
 
 This module is the M3-side server-only provider. It:
 
@@ -15,8 +15,8 @@ This module is the M3-side server-only provider. It:
   :meth:`ArticleRagIndexPlanService.build_index_plan(record_id=
   envelope.reading_record_id, user_id=envelope.user_id,
   include_rag_ask_only=include_rag_ask_only)` after material fence
-  checks pass — heading extraction (B3) runs regardless of opt-in
-  because heading belongs to ``main_reading`` (§3.5.2 B3 heading-enabled
+  checks pass — heading extraction runs regardless of opt-in
+  because heading belongs to ``main_reading`` (§3.5.2 heading-enabled
   baseline).
 - Validates material fence (envelope ↔ plan identity).
 - When ``include_rag_ask_only=False`` (default, §5.1 3): extracts
@@ -57,7 +57,7 @@ is delegated to :func:`build_descriptor_from_chunk` in
 :mod:`source_evidence_descriptor` — it fail-closes individual chunks
 without aborting the whole material.
 
-B3 heading enrichment scope (§4.2 / §5.2)
+ heading enrichment scope (§4.2 §5.2)
 -----------------------------------------
 Heading chunks are ``metadata_json["block_type"] == "heading"`` plan
 chunks (``main_reading`` route, canonical UTF-16 range set). Each
@@ -65,7 +65,7 @@ heading is associated with the first reading unit (chunk with non-empty
 ``citation.unit_ids``) whose ``canonical_text_start_utf16`` is strictly
 greater than the heading's ``canonical_text_end_utf16`` (i.e. the unit
 that begins after the heading in canonical order). Heading material is
-part of the B3 heading-enabled baseline (§3.5.2) — populated regardless
+part of the heading-enabled baseline (§3.5.2) — populated regardless
 of ``include_rag_ask_only`` opt-in.
 
 Infrastructure failures (e.g. asyncpg connection errors) are NOT
@@ -99,10 +99,10 @@ from app.services.reader_record_ask.context_envelope import (
 # Material fence diagnostic enum (server-only, never model-visible)
 # ---------------------------------------------------------------------------
 
-#: Safe fixed diagnostic values for ``MapSourceMaterial.material_failure_reason``.
-#: Per §5.1 6(b) / project convention, never interpolates raw exception text,
-#: caller-supplied values, or record identities. Used only for server-side
-#: logging / metrics; never enters DTO / SSE / model-visible output.
+# Safe fixed diagnostic values for ``MapSourceMaterial.material_failure_reason``.
+# Per §5.1 6(b) / project convention, never interpolates raw exception text,
+# caller-supplied values, or record identities. Used only for server-side
+# logging / metrics; never enters DTO / SSE / model-visible output.
 MaterialFailureReason = Literal[
     # Material fence OK; descriptor_sources (possibly empty) is safe to use.
     "ok",
@@ -122,13 +122,13 @@ MaterialFailureReason = Literal[
 
 
 # ---------------------------------------------------------------------------
-# HeadingEnrichment — B3 stable-document canonical heading for one unit
+# HeadingEnrichment — stable-document canonical heading for one unit
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class HeadingEnrichment:
-    """B3 — stable-document canonical heading for one unit source.
+    """stable-document canonical heading for one unit source.
 
     Frozen contract interface between M3 owner (producer) and Ask owner
     (consumer). Pairs one ``unit_id`` with the canonical heading text
@@ -191,9 +191,9 @@ class MapSourceMaterial:
         retention guarantee, no ``stale_evidence`` /
         ``invalid_cursor`` produced for dropped candidates.
     heading_enrichments:
-        B3 heading material (§4.2 / §5.2). Populated whenever material
+         heading material (§4.2 §5.2). Populated whenever material
         fence passes — including when ``include_rag_ask_only=False``
-        (B3 heading-enabled baseline, §3.5.2). Empty when material
+        (heading-enabled baseline, §3.5.2). Empty when material
         fence failed (§5.1 6(b) integral fail-closed) OR when the plan
         contains no qualifying heading chunks / no units following any
         heading. Each entry pairs one ``unit_id`` with the heading
@@ -210,7 +210,7 @@ class MapSourceMaterial:
     # Candidate descriptor sources (possibly empty). Frozen tuple —
     # Ask owner must NOT mutate.
     descriptor_sources: tuple[ArticleMapEntrySource, ...] = ()
-    # B3 heading enrichments (possibly empty). Frozen tuple —
+    # Heading enrichments (possibly empty). Frozen tuple —
     # Ask owner must NOT mutate.
     heading_enrichments: tuple[HeadingEnrichment, ...] = ()
     # Server-only diagnostic (never model-visible). Fixed safe enum.
@@ -305,9 +305,9 @@ class MapSourceMaterialProvider:
                 ``False``). ``False`` (§5.1 3): no descriptor parsing,
                 ``descriptor_sources=()``. ``True``: build plan with
                 rag_ask_only chunks and parse descriptors per
-                §3.5.1.2. Heading enrichment (B3) is populated in
+                §3.5.1.2. Heading enrichment is populated in
                 BOTH cases — heading belongs to ``main_reading``
-                (§3.5.2 B3 heading-enabled baseline).
+                (§3.5.2 heading-enabled baseline).
 
         Returns:
             :class:`MapSourceMaterial` with ``material_fence_ok`` set
@@ -328,7 +328,7 @@ class MapSourceMaterialProvider:
         # §3.4 / §5.1 6(b): material fence — envelope must carry
         # stable_document_id (cannot verify plan ↔ envelope identity
         # without it). Runs regardless of include_rag_ask_only because
-        # heading extraction (B3) also requires material fence.
+        # heading extraction also requires material fence.
         if envelope.stable_document_id is None:
             return MapSourceMaterial(
                 material_fence_ok=False,
@@ -398,14 +398,14 @@ class MapSourceMaterialProvider:
                 material_failure_reason="base_content_sha256_mismatch",
             )
 
-        # Material fence passed — extract B3 heading enrichments.
+        # Material fence passed — extract heading enrichments.
         # §4.2 / §5.2: heading belongs to main_reading; populated
-        # regardless of include_rag_ask_only opt-in (§3.5.2 B3
+        # regardless of include_rag_ask_only opt-in (§3.5.2
         # heading-enabled baseline).
         heading_enrichments = _build_heading_enrichments(plan)
 
         # §5.1 3: descriptor parsing only when include_rag_ask_only=True.
-        # When False (default), descriptor_sources=() — B3 heading is
+        # When False (default), descriptor_sources= — heading is
         # the only enrichment produced.
         if not include_rag_ask_only:
             return MapSourceMaterial(
@@ -432,7 +432,7 @@ class MapSourceMaterialProvider:
 
 
 # ---------------------------------------------------------------------------
-# B3 heading enrichment builder (§4.2 / §5.2)
+# Heading enrichment builder (§4.2 §5.2)
 # ---------------------------------------------------------------------------
 
 
@@ -458,7 +458,7 @@ def _read_metadata_str(
 def _build_heading_enrichments(
     plan: ArticleRagIndexPlan,
 ) -> tuple[HeadingEnrichment, ...]:
-    """B3 — extract heading enrichments from plan chunks (§4.2 / §5.2).
+    """extract heading enrichments from plan chunks (§4.2 §5.2).
 
     Heading chunks are ``metadata_json["block_type"] == "heading"`` plan
     chunks. Heading chunks are ``main_reading`` route blocks with

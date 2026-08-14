@@ -1,5 +1,5 @@
 /**
- * Phase 2 / P1: 双 Parser Round-trip 一致性测试 fixtures。
+ * 双 Parser Round-trip 一致性测试 fixtures。
  *
  * 从后端 services/api/tests/fixtures/markdown_structured_source/ 同步而来
  * （手动复制，避免引入跨语言构建依赖）。后端 fixtures 是 G0 frozen 只读

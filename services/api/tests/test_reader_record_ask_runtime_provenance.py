@@ -302,7 +302,7 @@ async def test_general_block_cannot_claim_article_provenance(
 
 @pytest.mark.asyncio
 async def test_partial_coverage_host_derives_evidence_bounded_scope() -> None:
-    """ASK-WEB-R4: article_scope is host-derived (always evidence_bounded).
+    """ASK-WEB-article_scope is host-derived (always evidence_bounded).
 
     The model can no longer claim ``full_article`` — the host conservatively
     derives ``evidence_bounded`` for every ``basis=article`` block. Since

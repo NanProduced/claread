@@ -1,4 +1,4 @@
-# task-history: D6-I4Y (renamed from test_d6_i4y_article_rag_operational_readiness.py)
+# task-history: (renamed from test_d6_i4y_article_rag_operational_readiness.py)
 """Article RAG operational readiness tests.
 
 Proves the Article RAG pipeline is **locally operable, debuggable, and
@@ -280,7 +280,7 @@ class TestFactoriesReturnUnconfiguredByDefault:
                     record_generation=1,
                     plan_content_sha256="0" * 64,
                     chunk_count=0,
-                    # P1-G: embedding_model / embedding_dimension /
+                    # Embedding_model embedding_dimension /
                     # embedding_text_type are required fields sourced from
                     # the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  This
                     # construction only feeds an unconfigured writer which
@@ -397,7 +397,7 @@ class TestWorkerEntryScript:
         ):
             monkeypatch.delenv(var, raising=False)
 
-        result = subprocess.run(  # noqa: S603 — fixed args
+        result = subprocess.run( # noqa: — fixed args
             [
                 sys.executable,
                 "-m",

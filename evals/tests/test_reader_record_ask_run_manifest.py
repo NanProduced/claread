@@ -1,6 +1,6 @@
-"""Tests for ReaderRecordAskRunManifest (R4-A3 final closure Task 1).
+"""Tests for the ReaderRecordAskRunManifest final contract.
 
-Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
+Spec: the accepted run-manifest closure contract.
 Requirement: Run Manifest Persistence + Aggregate Coverage Audit.
 
 Covers:
@@ -668,9 +668,9 @@ def test_manifest_writer_uses_run_session_layout_manifest_path(
 
 
 # ===========================================================================
-# P0-1 adversarial tests — strict from_json rejection rules + writer
+# Adversarial tests — strict from_json rejection rules + writer
 # pre-write validation. Each test asserts a specific rejection rule from
-# the 10-rule P0-1 contract. Tests MUST NOT use set() to silently dedupe
+# the 10-rule strict contract. Tests MUST NOT use set() to silently dedupe
 # before validation — list uniqueness is verified upstream of any set
 # operation in production code, and these tests pin that contract.
 # ===========================================================================

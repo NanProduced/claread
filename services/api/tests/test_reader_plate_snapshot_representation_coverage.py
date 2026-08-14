@@ -1,4 +1,4 @@
-# task-history: LP-R4 (renamed from test_lp_r4_snapshot_representation_coverage.py)
+# task-history: plate snapshot representation coverage (renamed from historical LP suite)
 """Reader Plate Snapshot Representation Coverage characterization tests.
 
 These tests describe the CURRENT behavior of ``_build_snapshot_id`` and
@@ -20,7 +20,7 @@ and therefore ``snapshot_id``).
 
 The production event-publish mapping (which field changes publish
 reader_events and thus advance ``last_event_sequence``) is documented in
-the LP-R4 audit report and verified by code inspection, not by these
+the representation-coverage audit report and verified by code inspection, not by these
 unit tests — it requires DB-level integration tests that are out of
 scope for this read-only audit.
 """
@@ -465,7 +465,7 @@ def test_parsed_decision_count_advances_snapshot_id() -> None:
 # In production, SOME of these fields advance last_event_sequence via a
 # reader_event publish, which would INDIRECTLY advance snapshot_id. The
 # tests below isolate the DIRECT effect by holding last_event_sequence
-# constant. See the LP-R4 report for the full event-publish mapping.
+# constant. See the representation-coverage report for the full event-publish mapping.
 # ---------------------------------------------------------------------------
 
 
@@ -912,7 +912,7 @@ def test_snapshot_id_gap_fields_summary() -> None:
 
     This test exists so that if _build_snapshot_id is ever modified to
     hash any of these fields, the test will FAIL and force the auditor
-    to update the LP-R4 audit matrix.
+    to update the representation-coverage audit matrix.
 
     Fields NOT hashed (direct coverage gaps):
     - record.title, display_title_zh, title_generation_status,
@@ -971,5 +971,5 @@ def test_snapshot_id_gap_fields_summary() -> None:
     assert baseline.snapshot_id == varied.snapshot_id, (
         "snapshot_id changed when only non-hashed fields were varied. "
         "If _build_snapshot_id was modified to hash these fields, "
-        "update the LP-R4 audit matrix."
+        "update the representation-coverage audit matrix."
     )

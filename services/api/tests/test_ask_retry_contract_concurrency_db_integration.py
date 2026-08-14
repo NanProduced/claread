@@ -1,4 +1,4 @@
-# task-history: ASK-RETRY-CONTRACT-R5 (renamed from test_ask_retry_contract_r5_db_integration.py)
+# task-history: ASK-RETRY-CONTRACT- (renamed from test_ask_retry_contract_r5_db_integration.py)
 """Ask retry contract concurrency DB integration — OPT-IN only.
 
 These tests require:

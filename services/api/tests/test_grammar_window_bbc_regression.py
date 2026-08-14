@@ -1,7 +1,7 @@
 """Synthetic expanded long-form regression test for grammar-window window architecture.
 
 Originally a BBC 858-word regression test (Task C5b) that verified grammar
-LLM call reduction from 37 (per-unit) to 3-5 (per-window). After T4.1c,
+LLM call reduction from 37 (per-unit) to 3-5 (per-window). After,
 the original BBC article (858 words) routes to SHORT_BATCH and uses the
 grammar batch path, not the grammar-window window path. To keep exercising the grammar-window
 window path, the fixture now repeats the BBC article 3x (~2574 words) so
@@ -84,10 +84,10 @@ from tests.test_reader_orchestration_pipeline_runner import (
 
 pytestmark = pytest.mark.anyio
 
-# T4.2a-R1: migration 0017 adds ``translate_article`` and
+# Migration 0017 adds ``translate_article`` and
 # ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
 # constraint. Required because the BBC article (>6000 chars) triggers the
-# T3.1 grouped translation/vocabulary path which creates these job types.
+# Grouped translation/vocabulary path which creates these job types.
 
 LEASE_DURATION = timedelta(seconds=30)
 
@@ -166,7 +166,7 @@ class _StaticGrammarWindowExecutor:
                     quality_score=4,
                     reading_blocker=False,
                     dedup_hint=f"grammar:{anchor_id}",
-                    # P2-1: populate content_* fields for contract output
+                    # Populate content_* fields for contract output
                     grammar_point=f"grammar_point:{anchor_id}",
                     pattern=f"pattern:{anchor_id}",
                     note=f"Grammar note for {anchor_id}.",
@@ -198,7 +198,7 @@ class _StaticGrammarWindowExecutor:
                     quality_score=5,
                     reading_blocker=False,
                     dedup_hint=f"sentence:{anchor_id}",
-                    # P2-1: populate content_* fields for contract output
+                    # Populate content_* fields for contract output
                     label=f"main_clause:{anchor_id}",
                     analysis=f"Sentence analysis for {anchor_id}.",
                     chunks=[{
@@ -243,9 +243,9 @@ async def bbc_regression_env() -> AsyncIterator[
     db_connection.DB_POOL = pool
     try:
         user_id = await insert_user(pool)
-        # T4.2a-R1: repeat the BBC article 3x to exceed 2000 words so the
-        # grammar route is GROUPED_WINDOWED (not SHORT_BATCH). Before T4.1c,
-        # all grammar-window enabled articles used the grammar-window window path; after T4.1c, only
+        # Repeat the BBC article 3x to exceed 2000 words so the
+        # grammar route is GROUPED_WINDOWED (not SHORT_BATCH). Before,
+        # all grammar-window enabled articles used the grammar-window window path; after, only
         # GROUPED_WINDOWED articles do. The original BBC article (858 words)
         # would route to SHORT_BATCH and use the grammar batch path instead,
         # defeating the test's purpose of verifying grammar-window window call reduction.
@@ -292,10 +292,10 @@ def _make_runner(
     but adds ``grammar_window_worker_service`` and ``grammar_window_publisher``
     so the grammar-window path is exercised end-to-end.
 
-    T4.2a-R1: inject fake batch executors for translation / vocabulary /
+    Inject fake batch executors for translation / vocabulary /
     grammar batch paths so the runner never falls back to real LLM executors
     when ``enable_grammar_window=True`` (default). The BBC article exceeds
-    6000 chars, so the T3.1 grouped path creates ``translate_article`` and
+    6000 chars, so the grouped path creates ``translate_article`` and
     ``build_vocabulary_layer_article`` batch jobs; without fake batch
     executors the batch workers would call real LLM.
     """
@@ -317,7 +317,7 @@ def _make_runner(
     grammar_worker = GrammarBundleWorkerService(
         pool=pool,
         executor=_StaticGrammarExecutor(),
-        # T4.2a-R1: safety net — GROUPED_WINDOWED articles should never
+        # Safety net — GROUPED_WINDOWED articles should never
         # invoke the grammar batch path, but inject a fake executor so
         # any accidental batch-first fallback is caught deterministically
         # instead of calling real LLM.
@@ -352,7 +352,7 @@ def _make_runner(
 def _extract_dedup_keys(rows: list[asyncpg.Record]) -> list[str]:
     """Extract semantic_dedup_key values from published layer quality_json.
 
-    P2-1: semantic_dedup_key is now stored in quality_json (provenance),
+    Semantic_dedup_key is now stored in quality_json (provenance),
     not output_json (which holds the GrammarNoteLayerOutput contract).
     """
     keys: list[str] = []
@@ -380,7 +380,7 @@ async def test_synthetic_expanded_long_form_grammar_window_regression(
     grammar_note / sentence_analysis layers with no cross-window duplicates.
 
     This is NOT the original BBC 858-word 3-5 window regression. The original
-    BBC sample now routes to SHORT_BATCH (T4.1c); a separate SHORT/STRUCTURED
+    BBC sample now routes to SHORT_BATCH; a separate SHORT/STRUCTURED
     routing regression for the 858-word sample should be added if needed.
 
     Verifies:
@@ -400,7 +400,7 @@ async def test_synthetic_expanded_long_form_grammar_window_regression(
         user_id=user_id,
         lease_owner="bbc-regression-grammar-window",
         lease_duration=LEASE_DURATION,
-        # T4.2a-R1: expanded article (3x) creates more units/windows/jobs.
+        # Expanded article (3x) creates more units/windows/jobs.
         max_ticks=600,
         max_jobs=400,
     )

@@ -1,4 +1,4 @@
-# task-history: D6-I2 (renamed from test_d6_i2_candidate_document_freeze_plan.py)
+# task-history: (renamed from test_d6_i2_candidate_document_freeze_plan.py)
 """Focused tests for the candidate document -> stable document freeze plan.
 
 These tests pin the canonical text derivation rules, UTF-16 offset
@@ -286,7 +286,7 @@ def test_narrative_block_types_all_default_to_main_reading() -> None:
 
 
 def test_table_hierarchy_default_canonical_text() -> None:
-    """Since the Markdown ecosystem refactor (D2 / A1), table /
+    """Since the Markdown ecosystem refactor, table /
     table_row / table_cell all default to ``main_reading``. The
     table / table_row wrappers carry no ``text_content`` so the plan
     skips them (no canonical offsets), while the table_cell leaves
@@ -398,7 +398,7 @@ def test_image_ocr_default_excluded_but_explicit_main_reading_promotes() -> None
 
 
 # --------------------------------------------------------------------
-# footnote default excluded; code_block enters canonical text (D2 / A1)
+# footnote default excluded; code_block enters canonical text
 # --------------------------------------------------------------------
 
 
@@ -417,7 +417,7 @@ def test_footnote_default_excluded_code_block_included() -> None:
     assert blocks_by_id["fn1"].canonical_text_end_utf16 is None
 
     # code_block defaults to main_reading (Markdown ecosystem refactor
-    # D2 / A1) -> canonical offsets populated.
+    # ) -> canonical offsets populated.
     assert blocks_by_id["cb1"].canonical_text_start_utf16 is not None
     assert blocks_by_id["cb1"].canonical_text_end_utf16 is not None
 
@@ -617,7 +617,7 @@ def test_no_main_reading_blocks_fails_closed() -> None:
     raise StableDocumentFreezePlanError instead of returning an empty
     canonical text.
 
-    Since the Markdown ecosystem refactor (D2 / A1), table_cell and
+    Since the Markdown ecosystem refactor, table_cell and
     code_block default to main_reading, so the "no main_reading"
     scenario uses image (metadata_only) + footnote (rag_ask_only).
     """
@@ -850,17 +850,17 @@ def test_input_list_not_mutated() -> None:
 
 
 # --------------------------------------------------------------------
-# D6-I1 validator failure -> freeze plan error
+# Validator failure -> freeze plan error
 # --------------------------------------------------------------------
 
 
 def test_validator_failure_raises_freeze_plan_error() -> None:
-    """When the D6-I1 validator rejects the input (e.g. duplicate
+    """When the validator rejects the input (e.g. duplicate
     block_id), the freeze plan builder MUST wrap the failure in
     StableDocumentFreezePlanError.
     """
     with pytest.raises(
-        StableDocumentFreezePlanError, match="D6-I1 block validation failed"
+        StableDocumentFreezePlanError, match="Stable document block validation failed"
     ):
         _build(
             [
@@ -872,7 +872,7 @@ def test_validator_failure_raises_freeze_plan_error() -> None:
 
 def test_validator_failure_for_unknown_parent_raises_freeze_plan_error() -> None:
     with pytest.raises(
-        StableDocumentFreezePlanError, match="D6-I1 block validation failed"
+        StableDocumentFreezePlanError, match="Stable document block validation failed"
     ):
         _build(
             [
@@ -900,7 +900,7 @@ def test_non_main_reading_blocks_have_none_canonical_offsets_in_output() -> None
 
     Uses footnote (rag_ask_only by default) — table_cell / code_block
     defaulted to main_reading since the Markdown ecosystem refactor
-    (D2 / A1) and would keep offsets.
+    and would keep offsets.
     """
     note = StableDocumentBlock(
         block_id="fn1",
@@ -1351,8 +1351,8 @@ def test_full_document_freeze_with_mixed_block_types() -> None:
     )
 
     # Canonical text contains: heading, p1, table cells (main_reading
-    # since D2 / A1), p2, promoted OCR, code block (main_reading since
-    # D2 / A1). The table / table_row wrappers are skipped; footnote
+    # since ), p2, promoted OCR, code block (main_reading since
+    # ). The table / table_row wrappers are skipped; footnote
     # stays excluded (rag_ask_only default).
     expected_chunks = [
         "Document Title",

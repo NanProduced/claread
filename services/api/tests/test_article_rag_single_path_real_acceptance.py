@@ -1,4 +1,4 @@
-"""Article RAG Single-Path Real-Chain Acceptance (R2).
+"""Article RAG Single-Path Real-Chain Acceptance.
 
 This module is the canonical real-chain acceptance smoke for the
 Article RAG single-path convergence.  It replaces the prior
@@ -6,7 +6,7 @@ smoke-collection namespace design in ``test_d6_i4z_article_rag_local_dry_run.py`
 which was mutually exclusive with the worker's frozen-contract
 collection enforcement.
 
-R2 fixes (vs R1 commit 5c9ed4d04):
+ fixes (vs commit 5c9ed4d04):
 
   1. Retrieval type contract: ``ArticleRagRetrievalHit`` has only
      ``chunk_id`` / ``text`` / ``citation: dict`` / ``metadata_json`` /
@@ -20,23 +20,23 @@ R2 fixes (vs R1 commit 5c9ed4d04):
      ``ArticleRagSearchPort`` adapter) so the Ask port calls
      retrieval EXACTLY once.  No explicit retrieval call outside the
      Ask chain.
-  3. D2: ``reader_runs`` is now queried via
+  3. ``reader_runs`` is now queried via
      ``reader_article_rag_index_runs.reader_run_id`` and asserted
      ``status == "completed"`` (the worker's terminal value for
      ``reader_runs``; ``reader_jobs`` uses ``"succeeded"`` and
      ``reader_article_rag_index_runs`` uses ``"indexed"``).
-  4. D4: Zilliz is queried for all chunks with our
+  4. Zilliz is queried for all chunks with our
      ``stable_document_id``; the precise ``chunk_id`` set is saved
-     for D7 comparison and cleanup.
-  5. D7: plan is rebuilt via ``ArticleRagIndexPlanService``; all 9
+     for comparison and cleanup.
+  5. Plan is rebuilt via ``ArticleRagIndexPlanService``; all 9
      citation fields are compared per ``chunk_id`` (not just
      "non-empty").
   6. Cleanup: deletes by the saved ``chunk_id`` set (NOT by
      ``stable_document_id`` filter).  Schema identity is compared
      before/after.
-  7. Old smoke prefix retired (Phase 1 + Phase 2).
+  7. Old smoke prefix retired (+).
 
-Design contract (R2):
+Design contract:
 
   A. **Single collection identity.**  The smoke writes to
      ``ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection`` (i.e.
@@ -48,7 +48,7 @@ Design contract (R2):
 
   B. **Precise fixture isolation.**  Each smoke run generates unique
      UUIDs for user / record / base / stable_document.  Cleanup
-     deletes by the EXACT ``chunk_id`` set saved at D4 — never by
+     deletes by the EXACT ``chunk_id`` set saved at — never by
      ``stable_document_id`` filter, never drop / recreate the
      collection.  Protected collections
      (``grammar_note_examples``, ``sentence_analysis_examples``)
@@ -78,7 +78,7 @@ Design contract (R2):
        - vector search service calls
        - retrieval service calls
        - vector delete service calls
-       - Ask model calls (always 0 in R2)
+       - Ask model calls (always 0 in)
 
 Env gate (opt-in, skip-by-default):
 
@@ -187,7 +187,7 @@ class CallCounts:
     vector_search_calls: int = 0
     retrieval_service_calls: int = 0
     vector_delete_calls: int = 0
-    ask_model_calls: int = 0  # always 0 in R2 — no real Ask model call
+    ask_model_calls: int = 0 # always 0 in — no real Ask model call
 
     def as_report(self) -> dict[str, int]:
         return {
@@ -322,7 +322,7 @@ class _CapturingRetrievalService:
     ``RetrievalBackedArticleRagPort(retrieval=...)`` so the production
     Ask port calls retrieval EXACTLY once through this wrapper.  After
     ``search_current_article`` returns, ``last_result`` is used for
-    D5-D7 assertions.
+     assertions.
 
     This matches the ``_RetrievalLike`` Protocol defined in
     ``article_rag_adapter.py`` (single async method
@@ -528,7 +528,7 @@ async def acceptance_env() -> asyncpg.Pool:
 _PARAGRAPH_TEXT = (
     "Article RAG single-path acceptance probe: a short non-sensitive "
     "English sentence used to seed a real test-Postgres schema for the "
-    "R1 real-chain smoke."
+    "real-chain smoke."
 )
 _HEADING_TEXT = "Acceptance Probe"
 
@@ -912,7 +912,7 @@ async def _preflight_zilliz(
 
 
 # ======================================================================
-# R4 — Fixed safe messages for SDK exception wrapping.
+# Fixed safe messages for SDK exception wrapping.
 # ======================================================================
 # These constants are the ONLY message text that may appear on a
 # propagating SDK exception from the cleanup helper.  They MUST NOT
@@ -944,7 +944,7 @@ class _CleanupResult:
     All schema-identity fields are compared against the preflight
     snapshot to prove the cleanup did not alter the collection structure.
 
-    R3 changes:
+     changes:
       - ``delete_call_count``: 0 if no cleanup target existed (no
         delete issued), 1 if a delete was issued.  This is the
         MEASURED value used for ``counts.vector_delete_calls``;
@@ -976,12 +976,12 @@ class _CleanupResult:
     protected_collections_unchanged: dict[str, bool]
     # Row count after (informational only — Milvus compaction is async).
     collection_row_count_after: int | None
-    # R3: measured delete call count (0 or 1).
+    # Measured delete call count (0 or 1).
     delete_call_count: int = 0
-    # R3: the union of (expected, saved, discovered) chunk_ids that
+    # The union of (expected, saved, discovered) chunk_ids that
     # was used as the delete filter.
     cleanup_target_chunk_ids: tuple[str, ...] = ()
-    # R3: the three input sets, recorded for the report.
+    # The three input sets, recorded for the report.
     expected_chunk_ids: tuple[str, ...] = ()
     saved_chunk_ids: tuple[str, ...] = ()
     discovered_chunk_ids: tuple[str, ...] = ()
@@ -1001,15 +1001,15 @@ async def _precise_cleanup_by_chunk_ids(
     chunk_ids by primary key, then verify deletion + collection
     integrity.
 
-    R4 design — closes the remaining fail-closed gaps from R3:
+     design — closes the remaining fail-closed gaps from
 
       1. ``expected_chunk_ids`` is built from the PostgreSQL plan
          BEFORE any paid vector write.  If the worker wrote vectors
-         but D2/D3/D4 failed, ``saved_chunk_ids`` is empty but
+         but D2/D3/ failed, ``saved_chunk_ids`` is empty but
          ``expected_chunk_ids`` still identifies the chunks that
          SHOULD have been written.
-      2. ``saved_chunk_ids`` is what D4 captured from Zilliz (may
-         be empty if D4 was not reached or poll timed out).
+      2. ``saved_chunk_ids`` is what captured from Zilliz (may
+         be empty if was not reached or poll timed out).
       3. ``discovered_chunk_ids`` is queried from Zilliz by
          ``stable_document_id`` IN FINALLY — this is the only use
          of ``stable_document_id`` as a filter, and it is for
@@ -1040,7 +1040,7 @@ async def _precise_cleanup_by_chunk_ids(
     In the last row, "all three ID sets" = expected ∪ saved ∪
     discovered (deduped, deterministic order).
 
-    SDK exception safety (R4):
+    SDK exception safety:
       - Discovery query failure is an INTERNAL fallback state —
         it does NOT propagate.  The helper continues with
         ``discovered_chunk_ids = ()`` and, if ``vector_write_attempted``
@@ -1071,7 +1071,7 @@ async def _precise_cleanup_by_chunk_ids(
         # use of stable_document_id as a filter — for DISCOVERY,
         # never for delete.
         #
-        # R4: discovery query failure is an INTERNAL fallback state.
+        # Discovery query failure is an INTERNAL fallback state.
         # It does NOT propagate.  The helper continues with
         # ``discovered_chunk_ids = ()`` and, if ``vector_write_attempted``
         # is True, falls back to deleting ``expected_chunk_ids``.
@@ -1100,7 +1100,7 @@ async def _precise_cleanup_by_chunk_ids(
         cleanup_target_set.update(discovered_chunk_ids)
         cleanup_target = tuple(sorted(cleanup_target_set))
 
-        # 3. Decide whether to delete (R4 behavior matrix).
+        # 3. Decide whether to delete (behavior matrix).
         #
         #   - ``backend_has_evidence``: saved or discovered is
         #     non-empty → vectors are known to exist.
@@ -1123,7 +1123,7 @@ async def _precise_cleanup_by_chunk_ids(
         )
 
         delete_result: Any = {"delete_count": 0}
-        # R4: wrap delete SDK exception in fixed safe error.
+        # Wrap delete SDK exception in fixed safe error.
         # Construct INSIDE except, raise OUTSIDE except so
         # __cause__ and __context__ are both None.
         delete_safe_error: Exception | None = None
@@ -1180,7 +1180,7 @@ async def _precise_cleanup_by_chunk_ids(
 
         # 6. Query by stable_document_id to confirm 0 rows remain.
         #
-        # R4: wrap post-delete verification query SDK exception in
+        # Wrap post-delete verification query SDK exception in
         # fixed safe error.  Construct INSIDE except, raise OUTSIDE
         # except so __cause__ and __context__ are both None.
         post_delete_query_count = 0
@@ -1395,7 +1395,7 @@ def _assert_schema_identity_unchanged(
 async def test_single_path_real_chain_acceptance(
     acceptance_env: asyncpg.Pool,
 ) -> None:
-    """Single-path real-chain acceptance smoke (R2).
+    """Single-path real-chain acceptance smoke.
 
     This is the canonical acceptance smoke for the Article RAG
     single-path convergence.  It exercises the FULL chain:
@@ -1415,17 +1415,17 @@ async def test_single_path_real_chain_acceptance(
          .search_current_article`` — the same adapter
          ``build_production_article_rag_port`` returns) — calls
          retrieval EXACTLY once via a ``_CapturingRetrievalService``
-         wrapper.  R2 stops here — NO real Ask model call.
+         wrapper. stops here — NO real Ask model call.
       7. Precise Zilliz cleanup (delete by EXACT saved chunk_id
          set, verify each chunk_id gone, verify schema identity
          unchanged, verify protected collections unchanged).
 
     Acceptance assertions (11 items):
 
-      D1. Worker claim succeeded; providers actually invoked
+     . Worker claim succeeded; providers actually invoked
           (measured via counting delegates: document_embedding
           == 1, vector_write == 1).
-      D2. ``reader_jobs`` + ``reader_runs`` +
+     . ``reader_jobs`` + ``reader_runs`` +
           ``reader_article_rag_index_runs`` all reached terminal
           success: ``reader_jobs.status == "succeeded"``,
           ``reader_runs.status == "completed"`` (the worker's
@@ -1436,36 +1436,36 @@ async def test_single_path_real_chain_acceptance(
       D3. ``index_run.status == "indexed"``; ``completed_at``
           non-null; embedding_model / vector_store_provider /
           vector_collection match the worker result.
-      D4. Zilliz contains chunks with our stable_document_id;
+     . Zilliz contains chunks with our stable_document_id;
           the precise ``chunk_id`` set is saved (non-empty,
-          unique) for D7 comparison + cleanup.
-      D5. Captured retrieval result has hits > 0; the result's
+          unique) for comparison + cleanup.
+     . Captured retrieval result has hits > 0; the result's
           ``reading_record_id`` / ``stable_document_id`` /
           ``base_id`` exactly match our fixture.  Every
           ``hit.chunk_id`` belongs to the saved Zilliz set.
-      D6. Retrieval uses Postgres plan for citation (not vector
-          payload) — proven OFFLINE by the existing P1-F
+     . Retrieval uses Postgres plan for citation (not vector
+          payload) — proven OFFLINE by the existing
           forged-vector citation regression test
           (``test_forged_vector_citation_metadata_is_not_truth``).
           The live smoke does NOT tamper with the vector payload;
           it only verifies the citation dict has the plan-backed
           9-key shape.
-      D7. Plan is rebuilt via ``ArticleRagIndexPlanService``; all
+     . Plan is rebuilt via ``ArticleRagIndexPlanService``; all
           9 citation fields are compared per ``chunk_id``
           (reading_record_id, stable_document_id, base_id,
           record_generation, block_ids, unit_ids,
           anchor_segment_ids, canonical_text_start_utf16,
           canonical_text_end_utf16).
-      D8. Ask port outcome: ``status == "ok"``, hits non-empty,
+     . Ask port outcome: ``status == "ok"``, hits non-empty,
           every ``hit.chunk_id`` belongs to the saved Zilliz set,
           every hit's identity (record / base / generation /
           stable_document) matches the fixture, ``source_scope``
           within the allowed Ask scopes, ``plan_content_sha256``
           non-empty 64-char lowercase-hex, ``rag_substrate_id``
           equals the immutable indexed run id (D3 row).
-      D9. (N/A — R2 does not make a real Ask model call.)
-      D10. (N/A — R2 does not make a real Ask model call.)
-      D11. Cleanup: fixture vectors deleted by precise chunk_id
+     . (N/A — does not make a real Ask model call.)
+     . (N/A — does not make a real Ask model call.)
+     . Cleanup: fixture vectors deleted by precise chunk_id
            set; each chunk_id individually verified gone;
            collection / schema identity / protected collections
            unchanged.
@@ -1480,10 +1480,10 @@ async def test_single_path_real_chain_acceptance(
       - vector_search_calls: 1 (retrieval search)
       - retrieval_service_calls: 1 (Ask port triggers it once)
       - vector_delete_calls: 1 (precise chunk_id cleanup)
-      - ask_model_calls: 0 (R2 stops at the Ask port boundary)
+      - ask_model_calls: 0 (stops at the Ask port boundary)
 
     Stop on first failure.  No retries.  Cleanup runs in ``finally``
-    regardless of success or failure.  If D4 was not reached, the
+    regardless of success or failure. If was not reached, the
     saved chunk_id set is empty — cleanup is a no-op but still
     verifies schema identity.
     """
@@ -1631,14 +1631,14 @@ async def test_single_path_real_chain_acceptance(
     assert ensure_result.job_id is not None
 
     # -----------------------------------------------------------------
-    # R3: Pre-build the Article RAG index plan from PostgreSQL BEFORE
+    # Pre-build the Article RAG index plan from PostgreSQL BEFORE
     # any paid vector write.  This gives us a deterministic
     # ``expected_chunk_ids`` set that survives any subsequent failure
-    # (D2/D3/D4 assertion failures, poll timeouts, etc.).  The plan
+    # (D2/D3/ assertion failures, poll timeouts, etc.). The plan
     # service reads only from PostgreSQL — no paid calls.
     #
-    # The pre-built plan is ALSO reused at D7 (no second plan
-    # construction).  ``rebuilt_plan`` at D7 is the SAME object.
+    # The pre-built plan is ALSO reused at (no second plan
+    # construction). ``rebuilt_plan`` at is the SAME object.
     # -----------------------------------------------------------------
     from app.services.reader_orchestration.article_rag_index_plan import (  # noqa: E501
         ArticleRagIndexPlanService,
@@ -1652,7 +1652,7 @@ async def test_single_path_real_chain_acceptance(
     expected_chunk_ids: tuple[str, ...] = tuple(
         chunk.chunk_id for chunk in prebuilt_plan.chunks
     )
-    # R3 preflight: expected_chunk_ids must be non-empty and unique.
+    # Preflight: expected_chunk_ids must be non-empty and unique.
     assert len(expected_chunk_ids) > 0, (
         "Pre-built plan produced 0 chunks — cannot run smoke without "
         "a deterministic expected chunk_id set."
@@ -1661,7 +1661,7 @@ async def test_single_path_real_chain_acceptance(
         f"Pre-built plan produced duplicate chunk_ids: "
         f"{expected_chunk_ids}"
     )
-    # R3 preflight: each expected chunk_id must NOT already exist in
+    # Preflight: each expected chunk_id must NOT already exist in
     # Zilliz (no leftover from a prior aborted run with the same
     # plan — extremely unlikely given unique fixture UUIDs, but
     # fail-closed regardless).
@@ -1683,14 +1683,14 @@ async def test_single_path_real_chain_acceptance(
     # so that ``_precise_cleanup_by_chunk_ids`` runs in ``finally``
     # regardless of success or failure.
     #
-    # R3: ``expected_chunk_ids`` is populated BEFORE any paid call,
+    # ``Expected_chunk_ids`` is populated BEFORE any paid call,
     # so the finally cleanup ALWAYS has a deterministic target even
-    # if D4 was never reached.  ``saved_chunk_ids`` is what D4
+    # if was never reached. ``saved_chunk_ids`` is what
     # actually captured from Zilliz (may be empty on failure paths).
     # The cleanup helper computes the union of (expected, saved,
     # discovered) and deletes by precise chunk_id primary keys.
     # -----------------------------------------------------------------
-    saved_chunk_ids: list[str] = []  # populated at D4
+    saved_chunk_ids: list[str] = [] # populated at
     cleanup_result: _CleanupResult | None = None
     worker_result: ArticleRagIndexWorkerResult | None = None
     capturing_retrieval: _CapturingRetrievalService | None = None
@@ -1718,7 +1718,7 @@ async def test_single_path_real_chain_acceptance(
         )
         counts.vector_write_calls = counting_writer.call_count
 
-        # D1: Worker claim succeeded; providers actually invoked.
+        # Worker claim succeeded; providers actually invoked.
         assert isinstance(worker_result, ArticleRagIndexWorkerResult)
         assert worker_result.status == "succeeded", (
             f"Worker did not reach 'succeeded'.  "
@@ -1745,7 +1745,7 @@ async def test_single_path_real_chain_acceptance(
         )
 
         # -----------------------------------------------------------------
-        # D2: Job + Run + index_run all reached terminal success.
+        # Job + Run + index_run all reached terminal success.
         # Query reader_runs via the index_run's reader_run_id FK
         # (canonical), with a fallback to reader_jobs.run_id
         # (defensive).  All three layers must be in their succeeded
@@ -1796,12 +1796,12 @@ async def test_single_path_real_chain_acceptance(
             "reader_runs row missing — could not resolve via "
             "index_run.reader_run_id or reader_jobs.run_id"
         )
-        # R3: the worker sets ``reader_runs.status = 'completed'``
+        # The worker sets ``reader_runs.status = 'completed'``
         # at ``article_rag_index_worker.py:897,1418`` (both the
         # already-indexed idempotent path and the fresh-index success
         # path).  ``'succeeded'`` is the terminal value for
         # ``reader_jobs`` and ``'indexed'`` for ``index_runs``; runs
-        # use ``'completed'``.  R3 tightens this to EXACTLY
+        # use ``'completed'``. tightens this to EXACTLY
         # ``'completed'`` — no allowlist, no future-compatibility
         # fallback.  If the worker vocabulary changes, this test
         # must be updated explicitly.
@@ -1853,10 +1853,10 @@ async def test_single_path_real_chain_acceptance(
         )
 
         # -----------------------------------------------------------------
-        # D4: Zilliz contains chunks with our stable_document_id.
-        # Save the precise chunk_id set for D7 + cleanup.
+        # Zilliz contains chunks with our stable_document_id.
+        # Save the precise chunk_id set for + cleanup.
         # -----------------------------------------------------------------
-        # R2 fix: Milvus eventual consistency.  The worker's
+        # Fix: Milvus eventual consistency. The worker's
         # ``upsert_chunks`` calls ``client.upsert()`` but does NOT
         # call ``client.flush()`` — production retrieval doesn't
         # happen immediately after write, so no flush is needed in
@@ -1891,22 +1891,22 @@ async def test_single_path_real_chain_acceptance(
         # Poll for up to 30 seconds (1-second intervals) until chunks
         # appear.  Milvus flush typically completes in 1-5 seconds on
         # Zilliz Cloud; the poll handles any residual async lag.
-        _D4_POLL_TIMEOUT_SECONDS = 30
-        _D4_POLL_INTERVAL_SECONDS = 1
+        _POLL_TIMEOUT_SECONDS = 30
+        _POLL_INTERVAL_SECONDS = 1
         saved_chunk_ids_tuple: tuple[str, ...] = ()
-        for _poll_attempt in range(_D4_POLL_TIMEOUT_SECONDS):
+        for _poll_attempt in range(_POLL_TIMEOUT_SECONDS):
             saved_chunk_ids_tuple = await asyncio.to_thread(
                 _fetch_fixture_chunk_ids
             )
             if saved_chunk_ids_tuple:
                 break
-            await asyncio.sleep(_D4_POLL_INTERVAL_SECONDS)
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
         saved_chunk_ids = list(saved_chunk_ids_tuple)
         assert len(saved_chunk_ids) > 0, (
             f"Expected >0 chunks in Zilliz with stable_document_id="
             f"{ids.stable_document_id}, got 0 after "
-            f"{_D4_POLL_TIMEOUT_SECONDS}s poll (flush + 1s intervals).  "
+            f"{_POLL_TIMEOUT_SECONDS}s poll (flush + 1s intervals).  "
             f"Worker reported vector_write_calls="
             f"{counts.vector_write_calls} (must be 1).  "
             f"Call counts: {counts.as_report()}"
@@ -1920,7 +1920,7 @@ async def test_single_path_real_chain_acceptance(
         )
 
         # -----------------------------------------------------------------
-        # D5 + D6 + D7: Retrieval (called EXACTLY once via the
+        # + Retrieval (called EXACTLY once via the
         # production Ask port chain)
         # -----------------------------------------------------------------
         # Build the production Ask port with a _CapturingRetrievalService
@@ -1993,7 +1993,7 @@ async def test_single_path_real_chain_acceptance(
         )
         counts.vector_search_calls = counting_searcher.call_count
         counts.retrieval_service_calls = capturing_retrieval.call_count
-        # R2 stops at the Ask port boundary — no real Ask model call.
+        # Stops at the Ask port boundary — no real Ask model call.
         counts.ask_model_calls = 0
 
         # Assert EXACT measured counts (single-path budget).
@@ -2012,12 +2012,12 @@ async def test_single_path_real_chain_acceptance(
             f"No explicit retrieval call outside the Ask chain."
         )
         assert counts.ask_model_calls == 0, (
-            f"Expected 0 ask_model_calls (R2 stops at the Ask port "
+            f"Expected 0 ask_model_calls (stops at the Ask port "
             f"boundary), got {counts.ask_model_calls}."
         )
 
         # -----------------------------------------------------------------
-        # D5: Captured retrieval result has hits > 0 and references
+        # Captured retrieval result has hits > 0 and references
         # our fixture.  Identity lives on ArticleRagRetrievalResult,
         # NOT on individual hits (ArticleRagRetrievalHit has only
         # chunk_id / text / citation: dict / metadata_json / score /
@@ -2061,8 +2061,8 @@ async def test_single_path_real_chain_acceptance(
             )
 
         # -----------------------------------------------------------------
-        # D6: Retrieval uses Postgres plan for citation (not vector
-        # payload).  This is proven OFFLINE by the existing P1-F
+        # Retrieval uses Postgres plan for citation (not vector
+        # payload). This is proven OFFLINE by the existing
         # forged-vector citation regression test
         # (``test_forged_vector_citation_metadata_is_not_truth``).
         # The live smoke does NOT tamper with the vector payload;
@@ -2094,13 +2094,13 @@ async def test_single_path_real_chain_acceptance(
             )
 
         # -----------------------------------------------------------------
-        # D7: Reuse the pre-built plan (R3 — no second plan
+        # Reuse the pre-built plan ( — no second plan
         # construction) and compare all 9 citation fields per
         # chunk_id.  This proves the retrieval citation EXACTLY
         # matches the Postgres plan truth — not just "non-empty" or
         # "contains paragraph".
         # -----------------------------------------------------------------
-        # R3: ``prebuilt_plan`` was built BEFORE the paid vector write
+        # ``Prebuilt_plan`` was built BEFORE the paid vector write
         # (see above).  Reuse it here — no second plan construction,
         # no second PostgreSQL read.  The plan is deterministic per
         # (record_id, user_id); rebuilding would return the same
@@ -2194,9 +2194,9 @@ async def test_single_path_real_chain_acceptance(
             )
 
         # -----------------------------------------------------------------
-        # D8: Ask evidence/context contains Article RAG retrieval
+        # Ask evidence/context contains Article RAG retrieval
         # result.  The production Ask seam returns a typed
-        # ``ArticleRagSearchOutcome`` with eligible hit views.  R2
+        # ``ArticleRagSearchOutcome`` with eligible hit views.
         # stops at the Ask port boundary — NO real Ask model call.
         # -----------------------------------------------------------------
         from app.services.reader_record_ask.article_rag_port import (  # noqa: E501
@@ -2266,7 +2266,7 @@ async def test_single_path_real_chain_acceptance(
             f"must be 64-char lowercase hex."
         )
         # Every eligible hit must reference the fixture identity,
-        # belong to the exact chunk_id set written to Zilliz at D4,
+        # belong to the exact chunk_id set written to Zilliz at,
         # and carry plan-backed truth fields (content hash + canonical
         # UTF-16 range) — the Ask attachment boundary.
         _saved_chunk_id_set = set(saved_chunk_ids)
@@ -2324,20 +2324,20 @@ async def test_single_path_real_chain_acceptance(
                 f"{hit.canonical_text_end_utf16}."
             )
 
-        # ask_model_calls must remain 0 (R2 stops at the Ask port
+        # ask_model_calls must remain 0 ( stops at the Ask port
         # boundary).
         assert counts.ask_model_calls == 0
     finally:
         # -----------------------------------------------------------------
-        # D11: Precise cleanup by union of (expected, saved, discovered)
+        # Precise cleanup by union of (expected, saved, discovered)
         # chunk_id sets (runs in finally regardless of pass/fail).
         # Deletes by EXACT chunk_id primary keys — NEVER by
         # stable_document_id filter, NEVER drop/recreate the collection.
         # -----------------------------------------------------------------
-        # R3: ``expected_chunk_ids`` was built from the PostgreSQL plan
-        # BEFORE any paid call — so even if D4 was never reached (D2/D3
-        # failure) or the D4 poll timed out, the cleanup still has a
-        # deterministic target.  ``saved_chunk_ids`` is what D4 actually
+        # ``Expected_chunk_ids`` was built from the PostgreSQL plan
+        # BEFORE any paid call — so even if was never reached (D2/D3
+        # failure) or the poll timed out, the cleanup still has a
+        # deterministic target. ``saved_chunk_ids`` is what actually
         # captured.  ``discovered_chunk_ids`` is what the cleanup helper
         # queries by stable_document_id in finally (DISCOVERY only,
         # never delete).  The helper computes the union and deletes by
@@ -2351,7 +2351,7 @@ async def test_single_path_real_chain_acceptance(
             preflight=preflight,
             vector_write_attempted=counting_writer.call_count > 0,
         )
-        # R3: ``vector_delete_calls`` comes from the MEASURED
+        # ``Vector_delete_calls`` comes from the MEASURED
         # ``delete_call_count`` in the cleanup result — NOT hardcoded
         # after success.  1 if a delete was issued, 0 if cleanup_target
         # was empty.
@@ -2423,7 +2423,7 @@ async def test_single_path_real_chain_acceptance(
                 f"{cleanup_result.collection_row_count_after} "
                 f"(preflight={preflight.collection_row_count})"
             )
-        print("=== End R3 Cleanup Result ===")
+        print("=== End Cleanup Result ===")
 
     # -----------------------------------------------------------------
     # Success-path report print — only runs if try body succeeded
@@ -2442,7 +2442,7 @@ async def test_single_path_real_chain_acceptance(
             f"  cleanup_post_delete_query_count: "
             f"{cleanup_result.post_delete_query_count}"
         )
-    print("=== End R2 Call Counts ===")
+    print("=== End Call Counts ===")
 
 
 # ---------------------------------------------------------------------------
@@ -2496,7 +2496,7 @@ class TestSinglePathGateLogic:
             monkeypatch.setenv(k, v)
         assert _real_smoke_env_present() is False, (
             "Gate let the smoke through with a smoke-prefix collection. "
-            "R2 requires article_rag_chunks — the smoke prefix design "
+            "requires article_rag_chunks — the smoke prefix design "
             "is incompatible with the worker's frozen contract enforcement."
         )
 
@@ -2547,17 +2547,17 @@ class TestSinglePathGateLogic:
 
 
 # ---------------------------------------------------------------------------
-# Offline tracer — verifies the R2 acceptance helpers work against the
+# Offline tracer — verifies the acceptance helpers work against the
 # REAL ArticleRagRetrievalHit / ArticleRagRetrievalResult shape, so the
 # real smoke cannot raise AttributeError at runtime.
 #
-# Per the R2 task spec Section 2:
+# Per the task spec Section 2:
 #   "增加离线 tracer，使用真实 ArticleRagRetrievalHit shape 验证验收
 #    helper，不允许再次提交运行时 AttributeError。"
 #
 # These tests construct a real ArticleRagRetrievalHit (frozen, slots=True)
 # with the production-shape citation dict and exercise the same access
-# patterns the real smoke uses in D5 / D6 / D7.  If a future contract
+# patterns the real smoke uses in /. If a future contract
 # change renames or removes a field, these tests fail OFFLINE before any
 # paid real-chain call is made.
 # ---------------------------------------------------------------------------
@@ -2610,21 +2610,21 @@ def _build_offline_retrieval_result() -> Any:
 
 
 class TestOfflineRetrievalHitShapeTracer:
-    """Offline tracer: verify the R2 acceptance helpers work against
+    """Offline tracer: verify the acceptance helpers work against
     the real ArticleRagRetrievalHit / ArticleRagRetrievalResult shape.
 
     These tests run WITHOUT any real provider call, without Zilliz,
     without Postgres.  They construct production-shape dataclasses and
-    exercise the same access patterns the real smoke uses in D5 / D6 /
-    D7.  If a contract change breaks the access pattern, these tests
+    exercise the same access patterns the real smoke uses in /
+   . If a contract change breaks the access pattern, these tests
     fail OFFLINE before any paid call is made.
     """
 
     def test_hit_has_no_stable_document_id_attribute(self) -> None:
         """ArticleRagRetrievalHit has only chunk_id / text / citation
         / metadata_json / score / content_sha256.  Accessing
-        ``hit.stable_document_id`` (R1's bug) MUST raise
-        AttributeError — this is the regression tracer for R1 defect
+        ``hit.stable_document_id`` ( bug) MUST raise
+        AttributeError — this is the regression tracer for defect
         #1.
         """
         result = _build_offline_retrieval_result()
@@ -2636,7 +2636,7 @@ class TestOfflineRetrievalHitShapeTracer:
         assert isinstance(hit.metadata_json, dict)
         assert hit.score == 0.95
         assert hit.content_sha256 == "0" * 64
-        # R1 defect #1 regression: hit.stable_document_id MUST raise
+        # Defect #1 regression: hit.stable_document_id MUST raise
         # AttributeError (the field does not exist on the frozen
         # slots dataclass).
         with pytest.raises(AttributeError):
@@ -2647,7 +2647,7 @@ class TestOfflineRetrievalHitShapeTracer:
     def test_citation_is_dict_not_object(self) -> None:
         """Citation is a dict, NOT an object.  Attribute access
         (``citation.stable_document_id``) MUST raise AttributeError —
-        this is the regression tracer for R1 defect #2.
+        this is the regression tracer for defect #2.
         """
         result = _build_offline_retrieval_result()
         hit = result.hits[0]
@@ -2659,7 +2659,7 @@ class TestOfflineRetrievalHitShapeTracer:
         assert "reading_record_id" in citation
         assert "block_ids" in citation
         assert "canonical_text_start_utf16" in citation
-        # R1 defect #2 regression: citation.stable_document_id MUST
+        # Defect #2 regression: citation.stable_document_id MUST
         # raise AttributeError (dict has no such attribute).
         with pytest.raises(AttributeError):
             _ = citation.stable_document_id  # type: ignore[attr-defined]
@@ -2669,7 +2669,7 @@ class TestOfflineRetrievalHitShapeTracer:
     def test_identity_lives_on_result_not_on_hits(self) -> None:
         """Identity (stable_document_id / base_id / reading_record_id)
         lives on ArticleRagRetrievalResult, NOT on individual hits.
-        The D5 assertions read these from the result, not the hit.
+        The assertions read these from the result, not the hit.
         """
         result = _build_offline_retrieval_result()
         # Correct: read identity from result.
@@ -2684,7 +2684,7 @@ class TestOfflineRetrievalHitShapeTracer:
 
     def test_citation_dict_has_exact_9_key_contract_shape(self) -> None:
         """The citation dict must have exactly the 9-key I4A shape
-        produced by ``_citation_dict_from_chunk``.  D6 asserts this
+        produced by ``_citation_dict_from_chunk``. asserts this
         in the real smoke; this tracer verifies the assertion logic
         itself works against the production shape.
         """
@@ -2705,7 +2705,7 @@ class TestOfflineRetrievalHitShapeTracer:
         assert set(citation.keys()) == expected_keys
 
     def test_field_by_field_comparison_works(self) -> None:
-        """D7 compares all 9 citation fields per chunk_id against the
+        """Compares all 9 citation fields per chunk_id against the
         rebuilt plan's ArticleRagCitationRef.  This tracer builds a
         matching ArticleRagCitationRef and verifies the comparison
         logic passes when the fields agree.
@@ -2729,7 +2729,7 @@ class TestOfflineRetrievalHitShapeTracer:
             canonical_text_start_utf16=18,
             canonical_text_end_utf16=100,
         )
-        # The 9-field comparison the real smoke does in D7.
+        # The 9-field comparison the real smoke does in.
         assert str(expected.reading_record_id) == str(
             citation["reading_record_id"]
         )
@@ -2753,7 +2753,7 @@ class TestOfflineRetrievalHitShapeTracer:
         )
 
     def test_field_by_field_comparison_detects_mismatch(self) -> None:
-        """D7 comparison must FAIL when any of the 9 fields mismatch.
+        """Comparison must FAIL when any of the 9 fields mismatch.
         This tracer builds a non-matching ArticleRagCitationRef and
         verifies the comparison raises AssertionError.
         """
@@ -2927,23 +2927,23 @@ class TestOfflineRetrievalHitShapeTracer:
 
 
 # ---------------------------------------------------------------------------
-# R3 Phase 2 — Offline failure injection tests for the cleanup helper.
+# Offline failure injection tests for the cleanup helper.
 #
 # These tests exercise ``_precise_cleanup_by_chunk_ids`` directly with a
 # fully in-memory fake Zilliz client.  No network, no real provider, no
 # real Zilliz, no Postgres.  They close the failure-path cleanup gap
-# identified in the R3 task spec:
+# identified in the task spec:
 #
 #   - ``expected_chunk_ids`` is pre-built from the PostgreSQL plan
 #     BEFORE any paid vector write.
-#   - ``saved_chunk_ids`` is what D4 captured (may be empty).
+# - ``saved_chunk_ids`` is what captured (may be empty).
 #   - ``discovered_chunk_ids`` is queried by ``stable_document_id`` in
 #     finally (DISCOVERY only, never delete filter).
 #   - ``cleanup_target`` = union of all three.
 #   - ``delete_call_count`` = 1 iff there is evidence of actual vectors
 #     in the backend (discovered or saved is non-empty).
 #
-# Scenarios A-F mirror the R3 task spec section 二.
+# Scenarios A-F mirror the task spec section 二.
 # ---------------------------------------------------------------------------
 
 
@@ -3026,14 +3026,14 @@ class _FakeZillizClient:
         # rows — simulates a ghost-row / eventual-consistency issue
         # so per-chunk verification finds them still present (Test F2).
         self.delete_is_noop: bool = False
-        # R4: When True, the FIRST ``stable_document_id == "..."``
+        # When True, the FIRST ``stable_document_id == "..."``
         # query (the discovery query in cleanup) raises a
         # RuntimeError.  Subsequent stable_document_id queries
         # (post-delete count) succeed — so per-chunk verification
         # and post-delete count still work.  Used by RED-A.
         self.discovery_query_should_fail: bool = False
         self._discovery_query_attempted: bool = False
-        # R4: When True, ``delete`` raises a RuntimeError whose
+        # When True, ``delete`` raises a RuntimeError whose
         # message contains sentinel substrings that mimic a real
         # SDK exception leaking URI/token/key/upstream message.
         # Used by RED-B to prove the cleanup helper wraps delete
@@ -3075,7 +3075,7 @@ class _FakeZillizClient:
         self,
         *,
         collection_name: str,
-        filter: str,  # noqa: A002 — matches SDK signature
+        filter: str, # noqa: — matches SDK signature
         output_fields: list[str],
         limit: int = 1,
     ) -> list[dict[str, Any]]:
@@ -3084,7 +3084,7 @@ class _FakeZillizClient:
         # Pattern 1: stable_document_id == "<uuid>"
         m = re.match(r'^stable_document_id == "([^"]+)"$', filter)
         if m:
-            # R4: discovery query failure injection — only the FIRST
+            # Discovery query failure injection — only the FIRST
             # stable_document_id query (discovery) raises; subsequent
             # stable_document_id queries (post-delete count) succeed.
             if (
@@ -3126,11 +3126,11 @@ class _FakeZillizClient:
         self,
         *,
         collection_name: str,
-        filter: str,  # noqa: A002 — matches SDK signature
+        filter: str, # noqa: — matches SDK signature
     ) -> dict[str, Any]:
         self.delete_calls.append(filter)
         if self.delete_malicious_exception:
-            # R4: simulates a real SDK exception that leaks URI,
+            # Simulates a real SDK exception that leaks URI,
             # token, key, and upstream message into the error.
             # The cleanup helper MUST wrap this in a fixed safe
             # error that does NOT contain any of these sentinels.
@@ -3238,7 +3238,7 @@ def _run_cleanup(
 
 
 class TestFailurePathCleanup:
-    """R3 Phase 2 — offline failure injection for the cleanup helper.
+    """offline failure injection for the cleanup helper.
 
     Each test constructs a ``_FakeZillizClient`` with seeded rows,
     builds a preflight snapshot, calls ``_precise_cleanup_by_chunk_ids``
@@ -3255,7 +3255,7 @@ class TestFailurePathCleanup:
     #
     #   * expected_chunk_ids = (A1, A2, A3) — built from plan BEFORE
     #     the paid vector write.
-    #   * saved_chunk_ids = () — D2 failed before D4 could capture.
+    # * saved_chunk_ids = — D2 failed before could capture.
     #   * Fake backend has rows A1, A2, A3 for our stable_document_id.
     #   * Cleanup discovers (A1, A2, A3) by stable_document_id.
     #   * cleanup_target = union(expected, saved, discovered) = (A1, A2, A3).
@@ -3325,10 +3325,10 @@ class TestFailurePathCleanup:
             assert f'"{cid}"' in delete_filter
 
     # ------------------------------------------------------------------
-    # Test B — D4 poll timed out; leftover from a previous run.
+    # Test B — poll timed out; leftover from a previous run.
     #
     #   * expected_chunk_ids = (B1, B2) — current plan had 2 chunks.
-    #   * saved_chunk_ids = () — D4 poll timed out before capture.
+    # * saved_chunk_ids = — poll timed out before capture.
     #   * Fake backend has B1, B2 (current plan) + B3 (leftover from a
     #     previous run with the SAME stable_document_id but a different
     #     plan content hash).
@@ -3388,10 +3388,10 @@ class TestFailurePathCleanup:
         assert remaining == []
 
     # ------------------------------------------------------------------
-    # Test C — D4 captured partial IDs.
+    # Test C — captured partial IDs.
     #
     #   * expected_chunk_ids = (C1, C2, C3).
-    #   * saved_chunk_ids = (C1, C2) — D4 captured 2 of 3 before timing
+    # * saved_chunk_ids = (C1, C2) — captured 2 of 3 before timing
     #     out.
     #   * Fake backend has C1, C2, C3.
     #   * cleanup_target = union(expected, saved, discovered) = (C1, C2, C3).
@@ -3444,7 +3444,7 @@ class TestFailurePathCleanup:
     # Test D — no vector write.
     #
     #   * expected_chunk_ids = (D1, D2, D3) — plan was built.
-    #   * saved_chunk_ids = () — D4 not reached.
+    # * saved_chunk_ids = — not reached.
     #   * Fake backend has 0 rows for our stable_document_id.
     #   * discovered = () — no rows to find.
     #   * cleanup_target = union = (D1, D2, D3) BUT backend_has_evidence
@@ -3569,7 +3569,7 @@ class TestFailurePathCleanup:
     #   * ``client.delete_should_fail = True`` → delete raises.
     #   * The exception MUST propagate (fail closed) — the helper does
     #     NOT swallow delete failures.
-    #   * R4: the exception is wrapped in the fixed safe message
+    # * the exception is wrapped in the fixed safe message
     #     (``_CLEANUP_DELETE_FAILED_SAFE_MESSAGE``) — the raw fake
     #     message does NOT appear in str(err).
     # ------------------------------------------------------------------
@@ -3597,7 +3597,7 @@ class TestFailurePathCleanup:
         preflight = _build_fake_preflight(
             client, stable_document_id=stable_doc_id
         )
-        # The delete failure MUST propagate — fail closed.  R4 wraps
+        # The delete failure MUST propagate — fail closed. wraps
         # it in the fixed safe message; the raw "fake delete failure"
         # does NOT appear in the error.
         with pytest.raises(
@@ -3684,7 +3684,7 @@ class TestFailurePathCleanup:
         assert result.post_delete_query_count > 0
         # The result fields contain ONLY safe fixture identity — no
         # URI, token, key, or secret material.  This is the "safe
-        # fixture identity" requirement from the R3 task spec.
+        # fixture identity" requirement from the task spec.
         unsafe_substrings = ("uri=", "token", "api_key", "secret", "password")
         for field_val in (
             result.cleanup_target_chunk_ids,
@@ -3707,23 +3707,23 @@ class TestFailurePathCleanup:
 
 
 # ======================================================================
-# R4 — Failure-Path Cleanup Fail-Closed Closure
+# Failure-Path Cleanup Fail-Closed Closure
 # ======================================================================
 #
-# R3 left two fail-closed gaps that R4 must close with TDD:
+# Left two fail-closed gaps that must close with TDD:
 #
 #   RED-A: writer was called (call_count > 0) but discovery query
-#          raises and ``saved_chunk_ids`` is empty.  R3 swallowed the
+# raises and ``saved_chunk_ids`` is empty. swallowed the
 #          discovery exception into an empty collection, concluded
 #          ``backend_has_evidence = False``, and skipped delete —
-#          leaving expected rows in the backend.  R4 introduces the
+# leaving expected rows in the backend. introduces the
 #          ``vector_write_attempted`` signal so that, when the writer
 #          was called, discovery failure falls back to deleting the
 #          pre-built ``expected_chunk_ids`` by precise PK filter.
 #
 #   RED-B: the Zilliz/Milvus SDK raises a ``delete`` exception whose
 #          message leaks URI, token, api_key, and upstream message.
-#          R3 propagated the original exception as-is.  R4 wraps
+# Propagated the original exception as-is. Wraps
 #          every propagating SDK exception in a fixed local message
 #          that does NOT interpolate collection, chunk_id,
 #          stable_document_id, URI, token, key, or row content, and
@@ -3731,15 +3731,15 @@ class TestFailurePathCleanup:
 #          ``__context__`` are both ``None``.
 #
 # Both RED tests below are written FIRST and must fail against the
-# R3 helper logic; the R4 fix then turns them GREEN.
+# Helper logic; the fix then turns them GREEN.
 # ======================================================================
 
 
 class TestFailurePathCleanupClosure:
-    """R4 — close the two remaining fail-closed gaps.
+    """close the two remaining fail-closed gaps.
 
     RED-A: writer attempted + discovery failure + saved empty
-           → must delete expected IDs (R3 skipped).
+           → must delete expected IDs (skipped).
     RED-B: malicious delete SDK exception
            → must wrap in fixed safe error, cause/context None.
 
@@ -3751,16 +3751,16 @@ class TestFailurePathCleanupClosure:
     #
     #   * expected_chunk_ids = (A1, A2, A3) — built before paid call.
     #   * vector_write_attempted = True (counting_writer.call_count > 0).
-    #   * saved_chunk_ids = () — D2 failed before D4 capture.
+    # * saved_chunk_ids = — D2 failed before capture.
     #   * discovery query raises (first stable_document_id query).
     #   * Fake backend actually has A1, A2, A3 for our stable_document_id.
     #   * Unrelated sentinel row U1 (different stable_document_id).
     #
-    # R3 behavior (BUG): discovery exception → discovered = () →
+    # Behavior (BUG): discovery exception → discovered = →
     #   backend_has_evidence = False → delete skipped → A1/A2/A3
     #   remain in backend.
     #
-    # R4 behavior (FIX): vector_write_attempted=True + discovery
+    # Behavior (FIX): vector_write_attempted=True + discovery
     #   failure → fall back to expected IDs → one precise PK delete
     #   → A1/A2/A3 gone, U1 preserved.
     # ------------------------------------------------------------------
@@ -3840,10 +3840,10 @@ class TestFailurePathCleanupClosure:
     #     upstream SDK message.
     #   * The cleanup helper MUST wrap this in a fixed safe error.
     #
-    # R3 behavior (BUG): original RuntimeError propagates as-is →
+    # Behavior (BUG): original RuntimeError propagates as-is →
     #   str(err) contains URI/token/key.
     #
-    # R4 behavior (FIX): wrap in fixed safe RuntimeError →
+    # Behavior (FIX): wrap in fixed safe RuntimeError →
     #   err.__cause__ is None, err.__context__ is None, sentinel
     #   not in str/repr/args/traceback.
     # ------------------------------------------------------------------
@@ -4027,7 +4027,7 @@ class TestFailurePathCleanupClosure:
             client,
             collection="article_rag_chunks",
             expected_chunk_ids=(c1, c2, c3),
-            saved_chunk_ids=(c1, c2),  # D4 captured 2 of 3
+            saved_chunk_ids=(c1, c2), # captured 2 of 3
             stable_document_id=stable_doc_id,
             preflight=preflight,
             vector_write_attempted=True,
@@ -4080,7 +4080,7 @@ class TestFailurePathCleanupClosure:
         def stale_once_query(
             *,
             collection_name: str,
-            filter: str,  # noqa: A002
+            filter: str, # noqa:
             output_fields: list[str],
             limit: int = 1,
         ) -> list[dict[str, Any]]:
@@ -4157,7 +4157,7 @@ class TestFailurePathCleanupClosure:
         def malicious_post_delete_query(
             *,
             collection_name: str,
-            filter: str,  # noqa: A002
+            filter: str, # noqa:
             output_fields: list[str],
             limit: int = 1,
         ) -> list[dict[str, Any]]:

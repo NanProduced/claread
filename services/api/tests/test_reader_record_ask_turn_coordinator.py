@@ -1,4 +1,4 @@
-"""R4-A5-7 commit-1: metered turn coordinator (offline / FunctionModel).
+"""Commit-1: metered turn coordinator (offline / FunctionModel).
 
 No live runtime wiring, no real LLM, no real RAG/embedding/vector I/O.
 """
@@ -458,7 +458,7 @@ def test_transition_under_capacity_one_does_not_evict_consume_target(
         ledger.issue(token=c, binding=binding, marker=m_c)
         assert ledger.lookup(c) is not None
         assert _token_order.get(c) == m_c
-        # Pre-R3 bug: nested issue(N) would capacity-evict C, then
+        # Pre- bug: nested issue(N) would capacity-evict C, then
         # mark_consumed(C) raised. Must succeed.
         receipt = ledger.transition_pointers(
             consume_token=c,

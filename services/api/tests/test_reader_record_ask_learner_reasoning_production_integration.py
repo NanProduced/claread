@@ -1,4 +1,4 @@
-"""Production-stream + thinking-transport integration (R1.3).
+"""Production-stream + thinking-transport integration.
 
 Enters via ``stream_agentic_thread_message`` with a FunctionModel that
 streams real ``DeltaThinkingPart`` events so ``run_agent_with_thinking_transport``

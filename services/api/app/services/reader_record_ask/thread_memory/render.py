@@ -1,6 +1,6 @@
 """Render thread memory snapshot into a model-visible data block.
 
-Implements R0.1 §6 注入形态约束 + §8.3 安全门第 7 条:
+Implements §6 注入形态约束 + §8.3 安全门第 7 条:
 
 - Memory is injected as a user-role data block wrapped in an XML fence
   ``<transcript_data role="data" not_instructions="true">…</transcript_data>``.
@@ -35,7 +35,7 @@ from app.services.reader_record_ask.thread_memory.schema import (
     ThreadMemorySnapshot,
 )
 
-# Confidence eviction order: lowest first, highest last (R0.1 §6
+# Confidence eviction order: lowest first, highest last ( §6
 # StructuredFact.confidence). ``prior_context`` is web history (always
 # evicted first); ``high`` is article+valid-binding or user correction.
 _CONFIDENCE_RANK: dict[str, int] = {
@@ -87,9 +87,9 @@ def _render_fact_line(
     bindings_by_id: dict[str, SourceBinding],
     invalid_ids: set[str],
 ) -> str:
-    """Render one fact as a single bullet line per R0.1 §6 注入形态约束.
+    """Render one fact as a single bullet line per §6 注入形态约束.
 
-    R1.5 P0-4: all untrusted dynamic fields (``fact.text``) are XML-escaped
+     All untrusted dynamic fields (``fact.text``) are XML-escaped
     before insertion so ``</transcript_data>``, prompt injection, evh /
     Bearer / sk- fragments cannot break the XML fence boundary.
     """
@@ -115,12 +115,12 @@ def _render_fact_line(
 
 def _episode_header(episode: Episode) -> str:
     """Return the escaped, line-atomic header for one episode."""
-    # R1.6 P1-3: TurnRange is a Pydantic model (TurnRange), not a dict.
+    # TurnRange is a Pydantic model (TurnRange), not a dict.
     # The old ``isinstance(episode.turn_range, dict)`` check was always
     # False, so the turn range display was silently dropped.
     turn_start = episode.turn_range.start
     turn_end = episode.turn_range.end
-    # R1.5 P0-4: escape episode_id (untrusted dynamic field).
+    # Escape episode_id (untrusted dynamic field).
     header = f"### episode {_xml_escape(episode.episode_id)}"
     if turn_start is not None and turn_end is not None:
         header += f" (turns {turn_start}-{turn_end})"
@@ -154,7 +154,7 @@ def render_memory_block(
     whose ``char_cost`` equals ``len(text)`` (the only path that
     produces a chargeable view).
 
-    R1.6.1 P1: budget boxing is **line-atomic**. A fact line is either
+     Budget boxing is **line-atomic**. A fact line is either
     kept in full or dropped entirely — never truncated mid-line. This
     forbids ``joined[:inner_budget]`` and ``inner[:max_inner]`` which
     could split a user correction, source type, turn marker, or XML
@@ -242,7 +242,7 @@ def render_memory_block(
     inner = "\n".join(kept_lines)
     text = f"{_XML_OPEN}\n{inner}\n{_XML_CLOSE}"
 
-    # R1.6.1 P1: the line-atomic loop above guarantees every kept line
+    # The line-atomic loop above guarantees every kept line
     # fits in inner_budget, so len(text) <= budget_chars is an invariant.
     # No further truncation is performed — the old ``inner[:max_inner]``
     # fallback that could split a line mid-way is removed. The assert is
@@ -262,7 +262,7 @@ def render_compaction_notice(
     method: str,
     duration_ms: int,
 ) -> str:
-    """Render the user-visible compaction notice (R0.1 §7.3).
+    """Render the user-visible compaction notice (§7.3).
 
     ``method`` ∈ {'model', 'emergency_deterministic', 'hybrid',
     'window_shrink'} selects the phrasing:
@@ -271,7 +271,7 @@ def render_compaction_notice(
     - ``emergency_deterministic`` / ``window_shrink`` → "整理遇到问题，已使用备用方案"
 
     The notice NEVER contains token counts, percentages, or a context
-    meter (frozen decision #7 + R0.1 RL3). ``duration_ms`` is accepted
+    meter (frozen decision #7 + RL3). ``duration_ms`` is accepted
     for telemetry symmetry but is NOT surfaced to the user.
     """
     del duration_ms  # not surfaced (frozen #7)

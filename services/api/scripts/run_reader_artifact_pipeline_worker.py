@@ -1,4 +1,4 @@
-"""Reader artifact pipeline worker entry point (D6-I3R).
+"""Reader artifact pipeline worker entry point.
 
 Drives :class:`ArtifactInputPipelineWorkerService` in a standalone loop so
 the artifact-backed text/markdown extraction + materialization pipeline can

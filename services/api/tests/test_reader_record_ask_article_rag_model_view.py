@@ -1,4 +1,4 @@
-"""R4-A5-5: Article RAG tool model-view scrub (offline core).
+"""Article RAG tool model-view scrub (offline core).
 
 Behavior tests: six port statuses fail-soft, ok hits through a single
 untrusted block + real JSON metering, sidecar-only provenance, identity
@@ -413,7 +413,7 @@ def test_rollback_mismatch_fails_closed_with_refund() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-5R P1-1: outcome-level identity fence
+# Outcome-level identity fence
 # ---------------------------------------------------------------------------
 
 
@@ -532,7 +532,7 @@ def test_outcome_fence_safe_view_budget_denied_zero_mutation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-5R P1-2: batch compensation completeness (no short-circuit)
+# Batch compensation completeness (no short-circuit)
 # ---------------------------------------------------------------------------
 
 _HIT_A_TEXT = "第一个段落的内容甲。"
@@ -773,7 +773,7 @@ def test_rag_assembler_source_has_no_io_or_model_retry() -> None:
 
 
 def test_rag_assembler_wired_only_via_turn_coordinator() -> None:
-    """R4-A5-7: assemble_rag_model_view is owned by TurnCoordinator."""
+    """Assemble_rag_model_view is owned by TurnCoordinator."""
     import app.services.reader_record_ask.agent as agent_mod
     import app.services.reader_record_ask.runtime as runtime_mod
     import app.services.reader_record_ask.turn_coordinator as coord_mod

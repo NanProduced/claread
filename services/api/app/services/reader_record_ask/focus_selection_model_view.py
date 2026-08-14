@@ -1,4 +1,4 @@
-"""ASK-UX-COT-COMPOSER-R3 P2 — focus selections model view.
+"""ASK-UX-COT-COMPOSER- — focus selections model view.
 
 Renders the user-pinned focus anchors beyond the primary selection
 (``envelope.focus_anchors[1:]``) as XML-escaped untrusted article text

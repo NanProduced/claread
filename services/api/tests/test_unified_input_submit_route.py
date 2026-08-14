@@ -1,4 +1,4 @@
-# task-history: D6-I3F (renamed from test_d6_i3f_unified_input_submit_route.py)
+# task-history: (renamed from test_d6_i3f_unified_input_submit_route.py)
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -302,7 +302,7 @@ def test_submit_reader_input_stable_ready_routes_to_stable_service_and_trims_emp
         language="en",
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        # L2/A4 — route parses once and shares the MarkdownParseResult.
+        # L2/ — route parses once and shares the MarkdownParseResult.
         preparsed=ANY,
     )
     mock_candidate.assert_not_awaited()
@@ -386,7 +386,7 @@ def test_submit_reader_input_candidate_routes_to_candidate_service() -> None:
         language=None,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        # L2/A4 — route parses once and shares the MarkdownParseResult.
+        # L2/ — route parses once and shares the MarkdownParseResult.
         preparsed=ANY,
     )
     mock_stable.assert_not_awaited()

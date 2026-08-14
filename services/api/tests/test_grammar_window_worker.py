@@ -645,7 +645,7 @@ async def test_unconfigured_executor_raises_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T1.2: variant strategy injection in grammar window worker
+# Variant strategy injection in grammar window worker
 # ---------------------------------------------------------------------------
 
 
@@ -679,7 +679,7 @@ def _make_valid_strategy_input(
 
 
 async def test_resolve_window_strategy_returns_strategy_fields() -> None:
-    """T1.2: _resolve_window_strategy returns reading_goal/reading_variant/
+    """_resolve_window_strategy returns reading_goal/reading_variant/
     strategy_hash/layer_policy_hash/grammar_prompt_lines from input_json."""
     input_data = _make_valid_strategy_input()
     result = _resolve_window_strategy(input_data)
@@ -695,7 +695,7 @@ async def test_resolve_window_strategy_returns_strategy_fields() -> None:
 
 
 async def test_resolve_window_strategy_rejects_missing_metadata() -> None:
-    """T1.2: Missing strategy metadata raises GrammarWindowExecutionError
+    """Missing strategy metadata raises GrammarWindowExecutionError
     (fail-closed, no default fallback)."""
     input_data: dict[str, Any] = {
         "window_id": str(uuid4()),
@@ -708,7 +708,7 @@ async def test_resolve_window_strategy_rejects_missing_metadata() -> None:
 
 
 async def test_resolve_window_strategy_rejects_hash_mismatch() -> None:
-    """T1.2: strategy_hash mismatch raises GrammarWindowExecutionError."""
+    """Strategy_hash mismatch raises GrammarWindowExecutionError."""
     input_data = _make_valid_strategy_input()
     input_data["strategy_hash"] = "stale_hash_value"
     with pytest.raises(GrammarWindowExecutionError) as exc_info:
@@ -717,7 +717,7 @@ async def test_resolve_window_strategy_rejects_hash_mismatch() -> None:
 
 
 async def test_build_window_prompt_injects_reader_strategy_section() -> None:
-    """T1.2: _build_window_prompt injects <reader_strategy> section with
+    """_build_window_prompt injects <reader_strategy> section with
     reading_goal/reading_variant/strategy_hash/layer_policy_hash/policy_lines."""
     strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
     grammar_layer = strategy.layers["grammar_bundle"]
@@ -757,7 +757,7 @@ async def test_build_window_prompt_injects_reader_strategy_section() -> None:
 
 
 async def test_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None:
-    """T1.2: When grammar_prompt_lines is empty, no <reader_strategy> section."""
+    """When grammar_prompt_lines is empty, no <reader_strategy> section."""
     executor = PydanticAIGrammarWindowExecutor()
     context: dict[str, Any] = {
         "target_anchors": [],
@@ -773,12 +773,12 @@ async def test_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None
 
 
 # ---------------------------------------------------------------------------
-# T1.3: budget key consistency (grammar_note.count / sentence_analysis.count)
+# Budget key consistency (grammar_note.count / sentence_analysis.count)
 # ---------------------------------------------------------------------------
 
 
 async def test_build_window_prompt_reads_nested_budget_keys() -> None:
-    """T1.3: _build_window_prompt reads grammar_note.count / sentence_analysis.count
+    """_build_window_prompt reads grammar_note.count / sentence_analysis.count
     from window_budget (the format grammar_window_bootstrap writes), NOT the old
     max_grammar_notes / max_sentence_analyses flat keys."""
     executor = PydanticAIGrammarWindowExecutor()
@@ -801,7 +801,7 @@ async def test_build_window_prompt_reads_nested_budget_keys() -> None:
 
 
 async def test_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
-    """T1.3: The budget keys read by the worker match the format written by
+    """The budget keys read by the worker match the format written by
     grammar_window_bootstrap._compute_window_budget. This is the regression test for
     the silent budget mismatch bug (old worker read max_grammar_notes /
     max_sentence_analyses which never matched the nested format)."""
@@ -832,7 +832,7 @@ async def test_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
 
 
 async def test_build_window_prompt_falls_back_when_budget_missing() -> None:
-    """T1.3: When window_budget is missing or empty, worker falls back to
+    """When window_budget is missing or empty, worker falls back to
     safe defaults (4/3). This is defensive, not the happy path."""
     executor = PydanticAIGrammarWindowExecutor()
     context: dict[str, Any] = {
@@ -980,9 +980,9 @@ async def test_window_field_descriptions_forbid_raw_html() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 / P1-2: window candidate schema validation (mirrors per-unit / batch)
+# window candidate schema validation (mirrors per-unit / batch)
 # ---------------------------------------------------------------------------
-# P1-2: ``reason_code`` / ``confidence`` / ``low_value`` / ``GrammarReasonCode``
+# ``Reason_code`` / ``confidence`` ``low_value`` / ``GrammarReasonCode``
 # were removed from the self-rating contract. The window schemas now carry
 # exactly three required fields: ``quality_score`` / ``reading_blocker`` /
 # ``dedup_hint``. Legacy fields are rejected via ``extra="forbid"``.
@@ -990,7 +990,7 @@ async def test_window_field_descriptions_forbid_raw_html() -> None:
 
 def _minimal_window_grammar_note_kwargs() -> dict[str, Any]:
     """Return the minimum kwargs required to construct a valid
-    _WindowGrammarNoteCandidate under the tightened P1-2 schema (3
+    _WindowGrammarNoteCandidate under the tightened schema (3
     self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     from app.services.reader_orchestration.grammar_window_worker import (
         _WindowGrammarSpan,
@@ -1014,7 +1014,7 @@ def _minimal_window_grammar_note_kwargs() -> dict[str, Any]:
 
 def _minimal_window_sentence_analysis_kwargs() -> dict[str, Any]:
     """Return the minimum kwargs required to construct a valid
-    _WindowSentenceAnalysisCandidate under the tightened P1-2 schema (3
+    _WindowSentenceAnalysisCandidate under the tightened schema (3
     self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     from app.services.reader_orchestration.grammar_window_worker import (
         _WindowSentenceChunk,
@@ -1033,7 +1033,7 @@ def _minimal_window_sentence_analysis_kwargs() -> dict[str, Any]:
 
 
 def test_window_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
-    """P1-2: _WindowGrammarNoteCandidate must reject candidates that omit
+    """_WindowGrammarNoteCandidate must reject candidates that omit
     any of the three required self-rating fields, mirroring per-unit / batch."""
     from pydantic import ValidationError
 
@@ -1055,7 +1055,7 @@ def test_window_grammar_note_candidate_rejects_missing_self_rating_fields() -> N
 
 
 def test_window_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> None:
-    """P1-2: _WindowSentenceAnalysisCandidate must reject candidates that
+    """_WindowSentenceAnalysisCandidate must reject candidates that
     omit any of the three required self-rating fields, mirroring per-unit / batch."""
     from pydantic import ValidationError
 
@@ -1077,7 +1077,7 @@ def test_window_sentence_analysis_candidate_rejects_missing_self_rating_fields()
 
 
 def test_window_candidate_rejects_out_of_range_quality_score() -> None:
-    """P1-2: window schemas must reject quality_score outside [1, 5]."""
+    """Window schemas must reject quality_score outside [1, 5]."""
     from pydantic import ValidationError
 
     from app.services.reader_orchestration.grammar_window_worker import (
@@ -1095,7 +1095,7 @@ def test_window_candidate_rejects_out_of_range_quality_score() -> None:
 
 
 def test_window_candidate_rejects_legacy_reason_code_field() -> None:
-    """P1-2: ``reason_code`` was removed from the window schemas too.
+    """``Reason_code`` was removed from the window schemas too.
     ``extra="forbid"`` rejects any payload that still carries it,
     regardless of the value (so ``long_sentence`` and the legacy valid
     codes are both rejected the same way)."""
@@ -1116,7 +1116,7 @@ def test_window_candidate_rejects_legacy_reason_code_field() -> None:
 
 
 def test_window_candidate_rejects_legacy_confidence_field() -> None:
-    """P1-2: ``confidence`` was removed from the window schemas too.
+    """``Confidence`` was removed from the window schemas too.
     ``extra="forbid"`` rejects any payload that still carries it."""
     from pydantic import ValidationError
 
@@ -1135,7 +1135,7 @@ def test_window_candidate_rejects_legacy_confidence_field() -> None:
 
 
 def test_window_candidate_rejects_empty_dedup_hint() -> None:
-    """P1-2: window schemas must reject empty dedup_hint."""
+    """Window schemas must reject empty dedup_hint."""
     from pydantic import ValidationError
 
     from app.services.reader_orchestration.grammar_window_worker import (
@@ -1152,7 +1152,7 @@ def test_window_candidate_rejects_empty_dedup_hint() -> None:
 
 
 def test_window_candidate_rejects_overlong_dedup_hint() -> None:
-    """P1-2: window schemas must reject dedup_hint longer than
+    """Window schemas must reject dedup_hint longer than
     MAX_GRAMMAR_DEDUP_HINT_LENGTH, mirroring per-unit / batch."""
     from pydantic import ValidationError
 
@@ -1196,7 +1196,7 @@ def test_window_candidate_saves_normalized_dedup_hint() -> None:
 
 
 def test_window_operational_rules_no_longer_duplicate_self_rating_section() -> None:
-    """P1-2: the window operational rules must NOT carry the hardcoded
+    """The window operational rules must NOT carry the hardcoded
     field-by-field self-rating explanation (items 6 and 8 in the old
     layout). The shared YAML is now the single authoritative source.
     Legacy ``reason_code`` / ``confidence`` references must also be gone."""

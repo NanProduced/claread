@@ -1,4 +1,4 @@
-# task-history: D6-I3V (renamed from test_d6_i3v_artifact_pipeline_status_route.py)
+# task-history: (renamed from test_d6_i3v_artifact_pipeline_status_route.py)
 """Route tests for GET /reader/source-artifacts/{artifact_id}/pipeline-status.
 
 Covers:

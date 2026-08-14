@@ -117,7 +117,7 @@ ReaderArtifactInputSourceType = Literal["file", "pdf", "image"]
 ReaderArtifactOriginalInputType = Literal["file_ref", "image_ref"]
 
 # ---------------------------------------------------------------------------#
-# Reader Orchestration reading strategy contract (T1 backend contract restore)
+# Reader Orchestration reading strategy contract
 #
 # `reading_goal` / `reading_variant` are first-class facts on `reading_records`.
 # They are the truth owner for Reader strategy in the new orchestration. They
@@ -280,7 +280,7 @@ class TranslationLayerGenerationOutput(BaseModel):
 class TranslationBatchGroupOutput(BaseModel):
     """Per-group LLM output within a batch translation unit.
 
-    Semantic-grouping contract (T1.1a): the backend pre-defines semantic
+    Semantic-grouping contract: the backend pre-defines semantic
     translation groups via :func:`plan_translation_groups` (sentence
     clustering across soft paragraph gaps; never one-unit-one-group /
     one-sentence-one-group / one-anchor-one-group) and gives each a stable
@@ -312,7 +312,7 @@ class TranslationBatchGroupOutput(BaseModel):
 class TranslationBatchUnitOutput(BaseModel):
     """Per-unit translation output within a batch generation result.
 
-    T1.1 short-article batch path: a single LLM call covers all units of
+    Short-article batch path: a single LLM call covers all units of
     a short article. Each entry pairs a ``unit_id`` with the translation
     groups emitted for that unit. The batch worker splits the list back
     into per-unit :class:`TranslationLayerOutput` objects before publish.
@@ -565,7 +565,7 @@ class ReaderSnapshotNavigationUnit(BaseModel):
     base_end_utf16: int = Field(gt=0)
     text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
-    # A5: stable block metadata projected from ``BuiltReadingUnit`` when
+    # Stable block metadata projected from ``BuiltReadingUnit`` when
     # a ``StableBlockAnnotation`` matched the unit's UTF-16 range. Both
     # fields default to ``None`` so legacy snapshots (no annotations)
     # keep their existing byte-for-byte shape — the snapshot builder
@@ -599,7 +599,7 @@ class ReaderSnapshotAnchorSegment(BaseModel):
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
 
 
-# T5.2a/T5.4a: validator statuses. Snapshot only projects trusted published
+# Validator statuses. Snapshot only projects trusted published
 # ready|partial via optional ReaderPlateSnapshot.semantic_outline (None otherwise).
 ReaderSemanticOutlineStatus = Literal[
     "unavailable", "pending", "partial", "ready", "failed", "stale"
@@ -797,7 +797,7 @@ class ReaderPlateSnapshot(BaseModel):
     stable_document_tree: list[ReaderStableDocumentBlockNode] = Field(
         default_factory=list
     )
-    # T5.4a: optional trusted published ready|partial only; else None → JSON null.
+    # Optional trusted published ready|partial only; else None → JSON null.
     semantic_outline: ReaderSemanticOutlineProjection | None = None
 
 
@@ -951,7 +951,7 @@ class ReaderSourceArtifactUploadInitResponse(BaseModel):
         "oss_put_object_presigned",
     ]
     headers: dict[str, str]
-    # D6-I3Q: presigned upload URL. ``None`` when the server has no presigner
+    # Presigned upload URL. ``None`` when the server has no presigner
     # configured (``oss_put_object_pending_credentials``); populated when a
     # presigner returns a signed URL (``oss_put_object_presigned``).
     # The URL carries the signature in the query string and may include the
@@ -1095,7 +1095,7 @@ class ReaderCandidateDocumentConfirmResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# S2: Candidate Recovery read model — typed preview projection DTOs
+# Candidate Recovery read model — typed preview projection DTOs
 # ---------------------------------------------------------------------------
 
 ReaderCandidateDocumentPreviewMode = Literal[
@@ -1484,7 +1484,7 @@ class ReaderRecordListItem(BaseModel):
     readiness_state: ReadingRecordReadinessState
     last_event_sequence: int = Field(ge=0)
     last_opened_at: datetime | None = None
-    # S2.5: Backend-decided stable identity fields. ``display_title`` is
+    # Backend-decided stable identity fields. ``display_title`` is
     # the title the UI should render (priority chain decided in the
     # backend); ``source_label`` is a controlled friendly source string.
     # The UI should prefer ``display_title`` over ``title`` and
@@ -1523,7 +1523,7 @@ class ReaderEventPollResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# D6-I3V Artifact Input Pipeline Status (read-only)
+# Artifact Input Pipeline Status (read-only)
 # ---------------------------------------------------------------------------
 
 ReaderArtifactPipelineOutcome = Literal[
@@ -1646,7 +1646,7 @@ class ReaderArtifactPipelineStatusResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# D6-I4T Article RAG Index Lifecycle API (read-only status + ensure trigger)
+# Article RAG Index Lifecycle API (read-only status + ensure trigger)
 #
 # The lifecycle service exposes two typed result dataclasses; these schemas
 # mirror them for the HTTP boundary. ``user_id`` is intentionally NOT
@@ -1735,7 +1735,7 @@ class ReaderArticleRagIndexEnsureResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# T5.6c — Explicit section translation command (synchronous bounded)
+# Explicit section translation command (synchronous bounded)
 # ---------------------------------------------------------------------------
 
 ReaderSectionTranslationOutcome = Literal[

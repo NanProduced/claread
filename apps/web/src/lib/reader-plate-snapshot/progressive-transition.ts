@@ -1,5 +1,5 @@
 /**
- * T4.2a-PUX-R1: Progressive Transition UX — deterministic fixture / event
+ * Progressive Transition UX — deterministic fixture / event
  * replay projection.
  *
  * Pure module (no React, no network, no LLM). Projects Reader snapshot +
@@ -13,7 +13,7 @@
  * rejected so published layers cannot be rolled back by out-of-order
  * or duplicate events.
  *
- * Complements {@link decidePollingAction} / T2.1 polling cursor semantics;
+ * Complements {@link decidePollingAction} polling cursor semantics;
  * does not replace the polling hook or backend orchestration contracts.
  */
 
@@ -69,7 +69,7 @@ export type ExpandedPanelKind =
   | "none";
 
 /**
- * Client interaction state that MUST survive snapshot reloads (T2.1 / PUX).
+ * Client interaction state that MUST survive snapshot reloads.
  * These fields are domain/UI identity, not Plate path truth.
  */
 export interface ProgressiveInteractionState {

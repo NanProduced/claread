@@ -46,7 +46,7 @@ import type {
  *   - GET  /reader/records/{record_id}/stable-document
  *   - GET  /reader/records/{record_id}/article-rag-index/status
  *   - POST /reader/records/{record_id}/article-rag-index/ensure
- *   - POST /reader/records/{record_id}/section-translation      (T5.6c)
+ *   - POST /reader/records/{record_id}/section-translation
  *
  * This module intentionally does NOT touch the legacy `/scene` endpoints.
  */

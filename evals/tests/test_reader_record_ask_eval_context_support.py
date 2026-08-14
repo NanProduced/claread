@@ -1,15 +1,15 @@
-"""Tests for context_support evaluator (R4-A4-0 final closure contract).
+"""Tests for the context_support evaluator's final contract.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: context_support atomic fact contract（P0-6）.
+spec.md` — Requirement: context_support atomic fact contract.
 
-R4-A4-0 final closure — authoritative model-visible context binding
+Authoritative model-visible context binding
 ==================================================================
 
-The previous (R4-A4-0 Task 1) implementation grounded each atomic fact
+The previous implementation grounded each atomic fact
 by matching ``fact.source_aliases`` against the truncated public
-snippet, and bound every fact to ``cited_handles[0]``. R4-A4-0 final
-closure replaces this with typed
+snippet, and bound every fact to ``cited_handles[0]``. The final
+contract replaces this with typed
 :class:`ModelContextSupportObservation` entries computed at harness
 run time against the ACTUAL model-visible context
 (``result.baseline_context.model_context_chunks``).
@@ -24,7 +24,7 @@ This file covers two test groups:
    ``RawArtifact.model_context_fingerprint`` /
    ``RawArtifact.model_context_handle_ids``.
 
-2. **R4-A4-0 final closure required tests (1..13)** — the 13
+2. **Required final-contract tests (1..13)** — the 13
    scenarios mandated by the user spec for this rework round. They
    are written as standalone tests at the bottom of the file so they
    can be audited as a block during the delivery report.
@@ -72,9 +72,9 @@ from claread_eval.reader_record_ask.loader import (
 from claread_eval.reader_record_ask.report import generate_eval_report
 from claread_eval.reader_record_ask.schema import (
     AtomicExpectedFact,
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -110,8 +110,8 @@ def _make_case_with_atomic_facts(
     *,
     case_id: str = "t-context-support",
     question_category: str = "city_enumeration",
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         input_mode="manual",
@@ -119,13 +119,13 @@ def _make_case_with_atomic_facts(
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(atomic_facts=facts),
+        expected=ReaderRecordAskExpected(atomic_facts=facts),
     )
 
 
-def _make_case_with_legacy_facts(facts: list[str]) -> ReaderRecordAskR4A3Case:
+def _make_case_with_legacy_facts(facts: list[str]) -> ReaderRecordAskCase:
     """Build a case using the deprecated ``required_article_facts`` field."""
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id="t-context-support-legacy",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -133,7 +133,7 @@ def _make_case_with_legacy_facts(facts: list[str]) -> ReaderRecordAskR4A3Case:
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category="city_enumeration",
-        expected=ReaderRecordAskR4A3Expected(required_article_facts=facts),
+        expected=ReaderRecordAskExpected(required_article_facts=facts),
     )
 
 
@@ -144,7 +144,7 @@ def _make_observation(
     fingerprint: str = _TEST_FP,
     supporting_handles: list[str] | None = None,
 ) -> ModelContextSupportObservation:
-    """Build a typed support observation under the R4-A4-0 final contract.
+    """Build a typed support observation under the final contract.
 
     ``supporting_handles`` defaults to ``[_HANDLE_CHUNK_0]`` when
     ``support=True`` and to ``[]`` when ``support=False`` — this
@@ -184,9 +184,9 @@ def _make_artifact(
 
     Pass ``model_context_fingerprint=None`` and
     ``model_context_handle_ids=[]`` for the legacy-artifact path
-    (P0-4 backward compat).
+    (backward compatibility).
 
-    R4-A4-0 final gate closure (P0-1): the explicit lifecycle fields
+    The explicit lifecycle fields
     ``instrumentation_version`` / ``capture_status`` drive the 4-state
     classification. When BOTH are ``None`` (default), the lifecycle is
     INFERRED from ``fingerprint`` / ``handle_ids``:
@@ -205,7 +205,7 @@ def _make_artifact(
     """
     if model_context_handle_ids is None:
         model_context_handle_ids = [_HANDLE_CHUNK_0]
-    # P0-1: infer lifecycle from fingerprint/handle_ids when not
+    # Infer lifecycle from fingerprint/handle_ids when not
     # explicitly specified. This keeps existing tests working without
     # forcing every caller to pass the lifecycle fields.
     if instrumentation_version is None and capture_status is None:
@@ -272,7 +272,7 @@ def _make_artifact(
 
 
 # ---------------------------------------------------------------------------
-# Basic positive / negative cases (R4-A4-0 final closure contract)
+# Basic positive / negative cases (final contract)
 # ---------------------------------------------------------------------------
 
 
@@ -390,7 +390,7 @@ def test_case_insensitive_match() -> None:
 def test_source_alias_outside_snippet_but_inside_model_context_passes() -> None:
     """Spec: "source alias 位于 public snippet 外，但位于 model context 内 → pass".
 
-    Under R4-A4-0 final closure the snippet is irrelevant — grounding
+    Under the final contract the snippet is irrelevant — grounding
     uses ``model_context_support`` computed against the ACTUAL
     model-visible chunks. ``support=True`` with a valid cited
     supporting handle → PASS regardless of snippet contents.
@@ -407,7 +407,7 @@ def test_source_alias_outside_snippet_but_inside_model_context_passes() -> None:
     artifact = _make_artifact(
         final_text="文章后段提到 Egypt 港口城市 Alexandria。",
         # Snippet is truncated BEFORE "Alexandria" appears in the body.
-        # Under the old contract this would fail; under R4-A4-0 final
+        # Under the old contract this would fail; under the final
         # closure the typed observation says support=True with a
         # supporting handle that IS in the cited set → PASS.
         resolved_snippets=["... earlier article body truncated before Alexandria ..."],
@@ -525,7 +525,7 @@ def test_fingerprint_mismatch_fails() -> None:
 
 
 def test_missing_observation_for_required_fact_is_instrumentation_incomplete() -> None:
-    """Spec (R4-A4-0 final closure P0-4): a NEW artifact (has fingerprint)
+    """Spec: a NEW artifact (has fingerprint)
     that lacks an observation for a required fact with source_aliases is
     ``instrumentation_incomplete`` — fail-closed.
 
@@ -559,9 +559,9 @@ def test_missing_observation_for_required_fact_is_instrumentation_incomplete() -
 
 
 def test_legacy_artifact_no_model_context_support_is_coverage_incomplete() -> None:
-    """Spec (R4-A4-0 final closure P0-4 legacy compat): an artifact with
+    """Spec (legacy compatibility): an artifact with
     NO fingerprint AND NO observations is a legacy artifact predating
-    R4-A4-0 final closure. The evaluator surfaces a
+    the final contract. The evaluator surfaces a
     ``legacy_artifact_no_model_context_support`` signal and does NOT
     auto-pass or auto-fail.
 
@@ -837,7 +837,7 @@ def test_legacy_required_article_facts_migration() -> None:
 
 def test_legacy_required_article_facts_skipped_when_atomic_facts_present() -> None:
     """When both fields are present, ``atomic_facts`` wins (new contract)."""
-    case = ReaderRecordAskR4A3Case(
+    case = ReaderRecordAskCase(
         id="t-both",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -845,7 +845,7 @@ def test_legacy_required_article_facts_skipped_when_atomic_facts_present() -> No
         baseline_mode="complete",
         question="...",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             required_article_facts=["legacy sentence"],
             atomic_facts=[
                 AtomicExpectedFact(
@@ -935,7 +935,7 @@ def test_supporting_handle_in_cited_set_passes() -> None:
 
 
 def test_support_true_with_empty_supporting_handles_fails() -> None:
-    """Spec (P0-2): ``support=True`` with empty ``supporting_handle_ids``
+    """Spec: ``support=True`` with empty ``supporting_handle_ids``
     is ``instrumentation_incomplete`` — fail-closed. The harness must
     record which chunk(s) contained the alias hit; an empty list means
     the harness could not determine support.
@@ -967,7 +967,7 @@ def test_support_true_with_empty_supporting_handles_fails() -> None:
 
 
 def test_supporting_handle_not_in_model_context_fails() -> None:
-    """Spec (P0-2): an observation naming a handle that is NOT in
+    """Spec: an observation naming a handle that is NOT in
     ``RawArtifact.model_context_handle_ids`` is forged / stale —
     fail-closed (``supporting_handle_not_in_model_context``).
 
@@ -1019,7 +1019,7 @@ def test_supporting_handle_not_in_model_context_fails() -> None:
 
 
 # ===========================================================================
-# R4-A4-0 FINAL CLOSURE — 13 REQUIRED TESTS
+# FINAL CONTRACT — 13 REQUIRED TESTS
 # ===========================================================================
 #
 # These tests are mandated by the user spec for this rework round. They
@@ -1039,7 +1039,7 @@ def test_required_1_snapshot_has_alias_but_chunks_truncated_support_false() -> N
     ``model_context_chunks`` were budget-truncated and do NOT contain
     the alias → ``support=False``.
 
-    This is the core R4-A4-0 final closure regression: the previous
+    This is the core final-contract regression: the previous
     implementation computed support against ``snapshot.units`` (all
     units, no budget) and would mark the alias as "supported" even
     though the model never saw it. The new contract computes support
@@ -1322,7 +1322,7 @@ def test_required_7_runtime_exception_empty_observation_and_fingerprint() -> Non
     - ``model_context_instrumentation_version="reader_record_ask_model_context_v1"``
     - ``model_context_capture_status="failed"``
 
-    R4-A4-0 final gate closure (P0-1): the explicit
+    The explicit
     ``capture_status="failed"`` lifecycle marker distinguishes this
     new runtime-exception artifact from a legacy artifact (which has
     ``version=None, status=None``). The previous heuristic
@@ -1365,7 +1365,7 @@ def test_required_7_runtime_exception_empty_observation_and_fingerprint() -> Non
         }
     )
     result = evaluate_context_support(case, artifact)
-    # P0-1: explicit ``capture_status="failed"`` → classified as
+    # Explicit ``capture_status="failed"`` → classified as
     # ``runtime_exception`` (an instrumentation_incomplete blocker),
     # NOT as legacy (which would return coverage_incomplete with
     # ``legacy_artifact_no_model_context_support``).
@@ -1582,19 +1582,19 @@ def test_required_11a_strictbool_rejects_string_false_true() -> None:
             required="true",  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall="false",  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall="true",  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             allow_subquestions="false",  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             allow_subquestions="true",  # type: ignore[arg-type]
         )
 
@@ -1606,17 +1606,17 @@ def test_required_11b_strictbool_rejects_int_zero_one() -> None:
     with pytest.raises(ValidationError):
         AtomicExpectedFact(fact_id="f2", required=1)  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall=0,  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall=1,  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(allow_subquestions=0)  # type: ignore[arg-type]
+        ReaderRecordAskExpected(allow_subquestions=0)  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(allow_subquestions=1)  # type: ignore[arg-type]
+        ReaderRecordAskExpected(allow_subquestions=1)  # type: ignore[arg-type]
 
 
 def test_required_11c_strictbool_rejects_float_zero_one() -> None:
@@ -1626,17 +1626,17 @@ def test_required_11c_strictbool_rejects_float_zero_one() -> None:
     with pytest.raises(ValidationError):
         AtomicExpectedFact(fact_id="f2", required=1.0)  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall=0.0,  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(
+        ReaderRecordAskExpected(
             requires_exhaustive_entity_recall=1.0,  # type: ignore[arg-type]
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(allow_subquestions=0.0)  # type: ignore[arg-type]
+        ReaderRecordAskExpected(allow_subquestions=0.0)  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Expected(allow_subquestions=1.0)  # type: ignore[arg-type]
+        ReaderRecordAskExpected(allow_subquestions=1.0)  # type: ignore[arg-type]
 
 
 # --- Required test 12 ------------------------------------------------------
@@ -1668,18 +1668,18 @@ def test_required_12_two_configs_match_flash_phase_ambiguous_fail_closed() -> No
         ],
         case_id="t-ambiguity",
     )
-    dataset = ReaderRecordAskR4A3Dataset(
+    dataset = ReaderRecordAskDataset(
         id="reader-record-ask-r4-a3",
         schema_version="r4-a3-dataset-v1",
-        description="R4-A3 ambiguity test dataset",
+        description="ambiguity test dataset",
         case_globs=["cases/*.json"],
         tags=["r4-a3", "test"],
         cases=[case],
     )
 
     # Two artifacts, two different per_config keys, BOTH match the
-    # Flash non-thinking phase regex. R4-A4-0 final gate closure
-    # (P0-1): explicit lifecycle fields mark these as captured
+    # Flash non-thinking phase regex. Explicit lifecycle fields
+    # mark these as captured
     # artifacts (NOT legacy) so the context_support dimension actually
     # evaluates them.
     artifact_flash = RawArtifact(
@@ -1783,12 +1783,12 @@ def test_required_12_two_configs_match_flash_phase_ambiguous_fail_closed() -> No
         deterministic_tests_passed=True,
         deterministic_tests_summary="13 required tests pass",
         verdict="accepted",
-        allow_r4_a4=True,
-        allow_r4_b1=False,
+        allow_correctness_followup=True,
+        allow_streaming_provider_followup=False,
         modified_files=[
             "evals/tests/test_reader_record_ask_eval_context_support.py"
         ],
-        task_label="R4-A4-0 final closure",
+        evaluation_heading="final closure",
     )
 
     # The report MUST surface an AMBIGUOUS marker for the Flash
@@ -1807,7 +1807,7 @@ def test_required_12_two_configs_match_flash_phase_ambiguous_fail_closed() -> No
 
 
 def test_required_13_legacy_artifact_indeterminate_not_model_failure() -> None:
-    """Required test 13: an old artifact predating R4-A4-0 final
+    """Required test 13: an old artifact predating the final
     closure (no ``model_context_fingerprint``, no
     ``model_context_support``, no ``model_context_handle_ids``) MUST
     be classified as ``indeterminate_requires_new_artifact`` (via the
@@ -1876,7 +1876,7 @@ def test_required_13_legacy_artifact_indeterminate_not_model_failure() -> None:
 
 
 def test_new_artifact_xor_fingerprint_observations_instrumentation_incomplete() -> None:
-    """Spec (P0-4): a NEW-style artifact (not legacy) that has
+    """Spec: a NEW-style artifact (not legacy) that has
     fingerprint XOR observations (one without the other) is
     ``instrumentation_incomplete`` — fail-closed.
 
@@ -1914,7 +1914,7 @@ def test_new_artifact_xor_fingerprint_observations_instrumentation_incomplete() 
 
 
 def test_new_artifact_no_handle_ids_instrumentation_incomplete() -> None:
-    """Spec (P0-4): a new-style artifact with fingerprint +
+    """Spec: a new-style artifact with fingerprint +
     observations but empty ``model_context_handle_ids`` is
     ``instrumentation_incomplete`` — the evaluator cannot verify
     supporting_handle_ids membership.
@@ -1990,9 +1990,9 @@ def test_evaluate_artifact_returns_context_support_dimension() -> None:
 
 
 # ===========================================================================
-# R4-A4-0 final gate closure — 13 required end-to-end tests
+# Final contract — 13 required end-to-end tests
 #
-# Spec (current round): the 13 scenarios mandated for P0-1/P0-2/P0-3
+# Spec: the 13 mandated closure scenarios
 # closure. Each test exercises the FULL seam:
 #
 #   RawArtifact → evaluate_artifact → aggregate_results →
@@ -2117,7 +2117,7 @@ def _make_coverage_audit_completed() -> _CoverageAuditResult:
 
 
 def _build_case_result(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> _CaseEvalResult:
     """Run the full 11-evaluator suite on ``artifact`` and wrap into a
@@ -2262,7 +2262,7 @@ def test_context_support_final_gate_01_legacy_artifact_blocked_in_aggregate() ->
     # Full seam: aggregate → verdict.
     case_results = [_build_case_result(case, artifact)]
     verdict, allow_a4, allow_b1 = _decide_verdict(case_results)
-    # P0-2: legacy artifacts MUST block the authoritative aggregate.
+    # Legacy artifacts MUST block the authoritative aggregate.
     assert verdict == "blocked_incomplete_real_model_run", (
         f"legacy artifact must block the authoritative aggregate; "
         f"got verdict={verdict!r}"
@@ -2270,7 +2270,7 @@ def test_context_support_final_gate_01_legacy_artifact_blocked_in_aggregate() ->
     assert allow_a4 is False
     assert allow_b1 is False
 
-    # P0-2: the failure cluster MUST be ``legacy-artifact``, NOT
+    # The failure cluster MUST be ``legacy-artifact``, NOT
     # ``fact-not-grounded``.
     aggregated = aggregate_results(case_results, {case.id: case})
     cluster_patterns = {
@@ -2382,7 +2382,7 @@ def test_context_support_final_gate_03_baseline_unavailable_no_empty_sha() -> No
         model_context_instrumentation_version="reader_record_ask_model_context_v1",
         model_context_capture_status="unavailable",
     )
-    # P0-3: no illegal empty SHA. The fingerprint is None (not "").
+    # No illegal empty SHA. The fingerprint is None (not "").
     assert artifact.model_context_fingerprint is None
     assert artifact.model_context_fingerprint != ""
 
@@ -2626,7 +2626,7 @@ def test_context_support_final_gate_07_captured_supporting_handle_not_in_model_c
 
 
 # ---------------------------------------------------------------------------
-# Spec test 8: captured + fact_not_supported → rework, allow_r4_a4=true.
+# Spec test 8: captured + fact_not_supported → rework, quality gate enabled.
 # ---------------------------------------------------------------------------
 
 
@@ -2635,7 +2635,7 @@ def test_context_support_final_gate_08_captured_fact_not_supported_rework() -> N
     mentioned in the answer but the observation says ``support=False``
     (the fact is NOT grounded in the model-visible baseline) MUST be
     classified as ``fact_not_supported`` (a real model correctness
-    failure) and enter rework with ``allow_r4_a4=true``.
+    failure) and enter rework with the quality gate enabled.
     """
     case = _make_case_with_atomic_facts([
         AtomicExpectedFact(
@@ -2687,7 +2687,7 @@ def test_context_support_final_gate_08_captured_fact_not_supported_rework() -> N
 
 
 # ---------------------------------------------------------------------------
-# Spec test 9: captured + fact_not_cited → rework, allow_r4_a4=true.
+# Spec test 9: captured + fact_not_cited → rework, quality gate enabled.
 # ---------------------------------------------------------------------------
 
 
@@ -2696,7 +2696,7 @@ def test_context_support_final_gate_09_captured_fact_not_cited_rework() -> None:
     grounded in the model context (``support=True`` with valid
     supporting handles) but the answer does NOT cite any of those
     handles MUST be classified as ``fact_not_cited`` (a real model
-    correctness failure) and enter rework with ``allow_r4_a4=true``.
+    correctness failure) and enter rework with the quality gate enabled.
     """
     case = _make_case_with_atomic_facts([
         AtomicExpectedFact(
@@ -2748,8 +2748,8 @@ def test_context_support_final_gate_09_captured_fact_not_cited_rework() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Spec test 10: captured + all success → accepted, allow_r4_a4=true,
-# allow_r4_b1=true.
+# Spec test 10: captured + all success → accepted,
+# quality and streaming gates enabled.
 # ---------------------------------------------------------------------------
 
 
@@ -2757,7 +2757,7 @@ def test_context_support_final_gate_10_captured_all_success_accepted() -> None:
     """Spec test 10: a captured artifact where all required facts are
     mentioned, grounded, and cited MUST be classified as ``supported``
     and the aggregate verdict MUST be ``accepted`` with
-    ``allow_r4_a4=true`` and ``allow_r4_b1=true``.
+    both quality and streaming gates enabled.
     """
     case = _make_case_with_atomic_facts([
         AtomicExpectedFact(
@@ -2930,7 +2930,7 @@ def test_context_support_final_gate_11_instrumentation_cluster_not_fact_not_grou
         c.failure_pattern for c in aggregated.failure_clusters
     }
 
-    # P0-2: instrumentation blockers MUST NOT cluster as fact-not-grounded.
+    # Instrumentation blockers MUST NOT cluster as fact-not-grounded.
     assert "fact-not-grounded" not in cluster_patterns, (
         "instrumentation blockers must NOT cluster as fact-not-grounded; "
         f"got clusters={cluster_patterns}"
@@ -2966,7 +2966,7 @@ def test_context_support_final_gate_12_compute_model_context_support_empty_chunk
     ``fingerprint=""`` empty SHA can trigger a ValidationError), the
     fingerprint is ``None``, and the handle_ids list is empty.
 
-    This is the P0-3 explicit empty-chunks handling. The caller is
+    This is the explicit empty-chunks handling. The caller is
     responsible for writing ``capture_status="unavailable"`` or
     ``"failed"`` based on the baseline/result state.
 
@@ -2992,7 +2992,7 @@ def test_context_support_final_gate_12_compute_model_context_support_empty_chunk
             severity="high",
         ),
     ])
-    # P0-3: empty chunks → ([], None, []). Must NOT raise.
+    # Empty chunks → ([], None, []). Must NOT raise.
     observations, fingerprint, handle_ids = (
         _HARNESS._compute_model_context_support(case, [])
     )
@@ -3092,10 +3092,10 @@ def test_context_support_final_gate_13_metadata_only_no_facts_not_incomplete() -
 
 
 # ===========================================================================
-# R4-A4-0 P1 supplemental tests — shared classification contract
+# Supplemental tests — shared classification contract
 # ===========================================================================
 #
-# These 7 tests verify the P1 contract de-duplication work directly:
+# These 7 tests verify the shared contract de-duplication work directly:
 # the closed ``ContextSupportClassification`` Literal, the three
 # routing frozensets, the Pydantic boundary rejection, and the
 # single-source invariant. They supplement (not replace) the 13
@@ -3116,7 +3116,7 @@ from claread_eval.reader_record_ask.evaluators import (  # noqa: E402
 
 
 def test_contract_illegal_classification_rejected_at_pydantic_boundary() -> None:
-    """P1 supplemental test 1: a classification string outside the
+    """Supplemental test 1: a classification string outside the
     closed :data:`ContextSupportClassification` Literal MUST be
     rejected at the Pydantic model boundary when constructing an
     :class:`EvalDimensionResult`.
@@ -3176,7 +3176,7 @@ def test_contract_illegal_classification_rejected_at_pydantic_boundary() -> None
 
 
 def test_contract_instrumentation_blockers_route_to_blocked_incomplete() -> None:
-    """P1 supplemental test 2: the three instrumentation blocker
+    """Supplemental test 2: the three instrumentation blocker
     classifications (``baseline_unavailable`` /
     ``runtime_exception`` / ``instrumentation_incomplete``) MUST all
     be members of
@@ -3270,7 +3270,7 @@ def test_contract_instrumentation_blockers_route_to_blocked_incomplete() -> None
 
 
 def test_contract_legacy_routes_to_authoritative_aggregate_blocked() -> None:
-    """P1 supplemental test 3: the ``legacy_artifact`` classification
+    """Supplemental test 3: the ``legacy_artifact`` classification
     MUST be a member of :data:`LEGACY_BLOCKER_CLASSIFICATIONS` and
     MUST route the authoritative aggregate to
     ``blocked_incomplete_real_model_run`` (precedence row 9.5, kept
@@ -3328,7 +3328,7 @@ def test_contract_legacy_routes_to_authoritative_aggregate_blocked() -> None:
 
 
 def test_contract_fact_not_supported_and_not_cited_route_to_rework() -> None:
-    """P1 supplemental test 4: the two real model correctness failure
+    """Supplemental test 4: the two real model correctness failure
     classifications (``fact_not_supported`` / ``fact_not_cited``)
     MUST both be members of
     :data:`MODEL_FAILURE_CLASSIFICATIONS` and MUST both route the
@@ -3410,7 +3410,7 @@ def test_contract_fact_not_supported_and_not_cited_route_to_rework() -> None:
 
 
 def test_contract_supported_routes_to_accepted() -> None:
-    """P1 supplemental test 5: the ``supported`` classification MUST
+    """Supplemental test 5: the ``supported`` classification MUST
     NOT be a member of any blocker frozenset
     (:data:`INSTRUMENTATION_INCOMPLETE_CLASSIFICATIONS` /
     :data:`LEGACY_BLOCKER_CLASSIFICATIONS` /
@@ -3465,7 +3465,7 @@ def test_contract_supported_routes_to_accepted() -> None:
 
 
 def test_contract_aggregator_failure_pattern_uses_shared_classification_set() -> None:
-    """P1 supplemental test 6: the aggregator's failure-pattern
+    """Supplemental test 6: the aggregator's failure-pattern
     router MUST consume the shared classification frozensets from
     :mod:`evaluators.context_support_contract` — not a private mirror
     copy. This is verified by introspecting the aggregator module's
@@ -3560,7 +3560,7 @@ def test_contract_aggregator_failure_pattern_uses_shared_classification_set() ->
 
 
 def test_contract_single_source_no_mirror_definitions() -> None:
-    """P1 supplemental test 7 (the ``rg`` invariant, as a runtime
+    """Supplemental test 7 (the ``rg`` invariant, as a runtime
     test): the closed :data:`ContextSupportClassification` Literal
     and the three routing frozensets
     (:data:`INSTRUMENTATION_INCOMPLETE_CLASSIFICATIONS` /

@@ -1,4 +1,4 @@
-"""Aggregator for R4-A3 reader-record-ask evaluator results.
+"""Aggregator for reader-record-ask evaluator results.
 
 Consumes a list of :class:`CaseEvalResult` (one per ``(case, run)`` pair)
 plus the case lookup dict, and produces an :class:`AggregatedReport`
@@ -38,7 +38,7 @@ from claread_eval.reader_record_ask.evaluators.context_support_contract import (
     MODEL_FAILURE_CLASSIFICATIONS as _MODEL_FAILURE_REASONS,
 )
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 
 class CaseEvalResult(BaseModel):
@@ -112,7 +112,7 @@ def _parse_recall(details: str) -> float | None:
 def _extract_failure_pattern(dimension: str, details: str) -> str:
     """Derive a short, stable failure-pattern key from evaluator details.
 
-    R4-A4-0 final gate closure (P0-2): for ``context_support`` the
+    For ``context_support`` the
     typed ``classification`` field on :class:`EvalDimensionResult` is
     the SINGLE source of truth — see :func:`_extract_failure_pattern_typed`.
     This string-based fallback is kept only for dimensions that do
@@ -132,7 +132,7 @@ def _extract_failure_pattern(dimension: str, details: str) -> str:
             return f"missing-{first}" if first else "incomplete-enumeration"
         return "incomplete-enumeration"
     if dimension == "instruction_following":
-        # R4-A4-0 (Task 3): distinguish ``indeterminate`` (count could
+        # Distinguish ``indeterminate`` (count could
         # not be determined) from ``actual_count_mismatch`` (count was
         # determined but did not match ``requested_count``). The
         # previous implementation grouped both under ``count-mismatch``,
@@ -156,7 +156,7 @@ def _extract_failure_pattern(dimension: str, details: str) -> str:
     if dimension == "usage_observability":
         return "observability-missing"
     if dimension == "context_support":
-        # P0-2: typed classification is the SINGLE source of truth.
+        # Typed classification is the SINGLE source of truth.
         # This fallback is only reached when ``classification`` is
         # None (e.g. legacy / metadata-only path). Defaulting to
         # ``fact-not-grounded`` here would mis-cluster
@@ -176,7 +176,7 @@ def _extract_failure_pattern_typed(
     details: str,
     classification: str | None,
 ) -> str:
-    """R4-A4-0 final gate closure (P0-2): typed failure-pattern key.
+    """Typed failure-pattern key.
 
     For ``context_support``, the typed ``classification`` field
     distinguishes:
@@ -213,7 +213,7 @@ def _extract_failure_pattern_typed(
 
 def _identify_failure_clusters(
     case_results: list[CaseEvalResult],
-    cases_by_id: dict[str, ReaderRecordAskR4A3Case],
+    cases_by_id: dict[str, ReaderRecordAskCase],
 ) -> list[FailureCluster]:
     # (dimension, question_category, pattern) -> {failed, case_ids}
     cluster_map: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -230,7 +230,7 @@ def _identify_failure_clusters(
             if dim.passed:
                 continue
             # Deterministic failure — LLM judge note is ignored.
-            # R4-A4-0 final gate closure (P0-2): use typed
+            # Use typed
             # ``classification`` field when available so
             # instrumentation blockers do NOT cluster as
             # ``fact-not-grounded``.
@@ -276,7 +276,7 @@ def _identify_failure_clusters(
 
 def aggregate_results(
     case_results: list[CaseEvalResult],
-    cases_by_id: dict[str, ReaderRecordAskR4A3Case],
+    cases_by_id: dict[str, ReaderRecordAskCase],
 ) -> AggregatedReport:
     """Aggregate per-(case, run) dimension results into a report.
 
@@ -332,7 +332,7 @@ def aggregate_results(
                 if dim.dimension == "unsupported_temporal_claims" and not dim.passed:
                     unsupported_count += 1
                 elif dim.dimension == "exhaustive_completeness":
-                    # R4-A4-3: passed runs always contribute recall=1.0
+                    # Passed runs always contribute recall=1.0
                     # (including ``requires_exhaustive_entity_recall=False``
                     # no-op passes). Failed runs keep the parsed recall
                     # from evaluator details; if unparseable, use 0.0 so
@@ -349,7 +349,7 @@ def aggregate_results(
                     instruction_pass += 1
 
         per_config[key] = {
-            # R4-A4-0 (Task 5): ``total_runs`` MUST be explicitly written.
+            # ``total_runs`` MUST be explicitly written.
             # The previous implementation computed it
             # (``total_runs = len(group)``) but did NOT include it in the
             # per_config dict, causing the report generator to read 0

@@ -12,7 +12,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - claread_postgres_data:/var/lib/postgresql/data
-      # DATA-SCHEMA-BASELINE D2: single fresh-init baseline. Legacy analysis
+      # DATA-SCHEMA-BASELINE: single fresh-init baseline. Legacy analysis
       # tables, legacy Eval control-plane tables and reader_ask_eval_traces are
       # not part of this file; directus_* tables are managed by Directus itself.
       - ../migrations/0001_initial.sql:/docker-entrypoint-initdb.d/0001_initial.sql:ro

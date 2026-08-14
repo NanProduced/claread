@@ -1,11 +1,11 @@
 """RunSessionLayout — single source of truth for run/session/artifact paths.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: RunSessionLayout 深模块（P0-1）.
+Requirement: RunSessionLayout 深模块.
 
 Prior to this module, the harness hardcoded `phase{N}-<ts>` run ids and wrote
 artifacts to ``runs/`` root, while the runner read from ``runs/<run_id>/`` and
-Phase 2/3 scanned the root directory to guess the latest run. That contract
+Later stages scanned the root directory to guess the latest run. That contract
 was broken — run id was not a single source of truth, and stages could not
 be connected reliably.
 
@@ -13,7 +13,7 @@ This module exposes a small interface (``run_id`` / ``prior_run_id`` /
 ``run_dir`` / ``artifact_dir`` / ``artifact_path``) over a robust
 implementation: path-traversal fail-closed, deterministic artifact filenames
 that do not collide on (case, model, thinking, run_index), and a single
-resolver shared by the harness (write), Phase 2/3 (read prior) and aggregate
+resolver shared by the harness (write), follow-up stages (read prior), and aggregate
 (read same run).
 
 The module never reads or writes file contents — it only resolves paths.
@@ -78,7 +78,7 @@ class RunSessionLayout:
         run_id: str,
         prior_run_id: str | None = None,
     ) -> None:
-        # R4-A4-2R P0-Path: normalize ``runs_root`` to an absolute
+        # Normalize ``runs_root`` to an absolute
         # canonical path at construction. This is the deep-module
         # contract: writer (harness subprocess) and reader (aggregate)
         # MUST resolve to the same absolute ``runs_root`` even when
@@ -126,7 +126,7 @@ class RunSessionLayout:
     def prior_artifact_dir(self) -> Path | None:
         """Directory holding the prior run's artifacts.
 
-        Returns ``None`` when ``prior_run_id`` is ``None`` (Phase 1, or
+        Returns ``None`` when ``prior_run_id`` is ``None`` (the initial run, or
         aggregate on a single phase).
         """
         if self._prior_run_id is None:
@@ -159,8 +159,8 @@ class RunSessionLayout:
         Filename format: ``<case_id>__<model|none>__<thinking|none>__<NN>.json``
         where ``NN`` is a 3-digit zero-padded run_index. All four dimensions
         are part of the filename so two independent repetitions of the same
-        case never overwrite each other, and a Phase 2 re-run of the same
-        case with thinking enabled is distinguishable from the Phase 1
+        case never overwrite each other, and a follow-up re-run of the same
+        case with thinking enabled is distinguishable from the initial
         artifact that produced it.
         """
         _validate_token("case_id", case_id)

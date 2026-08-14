@@ -99,7 +99,7 @@ function classifyTrustedTerminal(
   }
   const payload = (data ?? {}) as Record<string, unknown>;
 
-  // R6: submission.reconcile is a logical terminal independent of
+  // submission.reconcile is a logical terminal independent of
   // agentic turn identity — it arrives *instead* of a model stream when
   // the same client_submission_id already has a claim/pair. No identity
   // match is required (and no fake agentic.terminal(ok) is emitted).
@@ -297,7 +297,7 @@ export async function consumeReaderAskSse(
         if (buffer.trim()) {
           for (const event of parseSseChunk(buffer)) {
             buffer = "";
-            // R4-1: trailing-buffer path uses the same trust-then-dispatch
+            // Trailing-buffer path uses the same trust-then-dispatch
             // rule as the main loop. A foreign / stale terminal in the
             // trailing buffer MUST NOT mutate UI state.
             if (
@@ -357,7 +357,7 @@ export async function consumeReaderAskSse(
           break;
         }
 
-        // R4-1: Terminal identity MUST be verified before any UI mutation.
+        // Terminal identity MUST be verified before any UI mutation.
         // Capture identity from agentic.run_started as early as possible —
         // this must happen before classifyTrustedTerminal so the first
         // terminal after run_started can be matched against the active
@@ -444,7 +444,7 @@ export async function consumeReaderAskSse(
 }
 
 /**
- * R3 observability: mark phase timestamps on the host-supplied metrics
+ * Mark phase timestamps on the host-supplied metrics
  * object based on the arriving event. Only the metrics object is
  * mutated — never log content, reasoning text, or secrets here.
  *
@@ -499,7 +499,7 @@ function markEventMetrics(
 }
 
 /**
- * R3 observability: mark ``terminal_received`` on the host-supplied
+ * Mark ``terminal_received`` on the host-supplied
  * metrics object when a trusted terminal (or abort / parse_error / eof)
  * has been classified. Called exactly once per turn — the metrics
  * class is idempotent so duplicate calls are safe.

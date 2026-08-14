@@ -1,4 +1,4 @@
-"""T3.5 completion state finalizer focused tests.
+"""Completion state finalizer focused tests.
 
 Covers:
 - ``completed_clean`` transition when all enhancement jobs succeeded
@@ -9,7 +9,7 @@ Covers:
   the last succeeding job can land exactly on the budget; durable state
   is the source of truth)
 - ``max_jobs_reached`` / ``max_ticks_reached`` coinciding with all-terminal
-  durable state finalize to ``coverage_complete`` (P1 regression; the two
+  durable state finalize to ``coverage_complete`` ( regression; the two
   caps are symmetric because both are checked after the processed-count
   increment)
 - No finalization when non-terminal jobs remain (``retry_later``)
@@ -672,7 +672,7 @@ async def test_finalizer_finalizes_when_max_jobs_coincides_with_all_terminal(
     already terminal (the last succeeding job landed exactly on the
     budget), the finalizer must transition to ``coverage_complete``.
 
-    This is the core P1 regression: previously the finalizer blanket-
+    This is the core regression: previously the finalizer blanket-
     rejected ``max_jobs_reached`` and the record was wedged because the
     candidate scan never re-picks a record with all-terminal jobs.
     """

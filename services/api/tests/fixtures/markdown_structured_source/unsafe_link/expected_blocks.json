@@ -1,6 +1,6 @@
 {
   "fixture_name": "unsafe_link",
-  "description": "Unsafe protocol links (javascript/data/vbscript) stripped; safe https/mailto links preserved. A3: html_inline+link overlap (data: link with <script>) is fail-closed — no rescue merge, raw link syntax remains in text, inline_html warning emitted.",
+  "description": "Unsafe protocol links (javascript/data/vbscript) stripped; safe https/mailto links preserved. Fail-closed note: html_inline+link overlap (data: link with <script>) is fail-closed — no rescue merge, raw link syntax remains in text, inline_html warning emitted.",
   "blocks": [
     {
       "block_id": "b1",

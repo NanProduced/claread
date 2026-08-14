@@ -371,7 +371,7 @@ async def test_search_web_provider_result_ref_not_in_summary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §III: Secret-safe adapter repr
+# G3- §III: Secret-safe adapter repr
 # ---------------------------------------------------------------------------
 
 
@@ -379,7 +379,7 @@ async def test_search_web_provider_result_ref_not_in_summary() -> None:
 async def test_backend_repr_does_not_leak_api_key() -> None:
     """``repr(backend)`` must not contain the api_key sentinel.
 
-    G3-R1 §III: ``api_key`` uses ``field(repr=False)`` so that the
+    G3- §III: ``api_key`` uses ``field(repr=False)`` so that the
     dataclass-generated repr never includes the credential.
     """
     secret = "sk-qwen-SECRET-REPR-DO-NOT-LEAK-9f3a7c4e2b1d"
@@ -424,7 +424,7 @@ async def test_exception_output_does_not_leak_api_key() -> None:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §IV: Stream resource lifecycle (no aclosing, httpx stream context)
+# G3- §IV: Stream resource lifecycle (no aclosing, httpx stream context)
 # ---------------------------------------------------------------------------
 
 
@@ -437,7 +437,7 @@ async def test_stream_closed_after_malformed_sse(
     response even when ``_MalformedSseError`` is raised mid-stream.
 
     This test verifies no ``RuntimeWarning`` about unclosed resources
-    and no ``aclosing`` type errors (G3-R1 §IV).
+    and no ``aclosing`` type errors (G3- §IV).
     """
     import warnings
 

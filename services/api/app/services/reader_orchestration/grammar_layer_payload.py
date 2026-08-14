@@ -1,7 +1,7 @@
 """Grammar layer payload builder and shared item identity helper.
 
 实现 grammar_note 首发层 ``layer_published`` 事件 payload 合同
-（T4.2a-PUX-R4-R2.2-P2b-R1）。
+（）。
 
 提供：
 - :func:`build_grammar_item_id`：共享纯函数，生成 grammar item 的稳定 identity。

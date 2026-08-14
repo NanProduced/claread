@@ -1,5 +1,5 @@
 /**
- * T4.2a-O4-R2-D: Payload-aware Reader Event Classifier.
+ * Payload-aware Reader Event Classifier.
  *
  * Pure function that classifies a Reader Event as:
  * - ``reload_snapshot``: event changes snapshot representation; reload required
@@ -9,7 +9,7 @@
  *
  * This replaces the previous static ``RELOAD_TRIGGER_EVENT_TYPES`` check
  * (which only inspected ``event_type``) with a single, tested, payload-aware
- * classifier. Representation events (G1/G2/G3) published by O4-R2 backend
+ * classifier. Representation events (G1/G2/G3) published by the backend
  * writers now reliably trigger snapshot reload instead of being silently
  * consumed as cursor-only.
  *
@@ -47,7 +47,7 @@ export const ALLOWED_METADATA_FIELDS: ReadonlySet<string> = new Set([
 /**
  * Event types that unconditionally force a snapshot reload, regardless of
  * payload. These are the pre-existing reliable reload triggers preserved
- * from the D4 polling slice.
+ * from the polling slice.
  *
  * Representation events (``projection_ops`` / ``record_state_changed``) are
  * NOT here — they are classified by payload via {@link classifyReaderEvent}.

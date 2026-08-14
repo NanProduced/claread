@@ -50,7 +50,7 @@ _RUNNABLE_RECORD_PRODUCT_STATES = ("processing", "readable_enhancing")
 # Enhancement pipeline job types that the worker loop tracks. The candidate
 # scan counts ONLY these job types when deciding whether a record already has
 # tracked/runnable enhancement work. Non-enhancement jobs (notably
-# ``article_rag_index_build`` from the D6-I4B RAG bootstrap) must NOT keep a
+# ``article_rag_index_build`` from the RAG bootstrap) must NOT keep a
 # record out of the enhancement candidate set — otherwise an article_ready
 # record whose only job is a succeeded/queued RAG index job would be treated
 # as "already has tracked jobs" and never enter the enhancement pipeline,
@@ -88,7 +88,7 @@ class ReaderEnhancementWorkerLoopRecordResult:
     candidate: WorkerLoopCandidateRecord
     outcome: WorkerLoopRecordOutcome
     pipeline_summary: ReaderPipelineRunSummary | None = None
-    # T3.5: completion finalizer outcome. Present only when the finalizer
+    # Completion finalizer outcome. Present only when the finalizer
     # was actually invoked (i.e. ``stopped_reason == "all_workers_no_job"``
     # and ``product_state_decision.should_update_record`` was False).
     completion_finalization_result: CompletionFinalizationResult | None = None
@@ -143,7 +143,7 @@ class ReaderEnhancementWorkerLoopService:
         self._usage_attribution_service = ReaderUsageAttributionService(
             journal_service=self._journal_service
         )
-        # T3.5: completion finalizer advances ``readiness_state`` to
+        # Completion finalizer advances ``readiness_state`` to
         # ``coverage_complete`` once all enhancement jobs and analysis
         # windows reach a terminal status. Defaults to a finalizer that
         # reuses this service's repository so production wiring requires
@@ -185,7 +185,7 @@ class ReaderEnhancementWorkerLoopService:
                                 'failed_terminal',
                                 'skipped'
                             )
-                              -- T5.6b: ordinary tracked only (null-safe)
+                              -- ordinary tracked only (null-safe)
                               AND (job.input_json->>'request_origin')
                                   IS DISTINCT FROM 'section_v1'
                         ) AS tracked_job_count,
@@ -372,7 +372,7 @@ class ReaderEnhancementWorkerLoopService:
                                     )
                                     product_state_event_sequence = published_event.sequence
                         elif should_attempt_finalization(summary):
-                            # T3.5: pipeline reached ``all_workers_no_job``
+                            # Pipeline reached ``all_workers_no_job``
                             # without an attention signal. Verify every
                             # enhancement job and analysis window is
                             # terminal before transitioning
@@ -401,7 +401,7 @@ class ReaderEnhancementWorkerLoopService:
                             "stopped_reason": summary.stopped_reason,
                             "total_ticks": summary.total_ticks,
                             "total_jobs": summary.total_jobs,
-                            # T4.2a-R2-R2: persist budget diagnostics into
+                            # Persist budget diagnostics into
                             # the pipeline root span so they are queryable
                             # from ``reader_runtime_spans.metadata`` after
                             # the run completes — not just in the Python
@@ -509,7 +509,7 @@ class ReaderEnhancementWorkerLoopService:
                     if completion_finalization_result is not None
                     else None
                 ),
-                # T4.2a-R2-R2: budget diagnostics in structured log.
+                # Budget diagnostics in structured log.
                 "budget_denied": summary.outcome_counts.budget_denied,
                 "exhausted_layers": list(summary.exhausted_layers),
             },

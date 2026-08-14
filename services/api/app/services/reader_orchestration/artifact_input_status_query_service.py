@@ -1,4 +1,4 @@
-"""D6-I3V Artifact Input Pipeline Status query service (read-only).
+"""Artifact Input Pipeline Status query service (read-only).
 
 Provides a single entry point for clients to poll the pipeline status of a
 source artifact after init-upload / complete-upload / submit-input. The

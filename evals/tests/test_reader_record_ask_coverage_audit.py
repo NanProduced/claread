@@ -1,6 +1,6 @@
-"""Aggregate coverage audit tests (R4-A3 final closure Task 4 SubTask 4.7).
+"""Aggregate coverage audit tests.
 
-Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
+Spec: the accepted aggregate coverage audit contract.
 Requirement: Aggregate Coverage Audit.
 
 Drives :func:`validate_manifest_coverage` directly with minimal
@@ -443,7 +443,7 @@ def test_coverage_audit_corrupt_manifest_treated_as_missing(
 
 
 # ===========================================================================
-# P0-1 / P1 adversarial tests — single-artifact fake coverage,
+# Adversarial tests — single-artifact fake coverage,
 # three-state manifest classification, and absent+artifacts gap.
 # ===========================================================================
 
@@ -527,7 +527,7 @@ def test_coverage_audit_single_artifact_does_not_satisfy_duplicate_index_fake_co
 
 
 def test_coverage_audit_three_state_classification_absent(tmp_path: Path) -> None:
-    """P1 three-state: file does not exist → ManifestState.ABSENT.
+    """Manifest three-state: file does not exist → ManifestState.ABSENT.
 
     ``read_manifest_with_state`` returns state=ABSENT, manifest=None.
     This is the "never ran" path — distinct from corrupt.
@@ -544,7 +544,7 @@ def test_coverage_audit_three_state_classification_absent(tmp_path: Path) -> Non
 
 
 def test_coverage_audit_three_state_classification_valid(tmp_path: Path) -> None:
-    """P1 three-state: file exists and passes the strict contract →
+    """Manifest three-state: file exists and passes the strict contract →
     ManifestState.VALID with the parsed manifest.
     """
     from claread_eval.reader_record_ask.run_manifest import (
@@ -576,7 +576,7 @@ def test_coverage_audit_three_state_classification_valid(tmp_path: Path) -> None
 def test_coverage_audit_three_state_classification_corrupt(
     tmp_path: Path, corrupt_content: str
 ) -> None:
-    """P1 three-state: file exists but unparseable / missing fields /
+    """Manifest three-state: file exists but unparseable / missing fields /
     wrong types → ManifestState.CORRUPT.
 
     corrupt MUST NOT be folded into absent — a corrupt manifest
@@ -599,7 +599,7 @@ def test_coverage_audit_three_state_classification_corrupt(
 def test_coverage_audit_corrupt_manifest_does_not_leak_content_or_exception(
     tmp_path: Path,
 ) -> None:
-    """P1 safety: ManifestReadResult for a corrupt manifest carries
+    """Corrupt-manifest safety: ManifestReadResult carries
     ONLY the state (CORRUPT) — no file content, no exception text, no
     local sensitive information. The aggregate's report MUST NOT
     surface the corrupt content.

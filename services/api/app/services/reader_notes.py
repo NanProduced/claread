@@ -61,7 +61,7 @@ async def _persist_reading_record_anchor_branch(
     req: ReaderNoteCreateRequest,
     repository: ReaderOrchestrationRepository | None,
 ) -> ReaderNoteResponse:
-    """D6-U4 V1c single-range persistence for Reading Record notes.
+    """Single-range persistence for Reading Record notes.
 
     Runs the request through the Reading Record anchor gate, then writes
     a real row into `reader_notes` with the Reading Record anchor columns

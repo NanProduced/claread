@@ -17,12 +17,12 @@ pytestmark = pytest.mark.anyio
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _RAW_BASELINE_SQL = (
-    # DATA-SCHEMA-BASELINE D2: the single fresh baseline replaces all
+    # DATA-SCHEMA-BASELINE the single fresh baseline replaces all
     # per-step migrations; the constraint contracts below are verified
     # against it.
     REPO_ROOT / "infra" / "migrations" / "0001_initial.sql"
 ).read_text(encoding="utf-8")
-# DATA-D2-CLOSEOUT-R1: 0001 pins ``search_path`` to ``public`` for the
+# DATA-0001 pins ``search_path`` to ``public`` for the
 # fresh-init path; isolated-schema tests strip that pin and apply the DDL
 # into their own schema instead.
 BASELINE_SQL = re.sub(
@@ -509,7 +509,7 @@ async def test_user_annotations_color_contract_matches_baseline_palette(
             "用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。"
         )
 
-        # DATA-SCHEMA-BASELINE D2: highlights are Reading Record anchor rows
+        # DATA-SCHEMA-BASELINE highlights are Reading Record anchor rows
         # only; the color contract is verified against that row shape.
         for color in ("warm_yellow", "soft_mint", "soft_rose"):
             stored_color = await conn.fetchval(

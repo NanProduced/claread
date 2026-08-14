@@ -1,4 +1,4 @@
-// task-history: T4.2a-PUX-R4-R2-S1-P2
+// Production targeted Slate operations contract.
 /**
  * Production ReaderRecordPlateKit mounted targeted-ops characterization tests.
  *

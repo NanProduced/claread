@@ -1,7 +1,7 @@
-"""Typed artifact-load audit seam for the R4-A3 aggregate phase.
+"""Typed artifact-load audit seam for the aggregate step.
 
-Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
-Requirement: Artifact Load Audit (P0-1 final closure — artifact audit
+Artifact-load audit boundary for the evaluation harness.
+Requirement: Artifact Load Audit (final closure — artifact audit
 boundary).
 
 Prior to this module, ``_load_artifacts()`` in the runner script did
@@ -50,7 +50,7 @@ Safety contract:
   unless their dataset identity itself mismatches. A foreign run_id
   is an artifact-side audit failure, not a dataset-drift signal.
 
-The strict :class:`RawArtifact` schema (P0-1) is the single parsing
+The strict :class:`RawArtifact` schema is the single parsing
 truth — this module does NOT add a parallel validation layer. Every
 artifact that lands in ``valid_artifacts`` has passed the full strict
 contract (StrictInt / StrictBool / StrictStr / 64-hex SHA / non-empty
@@ -148,7 +148,7 @@ def load_artifacts_with_audit(
 
     This is the production artifact-load seam — the SINGLE source of
     truth for parsing on-disk artifacts. It enforces the strict
-    :class:`RawArtifact` contract (P0-1) via
+    :class:`RawArtifact` contract via
     :meth:`RawArtifact.model_validate` and produces a typed
     :class:`ArtifactLoadResult` that the aggregate verdict gate
     consults.
@@ -262,7 +262,7 @@ def load_artifacts_with_audit(
             continue
 
         # Strict schema validation via RawArtifact.model_validate.
-        # This enforces the P0-1 contract (StrictInt/Bool/Str + format
+        # This enforces the strict contract (StrictInt/Bool/Str + format
         # validators). A ValidationError here means the file is
         # corrupt or hand-edited — count as invalid_schema and skip.
         try:

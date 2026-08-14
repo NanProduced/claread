@@ -1,4 +1,4 @@
-"""Artifact input pipeline worker service (D6-I3P).
+"""Artifact input pipeline worker service.
 
 Composes :class:`ArtifactExtractionWorkerService` and
 :class:`ArtifactMaterializationWorkerService` into a single entry point so

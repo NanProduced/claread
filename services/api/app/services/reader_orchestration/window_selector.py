@@ -137,8 +137,8 @@ class SelectorLedger:
         }
     )
     # §7.3 density_cap：每 1000 UTF-16 chars 的最大 annotation 数（ratio 上限）。
-    # 旧实现误把它当作 raw count，P2-6 修正为 per-1000-chars ratio。
-    # Phase 5: sentence_analysis 从 1.0 提升到 2.0，与 grammar_note 的 3.0
+    # 旧实现误把它当作 raw count， 修正为 per-1000-chars ratio。
+    # Sentence_analysis 从 1.0 提升到 2.0，与 grammar_note 的 3.0
     # 保持对称。旧值 1.0 过紧，导致 sentence_analysis 在 RECORD_DENSITY 阶段
     # 被静默拒绝，无法与 grammar_note 在选点质量上公平竞争。
     density_cap: dict[str, float] = field(
@@ -163,7 +163,7 @@ class CandidateItem:
     构建 GrammarNoteLayerOutput / SentenceAnalysisLayerOutput。selector
     本身不读这些字段（只读 dedup/anchor/pattern/quality 字段）。
 
-    P1-2 self-rating contract: ``dedup_hint`` 是 LLM 产出的稳定学习点短键
+     self-rating contract: ``dedup_hint`` 是 LLM 产出的稳定学习点短键
     （非空，≤120 字符），DUP gate 把它规范化后跨 grammar_note /
     sentence_analysis 共享。``semantic_dedup_key`` 仍由 executor 基于
     (grammar_point, dedup_hint) / (label, dedup_hint) 计算，仅用于
@@ -185,7 +185,7 @@ class CandidateItem:
     quality_score: int
     reading_blocker: bool
     dedup_hint: str
-    # Layer content fields (P1-4 bridge: executor → publisher)
+    # Layer content fields (bridge: executor → publisher)
     grammar_point: str = ""
     pattern: str | None = None
     note: str = ""
@@ -273,7 +273,7 @@ class SelectionResult:
 
 @dataclass(slots=True)
 class WindowRoundState:
-    """当前 window 内已接受 candidate 的累计贡献（P1-5）。
+    """当前 window 内已接受 candidate 的累计贡献（）。
 
     旧实现只读 ``ledger`` 的 pre-existing 状态，未把同一 window 内已接受的
     candidate 累计到后续 gate 检查上，导致：
@@ -316,7 +316,7 @@ class WindowRoundState:
             "sentence_analysis": 0,
         }
     )
-    # P1-4: 跨 item_type 的已接受 anchor 集合（gate 7 ANCHOR_RATIO 用）。
+    # 跨 item_type 的已接受 anchor 集合（gate 7 ANCHOR_RATIO 用）。
     # gate 7 是跨 item_type 聚合的，所以不能用 anchor_counts_by_type，
     # 需要独立的 set 追踪所有 item_type 接受过的 anchor。
     accepted_anchors: set[str] = field(default_factory=set)
@@ -324,7 +324,7 @@ class WindowRoundState:
     def add(self, candidate: CandidateItem) -> None:
         """接受一个 candidate 后，将其贡献累计到本 window 的 running state。
 
-        P1-2 + reader-grammar-candidate-selection: ``dedup_keys_by_type``
+         reader-grammar-candidate-selection: ``dedup_keys_by_type``
         现在存储 scoped dedup key 元组 ``(anchor_segment_id,
         normalized_dedup_hint)`` → 出现次数。DUP gate 用此结构做
         scoped 比较（同 anchor 同 hint 才淘汰；不同 anchor 同 hint 不淘汰）。
@@ -347,7 +347,7 @@ class WindowRoundState:
         anchor_id = candidate.anchor_segment_id
         anchor_counts[anchor_id] = anchor_counts.get(anchor_id, 0) + 1
 
-        # P1-4: gate 7 跨 item_type 聚合
+        # Gate 7 跨 item_type 聚合
         self.accepted_anchors.add(anchor_id)
 
         if candidate.pattern_key:
@@ -379,15 +379,15 @@ def select_candidates(
         （同分时 grammar_note 优先；sentence_analysis 应有更高准入门槛）
     所有 counter 按 ``candidate.item_type`` 查询 ledger 的对应分桶。
 
-    P1-5：维护 ``WindowRoundState`` 把当前 window 内已接受的 candidate 累计
+    ：维护 ``WindowRoundState`` 把当前 window 内已接受的 candidate 累计
     到后续 gate 检查上，避免同 window 内接受重复 dedup key / 同 anchor
     多 item / 超 budget / density。
 
-    P1-3（§7.2 step 2 pre-filter）：当 ``target_anchor_ids`` 提供时，拒绝
+    （§7.2 step 2 pre-filter）：当 ``target_anchor_ids`` 提供时，拒绝
     ``anchor_segment_id`` 不在该集合内的 candidate。防止 LLM 返回 window
     范围外的 anchor 导致非法 layer。
 
-    P1-2 self-rating contract: DUP gate 使用 scoped dedup key
+     self-rating contract: DUP gate 使用 scoped dedup key
     ``(anchor_segment_id, normalize_dedup_hint(dedup_hint))`` 跨
     grammar_note / sentence_analysis 共享。同 anchor 同 hint 才淘汰
     （winner 由 sort order 决定）；不同 anchor 同 hint 不淘汰，全文重复
@@ -418,7 +418,7 @@ def select_candidates(
     )
 
     for sorted_index, candidate in enumerate(sorted_candidates):
-        # P1-3: §7.2 step 2 pre-filter — anchor_segment_id ∈ target_anchor_ids
+        # §7.2 step 2 pre-filter — anchor_segment_id ∈ target_anchor_ids
         # Empty set is treated as None (defensive: skip pre-filter when no
         # target anchors are available, e.g. malformed window_row).
         if (
@@ -461,7 +461,7 @@ def select_candidates(
         window_count_by_type[candidate.item_type] = (
             window_count_by_type.get(candidate.item_type, 0) + 1
         )
-        # P1-5：同 window 内接受的 candidate 累计到 window_round，
+        # ：同 window 内接受的 candidate 累计到 window_round，
         # 后续 gate 检查时叠加在 ledger 之上
         window_round.add(candidate)
         # reader-grammar-candidate-selection: 记录 current_window winner
@@ -511,7 +511,7 @@ def _check_gates(
     其他 gate 的 ``reason_code`` 为 ``None``；``reason`` 仅保留人类可读
     详情，不再承担 code 合同。
 
-    P1-5：DUP / PATTERN_DENSE / ANCHOR_CAP / RECORD_DENSITY / RECORD_BUDGET
+    ：DUP / PATTERN_DENSE ANCHOR_CAP / RECORD_DENSITY RECORD_BUDGET
     的 counter 在 ledger 之上叠加 ``window_round`` 的同 window 已接受累计值。
     """
     item_type = candidate.item_type
@@ -623,7 +623,7 @@ def _check_gates(
             )
 
     # gate 5 (RECORD_DENSITY): record density >= density_cap
-    # §7.3 P2-6：density = total_published_count / max(base_text_length_utf16 / 1000, 1.0)
+    # §7.3 ：density = total_published_count / max(base_text_length_utf16 1000, 1.0)
     # total_published_count = ledger.density_by_record[type] + window_round 已接受累计
     total_published_count = (
         ledger.density_by_record.get(item_type, 0)
@@ -656,7 +656,7 @@ def _check_gates(
             )
 
     # gate 7 (ANCHOR_RATIO): projected annotated_anchor_ratio > 0.30
-    # P1-4: 必须检查 projected ratio（含当前 candidate + 同 window 已接受），
+    # 必须检查 projected ratio（含当前 candidate + 同 window 已接受），
     # 不能只看 ledger 当前值。否则同一 window 内可以接受到 40%+ ratio。
     # projected = (ledger 已有 + 同 window 已接受 + 当前 candidate 如果是新 anchor) / total
     if ledger.total_anchors > 0:

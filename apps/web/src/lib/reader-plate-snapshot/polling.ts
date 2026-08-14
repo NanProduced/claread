@@ -13,10 +13,10 @@ import type {
 } from "@/types/api/reader-plate";
 
 /**
- * T4.2a-PUX-R4-R2: Complete reload context passed from polling → page → surface.
+ * Complete reload context passed from polling → page → surface.
  *
  * Contains ALL events from the poll response (not just the trigger event) so
- * the incremental projection merger can build a batch merge plan. See R1.1
+ * the incremental projection merger can build a batch merge plan. See the
  * design §3.2 and §3.7 for batch semantics.
  */
 export interface ReloadContext {
@@ -61,7 +61,7 @@ export type PollingDecision =
  * Contract reference: `docs/initiatives/reader-agentic-orchestration/modules/streaming-and-projection.md`
  * - `after_sequence == last_event_sequence` with empty events → caught up, no reload.
  * - `reload_required` → reload.
- * - Payload-aware classifier (T4.2a-O4-R2-D): for each event, call
+ * - Use the payload-aware classifier for each event by calling
  *   {@link classifyReaderEvent}. The first `reload_snapshot` or
  *   `reload_or_reset` classification forces a reload; the classifier's
  *   reason is preserved for traceability. `cursor_only` events are advanced.
@@ -79,9 +79,9 @@ export function decidePollingAction(input: {
   const { afterSequence, response, snapshotFence = null } = input;
 
   /**
-   * T4.2a-PUX-R4-R2: Build a ReloadContext with ALL events from the poll
+   * Build a ReloadContext with ALL events from the poll
    * response. The incremental projection merger needs the full batch to
-   * build a correct merge plan (see R1.1 design §3.7 batch semantics).
+   * build a correct merge plan (see design §3.7 batch semantics).
    */
   const buildReloadContext = (
     reason: string,
@@ -161,7 +161,7 @@ export interface UseReaderPlatePollingOptions {
   pollIntervalMs?: number;
   pollLimit?: number;
   /**
-   * Snapshot fence for the payload-aware classifier (T4.2a-O4-R2-D).
+   * Snapshot fence for the payload-aware classifier.
    *
    * Pass the generation/base_id of the currently accepted snapshot so
    * representation events from a stale base are detected as
@@ -173,11 +173,11 @@ export interface UseReaderPlatePollingOptions {
   /**
    * Called when the polling hook decides the snapshot must be reloaded.
    *
-   * T4.2a-PUX-R4-R2: receives a full {@link ReloadContext} (not just a reason
+   * Receives a full {@link ReloadContext} (not just a reason
    * string) so the page can pass trigger events and fence info to the Surface
    * for incremental projection merge.
    *
-   * T2.1 contract: the callback MUST resolve to `true` only when a fresh
+   * The callback MUST resolve to `true` only when a fresh
    * snapshot was actually applied (parent pushed a new `initialCursor` via
    * props). Resolve to `false` when the reload was skipped (e.g. an
    * in-flight reload is already running in the parent), rejected, or the
@@ -203,7 +203,7 @@ const DEFAULT_POLL_INTERVAL_MS = 3000;
 const DEFAULT_POLL_LIMIT = 100;
 
 /**
- * Polling hook for the D4 readOnly Reader Plate slice.
+ * Polling hook for the read-only Reader Plate slice.
  *
  * Flow:
  * 1. Poll `GET /api/web/reader/records/{recordId}/events?after_sequence={cursor}`.
@@ -244,12 +244,12 @@ export function useReaderPlatePolling(
   const onReloadRequiredRef = useRef(onReloadRequired);
   const onCursorChangeRef = useRef(onCursorChange);
   const cursorRef = useRef(cursor);
-  // T4.2a-O4-R2-D: keep the snapshot fence current in a ref so the polling
+  // Keep the snapshot fence current in a ref so the polling
   // tick always classifies against the latest accepted snapshot without
   // restarting the effect (which would reset the timer).
   const snapshotFenceRef = useRef<SnapshotFenceContext | null>(snapshotFence);
 
-  // T2.1: in-flight guard prevents stacking concurrent reloads. While a
+  // The in-flight guard prevents stacking concurrent reloads. While a
   // reload is awaiting the parent's snapshot fetch, additional reload
   // decisions from subsequent polls skip WITHOUT advancing the cursor —
   // the reload-required events must stay visible so the next tick can
@@ -266,7 +266,7 @@ export function useReaderPlatePolling(
     onCursorChangeRef.current = onCursorChange;
   }, [onCursorChange]);
 
-  // T4.2a-O4-R2-D: sync the snapshot fence ref so the polling tick reads the
+  // Sync the snapshot fence ref so the polling tick reads the
   // latest accepted snapshot's generation/base_id without re-subscribing.
   useEffect(() => {
     snapshotFenceRef.current = snapshotFence;

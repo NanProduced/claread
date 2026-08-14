@@ -1,4 +1,4 @@
-# task-history: D6-I3E (renamed from test_d6_i3e_candidate_document_creation_service.py)
+# task-history: (renamed from test_d6_i3e_candidate_document_creation_service.py)
 from __future__ import annotations
 
 import asyncio
@@ -535,14 +535,14 @@ def test_candidate_heading_strips_inline_markdown() -> None:
     )
     assert blocks[0].block_type == "heading"
     assert blocks[0].text_content == "Bold heading with link"
-    # A2: heading payload carries inline_marks (structured inline marks with
+    # Heading payload carries inline_marks (structured inline marks with
     # UTF-16 offsets). The markdown SYNTAX (**, []) is stripped from
     # text_content, but the mark ranges + safe link href are preserved as
     # structured data in inline_marks. No top-level `links` key is added
     # to heading payload (only paragraphs get the `links` key).
     assert blocks[0].payload_json.get("level") == 2
     assert "inline_marks" in blocks[0].payload_json, (
-        f"A2: heading with inline marks must carry inline_marks, got {blocks[0].payload_json!r}"
+        f"contract: heading with inline marks must carry inline_marks, got {blocks[0].payload_json!r}"
     )
     marks = blocks[0].payload_json["inline_marks"]
     assert {"type": "strong", "start": 0, "end": 12} in marks
@@ -621,7 +621,7 @@ def test_candidate_fenced_block_does_not_emit_fence_in_text_content() -> None:
 
 
 def test_markdown_candidate_blocks_carry_parser_identity_quality_json() -> None:
-    """T3 — markdown_file candidate blocks MUST carry the parser identity
+    """markdown_file candidate blocks MUST carry the parser identity
     triple (parser_name / parser_version / profile) in each block's
     ``quality_json`` to preserve provenance symmetry with the normalizer
     path (``input_document_normalizer._PARSER_IDENTITY``).
@@ -656,7 +656,7 @@ def test_markdown_candidate_blocks_carry_parser_identity_quality_json() -> None:
 
 
 def test_plain_text_candidate_blocks_do_not_carry_parser_identity() -> None:
-    """T3 — plain text candidate blocks (pasted_text / txt_file) MUST NOT
+    """plain text candidate blocks (pasted_text / txt_file) MUST NOT
     carry the markdown parser identity triple, because they are not
     produced by ``MarkdownSourceParser``. This guards against falsely
     attributing plain-text content to the structured-source parser when

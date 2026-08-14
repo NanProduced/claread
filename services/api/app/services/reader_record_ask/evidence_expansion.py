@@ -1,4 +1,4 @@
-"""Turn-bound opaque evidence expansion (R4-A5-3 / A5-3R, offline core).
+"""Turn-bound opaque evidence expansion (offline core).
 
 Deep module for ``selection continuation → opaque pointer → expand tool
 model-view → new evidence handle``. Narrow public surface, deep state:
@@ -6,7 +6,7 @@ callers never pass locators, offsets, body text, fingerprints, generations,
 or turn ids into :meth:`EvidenceExpansionSession.expand` — only an opaque
 pointer string.
 
-Full canonical source integrity (R4-A5-3R)
+Full canonical source integrity
 ------------------------------------------
 Construction verifies the **entire** canonical selection, not just the
 visible prefix, via the assembler-minted server-only
@@ -14,7 +14,7 @@ visible prefix, via the assembler-minted server-only
 
 - full char count == ``len(canonical)``;
 - full-content SHA-256 digest == ``seed.canonical_digest`` (minted by the
-  A5-2 assembler when the canonical selection is known — never the
+   assembler when the canonical selection is known — never the
   semantically unclear, possibly absent locator ``text_hash``);
 - seed/handle_ref/model-chunk/selection metadata handle consistency;
 - ``visible_prefix == canonical[:continuation_start]``;
@@ -27,7 +27,7 @@ tool-view, error messages, or registry sidecars.
 
 Pointer / binding contracts (design TMP §18)
 --------------------------------------------
-- A5-2's ``continuation_start`` stays server-only.
+- ``continuation_start`` stays server-only.
 - The **initial** expand pointer is the injected selection's ``evh_*``
   handle; **subsequent** pointers are server-minted ``cur_*`` cursors.
 - Every pointer is bound to and validated against:
@@ -39,7 +39,7 @@ Pointer / binding contracts (design TMP §18)
 - The model never supplies or influences the real turn_id; this module
   accepts only server-owned turn context.
 
-Ledger transition (R4-A5-3R)
+Ledger transition
 ----------------------------
 Cursor issuance + old-pointer consumption happen as **one** marker-scoped
 ledger transition (:meth:`ExpansionPointerLedger.transition_pointers`):
@@ -131,7 +131,7 @@ from app.services.reader_record_ask.tool_contracts import (
 
 EXPAND_ROLE: str = "expand"
 
-# A5-3: selection-scope expansion. A5-4: map-scope expansion (map cursors
+# Selection-scope expansion. Map-scope expansion (map cursors
 # expand entry window text — entries themselves are never evidence).
 ExpandScopeKind = Literal["selection", "map"]
 
@@ -190,7 +190,7 @@ def _mint_cursor_id() -> str:
 def mint_expansion_cursor_id() -> str:
     """Server-only opaque expansion cursor mint (``cur_<32 hex>``).
 
-    Shared by selection-scope (R4-A5-3) and map-scope (R4-A5-4)
+    Shared by selection-scope and map-scope
     expanders. Cursors are continuation pointers, never evidence handles.
     """
     return _mint_cursor_id()
@@ -247,7 +247,7 @@ class PointerBinding:
         if not isinstance(self.reading_record_id, UUID):
             raise TypeError("reading_record_id must be a UUID")
         if self.scope_kind not in ("selection", "map"):
-            # A5-3/A5-4 support selection + map scopes only.
+            # support selection + map scopes only.
             raise ValueError("scope_kind must be 'selection' or 'map'")
 
 
@@ -606,7 +606,7 @@ def render_expand_success_view(
 ) -> RenderedModelView:
     """Full expand tool-view for one segment (single untrusted text block).
 
-    Shared by selection-scope (R4-A5-3) and map-scope (R4-A5-4) expanders
+    Shared by selection-scope and map-scope expanders
     so the model-visible success shape cannot drift between scopes. The
     logical segment text appears exactly once, inside the renderer-minted
     ``role="expand"`` untrusted block. ``cursor`` may be the fixed-length
@@ -825,7 +825,7 @@ class EvidenceExpansionSession:
                     "selection model_chunk text != visible_prefix"
                 )
 
-        # R4-A5-3R full-source integrity: assembler-minted server-only seed.
+        # Full-source integrity: assembler-minted server-only seed.
         # Same-prefix forgeries (longer, or same length with a replaced
         # suffix) fail closed here — before any ledger write. Error text
         # carries no digest value and no body.

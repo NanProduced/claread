@@ -1,7 +1,7 @@
 """Dimension 5/11 — entity_precision.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: entity_precision typed entity catalog（P0-7）.
+spec.md` — Requirement: entity_precision typed entity catalog.
 
 Previous implementation only checked "other declared types" against
 ``allowed_entities_by_type``. When a BBC case declared only the
@@ -40,7 +40,7 @@ from collections.abc import Callable
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "entity_precision"
 
@@ -96,7 +96,7 @@ def _entity_appears_in_text(entity_entry: str, text: str) -> bool:
     return False
 
 
-def _resolve_catalog(case: ReaderRecordAskR4A3Case) -> dict[str, list[str]]:
+def _resolve_catalog(case: ReaderRecordAskCase) -> dict[str, list[str]]:
     """Return the typed entity catalog to use.
 
     Prefers :attr:`entity_catalog` (new contract). Falls back to
@@ -109,7 +109,7 @@ def _resolve_catalog(case: ReaderRecordAskR4A3Case) -> dict[str, list[str]]:
 
 
 def evaluate_entity_precision(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
     llm_judge: Callable[[str, dict], dict] | None = None,
 ) -> EvalDimensionResult:

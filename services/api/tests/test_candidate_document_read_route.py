@@ -1,4 +1,4 @@
-"""S2 P1-1: Route-level body contract tests for
+"""Route-level body contract tests for
 ``GET /reader/records/{record_id}/candidate-document``.
 
 These tests verify the **actual HTTP status code and the full top-level
@@ -18,7 +18,7 @@ FastAPI app with the production router wired in. Auth is mocked via
 Coverage:
 - 404 (record not found — collapsed)
 - 409 open_reader (readable_enhancing + article_ready + active_base_id)
-- 409 open_reader via coverage_complete (P1-2 regression)
+- 409 open_reader via coverage_complete (regression)
 - 409 return_to_library (failed state)
 - 409 multiple_ready_candidates
 - 200 happy path (one ready candidate + needs_confirmation)
@@ -381,7 +381,7 @@ async def test_409_open_reader_body_contract(
 async def test_409_open_reader_coverage_complete_body_contract(
     route_env: dict[str, object],
 ) -> None:
-    """P1-2: coverage_complete + active_base_id also yields open_reader."""
+    """Coverage_complete + active_base_id also yields open_reader."""
     pool = route_env["pool"]
     app = route_env["app"]
     assert isinstance(pool, asyncpg.Pool)
@@ -592,7 +592,7 @@ async def test_401_unauthenticated_body_contract(
     The body shape here is FastAPI's default for HTTPBearer
     auto_error=True; we only assert the status code so we do not
     over-couple to the auth envelope (which is owned by the auth
-    module, not S2).
+    module, not ).
     """
     app = route_env["app"]
     assert isinstance(app, FastAPI)

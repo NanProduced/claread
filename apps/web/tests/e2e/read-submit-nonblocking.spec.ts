@@ -1,20 +1,9 @@
 /**
- * 阶段 3 e2e — 提交路径非阻断合同（fail-closed 已撤销）。
- *
- * Mock BFF（reader-plate-smoke.spec.ts 风格：page.route + mock_phone
- * 登录态），验证：
- *   1. 安全内容（普通链接 / aside / vector<T>）经按钮与 Ctrl/Cmd+Enter
- *      均正常发出提交请求；
- *   2. 含 script 的内容前端不阻断（请求照常发出）且 script 不执行；
- *   3. lint 警告 badge 非阻断展示（不阻止请求）。
+ * Submit-path browser fail-closed: unsafe content is not executed and
+ * does not block submit. Safe submit / canonical Markdown live in Vitest.
  */
 
 import { expect, test, type Page } from "@playwright/test";
-
-import {
-  RICH_HTML,
-  RICH_HTML_PLAIN,
-} from "./fixtures/clipboard-fixtures";
 
 const READ_PATH = "/app/read";
 
@@ -117,26 +106,6 @@ async function pasteText(page: Page, text: string) {
   await page.waitForTimeout(500);
 }
 
-async function pasteRichClipboard(
-  page: Page,
-  payload: { html: string; plain: string },
-) {
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.evaluate(async ({ html, plain }) => {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([plain], { type: "text/plain" }),
-      }),
-    ]);
-  }, payload);
-  await page.locator("[data-slate-editor]").first().click();
-  await page.keyboard.press("Control+V");
-  await expect(page.getByRole("button", { name: "开始透读" })).toBeEnabled({
-    timeout: 10_000,
-  });
-}
-
 async function waitForSubmitReady(page: Page) {
   await expect(
     page.getByRole("button", { name: "开始透读" }),
@@ -145,70 +114,8 @@ async function waitForSubmitReady(page: Page) {
 
 // ---------------------------------------------------------------------------
 
-test.describe("阶段 3: 提交路径非阻断", () => {
-  test("富 HTML 提交 canonical Markdown 而非扁平 companion text", async ({
-    page,
-  }) => {
-    const captured: CapturedSubmit[] = [];
-    await mockSubmitEndpoint(page, captured);
-    await loginWithMockPhone(page);
-
-    await pasteRichClipboard(page, {
-      html: RICH_HTML,
-      plain: RICH_HTML_PLAIN,
-    });
-    await page.getByRole("button", { name: "开始透读" }).click();
-
-    await expect
-      .poll(() => captured.length, { timeout: 10_000 })
-      .toBe(1);
-    const submitted = captured[0].text ?? "";
-    expect(submitted).toContain("# Title One");
-    expect(submitted).toContain("## Section Two");
-    expect(submitted).toContain("> quoted insight");
-    expect(submitted).toContain("nested alpha");
-    expect(submitted).toContain("def f():");
-    expect(submitted).toContain("| Name | Value |");
-    expect(submitted.replace(/\r\n/g, "\n")).not.toBe(RICH_HTML_PLAIN);
-  });
-
-  test("安全内容（普通链接 + vector<T>）经按钮正常提交", async ({ page }) => {
-    const captured: CapturedSubmit[] = [];
-    await mockSubmitEndpoint(page, captured);
-    await loginWithMockPhone(page);
-
-    await pasteText(
-      page,
-      "Read [the docs](https://example.com/docs) about std::vector<T> carefully.",
-    );
-    await waitForSubmitReady(page);
-    await page.getByRole("button", { name: "开始透读" }).click();
-
-    await expect
-      .poll(() => captured.length, { timeout: 10_000 })
-      .toBe(1);
-    expect(captured[0].text).toContain("https://example.com/docs");
-    expect(captured[0].text).toContain("vector<T>");
-    expect(captured[0].sourceType).toBe("pasted_text");
-  });
-
-  test("安全内容经 Ctrl+Enter 正常提交", async ({ page }) => {
-    const captured: CapturedSubmit[] = [];
-    await mockSubmitEndpoint(page, captured);
-    await loginWithMockPhone(page);
-
-    await pasteText(page, "A short English article for the non-blocking gate.");
-    await waitForSubmitReady(page);
-    await page.locator("[data-slate-editor]").first().click();
-    await page.keyboard.press("Control+Enter");
-
-    await expect
-      .poll(() => captured.length, { timeout: 10_000 })
-      .toBe(1);
-    expect(captured[0].text).toContain("non-blocking gate");
-  });
-
-  test("含 script 的内容前端不阻断、script 不执行、badge 展示", async ({
+test.describe("提交路径非阻断", () => {
+  test("unsafe script/link content does not execute and does not block submit", async ({
     page,
   }) => {
     const captured: CapturedSubmit[] = [];
@@ -219,47 +126,30 @@ test.describe("阶段 3: 提交路径非阻断", () => {
       page,
       "Hello <script>window.__pwned = true</script> world, keep reading.",
     );
-
-    // 非阻断 badge 展示（debounce 后出现）
     await expect(page.getByTestId("read-source-lint-warning")).toBeVisible({
       timeout: 10_000,
     });
-
     await waitForSubmitReady(page);
     await page.getByRole("button", { name: "开始透读" }).click();
-
-    // 前端不阻断：请求照常发出
-    await expect
-      .poll(() => captured.length, { timeout: 10_000 })
-      .toBe(1);
-
-    // script 未执行
+    await expect.poll(() => captured.length, { timeout: 10_000 }).toBe(1);
     const pwned = await page.evaluate(
       () => (window as unknown as { __pwned?: boolean }).__pwned,
     );
     expect(pwned).toBeUndefined();
-  });
 
-  test("unsafe link 内容 badge 展示但提交不阻断", async ({ page }) => {
-    const captured: CapturedSubmit[] = [];
+    captured.length = 0;
+    await page.goto(READ_PATH);
     await mockSubmitEndpoint(page, captured);
-    await loginWithMockPhone(page);
-
     await pasteText(
       page,
       "Click [here](javascript:alert(1)) for more context on this topic.",
     );
-
     await expect(page.getByTestId("read-source-lint-warning")).toBeVisible({
       timeout: 10_000,
     });
-
     await waitForSubmitReady(page);
     await page.locator("[data-slate-editor]").first().click();
     await page.keyboard.press("Control+Enter");
-
-    await expect
-      .poll(() => captured.length, { timeout: 10_000 })
-      .toBe(1);
+    await expect.poll(() => captured.length, { timeout: 10_000 }).toBe(1);
   });
 });

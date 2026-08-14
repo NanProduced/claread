@@ -232,7 +232,7 @@ def project_agentic_history_message(
 
     Rules:
     - Trust DB ``final_status`` column as source of truth; JSON may only
-      confirm it. Mismatch → safe degrade (P0).
+      confirm it. Mismatch → safe degrade.
     - Never hydrate public evidence from agentic JSON.
     - Never emit ``envelope_fingerprint``, handles, or raw restricted evidence.
     - ``resolved_evidence_json`` is server-only and is never projected to history.
@@ -240,10 +240,10 @@ def project_agentic_history_message(
     del row_status  # reserved for future streaming mid-run projection
     del resolved_evidence_json  # restricted server-only; never cold-project
     anchors = list(context_anchors or [])
-    # ASK-REASONING-R1: cold reasoning comes only from the persisted
+    # ASK-REASONING-cold reasoning comes only from the persisted
     # projection (committed atomically with the ok answer). Extracted
     # before wire sanitization strips the raw JSONB payload.
-    # R4-4: extract both text and truncated flag from the same validated
+    # Extract both text and truncated flag from the same validated
     # snapshot so hot SSE, DB snapshot, and cold history stay consistent.
     reasoning_text, _, learner_stage = _safe_reasoning_projection(
         current_turn_run

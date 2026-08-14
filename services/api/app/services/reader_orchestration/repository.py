@@ -49,7 +49,7 @@ from .base_builder import (
     NavigationUnitFact,
     ReadingBaseBuildResult,
     StableReadingBase,
-    # R1: shared stable-block payload projection helpers — the reload path
+    # Shared stable-block payload projection helpers — the reload path
     # must project exactly the same heading level / inline marks / table
     # role semantics as the in-memory build path (single source of truth;
     # no second projection implementation).
@@ -136,7 +136,7 @@ class ReaderRecordSummary:
     source_metadata: dict[str, Any]
     last_event_sequence: int
     last_opened_at: datetime | None = None
-    # S2.5 Reading Record Identity Projection fields.
+    # Reading Record Identity Projection fields.
     # ``display_title`` is the backend-decided stable title following the
     # priority chain: succeeded generated_title_zh → record.title →
     # current-generation ready candidate title → original input filename →
@@ -570,7 +570,7 @@ class ReaderOrchestrationRepository:
         return result == "UPDATE 1"
 
     # ------------------------------------------------------------------
-    # T3.5 completion state finalizer helpers
+    # Completion state finalizer helpers
     #
     # These helpers are pure-read PostgreSQL queries used by the completion
     # finalizer to decide whether a record's enhancement work is fully
@@ -597,7 +597,7 @@ class ReaderOrchestrationRepository:
         succeeded, failed_terminal, cancelled, superseded) initialized to
         0 so callers can branch on ``.get(status, 0)`` without KeyError.
         """
-        # T5.6b: coverage-required counts exclude section_v1 lane jobs.
+        # Coverage-required counts exclude section_v1 lane jobs.
         # Null-safe ordinary predicate: missing request_origin stays ordinary.
         rows = await conn.fetch(
             """
@@ -687,7 +687,7 @@ class ReaderOrchestrationRepository:
         """Transition ``readiness_state`` for a record that is still in one
         of ``current_readiness_states``.
 
-        Used by the T3.5 finalizer to move ``article_ready`` /
+        Used by the finalizer to move ``article_ready``
         ``initial_enhancement_ready`` records to ``coverage_complete``. The
         WHERE clause guards against stale generations, deleted records, and
         records that already advanced out of the expected readiness window
@@ -752,7 +752,7 @@ class ReaderOrchestrationRepository:
         """Force-fail any ``pending`` / ``running`` analysis windows for the
         record's active base / generation.
 
-        Used by the T3.5 finalizer when all enhancement jobs are terminal
+        Used by the finalizer when all enhancement jobs are terminal
         but analysis windows remain non-terminal (e.g. the grammar-window grammar
         window worker is not registered in this deployment, or a window
         lease is stuck in ``running``). The candidate scan only re-picks
@@ -763,7 +763,7 @@ class ReaderOrchestrationRepository:
         ``completed_with_failures`` outcome.
 
         The failure metadata is merged into ``coverage.diagnostics`` so
-        T3.4a diagnostic queries surface the forced-fail reason without a
+         diagnostic queries surface the forced-fail reason without a
         schema migration. ``completed_at`` is stamped so the window is
         observably terminal.
 
@@ -810,7 +810,7 @@ class ReaderOrchestrationRepository:
         failure_reason: str,
         updated_at: datetime,
     ) -> int:
-        """T4.2a-R2: Force-fail non-terminal enhancement jobs.
+        """Force-fail non-terminal enhancement jobs.
 
         Used by the completion finalizer when the pipeline stopped due
         to ``budget_exhausted`` and non-terminal jobs remain. Without
@@ -868,7 +868,7 @@ class ReaderOrchestrationRepository:
         rationale_code: str,
         updated_at: datetime,
     ) -> int:
-        """T4.2a-R2-R2: Supersede conflicting legacy per-unit grammar jobs.
+        """Supersede conflicting legacy per-unit grammar jobs.
 
         When a grammar batch job is authoritative (succeeded /
         failed_terminal / skipped / non-terminal), any legacy
@@ -1349,7 +1349,7 @@ class ReaderOrchestrationRepository:
             label = navigation_item.get("label")
             label_text = label if isinstance(label, str) else None
 
-            # R1: project stable block metadata from the active Stable
+            # Project stable block metadata from the active Stable
             # Document when this unit's base range EXACTLY matches a block's
             # canonical range. ``unit_type`` / ``label`` are NOT overridden
             # here: they are the persisted legacy truth (the heading override
@@ -1710,13 +1710,13 @@ class ReaderOrchestrationRepository:
         generation: int,
         build_result: ReadingBaseBuildResult,
     ) -> tuple[ReaderSnapshotUserAsset, ...]:
-        """Load D6-U4 Reading Record user assets for the current snapshot.
+        """Load Reading Record user assets for the current snapshot.
 
         Only rows matching the active base_id + generation are returned.
         Stale base/generation rows are excluded by the base_id + generation
         filter.
 
-        D6-U5.1 defensive validation: each row is validated against the
+         defensive validation: each row is validated against the
         active base facts (unit_text, anchor_segment range, selected_text,
         text_hash) before being admitted into the snapshot. Rows that fail
         validation are silently skipped so that a single dirty highlight or
@@ -1929,25 +1929,25 @@ class ReaderOrchestrationRepository:
     ) -> tuple[tuple[ReaderRecordSummary, ...], int]:
         """List the current user's reading records as a safe read model.
 
-        S2.5 (P1-1 fix): ``display_title`` is computed in SQL via a CTE
+         (fix): ``display_title`` is computed in SQL via a CTE
         so that the search ``query`` can be filtered at the database
         level and ``LIMIT`` is applied server-side. ``total`` uses a
         separate ``COUNT`` query.
 
-        S2.5 (P1-1 row-determinism fix): The earliest ``original_inputs``
+         (row-determinism fix): The earliest ``original_inputs``
         row is fetched once per record via a single ``LEFT JOIN LATERAL``
         (``LIMIT 1``). All ``display_title`` / filename / source-label
         inputs derive from this one deterministic row. There are no
         repeated scalar subqueries against ``original_inputs``.
 
-        S2.5 (P1-2 bounded-read fix): When ``query`` is ``None``, the
+         (bounded-read fix): When ``query`` is ``None``, the
         items SQL contains ``ORDER BY + LIMIT`` and NO ``COUNT(*)
         OVER()`` window function; ``total`` is always a separate simple
         ``COUNT(*)`` on ``reading_records``. When ``query`` is non-empty,
         ``total`` uses a separate CTE count (no window function on the
         items query).
 
-        S2.5 (P2 fix): The ready candidate title is only included in the
+         (fix): The ready candidate title is only included in the
         priority chain when exactly one ready candidate exists for the
         current generation (``ready_count = 1``). When 0 or 2+ ready
         candidates exist, the title is NULL and the chain falls through
@@ -1968,11 +1968,11 @@ class ReaderOrchestrationRepository:
             # CTE that computes display_title in SQL using the same
             # 6-layer priority chain as the Python projection function.
             #
-            # P1-1: original_inputs is joined ONCE per record via
+            # Original_inputs is joined ONCE per record via
             # LEFT JOIN LATERAL (LIMIT 1). No scalar subqueries, no
             # unconditional LEFT JOIN that would fan out rows.
             #
-            # P1-2: ready candidate CTEs are scoped to the current
+            # Ready candidate CTEs are scoped to the current
             # user's records via an EXISTS subquery, so the sidebar
             # request does not aggregate the entire candidate table.
             cte_sql = """
@@ -2093,7 +2093,7 @@ class ReaderOrchestrationRepository:
             )
 
             if normalized_query is None:
-                # P1-2: query=None — items SQL has ORDER BY + LIMIT and
+                # Query=None — items SQL has ORDER BY + LIMIT and
                 # NO COUNT(*) OVER() window function. total is always a
                 # separate simple COUNT(*) on reading_records.
                 # Note: $3 (query) is not referenced in this branch, so
@@ -2125,7 +2125,7 @@ class ReaderOrchestrationRepository:
                     normalized_product_states,
                 )
             else:
-                # P1-2: query non-empty — items SQL has filter + ORDER BY
+                # Query non-empty — items SQL has filter + ORDER BY
                 # + LIMIT, NO COUNT(*) OVER(). total uses a separate CTE
                 # count query so display_title filtering is applied.
                 rows = await conn.fetch(
@@ -2366,7 +2366,7 @@ async def supersede_ready_candidates_for_locked_record(
 
 
 # ----------------------------------------------------------------------
-# S2: Candidate Recovery read model — read-side query helpers
+# Candidate Recovery read model — read-side query helpers
 # ----------------------------------------------------------------------
 
 

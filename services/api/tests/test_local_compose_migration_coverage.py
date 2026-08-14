@@ -1,4 +1,4 @@
-"""DATA-SCHEMA-BASELINE D2: single-baseline compose mount pin.
+"""DATA-SCHEMA-BASELINE single-baseline compose mount pin.
 
 The local fresh-init path applies exactly one file:
 ``infra/migrations/0001_initial.sql`` mounted into
@@ -26,7 +26,7 @@ def test_migrations_dir_contains_only_the_single_baseline() -> None:
     entries = sorted(path.name for path in MIGRATIONS_DIR.iterdir())
     assert entries == [BASELINE_NAME], (
         "infra/migrations must contain ONLY 0001_initial.sql after "
-        f"DATA-SCHEMA-BASELINE D2; found: {entries}"
+        f"DATA-SCHEMA-BASELINE; found: {entries}"
     )
 
 

@@ -1,4 +1,4 @@
-"""D6-I2D-A Candidate Document Confirm Transaction Service.
+"""Candidate Document Confirm Transaction Service.
 
 Reads a ``candidate_reading_documents`` row, rebuilds the
 ``StableDocumentFreezePlan`` from its ``blocks_json``, and delegates to
@@ -116,7 +116,7 @@ class StaleCandidateRevisionError(CandidateDocumentConfirmError):
 class CandidateDocumentStatusError(CandidateDocumentConfirmError):
     """Raised when the candidate row exists but ``status != 'ready'``.
 
-    Carries structured fields so callers (e.g. the D6-I2D-B application
+    Carries structured fields so callers (e.g. the application
     service) can inspect the status and branch — for example, recovering
     a 'confirmed' candidate instead of re-freezing it.
 
@@ -301,7 +301,7 @@ async def confirm_candidate_document(
     # (2) Validate candidate status — only 'ready' can be confirmed.
     # A typed CandidateDocumentStatusError is raised (subclass of
     # CandidateDocumentConfirmError) so callers can branch on the
-    # status — e.g. the D6-I2D-B application service recovers a
+    # status — e.g. the application service recovers a
     # 'confirmed' candidate instead of re-freezing.
     candidate_status = str(row["status"])
     if candidate_status != "ready":

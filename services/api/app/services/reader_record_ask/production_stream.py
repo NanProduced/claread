@@ -47,7 +47,7 @@ from app.services.reader_record_ask.envelope_builder import (
 from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
 from app.services.reader_record_ask.finalizer import FinalizedAskResult
 
-# M3 C2 wiring: map-source material provider for B3 heading enrichment (§4.2).
+# M3 wiring: map-source material provider for heading enrichment (§4.2).
 # Imported lazily inside stream_agentic_thread_message to avoid module-load
 # cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
 # runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
@@ -131,7 +131,7 @@ RunFn = Callable[..., Any]
 
 logger = logging.getLogger(__name__)
 
-# ASK-TURN-LIFECYCLE R1: SSE chunk prefixes that mark a typed terminal
+# ASK-TURN-LIFECYCLE SSE chunk prefixes that mark a typed terminal
 # event. When the generator yields a chunk starting with one of these
 # prefixes, the stream lifecycle hook's ``mark_terminal_emitted`` is
 # called so the route's ``finally`` block skips stale-stream
@@ -149,7 +149,7 @@ def _is_terminal_sse_chunk(chunk: str) -> bool:
 
 SubmissionTerminalStatus = Literal["completed", "failed", "cancelled"]
 
-# R8.1: fixed priority — completed > failed > cancelled.
+# Fixed priority — completed > failed > cancelled.
 _SUBMISSION_TERMINAL_RANK: dict[SubmissionTerminalStatus, int] = {
     "completed": 3,
     "failed": 2,
@@ -245,7 +245,7 @@ def _submission_status_from_terminal_chunk(
 ) -> SubmissionTerminalStatus | None:
     """Map a typed terminal SSE frame to durable submission status.
 
-    R8: captures the **known** model outcome at the yield site of a
+    Captures the **known** model outcome at the yield site of a
     trusted terminal event. Does not invent cancelled for non-terminal
     or unparseable frames.
     """
@@ -287,7 +287,7 @@ def _submission_status_from_terminal_chunk(
 # internals (exception text, schema bodies, raw responses, thinking).
 TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
 TERMINAL_REASON_AGENT_RUN_FAILED = "agent_run_failed"
-# Host-only model-view budget terminal (R4-A5-7). Typed reason only —
+# Host-only model-view budget terminal. Typed reason only —
 # never embed budget denial text, account dumps, or body.
 TERMINAL_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 
@@ -618,7 +618,7 @@ def build_completed_dto(
     # Validate restricted evidence invariants before emitting public ok.
     build_restricted_evidence_json(run_result=run_result, envelope=envelope)
     finalized = run_result.finalized
-    # ASK-WEB-G1-R1: surface the turn-level web search summary on the
+    # ASK-WEB-G1-surface the turn-level web search summary on the
     # public completed DTO. ``None`` means search was not invoked this
     # turn (capability disabled / agent did not call ``search_web``).
     # The summary counts only message-local web citations actually
@@ -667,14 +667,14 @@ def build_terminal_dto(
 
 
 class _TurnLifecycleMetrics:
-    """R3 observability: per-turn lifecycle timing metrics.
+    """Observability: per-turn lifecycle timing metrics.
 
     Records only timestamps and counts — never answer content, reasoning
     text, citations, provider payloads, secrets, or user input. All
     timestamps are ``time.perf_counter`` deltas (ms) from
     ``started_at`` so they are monotonic and clock-skew-immune.
 
-    Lifecycle phases tracked (R3 contract):
+    Lifecycle phases tracked (contract):
 
     - ``first_reasoning_ms``: first learner-reasoning snapshot arrival.
       ``None`` when no reasoning was emitted this turn.
@@ -824,7 +824,7 @@ class _ProgressProjector:
         self.time_to_first_activity_ms: int | None = None
         self.read_range_calls = 0
         self.search_current_article_calls = 0
-        # ASK-WEB-G1-R1: per-turn web search call counter (host-owned).
+        # ASK-WEB-G1-per-turn web search call counter (host-owned).
         # Mirrors ``read_range_calls`` / ``search_current_article_calls``
         # so observers can audit the per-turn web search budget without
         # touching the agent's tool surface.
@@ -832,7 +832,7 @@ class _ProgressProjector:
         self.tool_call_sequence: list[str] = []
         self._agent_started_emitted = False
         self._validation_running = False
-        # ASK-WEB-R4: per-attempt telemetry context. ``turn_run_id`` and
+        # ASK-WEB-per-attempt telemetry context. ``turn_run_id`` and
         # ``model_route`` are server-owned, non-sensitive identifiers
         # logged with each WebSearchResultEvent for per-attempt
         # observability. Never includes query / URL / provider payload.
@@ -1084,7 +1084,7 @@ class _ProgressProjector:
             # process truth.
             return out
 
-        # ASK-WEB-G1-R1: Web Search call/result projection. The agent
+        # ASK-WEB-G1-Web Search call/result projection. The agent
         # emits ``WebSearchCallEvent`` when it invokes ``search_web``
         # and ``WebSearchResultEvent`` when the host returns. Neither
         # carries the query text, URLs, or provider payload — only the
@@ -1111,7 +1111,7 @@ class _ProgressProjector:
             # host-rejected invocation may have emitted a started event but
             # must never increase this real-attempt counter.
             self.web_search_calls = max(self.web_search_calls, event.attempt_count)
-            # ASK-WEB-R4: per-attempt telemetry. Logs only non-sensitive
+            # ASK-WEB-per-attempt telemetry. Logs only non-sensitive
             # identifiers and typed outcomes — never query / URL / provider
             # payload / reasoning / API key. ``turn_run_id`` and
             # ``model_route`` are server-owned. ``detail_code`` is a short
@@ -1131,7 +1131,7 @@ class _ProgressProjector:
                 event.registered_evidence_count,
                 event.duration_ms,
             )
-            # ASK-WEB-R4: use ``turn_outcome`` (turn-level aggregated)
+            # ASK-WEB-use ``turn_outcome`` (turn-level aggregated)
             # instead of ``outcome`` (per-attempt) for UI activity so a
             # ``call_limit`` attempt after a successful search does NOT
             # degrade the turn to ``unavailable``. ``outcome`` and
@@ -1268,7 +1268,7 @@ async def _run_agentic_turn(
     pointer_ledger: ExpansionPointerLedger | None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    # ASK-WEB-G1-R1: web search capability + port + registry. The
+    # ASK-WEB-G1-web search capability + port + registry. The
     # capability is the server-owned execution truth — when ``None`` the
     # runtime must NOT mount the ``search_web`` tool. The backend port
     # is provider-neutral; ``None`` means fail-soft even when
@@ -1278,7 +1278,7 @@ async def _run_agentic_turn(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
-    # ASK-COMPACTION-INTEGRATED-R1: precise, default-real test seams.
+    # ASK-COMPACTION-INTEGRATED-precise, default-real test seams.
     # Production passes neither seam (the flag + real repository + real Flash
     # compactor are derived below); an integrated test that drives
     # the real stream/core against real PostgreSQL injects a deterministic
@@ -1287,7 +1287,7 @@ async def _run_agentic_turn(
     # behavior, exactly like the existing ``model`` / ``run_fn`` seams.
     memory_enabled_override: bool | None = None,
     memory_compactor: Any | None = None,
-    # ASK-LEARNER-REASONING-PROJECTOR-R1 test seams (production leaves None).
+    # ASK-LEARNER-REASONING-PROJECTOR- test seams (production leaves None).
     learner_reasoning_enabled_override: bool | None = None,
     learner_reasoning_run_fn: Any | None = None,
     learner_reasoning_model_config: Any | None = None,
@@ -1312,7 +1312,7 @@ async def _run_agentic_turn(
     product budget into ``run_reading_record_ask`` (and from there into
     PydanticAI ``agent.run``). Both default to ``None``.
 
-    ASK-WEB-G1-R1: ``web_search_capability`` / ``web_search_backend`` /
+    ASK-WEB-G1-``web_search_capability`` / ``web_search_backend`` /
     ``web_evidence_registry`` forward the resolved execution truth into
     ``run_reading_record_ask`` so the runtime can mount the
     ``search_web`` tool and inject the :class:`WebSearchBackend` port.
@@ -1348,14 +1348,14 @@ async def _run_agentic_turn(
         return
 
     started_at = time.perf_counter()
-    # ASK-WEB-R4: pass turn_run_id and model_route to the projector for
+    # ASK-WEB-pass turn_run_id and model_route to the projector for
     # per-attempt web search telemetry. Both are server-owned, non-sensitive.
     projector = _ProgressProjector(
         started_at=started_at,
         turn_run_id=str(turn["id"]),
         model_route=_safe_model_route(active_model),
     )
-    # ASK-TURN-LIFECYCLE R3: per-turn lifecycle timing metrics. Records
+    # ASK-TURN-LIFECYCLE per-turn lifecycle timing metrics. Records
     # only timestamps and counts — never content/secrets. Logged on the
     # final info line so operators can observe the
     # first-delta → validation → persistence → terminal sequence.
@@ -1365,7 +1365,7 @@ async def _run_agentic_turn(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
-    # ASK-LEARNER-REASONING-PROJECTOR-R1: flag OFF → discard at ingress.
+    # ASK-LEARNER-REASONING-PROJECTOR-flag OFF → discard at ingress.
     # Flag ON → use the *same* ResolvedModelConfig that built active_model
     # (never re-resolve the default MODEL_ROUTE_READER_ASK here).
     _lr_settings = get_settings()
@@ -1397,16 +1397,16 @@ async def _run_agentic_turn(
         if pointer_ledger is not None
         else get_process_pointer_ledger()
     )
-    # ASK-WEB-R4: create a RuntimeObservation so the runtime tracks
+    # ASK-WEB-create a RuntimeObservation so the runtime tracks
     # output_validation_final_attempts / output_validation_retry_requests
     # for per-turn observability. Never serialised; never on any public
     # DTO / SSE / DB surface. Logged only as aggregate counts on the
     # terminal/completed info line.
     runtime_observation = RuntimeObservation()
-    # R1.5 P0-2: thread-memory wiring. flag=false → do NOT construct the
+    # Thread-memory wiring. flag=false → do NOT construct the
     # repository, do NOT pass memory params (zero DB I/O, prompt字节级
     # 不含 memory). flag=true → construct ThreadMemoryRepository and pass
-    # memory_enabled=True so the production R2 manager owns atomic
+    # memory_enabled=True so the production manager owns atomic
     # canonical read, bounded Flash compaction, deterministic fallback,
     # CAS persistence, fence validation, and recent-history injection.
     memory_settings = get_settings()
@@ -1584,7 +1584,7 @@ async def _run_agentic_turn(
                 )
                 continue
             if isinstance(item, AnswerPreviewResetEvent):
-                # R4-2: canonical preview-reset SSE event. Carries
+                # Canonical preview-reset SSE event. Carries
                 # generation_id, reason, execution_version, and full
                 # turn identity so the client can validate trust before
                 # mutating UI state. The client MUST clear
@@ -1620,14 +1620,14 @@ async def _run_agentic_turn(
                 # Only project known runtime events; never dump raw objects.
                 continue
             if isinstance(item, AnswerDeltaEvent):
-                # R4-A6: token-level answer_text increment — user-visible
+                # Token-level answer_text increment — user-visible
                 # answer content, never reasoning. Maps 1:1 to
                 # message.delta; never projected as agentic progress.
-                # R4-2: include generation_id so the client can discard
+                # Include generation_id so the client can discard
                 # deltas from a stale generation after a preview_reset.
-                # R3: track first/last answer delta timestamps.
+                # Track first/last answer delta timestamps.
                 #
-                # ASK-UX-HISTORY-COT-R2 P0-4: include full turn identity
+                # ASK-UX-HISTORY-COT- include full turn identity
                 # (execution_version / message_id / thread_id / turn_run_id)
                 # so the frontend ``activeRunIdentity`` guard can attribute
                 # the delta to the owning turn. Without these fields the
@@ -1699,8 +1699,8 @@ async def _run_agentic_turn(
                 | WebSearchResultEvent,
             ):
                 if isinstance(item, AnswerDeltaEvent):
-                    # R4-A6: token-level answer_text increment (drain path).
-                    # R3: track first/last answer delta timestamps.
+                    # Token-level answer_text increment (drain path).
+                    # Track first/last answer delta timestamps.
                     metrics.mark_answer_delta()
                     yield _encode_message_delta_sse(
                         item,
@@ -2063,10 +2063,10 @@ async def _run_agentic_turn(
             ):
                 yield frame
             return
-        # R3: persistence_done marks the successful commit timestamp. From
+        # Persistence_done marks the successful commit timestamp. From
         # this point on, the canonical answer is durable and any reload
         # returns the same content.
-        # R4-3: CAS outcome check. Only the CAS WINNER (the call that
+        # CAS outcome check. Only the CAS WINNER (the call that
         # actually flipped the row from streaming → completed with
         # final_status=ok) may emit reasoning.completed and message.completed.
         # The CAS loser (status == "already_terminal") must NOT emit
@@ -2119,7 +2119,7 @@ async def _run_agentic_turn(
         metrics.mark_persistence_done()
         stored = persisted.get("user_visible_output_json")
         emit_payload = stored if isinstance(stored, dict) else completed_json
-        # ASK-REASONING-R1: persist-first ordering contract. The projection
+        # ASK-REASONING-persist-first ordering contract. The projection
         # and the answer are now committed in one transaction, so from this
         # point on any reload returns the same visible reasoning text. Only
         # now may the completion promise be emitted — and it must precede
@@ -2146,7 +2146,7 @@ async def stream_agentic_thread_message(
     facts: Any,
     request_anchor: Any | None,
     validated_anchor: Any | None = None,
-    # ASK-UX-COT-COMPOSER-R3 P2 — full canonical focus anchor set (≤4,
+    # ASK-UX-COT-COMPOSER- — full canonical focus anchor set (≤4,
     # route-gate-validated). ``request_anchor`` is the primary selection
     # (the first anchor); the complete set enters the envelope fence and
     # the model view, and is snapshotted for retry replay. ``None`` =
@@ -2163,7 +2163,7 @@ async def stream_agentic_thread_message(
     retry_message_id: UUID | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    # ASK-WEB-G1-R1: web search capability resolved from the request
+    # ASK-WEB-G1-web search capability resolved from the request
     # toggle (``web_search_mode``). When ``None`` (capability not
     # granted / ``web_search_mode="disabled"``) the runtime must NOT
     # mount the ``search_web`` tool. When non-None and
@@ -2175,20 +2175,20 @@ async def stream_agentic_thread_message(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
-    # ASK-TURN-LIFECYCLE R1: route-owned lifecycle hook. The generator
+    # ASK-TURN-LIFECYCLE route-owned lifecycle hook. The generator
     # registers the active turn (turn_run_id + message_id) as soon as
     # the rows are persisted, and marks terminal-emitted after yielding
     # a typed terminal event. The route's ``finally`` block uses this
     # to reconcile any still-streaming row on generator close.
     lifecycle: StreamLifecycleHook | None = None,
-    # ASK-RETRY-CONTRACT-R2/R5: client-generated submission identity.
+    # ASK-RETRY-CONTRACT-/client-generated submission identity.
     client_submission_id: UUID | None = None,
-    # R5: pair already durable-created by facade gateway.
+    # Pair already durable-created by facade gateway.
     existing_user_message: dict[str, Any] | None = None,
     existing_assistant_message: dict[str, Any] | None = None,
     claim_generation: int | None = None,
     model_option_key: str | None = None,
-    # ASK-COMPACTION-INTEGRATED-R1: default-real test seams forwarded to
+    # ASK-COMPACTION-INTEGRATED-default-real test seams forwarded to
     # ``_run_agentic_turn`` (see that helper for the contract). Production
     # callers pass none of these.
     memory_enabled_override: bool | None = None,
@@ -2289,7 +2289,7 @@ async def stream_agentic_thread_message(
     if wired_rag is None and auto_wire_dependencies:
         wired_rag = build_production_article_rag_port(settings)
 
-    # M3 C2 wiring: construct the map-source material provider so B3 heading
+    # M3 wiring: construct the map-source material provider so heading
     # enrichment (§4.2) takes effect on the production path. Only wired when
     # auto_wire_dependencies=True (tests pass auto_wire=False or inject their
     # own run_fn). The provider is a thin preflight adapter — no DB writes,
@@ -2311,7 +2311,7 @@ async def stream_agentic_thread_message(
             plan_service=ArticleRagIndexPlanService()
         )
 
-    # ASK-WEB-G1-R2: NEVER auto-inject FakeWebSearchBackend on the
+    # ASK-WEB-G1-NEVER auto-inject FakeWebSearchBackend on the
     # production path. The fake backend is test-only; production code
     # must never import, construct, or default-select it. When the
     # capability is granted (``enabled_for_turn=True``) but no explicit
@@ -2349,7 +2349,7 @@ async def stream_agentic_thread_message(
     if retry_message_id is not None:
         # Retry mode: reset the existing assistant message and reuse the
         # preceding user message's content.  No new user message is created.
-        # ASK-RETRY-CONTRACT-R3: content_md is preserved until the new run
+        # ASK-RETRY-CONTRACT-content_md is preserved until the new run
         # commits; supersedes_run_id + run_attempt link the regenerate chain.
         existing_assistant, existing_user = (
             await repo.get_assistant_message_with_preceding_user_message(
@@ -2397,7 +2397,7 @@ async def stream_agentic_thread_message(
         # Use the original user message text as agent input.
         content = existing_user["content_md"] or ""
     else:
-        # ASK-WEB-G1-R2: persist the resolved web search capability mode
+        # ASK-WEB-G1-persist the resolved web search capability mode
         # (``allowed`` / ``disabled``) on the user message so the retry
         # path can replay the original turn's capability without re-
         # deciding it from the current UI toggle. The persisted value
@@ -2409,14 +2409,14 @@ async def stream_agentic_thread_message(
         # replay; the runtime must NOT fall back to the current UI
         # toggle when this field is present.
         #
-        # ASK-WEB-G1-R3: ``allowed`` is only persisted when a real
+        # ASK-WEB-G1-``allowed`` is only persisted when a real
         # backend was actually wired this turn. Without a backend, the
         # capability cannot execute, so retry replay must NOT inherit a
         # "假可用" (fake-available) mode — fail-closed to ``disabled``.
         #
-        # ASK-RETRY-CONTRACT-R5: prefer pair already created by the facade
+        # ASK-RETRY-CONTRACT-prefer pair already created by the facade
         # gateway (atomic claim+pair+bind). Fall back to create only when
-        # no client_submission_id (pre-R2 clients) or tests inject messages.
+        # no client_submission_id (pre- clients) or tests inject messages.
         from app.services.reader_record_ask.submission_gateway import (
             build_retry_snapshot,
         )
@@ -2429,7 +2429,7 @@ async def stream_agentic_thread_message(
             retry_snapshot = build_retry_snapshot(
                 model_option_key=model_option_key,
                 web_search_mode=persisted_web_search_mode,
-                # R3 P2 — persist the full validated focus set (canonical
+                # Persist the full validated focus set (canonical
                 # dicts) so regenerate replays the same user focus.
                 focus_anchors=[
                     entry.model_dump(mode="json") for entry in focus_anchors
@@ -2477,14 +2477,14 @@ async def stream_agentic_thread_message(
                 },
             )
 
-    # R8/R8.1: known model terminal; monotonic via merge_known_submission_status.
+    # known model terminal; monotonic via merge_known_submission_status.
     known_submission_status: SubmissionTerminalStatus | None = None
 
     async def _sync_submission_terminal(
         *,
         known: SubmissionTerminalStatus | None = None,
     ) -> None:
-        """R6–R8.1: CAS terminal sync for client_submission_id.
+        """CAS terminal sync for client_submission_id.
 
         Uses :func:`apply_agentic_submission_terminal` seam. Never invents
         cancelled when outcome is unknown.
@@ -2559,7 +2559,7 @@ async def stream_agentic_thread_message(
         await _sync_submission_terminal(known="failed")
         return
 
-    # ASK-TURN-LIFECYCLE R1: register the active turn identity with the
+    # ASK-TURN-LIFECYCLE register the active turn identity with the
     # route-owned lifecycle hook. From this point on, any generator close
     # (client disconnect, BFF disconnect, ASGI cancellation) will trigger
     # the route's ``finally`` block to reconcile this turn_run/message to
@@ -2570,7 +2570,7 @@ async def stream_agentic_thread_message(
             message_id=UUID(assistant_msg["id"]),
         )
 
-    # ASK-TURN-LIFECYCLE R4-5c: heartbeat task. During streaming, a
+    # ASK-TURN-LIFECYCLE heartbeat task. During streaming, a
     # background coroutine updates ``updated_at`` on the turn_run row at
     # ``HEARTBEAT_INTERVAL_SECONDS`` intervals. The stale-stream
     # reconciler (startup sweep + periodic sweeper) treats rows whose
@@ -2620,12 +2620,12 @@ async def stream_agentic_thread_message(
             thread_id=str(thread_id),
             turn_run_id=turn["id"],
             has_initial_selection=envelope.initial_anchor is not None,
-            # ASK-WEB-G1-R1: echo the resolved capability mode so the
+            # ASK-WEB-G1-echo the resolved capability mode so the
             # frontend can render the Search toggle in the correct state.
             # ``allowed`` only means the capability is mounted; the agent
             # may still choose not to search.
             #
-            # ASK-WEB-G1-R3: ``allowed`` must only be echoed when a real
+            # ASK-WEB-G1-``allowed`` must only be echoed when a real
             # executable ``WebSearchBackend`` is wired this turn. Even when
             # the capability resolver returned ``enabled_for_turn=True``,
             # missing backend means the ``search_web`` tool would be a
@@ -2663,7 +2663,7 @@ async def stream_agentic_thread_message(
             learner_reasoning_finalize_grace=learner_reasoning_finalize_grace,
         ):
             yield chunk
-            # ASK-TURN-LIFECYCLE R1: mark terminal-emitted as soon as the
+            # ASK-TURN-LIFECYCLE mark terminal-emitted as soon as the
             # generator yields a typed terminal event. This tells the
             # route's ``finally`` block that the row was already
             # terminalized by the generator and stale-stream reconciliation
@@ -2671,14 +2671,14 @@ async def stream_agentic_thread_message(
             if _is_terminal_sse_chunk(chunk):
                 if lifecycle is not None:
                     lifecycle.mark_terminal_emitted()
-                # R8.1: single monotonic merge for known terminal status.
+                # Single monotonic merge for known terminal status.
                 noted = _submission_status_from_terminal_chunk(chunk)
                 known_submission_status = merge_known_submission_status(
                     known_submission_status,
                     noted,
                 )
     finally:
-        # R4-5c: cancel the heartbeat task on stream end (normal,
+        # Cancel the heartbeat task on stream end (normal,
         # exception, or ASGI cancellation). The ``CancelledError`` is
         # expected and swallowed; any other exception surfaced from the
         # heartbeat loop is logged but never re-raised — the stream's
@@ -2695,7 +2695,7 @@ async def stream_agentic_thread_message(
                     heartbeat_turn_run_id,
                     exc_info=True,
                 )
-        # R8: sync with known outcome; never invent cancelled if unknown.
+        # Sync with known outcome; never invent cancelled if unknown.
         await _sync_submission_terminal(known=known_submission_status)
 
 
@@ -2715,10 +2715,10 @@ async def retry_agentic_thread_message(
     pointer_ledger: ExpansionPointerLedger | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    # R3 P2 — validated plural focus set replayed from the persisted retry
+    # Validated plural focus set replayed from the persisted retry
     # snapshot. The retry facade re-gates every anchor before reaching here.
     focus_anchors: Any | None = None,
-    # ASK-WEB-G1-R1: retry must receive the same resolved web search
+    # ASK-WEB-G1-retry must receive the same resolved web search
     # capability as the original send (callers resolve via
     # ``resolve_reader_record_ask_execution`` before calling). When
     # ``None`` the runtime must NOT mount the ``search_web`` tool —
@@ -2727,7 +2727,7 @@ async def retry_agentic_thread_message(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
-    # ASK-TURN-LIFECYCLE R1: forwarded to ``stream_agentic_thread_message``.
+    # ASK-TURN-LIFECYCLE forwarded to ``stream_agentic_thread_message``.
     lifecycle: StreamLifecycleHook | None = None,
     main_model_config: Any | None = None,
 ) -> AsyncIterator[str]:
@@ -2748,7 +2748,7 @@ async def retry_agentic_thread_message(
     original send — callers resolve via
     :func:`resolve_reader_record_ask_execution` before calling.
 
-    ASK-WEB-G1-R1: ``web_search_capability`` / ``web_search_backend`` /
+    ASK-WEB-G1-``web_search_capability`` ``web_search_backend`` /
     ``web_evidence_registry`` forward the resolved web search truth. Retry
     must not silently grant a capability the user did not enable on the
     original turn — callers must pass the same capability (or ``None``)

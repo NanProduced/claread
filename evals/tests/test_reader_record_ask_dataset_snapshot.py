@@ -1,10 +1,10 @@
-"""P1-b: atomic dataset snapshot single-read contract tests.
+"""Atomic dataset snapshot single-read contract tests.
 
 Spec: ``docs/tmp/reader-orchestration/review/...
-TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (rework §二 P1-b).
+TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (snapshot rework).
 
 Background: the prior implementation read the dataset files TWICE —
-once in :func:`load_r4_a3_dataset` (parsing YAML/JSON into Python
+once in the legacy dataset loader (parsing YAML/JSON into Python
 objects) and again in :func:`compute_dataset_identity` (re-reading the
 same files to compute the SHA-256 fingerprint). Because the working
 dataset lives under ``evals/tmp/`` and is gitignored, a mutation
@@ -15,10 +15,10 @@ parser actually consumed.
 The rework introduces an atomic snapshot contract:
 
     :class:`LoadedReaderRecordAskDatasetSnapshot`
-    ─── produced by :func:`load_r4_a3_dataset_with_snapshot` ───
+    ─── produced by the snapshot loader ───
     captures ``dataset.yaml`` and every loader-resolved case file as
     raw bytes in a SINGLE read pass. Both the parsed
-    :class:`ReaderRecordAskR4A3Dataset` and the
+    parsed dataset model and the
     :class:`DatasetIdentity` are derived from the SAME captured bytes.
 
 These tests prove the contract:
@@ -54,12 +54,12 @@ from claread_eval.reader_record_ask.dataset_identity import (
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.loader import (
     LoadedReaderRecordAskDatasetSnapshot,
-    load_r4_a3_dataset,
-    load_r4_a3_dataset_with_snapshot,
+    load_reader_record_ask_dataset,
+    load_reader_record_ask_dataset_with_snapshot,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -72,8 +72,8 @@ def _make_case(
     case_id: str = "case-a",
     article_text: str = "Hello world. This is a synthetic article.",
     phase_tags: list[str] | None = None,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         article_text=article_text,
@@ -85,7 +85,7 @@ def _make_case(
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         tags=[],
         phase_tags=phase_tags if phase_tags is not None else ["real_phase1"],
     )
@@ -94,7 +94,7 @@ def _make_case(
 def _write_dataset(
     dataset_dir: Path,
     *,
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskCase],
     dataset_id: str = "test-dataset",
     schema_version: str = "test-schema-v1",
     description: str = "synthetic test dataset",
@@ -122,20 +122,20 @@ def _write_dataset(
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 1: each file is read EXACTLY ONCE from disk.
+# Test 1: each file is read EXACTLY ONCE from disk.
 # ---------------------------------------------------------------------------
 
 
 def test_each_file_read_exactly_once(tmp_path: Path) -> None:
-    """P1-b: the snapshot loader reads each file exactly ONCE.
+    """The snapshot loader reads each file exactly ONCE.
 
-    Prior to the rework, :func:`load_r4_a3_dataset` read files for
+    Prior to the rework, the legacy dataset loader read files for
     parsing, then :func:`compute_dataset_identity` re-read the SAME
     files for hashing. This double-read was the root cause of the
     snapshot desync risk.
 
     This test patches :meth:`Path.read_bytes` to count invocations
-    per file. After :func:`load_r4_a3_dataset_with_snapshot` returns:
+    per file. After the snapshot loader returns:
 
     - ``dataset.yaml`` MUST have been read exactly once.
     - Each case file MUST have been read exactly once.
@@ -166,7 +166,7 @@ def test_each_file_read_exactly_once(tmp_path: Path) -> None:
     original_method = Path.read_bytes
     Path.read_bytes = _tracking_read_bytes  # type: ignore[method-assign]
     try:
-        snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+        snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     finally:
         Path.read_bytes = original_method  # type: ignore[method-assign]
 
@@ -209,7 +209,7 @@ def test_each_file_read_exactly_once(tmp_path: Path) -> None:
 
 
 def test_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> None:
-    """P1-b: the snapshot loader MUST NOT call the legacy
+    """The snapshot loader MUST NOT call the legacy
     :func:`compute_dataset_identity` (which re-reads files from disk).
 
     The snapshot loader uses :func:`compute_dataset_identity_from_bytes`
@@ -233,12 +233,12 @@ def test_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> None:
 
     di_module.compute_dataset_identity = _tracking_legacy  # type: ignore[assignment]
     try:
-        snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+        snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     finally:
         di_module.compute_dataset_identity = original  # type: ignore[assignment]
 
     assert call_count["n"] == 0, (
-        "load_r4_a3_dataset_with_snapshot MUST NOT call the legacy "
+        "load_reader_record_ask_dataset_with_snapshot MUST NOT call the legacy "
         "compute_dataset_identity (which re-reads files from disk). "
         f"Got {call_count['n']} calls. Use "
         "compute_dataset_identity_from_bytes on captured bytes instead."
@@ -248,12 +248,12 @@ def test_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 2: parse and hash use the SAME bytes.
+# Test 2: parse and hash use the SAME bytes.
 # ---------------------------------------------------------------------------
 
 
 def test_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
-    """P1-b: schema parsing and content SHA-256 are derived from the
+    """Schema parsing and content SHA-256 are derived from the
     SAME captured bytes.
 
     This is the core atomic-snapshot invariant. We prove it by
@@ -277,7 +277,7 @@ def test_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
     _write_dataset(dataset_dir, cases=cases)
 
     # Capture the snapshot.
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     original_sha = snapshot.identity.content_sha256
     original_article_a = snapshot.dataset.cases[0].article_text
 
@@ -316,7 +316,7 @@ def test_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
     # Re-loading the dataset from the mutated disk produces a DIFFERENT
     # hash — proving the mutation was real and the snapshot's stability
     # is not a fluke of the mutation being a no-op.
-    mutated_snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    mutated_snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     assert mutated_snapshot.identity.content_sha256 != original_sha, (
         "After mutating the case file, a fresh snapshot MUST produce a "
         "different content_sha256. If it matches the original, the "
@@ -330,7 +330,7 @@ def test_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
 def test_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
     tmp_path: Path,
 ) -> None:
-    """P1-b: mutating ``dataset.yaml`` AFTER capture MUST NOT affect
+    """Mutating ``dataset.yaml`` AFTER capture MUST NOT affect
     the snapshot.
 
     The previous test mutated a case file. This test mutates
@@ -342,7 +342,7 @@ def test_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases, description="original description")
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     original_sha = snapshot.identity.content_sha256
 
     # Mutate dataset.yaml after capture.
@@ -361,7 +361,7 @@ def test_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
     )
 
     # Re-loading from the mutated disk produces a different hash.
-    mutated_snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    mutated_snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     assert mutated_snapshot.identity.content_sha256 != original_sha, (
         "A fresh snapshot from the mutated dataset.yaml MUST produce a "
         "different content_sha256 (proves the mutation was persisted)."
@@ -369,12 +369,12 @@ def test_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 3: snapshot type and single-read structure.
+# Test 3: snapshot type and single-read structure.
 # ---------------------------------------------------------------------------
 
 
 def test_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
-    """P1-b: :class:`LoadedReaderRecordAskDatasetSnapshot` is a
+    """:class:`LoadedReaderRecordAskDatasetSnapshot` is a
     ``@dataclass(frozen=True)`` — the snapshot is immutable after
     capture.
 
@@ -387,7 +387,7 @@ def test_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Frozen dataclass: assigning to a field raises FrozenInstanceError.
     with pytest.raises(AttributeError):
@@ -406,8 +406,8 @@ def test_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
 
 
 def test_load_dataset_returns_snapshot_dataset(tmp_path: Path) -> None:
-    """P1-b: the legacy :func:`load_r4_a3_dataset` adapter MUST reuse
-    :func:`load_r4_a3_dataset_with_snapshot` internally.
+    """The legacy dataset-loader adapter MUST reuse
+    the snapshot loader internally.
 
     The adapter returns ``snapshot.dataset`` (discarding the identity).
     This keeps backwards compatibility without introducing a second
@@ -418,8 +418,8 @@ def test_load_dataset_returns_snapshot_dataset(tmp_path: Path) -> None:
     _write_dataset(dataset_dir, cases=cases)
 
     # Both functions must produce the same parsed dataset.
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
-    legacy_dataset = load_r4_a3_dataset(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
+    legacy_dataset = load_reader_record_ask_dataset(dataset_dir)
 
     assert len(legacy_dataset.cases) == len(snapshot.dataset.cases) == 2
     assert [c.id for c in legacy_dataset.cases] == [
@@ -430,14 +430,14 @@ def test_load_dataset_returns_snapshot_dataset(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 4: existing fingerprint properties still hold via snapshot loader.
+# Test 4: existing fingerprint properties still hold via snapshot loader.
 # ---------------------------------------------------------------------------
 
 
 def test_snapshot_identity_same_for_same_dataset_in_different_paths(
     tmp_path: Path,
 ) -> None:
-    """P1-b: the snapshot identity is stable across absolute paths.
+    """The snapshot identity is stable across absolute paths.
 
     The hash inputs are POSIX relative paths + raw bytes — the
     absolute ``dataset_dir`` is NOT part of the hash. Two copies of
@@ -450,8 +450,8 @@ def test_snapshot_identity_same_for_same_dataset_in_different_paths(
     _write_dataset(dir_a, cases=cases)
     shutil.copytree(dir_a, dir_b)
 
-    snapshot_a = load_r4_a3_dataset_with_snapshot(dir_a)
-    snapshot_b = load_r4_a3_dataset_with_snapshot(dir_b)
+    snapshot_a = load_reader_record_ask_dataset_with_snapshot(dir_a)
+    snapshot_b = load_reader_record_ask_dataset_with_snapshot(dir_b)
 
     assert snapshot_a.identity.content_sha256 == snapshot_b.identity.content_sha256, (
         "Same dataset in different absolute paths MUST produce the same "
@@ -464,12 +464,12 @@ def test_snapshot_identity_same_for_same_dataset_in_different_paths(
 def test_snapshot_identity_changes_on_case_content_mutation(
     tmp_path: Path,
 ) -> None:
-    """P1-b: editing a case file's content changes the snapshot identity."""
+    """Editing a case file's content changes the snapshot identity."""
     cases = [_make_case(case_id="case-a", article_text="original content")]
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
 
-    before = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    before = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Mutate the case file content.
     case_path = dataset_dir / "cases" / "case-a.json"
@@ -477,7 +477,7 @@ def test_snapshot_identity_changes_on_case_content_mutation(
     payload["article_text"] = "modified content"
     case_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    after = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    after = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     assert before.identity.content_sha256 != after.identity.content_sha256, (
         "Editing a case file's content MUST change the snapshot identity."
@@ -485,20 +485,20 @@ def test_snapshot_identity_changes_on_case_content_mutation(
 
 
 def test_snapshot_identity_changes_on_filename_rename(tmp_path: Path) -> None:
-    """P1-b: renaming a case file changes the snapshot identity (the
+    """Renaming a case file changes the snapshot identity (the
     fingerprint binds relative path AND content)."""
     cases = [_make_case(case_id="case-a")]
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
 
-    before = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    before = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Rename the case file (the case id inside stays the same).
     old_path = dataset_dir / "cases" / "case-a.json"
     new_path = dataset_dir / "cases" / "case-a-renamed.json"
     old_path.rename(new_path)
 
-    after = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    after = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     assert before.identity.content_sha256 != after.identity.content_sha256, (
         "Renaming a case file MUST change the snapshot identity — the "
@@ -509,11 +509,11 @@ def test_snapshot_identity_changes_on_filename_rename(tmp_path: Path) -> None:
 def test_snapshot_identity_changes_on_dataset_yaml_mutation(
     tmp_path: Path,
 ) -> None:
-    """P1-b: editing ``dataset.yaml`` changes the snapshot identity."""
+    """Editing ``dataset.yaml`` changes the snapshot identity."""
     cases = [_make_case(case_id="case-a")]
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases, description="original")
-    before = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    before = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Mutate dataset.yaml.
     yaml_path = dataset_dir / "dataset.yaml"
@@ -524,7 +524,7 @@ def test_snapshot_identity_changes_on_dataset_yaml_mutation(
         encoding="utf-8",
     )
 
-    after = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    after = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     assert before.identity.content_sha256 != after.identity.content_sha256, (
         "Editing dataset.yaml MUST change the snapshot identity."
@@ -532,7 +532,7 @@ def test_snapshot_identity_changes_on_dataset_yaml_mutation(
 
 
 def test_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
-    """P1-b: content under ``runs/`` MUST NOT affect the snapshot identity.
+    """Content under ``runs/`` MUST NOT affect the snapshot identity.
 
     The loader excludes ``runs/`` from both parsing and identity
     hashing — run artifacts/reports are not dataset content.
@@ -540,7 +540,7 @@ def test_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
     cases = [_make_case(case_id="case-a")]
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
-    before = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    before = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Write run artifacts under runs/.
     runs_dir = dataset_dir / "runs" / "phase1-test"
@@ -559,7 +559,7 @@ def test_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
     )
     (runs_dir / "report.md").write_text("# report\n", encoding="utf-8")
 
-    after = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    after = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     assert before.identity.content_sha256 == after.identity.content_sha256, (
         "runs/ content MUST NOT affect the snapshot identity."
@@ -567,12 +567,12 @@ def test_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 5: artifact stamping uses snapshot.identity (integration).
+# Test 5: artifact stamping uses snapshot.identity (integration).
 # ---------------------------------------------------------------------------
 
 
 def test_artifact_stamping_uses_snapshot_identity(tmp_path: Path) -> None:
-    """P1-b: an artifact stamped with ``snapshot.identity`` round-trips
+    """An artifact stamped with ``snapshot.identity`` round-trips
     through :func:`find_identity_mismatched_artifacts` as a MATCH.
 
     This proves the snapshot identity is the same triple that the
@@ -587,7 +587,7 @@ def test_artifact_stamping_uses_snapshot_identity(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Build an artifact stamped with the snapshot's identity.
     artifact = RawArtifact(
@@ -628,7 +628,7 @@ def test_artifact_stamping_uses_snapshot_identity(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-b Test 6: documentation accuracy — the snapshot docstring MUST
+# Test 6: documentation accuracy — the snapshot docstring MUST
 # declare single-byte-capture identity-bound semantics, MUST warn that
 # the snapshot is NOT a deep immutable object, and MUST instruct
 # callers not to mutate ``snapshot.dataset``. These are introspection
@@ -720,7 +720,7 @@ def test_snapshot_frozen_prevents_rebinding_but_not_internal_mutation(
     dataset_dir = tmp_path / "dataset"
     _write_dataset(dataset_dir, cases=cases)
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
 
     # Sanity: the snapshot class is still frozen at the top level.
     assert LoadedReaderRecordAskDatasetSnapshot.__dataclass_params__.frozen, (

@@ -15,7 +15,7 @@ export type UpstreamResult<T> =
       /**
        * Parsed JSON object of the upstream error response, when the body
        * is JSON-parseable AND a plain object. Used by BFF adapters that
-       * need the upstream's typed error shape (e.g. S4 candidate recovery
+       * need the upstream's typed error shape (e.g. candidate recovery
        * conflict resolution). Always `undefined` for the success case,
        * for non-2xx responses whose body is not a plain JSON object, and
        * for non-JSON upstream bodies.

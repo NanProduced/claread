@@ -1,7 +1,7 @@
 /**
- * T5.5a — pure L2 semantic-outline navigation projection.
+ * Pure L2 semantic-outline navigation projection.
  *
- * Product gate (Phase 0 A) is stricter than T5.4b hasTrustedSemanticOutline:
+ * The product gate is stricter than `hasTrustedSemanticOutline`:
  * ready|partial + non-empty nodes + source identity match + every start_unit_id
  * present in the deterministic unit universe.
  *

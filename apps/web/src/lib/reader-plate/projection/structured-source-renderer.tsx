@@ -169,7 +169,7 @@ function renderInlineMarks(
   // CONTRACT.md Clause 3, "Inline flattening"). This path is reserved for
   // a future parser-version bump.
   //
-  // Phase 4 / P3 bug fix: previously `nodes` was initialized to
+  // Bug fix: previously `nodes` was initialized to
   // `[textContent]` and then each mark was pushed, causing the full text
   // to render twice (once as raw textContent + once as concatenated mark
   // texts). The bug was latent because the backend never emits marks.

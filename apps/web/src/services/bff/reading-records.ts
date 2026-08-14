@@ -24,7 +24,7 @@ export interface ReadingRecordListItemVm {
   readingRecordId: string;
   readerUrl: string;
   /**
-   * S2.5: Mapped from the backend-decided `display_title` (not the raw
+   * Mapped from the backend-decided `display_title` (not the raw
    * `title` field) so the UI always shows the stable identity string.
    */
   title: string;
@@ -35,9 +35,9 @@ export interface ReadingRecordListItemVm {
   lastEventSequence: number;
   lastOpenedAt: string | null;
   /**
-   * S2.5: Backend-controlled friendly source label (e.g. "粘贴文本",
+   * Backend-controlled friendly source label (e.g. "粘贴文本",
    * "上传文件 · report.pdf"). Shown as the second line in Library rows.
-   * Raw source_metadata is NOT exposed to the browser (P1-2 fix).
+   * Raw source_metadata is NOT exposed to the browser.
    */
   sourceLabel: string;
 }
@@ -118,7 +118,7 @@ export async function getReadingRecordListFromWeb(
     items: data.items.map((item) => ({
       readingRecordId: item.record_id,
       readerUrl: appReaderRoute(item.record_id),
-      // S2.5: Use the backend-decided display_title instead of the raw
+      // Use the backend-decided display_title instead of the raw
       // title field. The backend guarantees display_title is non-empty.
       title: item.display_title,
       createdAt: item.created_at,

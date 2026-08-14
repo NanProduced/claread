@@ -1,4 +1,4 @@
-"""T5.6a — section candidate projection from trusted outline."""
+"""section candidate projection from trusted outline."""
 
 from __future__ import annotations
 

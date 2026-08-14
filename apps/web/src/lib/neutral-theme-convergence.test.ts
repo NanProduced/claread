@@ -1,6 +1,6 @@
 /**
  * Static contract tests for the non-Reader / non-Ask neutral theme
- * convergence (Task 3A). Asserts that functional pages (Daily, Settings,
+ * convergence. Asserts that functional pages (Daily, Settings,
  * Library, Vocabulary) no longer reference paper semantics, warm gradients,
  * or raw HEX/RGBA, and that the Theme Preferences preview surface uses
  * only named design tokens with a distinct Light/Dark contract.

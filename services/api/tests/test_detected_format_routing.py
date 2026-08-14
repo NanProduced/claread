@@ -1,6 +1,6 @@
 """L2 — detected_format 解耦与结构真相链路（pasted_text Markdown）。
 
-P0 根因：candidate 块构造用 ``source_type == "markdown_file"`` 决定是否
+ 根因：candidate 块构造用 ``source_type == "markdown_file"`` 决定是否
 走 MarkdownSourceParser，导致 pasted_text 粘贴的 Markdown 在 candidate
 路径全部退化为 paragraph，confirm 后 Stable/Reader 出现 raw ``##`` /
 ``>`` / ``-``。本文件锁两件事：

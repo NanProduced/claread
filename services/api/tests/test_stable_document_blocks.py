@@ -1,4 +1,4 @@
-# task-history: D6-I1 (renamed from test_d6_i1_stable_document_blocks.py)
+# task-history: (renamed from test_d6_i1_stable_document_blocks.py)
 from __future__ import annotations
 
 import re
@@ -429,7 +429,7 @@ def _migration_sql() -> str:
     connection. The static guard catches drift early.
 
     The original 0004_reader_document_blocks.sql was folded into
-    infra/migrations/0001_initial.sql (DATA-SCHEMA-BASELINE D2).
+    infra/migrations/0001_initial.sql (DATA-SCHEMA-BASELINE).
     """
     from pathlib import Path
 
@@ -567,8 +567,8 @@ _DEFAULT_POLICY_MATRIX: dict[str, dict[str, object]] = {
         "allowed_source_scope": ["heading"],
         "rag_eligible": True,
     },
-    # Table hierarchy -> main_reading (Markdown ecosystem refactor D2 /
-    # A1). The table / table_row wrappers carry no text_content and stay
+    # Table hierarchy -> main_reading (Markdown ecosystem refactor
+    # ). The table / table_row wrappers carry no text_content and stay
     # rag_eligible=False; RAG targets the table_cell leaves.
     "table_cell": {
         "default_route": "main_reading",
@@ -746,7 +746,7 @@ def test_metadata_only_blocks_are_not_rag_eligible_by_default() -> None:
     rag_eligible=False so RAG indexing never silently pulls table /
     image / unknown truth.
 
-    Since the Markdown ecosystem refactor (D2 / A1), table / table_row
+    Since the Markdown ecosystem refactor, table/table_row
     default to ``main_reading`` (they render in the main reading flow)
     but stay ``rag_eligible=False`` (structural wrappers carry no
     text).  image / unknown remain ``metadata_only``.
@@ -797,7 +797,7 @@ def test_empty_dict_policy_is_treated_as_omitted_table_cell(supplied: object) ->
     """A storage-placeholder empty dict `{}` (or explicit None) for
     `interpretation_policy` MUST be replaced by the per-block-type
     default. For `table_cell`, that means `main_reading` /
-    `table_cell` (Markdown ecosystem refactor D2 / A1), not the
+    `table_cell` (Markdown ecosystem refactor), not the
     model-level `main_reading` / `main_reading_text` fallback. This
     prevents the DB `'{}'::jsonb` storage default from silently
     re-scoping table_cell blocks as narrative main-reading text.
@@ -888,7 +888,7 @@ def test_empty_dict_policy_never_silently_routes_to_main_reading(
     # (rag_eligible=False). main_reading is the route that would let
     # the block leak into the main grammar pass; table / table_row /
     # table_cell / code_block legitimately default to main_reading
-    # since the Markdown ecosystem refactor (D2 / A1), so they are no
+    # since the Markdown ecosystem refactor, so they are no
     # longer part of this safety net.
 
 
@@ -1011,7 +1011,7 @@ def test_content_sha256_differs_for_empty_dict_vs_explicit_main_reading() -> Non
 def test_migration_documents_storage_default_split() -> None:
     """The migration's `interpretation_policy_json DEFAULT '{}'::jsonb`
     is a STORAGE placeholder only. The migration comment must explain
-    that D6-I2 service code is responsible for writing the
+    that service code is responsible for writing the
     Python-model-generated per-block-type policy into the column, so
     the DB default is never relied on at runtime. This guards against
     future readers "fixing" the DB default to match the Python
@@ -1025,18 +1025,22 @@ def test_migration_documents_storage_default_split() -> None:
         flags=re.MULTILINE | re.IGNORECASE,
     ), "expected storage-default placeholder on interpretation_policy_json"
     # The migration comment must explicitly call out the split: DB
-    # default is storage-only; D6-I2 service must persist the Python
-    # model-generated policy.
+    # default is storage-only; service code must persist the Python
+    # model-generated policy (never rely on the DB default at runtime).
     lower = sql.lower()
-    assert "d6-i2" in lower, (
-        "migration comment must name D6-I2 as the layer that persists "
-        "the Python-model-generated policy into interpretation_policy_json"
+    assert "storage placeholder" in lower or "storage default" in lower, (
+        "migration comment must mark the DB DEFAULT as a storage "
+        "placeholder rather than a runtime policy source"
+    )
+    assert "service code" in lower, (
+        "migration comment must state that service code writes the "
+        "Python-model-generated policy into interpretation_policy_json"
     )
     assert "default_interpretation_policy_for" in lower, (
         "migration comment must reference the Python helper that "
         "produces the per-block-type default policy"
     )
-    assert "storage placeholder" in lower or "storage default" in lower, (
-        "migration comment must mark the DB DEFAULT as a storage "
-        "placeholder rather than a runtime policy source"
+    assert "never relied on at runtime" in lower or "not relied on at runtime" in lower, (
+        "migration comment must state the DB default is never relied on "
+        "at runtime for interpretation policy"
     )

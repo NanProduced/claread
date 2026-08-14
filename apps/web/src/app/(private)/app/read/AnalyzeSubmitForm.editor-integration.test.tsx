@@ -10,7 +10,7 @@
  * 状态栏静默合同（无"已保留文档结构"噪音）/ clear / 提交 / 无障碍关系在
  * 单一状态源下保持一致。
  *
- * 用户级粘贴与 Ctrl/Cmd+Enter 的浏览器行为由 Phase 5 Playwright 验收
+ * 用户级粘贴与 Ctrl/Cmd+Enter 的浏览器行为由 Playwright 验收
  * 覆盖（jsdom 不支持 beforeinput，无法驱动 Slate 真实 DOM 管线）。
  */
 

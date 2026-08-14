@@ -79,7 +79,7 @@ export type ReaderRecordPlateBlock =
   | ReaderRecordPlateBlockquoteBlock
   | ReaderRecordPlateCalloutBlock
   | ReaderRecordPlateSentenceAnalysisBlock
-  // B2: Markdown stable-block-derived types. Only emitted when backend
+  // Markdown stable-block-derived types. Only emitted when backend
   // `reader_source_block` carries `stableBlockType` metadata; legacy
   // snapshots without `StableBlockAnnotation` fall through to paragraph.
   | ReaderRecordPlateHeadingBlock
@@ -203,10 +203,10 @@ export interface ReaderRecordPlateSentenceAnalysisChunk
 }
 
 // ---------------------------------------------------------------------------
-// B2: Markdown stable-block-derived block types.
+// Markdown stable-block-derived block types.
 //
 // These block types are projected from `ReaderSourceBlockNodeDto` when the
-// backend emits `stableBlockType` metadata (A5). They share a common
+// backend emits `stableBlockType` metadata. They share a common
 // `ReaderRecordPlateStableBlockData` shape that carries anchor-segment /
 // base-range / hash info so selection, vocabulary marks and grammar marks
 // continue to work on Markdown-rendered blocks.
@@ -419,7 +419,7 @@ export interface ReaderRecordPlateTextLeaf {
 }
 
 /**
- * B3: Inline mark projected from backend `ReaderSourceBlockInlineMarkDto`.
+ * Inline mark projected from backend `ReaderSourceBlockInlineMarkDto`.
  *
  * `start` / `end` are segment-level UTF-16 offsets (already converted from
  * block-level offsets via `segment.unit_start_utf16`). The renderer slices

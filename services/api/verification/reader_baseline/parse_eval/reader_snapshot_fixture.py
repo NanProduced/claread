@@ -1,6 +1,6 @@
-"""Hermetic **non-empty layer** Reader snapshot fixture (R1 evidence).
+"""Hermetic **non-empty layer** Reader snapshot fixture (evidence).
 
-R1 task 6: this module constructs a duck-typed
+ task 6: this module constructs a duck-typed
 ``ReaderPlateSnapshot`` + ``ReaderPipelineRunSummary`` whose
 ``enhancement_layers`` carry **real, non-empty** translation +
 vocabulary + sidecar_ref outputs. It exists so the official
@@ -466,7 +466,7 @@ def build_fake_artifact_with_non_empty_layers(
 ) -> ParseEvalArtifactV1:
     """Build a **fake-executor** artifact via the official adapter.
 
-    R2 (P1-3) correction: this fixture builder always produces an
+     correction: this fixture builder always produces an
     artifact whose runner provenance carries ``is_fake=True`` and
     whose model / prompt provenance fields are ``None``. The fixture
     is hand-constructed content — there is no real LLM run behind it,
@@ -506,7 +506,7 @@ def build_fake_artifact_with_non_empty_layers(
 
 
 # ---------------------------------------------------------------------------
-# R3 (P1): build_schema_only_real_provenance_fixture has been REMOVED from
+# Build_schema_only_real_provenance_fixture has been REMOVED from
 # the public package. It was a schema-only helper that constructed a full
 # ``ParseEvalArtifactV1`` with ``executor_mode="real"`` and
 # ``is_fake=False`` directly via Pydantic — bypassing the official adapter.

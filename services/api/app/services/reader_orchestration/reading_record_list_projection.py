@@ -1,4 +1,4 @@
-"""S2.5: Reading Record Identity Projection (list read model).
+"""Reading Record Identity Projection (list read model).
 
 Pure functions that turn raw Agentic Reading Record columns into the
 safe ``display_title`` and ``source_label`` strings shown in Library and
@@ -100,7 +100,7 @@ def build_reading_record_list_projection(
             ``succeeded`` unlocks layer 1.
         ready_candidate_title: The title of the current-generation
             ready candidate. The caller MUST pass ``None`` when the
-            ready candidate count is 0 or 2+ (P2 fix); only pass the
+            ready candidate count is 0 or 2+ (fix); only pass the
             title when exactly one ready candidate exists.
         original_input_type: ``original_inputs.input_type`` for the
             earliest original input (may be None for legacy rows).

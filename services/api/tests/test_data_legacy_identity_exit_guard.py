@@ -1,6 +1,6 @@
 """DATA-LEGACY-IDENTITY-EXIT zero-residual guard.
 
-Locks L-GATE + P1 for DATA-LEGACY-IDENTITY-EXIT-LONG:
+Locks L-GATE for DATA-LEGACY-IDENTITY-EXIT-LONG:
 
 1. No production module under ``app/`` reads or writes the seven legacy
    analysis tables (exact names — never a wildcard).
@@ -10,11 +10,11 @@ Locks L-GATE + P1 for DATA-LEGACY-IDENTITY-EXIT-LONG:
    ``text_anchors.py``, ``schemas/user_assets/records.py``) have no
    importers and no surviving files anywhere in ``app/``.
 
-DATA-SCHEMA-BASELINE D2 has since dropped those legacy columns from the
+DATA-SCHEMA-BASELINE has since dropped those legacy columns from the
 baseline schema; the guard below still locks the code-level exit (the seven
 legacy tables and the render-scene helpers must never reappear in ``app/``).
 
-DATA-D2-CLOSEOUT-R1 extends the guard to the 13 dropped identity columns:
+DATA- extends the guard to the 13 dropped identity columns:
 ``analysis_record_id`` (7 tables), ``anchor_sentence_id``,
 ``annotation_type`` (feedback), ``record_id`` (ai_usage_events /
 dict_ai_candidate_entries) and ``task_id`` (ai_usage_events /
@@ -45,7 +45,7 @@ RENDER_SCENE_SYMBOLS = (
     "validate_multi_text_against_render_scene",
 )
 
-# Physically deleted in the P1 commit; they must never reappear.
+# Physically deleted in the commit; they must never reappear.
 DELETED_LEGACY_MODULES = {
     APP_ROOT / "services" / "user_assets" / "records.py",
     APP_ROOT / "services" / "text_anchors.py",

@@ -2,7 +2,7 @@
 instrumentation.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: BudgetedUsageModel 深模块（P0-8）.
+Requirement: BudgetedUsageModel 深模块.
 
 These tests require ``pydantic_ai`` (only available in the services/api
 venv). When run from the evals project (which does not depend on

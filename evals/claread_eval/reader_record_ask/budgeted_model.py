@@ -1,7 +1,7 @@
 """BudgetedUsageModel — test-only provider request/usage instrumentation.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: BudgetedUsageModel 深模块（P0-8）.
+Requirement: BudgetedUsageModel 深模块.
 
 Prior to this module, the harness's ``_extract_usage()`` defensive
 ``getattr`` walk usually returned ``None`` because the agent's draft

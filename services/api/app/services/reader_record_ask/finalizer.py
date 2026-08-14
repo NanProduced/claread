@@ -81,7 +81,7 @@ class PublicCitation(BaseModel):
     citations do not need to populate them, but web citations must
     populate ``url`` and ``title`` (architecture brief §5).
 
-    ASK-WEB-G1-R3: this is the single canonical public citation contract.
+    ASK-WEB-G1-this is the single canonical public citation contract.
     The previous ``PublicWebCitation`` class in ``web_search_contracts``
     has been removed — it duplicated a subset of this contract with
     identical field validation. Web citations must carry a canonical URL
@@ -490,7 +490,7 @@ async def finalize_agent_answer(
             )
         else:
             web_ev = web_by_handle[handle_id]
-            # ASK-WEB-G1-R2: provider may not supply a title. The single
+            # ASK-WEB-G1-provider may not supply a title. The single
             # canonical production fallback is the WebEvidence's
             # ``display_domain`` (already extracted from the canonical URL
             # at registration time). Tests must NOT manually patch the

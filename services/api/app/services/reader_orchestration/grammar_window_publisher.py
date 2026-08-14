@@ -69,7 +69,7 @@ from app.services.reader_orchestration.window_selector import (
     select_candidates,
 )
 
-# T3.4a: window diagnostics no_op_cause values (success path).
+# Window diagnostics no_op_cause values (success path).
 # Failure path uses NO_OP_CAUSE_EXECUTION_FAILED (written by pipeline_runner).
 NO_OP_CAUSE_LLM_EMPTY = "llm_empty"
 NO_OP_CAUSE_SELECTOR_REJECTED_ALL = "selector_rejected_all"
@@ -107,7 +107,7 @@ class PublishedWindowResult:
 
 @dataclass(frozen=True, slots=True)
 class WindowCandidateContent:
-    """Content for layer output (P1-4 fix).
+    """Content for layer output (fix).
 
     Carries the actual grammar_note/sentence_analysis content needed to
     build proper GrammarNoteLayerOutput / SentenceAnalysisLayerOutput.
@@ -341,7 +341,7 @@ class GrammarWindowPublisher:
                     conn, plan_row, job_row["base_id"]
                 )
                 window_budget = self._parse_window_budget(window_row)
-                # P1-3: pass target_anchor_ids from window_row so selector
+                # Pass target_anchor_ids from window_row so selector
                 # can reject candidates whose anchor_segment_id is outside
                 # the window's target anchor set (§7.2 step 2 pre-filter).
                 target_anchor_ids = self._parse_target_anchor_ids(window_row)
@@ -357,7 +357,7 @@ class GrammarWindowPublisher:
                 sentence_layer_ids: list[UUID] = []
                 accepted_by_unit: dict[str, dict[str, list[CandidateItem]]] = {}
 
-                # P1-4: build contents lookup by semantic_dedup_key so _insert_layer
+                # Build contents lookup by semantic_dedup_key so _insert_layer
                 # can produce proper GrammarNoteLayerOutput / SentenceAnalysisLayerOutput.
                 contents_by_dedup: dict[str, WindowCandidateContent] | None = (
                     {c.semantic_dedup_key: c for c in candidate_contents}
@@ -453,7 +453,7 @@ class GrammarWindowPublisher:
 
                 # 8. Update window status + coverage
                 new_window_status = "completed" if selection.accepted else "no_op"
-                # T3.4a: build window diagnostics for observability. Persisted
+                # Build window diagnostics for observability. Persisted
                 # to BOTH reader_jobs.output_ref_json (full diagnostics, primary)
                 # and analysis_windows.coverage.diagnostics (subset, queryable
                 # without joining reader_jobs). This makes no-op windows
@@ -499,7 +499,7 @@ class GrammarWindowPublisher:
                     ],
                     "accepted_count": len(selection.accepted),
                     "no_op": not selection.accepted,
-                    # T3.4a: full diagnostics (window_meta / strategy / budgets /
+                    # Full diagnostics (window_meta / strategy / budgets
                     # raw_candidate_count_by_type / accepted_count_by_type /
                     # rejected_count_by_type / rejected_breakdown / no_op_cause).
                     "diagnostics": diagnostics,
@@ -574,7 +574,7 @@ class GrammarWindowPublisher:
     def _parse_target_anchor_ids(
         window_row: asyncpg.Record,
     ) -> set[str] | None:
-        """Parse ``target_anchor_ids`` JSONB from window row (P1-3).
+        """Parse ``target_anchor_ids`` JSONB from window row.
 
         Returns ``set[str]`` of valid anchor_segment_ids for the window,
         or ``None`` if the column is missing/empty (defensive: allows
@@ -686,7 +686,7 @@ class GrammarWindowPublisher:
             density_by_record.setdefault(item_type, 0)
 
         # Query total_anchors + base_text_length_utf16 in one round-trip.
-        # base_text_length_utf16 feeds the RECORD_DENSITY gate (§7.3 P2-6):
+        # base_text_length_utf16 feeds the RECORD_DENSITY gate (§7.3):
         #   density = total_published_count / max(base_text_length_utf16 / 1000, 1.0)
         # Bug fix: previously this was never set, so it defaulted to 0 and
         # the density denominator collapsed to 1.0 — turning the per-1000-chars
@@ -822,7 +822,7 @@ class GrammarWindowPublisher:
         }
 
     # ------------------------------------------------------------------
-    # T3.4a: window diagnostics builder
+    # Window diagnostics builder
     # ------------------------------------------------------------------
 
     def _build_window_diagnostics(
@@ -835,7 +835,7 @@ class GrammarWindowPublisher:
         plan_row: asyncpg.Record,
         job_row: asyncpg.Record,
     ) -> dict[str, Any]:
-        """Build window diagnostics summary for observability (T3.4a).
+        """Build window diagnostics summary for observability.
 
         Persisted to ``reader_jobs.output_ref_json.diagnostics`` (primary)
         and ``analysis_windows.coverage.diagnostics`` (subset, queryable
@@ -1123,13 +1123,13 @@ class GrammarWindowPublisher:
         ``uq_enhancement_layers_source_job_fingerprint`` unique constraint when
         publishing multiple unit layers from the same window job.
 
-        P1-4: When ``contents_by_dedup`` is provided, ``output_json`` is built
+        When ``contents_by_dedup`` is provided, ``output_json`` is built
         as a proper ``GrammarNoteLayerOutput`` / ``SentenceAnalysisLayerOutput``
         (§8.3 contract) and provenance goes to ``quality_json``. When
         ``contents_by_dedup`` is ``None``, falls back to the legacy
         selector-sidecar ``output_json`` shape for backward compatibility.
 
-        P2-7: When ``self._event_runtime`` is not None, emits a
+        When ``self._event_runtime`` is not None, emits a
         ``layer_published`` reader_event so frontend polling can detect the
         new layer without snapshot reload.
         """
@@ -1179,9 +1179,9 @@ class GrammarWindowPublisher:
             published_at,
         )
 
-        # P2-7: emit layer_published reader_event for progressive publish
+        # Emit layer_published reader_event for progressive publish
         if self._event_runtime is not None:
-            # T4.2a-PUX-R4-R2.2-P2b-R1: grammar_note 首发使用扩展 payload
+            # Grammar_note 首发使用扩展 payload
             # （schema_version / operation / insertions[]），由 builder 从 typed
             # GrammarNoteLayerOutput（即 output_json）自动派生，validator 在同事务
             # 内、event 写入前校验。sentence_analysis 保持既有 10 字段 payload。
@@ -1253,11 +1253,11 @@ class GrammarWindowPublisher:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build ``output_json`` + ``quality_json`` for the layer INSERT.
 
-        P1-4 + P2-1: always produces a proper ``GrammarNoteLayerOutput`` /
+        Always produces a proper ``GrammarNoteLayerOutput``
         ``SentenceAnalysisLayerOutput`` for ``output_json`` and stores
         provenance (dedup_key/pattern_key/quality_score) in ``quality_json``.
 
-        P2-1 (fail closed): when ``contents_by_dedup`` is None but candidates
+         (fail closed): when ``contents_by_dedup`` is None but candidates
         exist, raises ValueError instead of falling back to sidecar shape.
         Production path must always produce contract-compliant output_json.
         """
@@ -1265,7 +1265,7 @@ class GrammarWindowPublisher:
             if candidates:
                 raise ValueError(
                     "candidate_contents is required when candidates exist "
-                    "(P2-1 fail closed: sidecar fallback removed)"
+                    "(fail-closed: sidecar fallback removed)"
                 )
             # No candidates → empty output (no-op window)
             return {"schema_version": 1, "items": []}, {
@@ -1330,7 +1330,7 @@ class GrammarWindowPublisher:
         # quality_json stores provenance (§8.3): plan_id / window_id /
         # window_index / dedup_key / pattern_key / quality_score /
         # reading_blocker / dedup_hint. These fields MUST NOT appear in output_json.
-        # P1-2 self-rating contract: reading_blocker / dedup_hint are now part of
+        # Self-rating contract: reading_blocker / dedup_hint are now part of
         # the audit trail so downstream consumers can reconstruct the scoped dedup
         # decision without re-running the selector.
         quality_json: dict[str, Any] = {

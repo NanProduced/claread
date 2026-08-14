@@ -78,7 +78,7 @@ class WebSearchHitView:
 
     ``provider_result_ref`` is internal-only — never on public DTOs.
 
-    R5: ``published_at`` / ``page_age`` are optional provider-supplied
+    ``Published_at`` / ``page_age`` are optional provider-supplied
     freshness metadata. The host accepts only a strict ``YYYY-MM-DD``
     value as ``published_at``; it retains raw ``page_age`` internally but
     never projects it as a public freshness claim.
@@ -92,7 +92,7 @@ class WebSearchHitView:
     # the host can correlate a registered :class:`WebEvidence` with a
     # provider-side diagnostic id when auditing a turn.
     provider_result_ref: str | None = None
-    # ASK-WEB-R4: optional provider-supplied freshness hints.
+    # ASK-WEB-optional provider-supplied freshness hints.
     published_at: str | None = None
     page_age: str | None = None
 

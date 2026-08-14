@@ -236,7 +236,7 @@ class ReadingRecordAskContextEnvelope(BaseModel):
     )
 
     initial_anchor: EnvelopeInitialAnchor | None = None
-    # ASK-UX-COT-COMPOSER-R3 P2 — the full canonical user-focus anchor set
+    # ASK-UX-COT-COMPOSER- — the full canonical user-focus anchor set
     # (≤4: one auto + three pinned, gate-validated). ``initial_anchor`` is the primary selection
     # (focus_anchors[0] when the plural field is present); the remaining
     # anchors enter the model view as additional focus selections.
@@ -360,7 +360,7 @@ class VerifiedEnvelopeInput(BaseModel):
     product_state: str = Field(min_length=1)
     readiness_state: str = Field(min_length=1)
     initial_anchor: EnvelopeInitialAnchor | None = None
-    # R3 P2 — full canonical focus anchor set (≤4); see the envelope field.
+    # Full canonical focus anchor set (≤4); see the envelope field.
     focus_anchors: tuple[EnvelopeInitialAnchor, ...] | None = Field(
         default=None, max_length=4
     )
@@ -422,7 +422,7 @@ def compute_envelope_fingerprint(
     readiness (:class:`ResolvedWebSearchCapability`) is excluded — it
     may change across retry without rewriting the fence identity.
 
-    R3 P2: the canonical focus anchor set (when non-empty) is part of the
+     The canonical focus anchor set (when non-empty) is part of the
     fence identity — a different user focus selection is a different turn
     context. Empty/absent focus keeps the payload byte-identical to the
     pre-plural contract, so legacy fingerprints are stable.
@@ -445,7 +445,7 @@ def compute_envelope_fingerprint(
         ),
         "web_search_mode": web_search_mode,
     }
-    # R3 P2 — include the focus set only when non-empty so legacy
+    # Include the focus set only when non-empty so legacy
     # (no focus) fingerprints stay byte-identical.
     if focus_anchors:
         payload["focus_anchors"] = [

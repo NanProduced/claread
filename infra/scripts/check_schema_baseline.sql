@@ -1,4 +1,4 @@
--- DATA-SCHEMA-BASELINE D2 fail-closed guard for the single fresh baseline.
+-- DATA-SCHEMA-BASELINE fail-closed guard for the single fresh baseline.
 -- Run with: psql -v ON_ERROR_STOP=1 -f check_schema_baseline.sql
 -- Verifies infra/migrations/0001_initial.sql end state:
 --   1. exactly the 53 baseline application tables exist
@@ -7,7 +7,7 @@
 --   2. legacy analysis / Eval control-plane tables are absent,
 --   3. the confirmed legacy columns on protected shared tables are absent,
 --   4. the contract CHECKs/indexes of the exited contracts are present,
---   5. the Reader D5 attribution columns/indexes/FKs are present.
+-- 5. the Reader attribution columns/indexes/FKs are present.
 
 DO $guard$
 DECLARE
@@ -358,7 +358,7 @@ BEGIN
         END IF;
     END LOOP;
     IF cardinality(missing) > 0 THEN
-        RAISE EXCEPTION 'Reader D5 attribution objects missing from the baseline: %', missing;
+        RAISE EXCEPTION 'Reader attribution objects missing from the baseline: %', missing;
     END IF;
 END
 $guard$;

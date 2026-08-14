@@ -1,4 +1,4 @@
-"""R4-A5-1 / A5-1R unit tests: ModelVisibleTurnBudget + ModelViewRenderer.
+"""/ unit tests: ModelVisibleTurnBudget + ModelViewRenderer.
 
 Scope: foundation modules only. No agent loop, no real LLM, no RAG I/O.
 """
@@ -329,7 +329,7 @@ def test_tool_view_cost_is_canonical_json_not_xml() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A5-1R: fail-closed JSON + sanitized errors
+# Fail-closed JSON + sanitized errors
 # ---------------------------------------------------------------------------
 
 
@@ -776,7 +776,7 @@ def test_request_frame_with_projection_charges_request_frame_only() -> None:
 
 
 def test_old_envelope_projection_keeps_runtime_selection_preview() -> None:
-    """A5-1 must not switch runtime selection preview; old path intact."""
+    """Must not switch runtime selection preview; old path intact."""
     envelope = build_context_envelope(
         VerifiedEnvelopeInput(
             user_id=_USER,

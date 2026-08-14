@@ -1,6 +1,6 @@
-"""A6 — Semantic Outline content-sufficiency short-circuit.
+"""Semantic Outline content-sufficiency short-circuit.
 
-D3 decision: when the stable document already carries enough Markdown
+ decision: when the stable document already carries enough Markdown
 headings, the backend MUST skip semantic outline job creation. The
 existing ``activation_ready = generation_enabled AND profile_configured``
 predicate is unchanged; this adds a content-sufficiency short-circuit
@@ -87,7 +87,7 @@ class _StubState:
     """Minimal stub for the eligibility predicate.
 
     The settings-aware predicate inspects ``activation_ready`` (captured at
-    factory time), ``unit_types`` (A6 content-sufficiency short-circuit),
+    factory time), ``unit_types`` (content-sufficiency short-circuit),
     and ``record_id`` / ``base_id`` (for the structured diagnostic log).
     """
 
@@ -204,7 +204,7 @@ async def test_int_article_with_sufficient_headings_skips_job(
     The plain text ``"Heading One\\n\\nHeading Two\\n\\nBody content here."``
     produces two short, punctuation-free lines that the heuristic
     ``_classify_unit_type`` classifies as ``heading``. The third paragraph
-    ends with a period → ``body``. With ≥2 headings, A6 must short-circuit
+    ends with a period → ``body``. With ≥2 headings, must short-circuit
     semantic outline job creation.
     """
     user_id = await insert_user(outline_env)
@@ -262,7 +262,7 @@ async def test_integration_article_without_sufficient_headings_creates_job(
     """Article with <2 heading units → outline job created (regression).
 
     The default ``submit_article_ready`` plain text produces body units
-    (sentences ending with periods), so heading count < 2. A6 must NOT
+    (sentences ending with periods), so heading count < 2. must NOT
     short-circuit; the existing activation path creates exactly one job.
     """
     user_id = await insert_user(outline_env)
@@ -303,11 +303,11 @@ async def test_int_skip_does_not_create_diagnostic_when_activation_off(
     outline_env: asyncpg.Pool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """activation_ready=False + ≥2 headings → no job, no A6 diagnostic.
+    """activation_ready=False + ≥2 headings → no job, no diagnostic.
 
     The skip must ONLY record ``skipped_markdown_headings_sufficient`` when
     activation is ready but content is sufficient. When activation itself
-    is off, the existing always-false path applies — no A6 diagnostic.
+    is off, the existing always-false path applies — no diagnostic.
     """
     settings = Settings(
         semantic_outline_generation_enabled=False,
@@ -337,13 +337,13 @@ async def test_int_skip_does_not_create_diagnostic_when_activation_off(
             SEMANTIC_OUTLINE_JOB_TYPE,
         )
     assert job_count == 0
-    # No A6 diagnostic when activation is off.
+    # No diagnostic when activation is off.
     diagnostic_messages = [
         r.getMessage()
         for r in caplog.records
         if "skipped_markdown_headings_sufficient" in r.getMessage()
     ]
     assert not diagnostic_messages, (
-        "A6 diagnostic must not fire when activation_ready=False; got: "
+        "diagnostic must not fire when activation_ready=False; got: "
         f"{diagnostic_messages}"
     )

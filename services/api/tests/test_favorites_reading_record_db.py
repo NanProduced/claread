@@ -1,4 +1,4 @@
-"""DATA-SCHEMA-BASELINE D2 fresh-init gate: reading_record favorite chain.
+"""DATA-SCHEMA-BASELINE fresh-init gate: reading_record favorite chain.
 
 Proves against the real local database (fresh volume initialized only from
 ``infra/migrations/0001_initial.sql``) that the exited favorite contract

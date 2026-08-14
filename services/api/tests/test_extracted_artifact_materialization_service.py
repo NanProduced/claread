@@ -1,4 +1,4 @@
-# task-history: D6-I3N (renamed from test_d6_i3n_extracted_artifact_materialization_service.py)
+# task-history: (renamed from test_d6_i3n_extracted_artifact_materialization_service.py)
 """Tests for the ExtractedArtifactMaterializationService.
 
 Covers:
@@ -767,7 +767,7 @@ async def test_transaction_rollback_on_persistence_failure(
 
 
 # ===================================================================
-# Double-call idempotency tests (P1: entry state gate)
+# Double-call idempotency tests (entry state gate)
 # ===================================================================
 
 
@@ -856,7 +856,7 @@ async def test_double_call_rejected_path_fail_closed(mat_env: asyncpg.Pool) -> N
 
 
 # ===================================================================
-# Source type derivation tests (P1: _derive_source_type fail-closed)
+# Source type derivation tests (_derive_source_type fail-closed)
 # ===================================================================
 
 
@@ -949,7 +949,7 @@ async def test_octet_stream_without_txt_md_extension_fail_closed(
 
 
 # ===================================================================
-# Source artifact guard tests (P2: deleted/non-original/local-provider)
+# Source artifact guard tests (deleted/non-original/local-provider)
 # ===================================================================
 
 

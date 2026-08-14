@@ -1,4 +1,4 @@
-"""ASK-TURN-LIFECYCLE R4-5 — Production stale-stream recovery.
+"""ASK-TURN-LIFECYCLE — Production stale-stream recovery.
 
 Provides the real production entry point for orphan streaming
 ``reader_ask_turn_runs`` rows left behind by process crash / restart.
@@ -60,7 +60,7 @@ from app.services.reader_record_ask.repository import (
 
 logger = logging.getLogger(__name__)
 
-# R4-5: interval for the periodic safety-net sweeper. Conservative —
+# Interval for the periodic safety-net sweeper. Conservative —
 # the startup sweep is the primary recovery path; this is only for
 # in-process orphans that slipped through the route ``finally``.
 PERIODIC_SWEEP_INTERVAL_SECONDS: int = 60
@@ -73,7 +73,7 @@ async def run_startup_stale_stream_sweep(
 ) -> dict[str, Any]:
     """Reconcile all stale streaming rows on app startup.
 
-    ASK-TURN-LIFECYCLE R4-5: the primary production entry point for
+    ASK-TURN-LIFECYCLE the primary production entry point for
     orphan streaming rows. Called once from the FastAPI ``lifespan``
     handler after the DB pool is initialized. At startup, ALL streaming
     rows are orphans — the previous process is dead and no heartbeats
@@ -122,7 +122,7 @@ async def run_startup_stale_stream_sweep(
 class StaleStreamSweeper:
     """Periodic background sweeper for in-process orphan streaming rows.
 
-    ASK-TURN-LIFECYCLE R4-5: a lightweight background task that runs
+    ASK-TURN-LIFECYCLE a lightweight background task that runs
     every ``PERIODIC_SWEEP_INTERVAL_SECONDS`` and reconciles
     heartbeat-dead streaming rows. This catches orphans that slipped
     through the route ``finally`` block (e.g., ASGI cancellation without

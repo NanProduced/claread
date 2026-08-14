@@ -5,8 +5,8 @@ from claread_eval.reader_record_ask.evaluators.numeric_grounding import (
     evaluate_numeric_grounding,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
@@ -14,8 +14,8 @@ def _make_case(
     *,
     allowed_numerics: list[str] | None = None,
     question: str = "文章提到了哪些数据？",
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-numeric",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -23,7 +23,7 @@ def _make_case(
         baseline_mode="complete",
         question=question,
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             allowed_numerics=allowed_numerics or [],
         ),
     )
@@ -100,7 +100,7 @@ def test_question_number_implicitly_allowed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 4) — structural numbering and CN date component masking.
+# Structural numbering and CN date component masking.
 # ---------------------------------------------------------------------------
 
 

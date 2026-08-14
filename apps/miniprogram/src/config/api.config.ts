@@ -37,7 +37,7 @@ export const defaultHeaders: RequestHeaders = {
 
 /**
  * 获取带认证的请求头
- * Phase 2: 从 auth store 获取 token，注入到所有 API 请求
+ * 从 auth store 获取 token，注入到所有 API 请求
  */
 export function getAuthHeaders(): RequestHeaders {
   const token = getToken()

@@ -1,4 +1,4 @@
-"""ASK-UX-COT-COMPOSER-R3 P2 — plural focus_anchors contract tests.
+"""ASK-UX-COT-COMPOSER- — plural focus_anchors contract tests.
 
 Covers: request schema (plural ≤3 + singular compatibility), service
 resolver + fail-closed per-anchor gate, focus selections model view

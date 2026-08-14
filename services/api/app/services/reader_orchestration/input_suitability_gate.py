@@ -152,7 +152,7 @@ class InputSuitabilityGate:
                 preview=preview,
             )
 
-        # A4 — 解析结果共享: when the caller has already parsed the
+        # 解析结果共享: when the caller has already parsed the
         # normalized text (e.g. the upload/materialization pipeline that
         # wants to share one parse across gate + normalizer + candidate
         # creation), reuse that result instead of invoking the parser

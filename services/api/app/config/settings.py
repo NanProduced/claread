@@ -48,13 +48,13 @@ class Settings(BaseSettings):
     reader_vocabulary_model_profile: str = ""
     reader_grammar_bundle_model_profile: str = ""
     reader_title_model_profile: str = ""
-    # T5.8a: semantic outline registration only — default empty/disabled.
-    # Presence of these fields is NOT a live kill-switch wiring (T5.8b/d).
+    # Semantic outline registration only — default empty/disabled.
+    # Presence of these fields is NOT live kill-switch wiring.
     reader_semantic_outline_model_profile: str = ""
     semantic_outline_generation_enabled: bool = False
     reader_worker_scan_interval_seconds: int = 5
     reader_worker_batch_size: int = 10
-    # T1 acceptance: aligned with pipeline_runner.DEFAULT_PIPELINE_MAX_TICKS /
+    # Acceptance: aligned with pipeline_runner.DEFAULT_PIPELINE_MAX_TICKS /
     # DEFAULT_PIPELINE_MAX_JOBS so the CLI, worker loop, and smoke harness all
     # share the same medium-sample budget. See pipeline_runner.py for the math.
     reader_worker_max_ticks: int = 96
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # compactor is guarded by deterministic Host validation and an emergency
     # fallback; failures remain fail-soft for the user turn.
     reader_record_ask_memory_enabled: bool = False
-    # ASK-LEARNER-REASONING-PROJECTOR-R1: learner reasoning summary via a
+    # Learner reasoning summary via a
     # same-authority cheap non-thinking projector. Default OFF. When OFF,
     # production discards private reasoning at ingress (byte-stable with
     # the prior UserSafeReasoningObserver path). When ON, turn-local raw
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     # 内部 API Key（云函数调用等）
     internal_api_key: str = ""
 
-    # Aliyun OSS（D6-I3Q）
+    # Aliyun OSS
     # 凭证从环境变量读取，不写入代码、测试或 API 响应。
     # dev 默认 bucket/endpoint 保持 claread-dev / oss-cn-shenzhen 兼容。
     # presign_enabled=False 时默认 fail closed（NullPresigner），客户端走 pending credentials 语义。
@@ -179,13 +179,13 @@ class Settings(BaseSettings):
     aliyun_oss_presign_enabled: bool = False
     aliyun_oss_presign_expires_seconds: int = 900
 
-    # Reader artifact pipeline worker (D6-I3R)
+    # Reader artifact pipeline worker
     reader_artifact_worker_poll_interval_seconds: int = 5
     reader_artifact_worker_lease_owner_prefix: str = "reader-artifact-pipeline-worker"
     reader_artifact_worker_lease_duration_seconds: int = 120
     reader_artifact_worker_max_ticks: int = 100
 
-    # Reader OCR provider (D6-I3T + D6-I3U)
+    # Reader OCR provider
     # 默认 disabled：本地 worker 可启动但 image/* job terminal fail closed
     # (ocr_provider_unconfigured)。启用后需要单独配置 DASHSCOPE_API_KEY 等
     # 凭证（不在 settings 默认值中写入密钥）。
@@ -195,13 +195,13 @@ class Settings(BaseSettings):
     reader_ocr_provider_name: str = "qwen"
     reader_ocr_min_text_confidence: float = 0.75
     reader_ocr_min_layout_confidence: float = 0.65
-    # D6-I3U: real Qwen OCR adapter settings.
+    # Real Qwen OCR adapter settings.
     # 模型名可配置，默认 qwen3.5-ocr；可通过 env/settings 覆盖。
     reader_ocr_qwen_model: str = "qwen3.5-ocr"
     # 单次 OCR 请求超时（秒）；超时映射为 retryable ocr_backend_transient。
     reader_ocr_request_timeout_seconds: int = 60
 
-    # D6-I4D: Article RAG provider adapter foundation.
+    # Article RAG provider adapter foundation.
     # 默认 disabled + 无 zilliz 凭证 / 无 embedding provider 时，
     # factory 返回 Unconfigured* 包装（fail closed，不联网）。
     # README/Zilliz 仅作为 index replica；citation truth 永远回 Postgres。
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     reader_article_rag_enabled: bool = False
     reader_article_rag_smoke: bool = False
 
-    # D6-I4U: Article RAG index worker entry (poll/lease/max-ticks).
+    # Article RAG index worker entry (poll/lease/max-ticks).
     # Mirrors reader_artifact_worker_* defaults; the entry script reads these
     # as CLI argument defaults. Missing DashScope/Zilliz config does NOT
     # prevent worker startup — providers fail closed on first job.

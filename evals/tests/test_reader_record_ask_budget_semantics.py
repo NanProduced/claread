@@ -1,9 +1,9 @@
-"""R4-A4-2R P1-Budget: planned logical runs vs provider request cap semantics.
+"""Planned logical runs vs provider request cap semantics.
 
-Spec: R4-A4-2R — Real Eval Fixture Identity / Path Contract Repair,
-``P1 — Budget semantics`` block.
+Spec: the accepted real-eval fixture identity and path contract,
+``Budget semantics`` block.
 
-R4-A4-2 audit found: "30 planned runs 共消耗 30 provider requests，
+The audit scenario found: "30 planned runs 共消耗 30 provider requests，
 但 3 次 output retry 导致只完成 27 runs." The previous preflight /
 report did not distinguish:
 
@@ -286,7 +286,7 @@ class TestRetriesConsumedSemantics:
     def test_three_retries_consumed(self) -> None:
         """27 completed, 30 requests → retries_consumed=3.
 
-        This is the R4-A4-2 audit scenario: 30 planned, cap=30, but
+        This audit scenario uses 30 planned runs and a cap of 30, but
         3 output retries pushed total requests to 30 before all 30
         planned could complete, leaving 27 completed + 3 retries.
         """

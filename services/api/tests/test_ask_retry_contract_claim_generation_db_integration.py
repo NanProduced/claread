@@ -1,4 +1,4 @@
-# task-history: ASK-RETRY-CONTRACT-R6 (renamed from test_ask_retry_contract_r6_db_integration.py)
+# task-history: ASK-RETRY-CONTRACT- (renamed from test_ask_retry_contract_r6_db_integration.py)
 """Ask retry contract claim-generation real PostgreSQL integration — OPT-IN only.
 
 Prerequisites (Owner, not this agent):

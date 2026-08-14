@@ -21,8 +21,8 @@ from claread_eval.reader_record_ask.runtime_fixture import (
     precheck_required_facts_support,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -70,12 +70,12 @@ def _make_synthetic_case(
     phase_tags: list[str] | None = None,
     expected_runtime_fixture_fingerprint: str | None = None,
     atomic_facts=None,
-) -> ReaderRecordAskR4A3Case:
+) -> ReaderRecordAskCase:
     """Build a minimal synthetic case for runtime fixture identity tests."""
-    expected = ReaderRecordAskR4A3Expected()
+    expected = ReaderRecordAskExpected()
     if atomic_facts is not None:
-        expected = ReaderRecordAskR4A3Expected(atomic_facts=atomic_facts)
-    return ReaderRecordAskR4A3Case(
+        expected = ReaderRecordAskExpected(atomic_facts=atomic_facts)
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind=source_kind,
         record_id=None,
@@ -100,7 +100,7 @@ def _make_bbc_real_phase1_case(
     *,
     case_id: str = "case-bbc",
     expected_runtime_fixture_fingerprint: str | None = None,
-) -> ReaderRecordAskR4A3Case:
+) -> ReaderRecordAskCase:
     """Build a minimal BBC real_phase1 case."""
     return _make_synthetic_case(
         case_id=case_id,

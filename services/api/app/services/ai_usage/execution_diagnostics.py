@@ -1,4 +1,4 @@
-"""Usage presence diagnostics and durable execution correlation (T4.2a-O2).
+"""Usage presence diagnostics and durable execution correlation.
 
 This module is the **single** constructor for execution correlation keys and
 usage-presence diagnostic codes used by Reader orchestration workers.
@@ -61,7 +61,7 @@ META_SPAN_TOTALS: Final = "span_token_totals"
 META_EVENT_TOTALS: Final = "event_token_totals"
 
 # ---------------------------------------------------------------------------
-# Duration provenance (T4.2a-O3) — never alias worker/agent duration as
+# Duration provenance — never alias worker/agent duration as
 # provider latency. Does not write ai_usage_events.latency_ms.
 # ---------------------------------------------------------------------------
 
@@ -221,7 +221,7 @@ class UsageRecordOutcome:
 
 @dataclass(frozen=True, slots=True)
 class DurationProvenance:
-    """Lineage for agent-run vs provider-request timing (T4.2a-O3).
+    """Lineage for agent-run vs provider-request timing.
 
     Field dictionary (stable metadata keys):
 

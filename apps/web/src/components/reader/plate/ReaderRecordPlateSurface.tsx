@@ -172,7 +172,7 @@ export interface ReaderRecordPlateSurfaceProps {
   readingClassName?: string;
   onRequestSnapshotReload?: () => void | Promise<void>;
   /**
-   * T4.2a-PUX-R4-R2: Reload context delivered by the page when a polling-
+   * Reload context delivered by the page when a polling-
    * triggered reload arrives. The Surface feeds this to the incremental
    * projection merger in its value swap effect: when triggerEvents are
    * present the merger may produce a targeted_apply (replaceNodes batch)
@@ -854,7 +854,7 @@ function isGrammarCalloutElement(value: unknown): value is ReaderCalloutElement 
  * Explicit tuple comparison: two grammar callouts enter the same group
  * ONLY if both `unitId` AND `anchorSegmentId` are non-empty AND equal.
  *
- * This is the complete tuple comparison required by Method A2 — it does
+ * This compares the complete identity tuple — it does
  * NOT rely on structural facts like "cross-unit is usually separated by
  * a paragraph". A callout with a different `unitId` but the same
  * `anchorSegmentId` must NOT enter the same group.
@@ -878,7 +878,7 @@ function sameGroupTarget(
 }
 
 /**
- * T4.2a-PUX-R4-R2.2-P2a (Method A2): group consecutive grammar callouts
+ * Group consecutive grammar callouts
  * by stable identity `callout-group:{unitId}:{anchorSegmentId}`.
  *
  * Exported for direct unit testing of the grouping invariant and

@@ -1,4 +1,4 @@
-"""R7-3 / R7-3b hermetic regressions: grammar batch lease heartbeat +
+"""/ hermetic regressions: grammar batch lease heartbeat +
 model-invocation usage (no DB, no real LLM).
 
 Covers:
@@ -9,7 +9,7 @@ LeaseHeartbeat manager:
 - stop idempotent; context manager surfaces loss on clean exit;
 - interval clamped strictly below the lease.
 
-Usage persistence (R7-3b):
+Usage persistence:
 - generate returns → result and usage captured IMMEDIATELY
   in the journal, then materialized by canonical invocation_key
   (model_call_completed) → publish → SAME row updated
@@ -112,7 +112,7 @@ class FakeJobRuntime:
 
 
 class ExpiryAwareRuntime:
-    """Runtime that REALLY tracks lease_expires_at (R7-3b test A).
+    """Runtime that REALLY tracks lease_expires_at (test A).
 
     heartbeat() extends the lease iff it has not expired; an expired
     lease raises IllegalTransitionError like the real runtime after
@@ -196,7 +196,7 @@ class FakePublisher:
 
 
 class LeaseValidatingPublisher:
-    """Publisher that enforces the lease fence (R7-3b test A)."""
+    """Publisher that enforces the lease fence (test A)."""
 
     def __init__(self, runtime: ExpiryAwareRuntime) -> None:
         self.runtime = runtime
@@ -678,7 +678,7 @@ async def test_heartbeat_lost_before_publish_skips_publish_and_writes_nothing_to
     assert result.ownership_lost is True
     assert result.published_batch is None
     assert publisher.calls == []
-    # R7-3b: NO unfenced writes after ownership loss — neither
+    # NO unfenced writes after ownership loss — neither
     # reader_jobs transitions nor reader_runs status updates.
     assert runtime.transitions == []
     assert run_status_calls == []
@@ -815,7 +815,7 @@ async def test_retry_invocations_are_separate_usage_rows(
 
 
 # ---------------------------------------------------------------------------
-# R7-3b B: cancellation after the model returned
+# B: cancellation after the model returned
 # ---------------------------------------------------------------------------
 
 
@@ -920,7 +920,7 @@ async def test_cancellation_during_initial_usage_persistence_still_records_once(
 
 
 # ---------------------------------------------------------------------------
-# R7-3b C: usage persistence failure must not be marked recorded
+# C: usage persistence failure must not be marked recorded
 # ---------------------------------------------------------------------------
 
 
@@ -1062,7 +1062,7 @@ async def test_same_invocation_key_never_inserts_twice(
 
 
 # ---------------------------------------------------------------------------
-# R7-3b D: ownership race — old attempt writes nothing
+# D: ownership race — old attempt writes nothing
 # ---------------------------------------------------------------------------
 
 
@@ -1145,7 +1145,7 @@ async def test_real_outcome_update_patches_same_row(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# R7-3b A: expiry-aware runtime — positive / negative controls
+# A: expiry-aware runtime — positive / negative controls
 # ---------------------------------------------------------------------------
 
 

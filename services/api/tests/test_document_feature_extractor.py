@@ -1,4 +1,4 @@
-"""T4.1 / T4.1a: focused unit tests for the deterministic document feature
+"""/ focused unit tests for the deterministic document feature
 extractor and the three-mode article route classifier.
 
 These tests are PURE (no database, no LLM). They pin the routing contract
@@ -93,7 +93,7 @@ def test_bbc_near_threshold_text_exceeds_legacy_char_threshold() -> None:
 
 
 def test_bbc_near_threshold_routes_to_short_batch() -> None:
-    """T4.1a regression fix: a BBC-style ~1000-word / ~6300-char article
+    """Regression fix: a BBC-style ~1000-word ~6300-char article
     routes to SHORT_BATCH under the new word-based router, even though its
     raw char length exceeds the legacy 6000 threshold."""
     profile = _profile(_BBC_NEAR_THRESHOLD_TEXT, ("body",) * 7)
@@ -142,7 +142,7 @@ def test_empty_text_routes_to_short_batch() -> None:
 
 
 def test_medium_article_routes_to_structured_batch() -> None:
-    """T4.1a: a medium article (~1450 words / ~8900 chars) routes to
+    """A medium article (~1450 words ~8900 chars) routes to
     STRUCTURED_BATCH -- a single whole-article batch job -- NOT to the
     grouped/windowed heavy path."""
     assert len(_MEDIUM_TEXT) > 6000  # legacy router would have grouped it
@@ -166,8 +166,8 @@ def test_medium_article_is_not_grouped_windowed() -> None:
 
 
 def test_long_article_routes_to_grouped_windowed() -> None:
-    """T4.1a: a clearly long article (~2300 words / ~14300 chars) still
-    routes to GROUPED_WINDOWED so the existing T3.1 / T3.2b windowed
+    """A clearly long article (~2300 words ~14300 chars) still
+    routes to GROUPED_WINDOWED so the existing windowed
     execution contract is preserved."""
     profile = _profile(_LONG_TEXT, ("body",) * 16)
     assert profile.estimated_word_count > STRUCTURED_ARTICLE_MAX_WORD_COUNT
@@ -312,12 +312,12 @@ def test_content_utf16_length_counts_surrogate_pairs() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# Non-ASCII, non-CJK scripts (Cyrillic / Arabic / Greek) -- P1 regression
+# Non-ASCII, non-CJK scripts (Cyrillic / Arabic Greek) -- regression
 # ---------------------------------------------------------------------------#
 
 
 def test_long_cyrillic_article_is_not_misrouted_to_short_batch() -> None:
-    """P1 regression: a long Cyrillic article must NOT be counted as 0
+    """Regression: a long Cyrillic article must NOT be counted as 0
     words. The original ``[A-Za-z0-9]`` word pattern ignored Cyrillic
     entirely, so a 16500-char Russian article was misrouted to
     SHORT_BATCH. The Unicode-aware word counter now counts Cyrillic
@@ -331,7 +331,7 @@ def test_long_cyrillic_article_is_not_misrouted_to_short_batch() -> None:
 
 
 def test_long_arabic_article_is_not_misrouted_to_short_batch() -> None:
-    """P1 regression: a long Arabic article must NOT be counted as 0
+    """Regression: a long Arabic article must NOT be counted as 0
     words. Arabic letters are Unicode word characters; the Unicode-aware
     counter routes a long Arabic article to GROUPED_WINDOWED."""
     # "مرحبا بالعالم" = "hello world" in Arabic, 2 whitespace tokens.
@@ -342,7 +342,7 @@ def test_long_arabic_article_is_not_misrouted_to_short_batch() -> None:
 
 
 def test_long_greek_article_is_not_misrouted_to_short_batch() -> None:
-    """P1 regression: a long Greek article must NOT be counted as 0
+    """Regression: a long Greek article must NOT be counted as 0
     words. Greek letters are Unicode word characters."""
     # "καλημέρα κόσμε" = "good morning world" in Greek, 2 tokens.
     greek_text = "καλημέρα κόσμε " * 1500

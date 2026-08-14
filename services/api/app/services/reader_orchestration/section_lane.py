@@ -1,4 +1,4 @@
-"""T5.6b — translation execution lane classifier (null-safe SQL fragments).
+"""translation execution lane classifier (null-safe SQL fragments).
 
 is_section_lane  ⇔  origin = 'section_v1'
 is_ordinary_lane ⇔  origin IS DISTINCT FROM 'section_v1'

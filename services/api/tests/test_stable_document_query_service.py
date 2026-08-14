@@ -1,4 +1,4 @@
-# task-history: D6-I2E (renamed from test_d6_i2e_stable_document_query_service.py)
+# task-history: (renamed from test_d6_i2e_stable_document_query_service.py)
 from __future__ import annotations
 
 import json

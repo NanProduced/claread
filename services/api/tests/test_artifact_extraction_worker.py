@@ -1,4 +1,4 @@
-# task-history: D6-I3L (renamed from test_d6_i3l_artifact_extraction_worker.py)
+# task-history: (renamed from test_d6_i3l_artifact_extraction_worker.py)
 from __future__ import annotations
 
 import hashlib
@@ -120,7 +120,7 @@ async def _seed_full_environment(
         )
         # source_text is NULL because extraction hasn't happened yet; the
         # check constraint ck_original_inputs_has_source is satisfied by a
-        # non-empty source_ref_json that mirrors what D6-I3J produces when
+        # non-empty source_ref_json that mirrors what produces when
         # binding a source_artifact to an original_input.
         source_ref_json = {
             "artifact_id": str(_ARTIFACT_ID),

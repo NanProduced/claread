@@ -1,4 +1,4 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: Grammar layer_published payload validator tests.
+"""Grammar layer_published payload validator tests.
 
 聚焦 grammar_note 首发的 layer_published 扩展 payload validator。
 验证所有 spec 校验项（基础字段 / operation / insertions / descriptor /

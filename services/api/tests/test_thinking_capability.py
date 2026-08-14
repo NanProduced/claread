@@ -1,4 +1,4 @@
-"""R4-A5-8A1: provider-thinking capability contract (offline)."""
+"""Provider-thinking capability contract (offline)."""
 
 from __future__ import annotations
 
@@ -157,9 +157,9 @@ def test_dialects_not_collapsed_to_generic_true():
 
 
 def test_direct_deepseek_absent_mode_normalized_to_explicit_enabled():
-    """absent configured mode is normalized to explicit enabled on wire (R3).
+    """absent configured mode is normalized to explicit enabled on wire.
 
-    R4-A5-8A1R3: absent configuration must NOT fall into the non-thinking
+    Absent configuration must NOT fall into the non-thinking
     branch. Product policy normalizes absent to an explicit
     ``{"thinking": {"type": "enabled"}}`` so the wire payload is
     self-describing. Sampling params are stripped (same as enabled);
@@ -195,7 +195,7 @@ def test_direct_deepseek_absent_mode_normalized_to_explicit_enabled():
 
 
 def test_direct_deepseek_absent_mode_with_effort_carries_effort():
-    """absent mode + configured effort → enabled wire with effort (R3).
+    """absent mode + configured effort → enabled wire with effort.
 
     Even when the thinking field is absent, if reasoning_effort is
     configured, the effective enabled wire state carries it.
@@ -304,7 +304,7 @@ def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
     Guards against a regression that collapses absent with disabled (the
     classic bug when thinking is treated as a bool). Also verifies that
     effective_wire_mode collapses absent→enabled but keeps disabled
-    distinct (R3).
+    distinct.
     """
     modes_seen: set[str] = set()
     wire_modes_seen: set[str] = set()
@@ -332,11 +332,11 @@ def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
 
 
 def test_effective_wire_mode_none_for_dashscope_qwen():
-    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    """Effective_wire_mode direct_thinking_enabled_on_wire are None
     for DashScope Qwen — the Direct DeepSeek thinking.type wire protocol
     does not apply. Qwen uses enable_thinking / thinking_budget instead.
 
-    R4-A5-8A1R3R: guards against a regression where these properties
+    Guards against a regression where these properties
     return misleading "enabled" / True for non-deepseek_direct dialects.
     """
     settings = RunModelSettings(
@@ -355,7 +355,7 @@ def test_effective_wire_mode_none_for_dashscope_qwen():
 
 
 def test_effective_wire_mode_none_for_dashscope_deepseek():
-    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    """Effective_wire_mode direct_thinking_enabled_on_wire are None
     for DashScope-routed DeepSeek — the Direct wire protocol does not
     apply. DashScope DeepSeek uses enable_thinking instead.
     """
@@ -373,7 +373,7 @@ def test_effective_wire_mode_none_for_dashscope_deepseek():
 
 
 def test_effective_wire_mode_none_for_dialect_none():
-    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    """Effective_wire_mode direct_thinking_enabled_on_wire are None
     for dialect=none — no thinking wire protocol applies at all.
     """
     settings = RunModelSettings()
@@ -391,7 +391,7 @@ def test_effective_wire_mode_none_for_dialect_none():
 
 
 def test_effective_wire_mode_still_works_for_deepseek_direct():
-    """P2 cross-check: deepseek_direct dialect still returns meaningful
+    """Cross-check: deepseek_direct dialect still returns meaningful
     wire mode values (not None) after the None-for-other-dialects change.
     """
     settings = RunModelSettings(

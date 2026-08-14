@@ -5,16 +5,16 @@ from claread_eval.reader_record_ask.evaluators.answer_success import (
 )
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
 def _make_case(
     *,
     forbidden_patterns: list[str] | None = None,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-answer-success",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -22,7 +22,7 @@ def _make_case(
         baseline_mode="complete",
         question="这篇文章主要说了什么？",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             forbidden_answer_patterns=forbidden_patterns or [],
         ),
     )

@@ -25,7 +25,7 @@ export function AssistantMessage({
   children,
   className,
 }: AssistantMessageProps) {
-  // P1 — vertical rhythm: 4/8 spacing between process → answer → sources →
+  // Vertical rhythm: 4/8 spacing between process → answer → sources →
   // actions. The content column stays narrow for readability; the assistant
   // surface is frameless (no border, no bg), letting the answer text own
   // the visual weight.

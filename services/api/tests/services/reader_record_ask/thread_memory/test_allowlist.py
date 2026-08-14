@@ -1,6 +1,6 @@
-"""Tests for allowlist validation (R0.1 §4.2(d) ten-step algorithm).
+"""Tests for allowlist validation (§4.2(d) ten-step algorithm).
 
-A1 stub: 待 A1 完成后移除（schema/mapping 走 conftest 注入的 _stub）
+ stub: 待 完成后移除（schema/mapping 走 conftest 注入的 _stub）
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ def test_validate_snapshot_does_not_reject_at_exactly_20_percent():
 
 
 def test_validate_snapshot_strips_article_facts_without_binding():
-    """Article facts must reference a Host binding (R0.1 §4.2(d) step 6b)."""
+    """Article facts must reference a Host binding (§4.2(d) step 6b)."""
     facts = [
         # Valid article fact: source_ids includes a binding_id.
         _fact(
@@ -249,7 +249,7 @@ def test_validate_snapshot_strips_article_facts_without_binding():
     bindings = [bind1]
     snap = _snapshot([_episode(facts, bindings)])
     allow = {"m1", "m2", "bind1"}
-    # R1.6 P0-2: pass Host binding map so article provenance check works.
+    # Pass Host binding map so article provenance check works.
     host_map = {"bind1": bind1}
     validated, metrics = validate_snapshot(snap, host_map, allow, fence_results={})
     assert metrics["binding_violation"] == 1
@@ -294,13 +294,13 @@ def test_compute_watermark_is_deterministic():
 
 
 def test_compute_watermark_matches_revision_digest_definition():
-    """R1.6 P0-1 + R1.6.1 P0-1: SHA256(json.dumps([(id, role,
+    """SHA256(json.dumps([(id, role,
     revision_digest)], sort_keys=True)).
 
     Replaces the old (id, role)-only hash. The revision digest is a
     per-message SHA-256 of safe-visible content — no raw text leaks.
 
-    R1.6.1 P0-1: the assistant digest now uses a structured JSON
+     The assistant digest now uses a structured JSON
     serialization (``{"run_id": ..., "answer_texts": [...],
     "web_outcome": ...}``) instead of the old separator-based
     ``f"{run_id}|\\n".join(texts)`` which lost the run_id on
@@ -312,9 +312,9 @@ def test_compute_watermark_matches_revision_digest_definition():
          "canonical_turn_run_id": "r1",
          "answer_blocks": [{"text": "hi"}]},
     ]
-    # Compute expected digests manually using the R1.6.1 structured format.
+    # Compute expected digests manually using the structured format.
     user_digest = hashlib.sha256(b"hello").hexdigest()
-    # R1.6.1 P0-1: structured JSON digest input (no separator-based join).
+    # Structured JSON digest input (no separator-based join).
     assistant_digest_input = json.dumps(
         {"run_id": "r1", "answer_texts": ["hi"], "web_outcome": ""},
         sort_keys=True,

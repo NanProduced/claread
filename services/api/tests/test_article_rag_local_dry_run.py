@@ -1,4 +1,4 @@
-# task-history: D6-I4Z (renamed from test_d6_i4z_article_rag_local_dry_run.py)
+# task-history: (renamed from test_d6_i4z_article_rag_local_dry_run.py)
 """Article RAG local dry-run (no-network offline tests).
 
 Single surface:
@@ -23,7 +23,7 @@ A. **No-network local dry-run** (default `pytest` runs all of these):
       contains a real-looking token, and that monkeypatched socket
       / httpx guards would catch any regression.
 
-Real-chain acceptance (R1/R2) lives in the canonical
+Real-chain acceptance lives in the canonical
 ``test_article_rag_single_path_real_acceptance.py`` module — that
 is the SINGLE real-chain entry point.  It writes to the production
 ``article_rag_chunks`` collection with precise fixture isolation
@@ -70,7 +70,7 @@ RUNBOOK_DOC = (
     / "local-article-rag-runbook.md"
 )
 
-# The canonical real-chain acceptance test (R1/R2).  This module is
+# The canonical real-chain acceptance test. This module is
 # the SINGLE real-chain entry point; the prior smoke-collection
 # namespace design that lived here has been retired.  The runbook
 # must point at this file as the only real-chain acceptance surface.
@@ -350,7 +350,7 @@ class TestWorkerConstructionWithNoConfig:
         ):
             monkeypatch.delenv(var, raising=False)
 
-        result = subprocess.run(  # noqa: S603 — fixed args
+        result = subprocess.run( # noqa: — fixed args
             [
                 sys.executable,
                 "-m",
@@ -701,7 +701,7 @@ class TestNoNetworkGuard:
         ``DASHSCOPE_API_KEY`` / ``BAILIAN_API_KEY`` /
         ``ZILLIZ_TOKEN`` / ``READER_ARTICLE_RAG_ZILLIZ_TOKEN`` from
         the environment.  Strip them all and run ``build_worker_service``
-        — it must still produce the Unconfigured* sentinels.
+        it must still produce the Unconfigured* sentinels.
         """
         for var in (
             "DASHSCOPE_API_KEY",

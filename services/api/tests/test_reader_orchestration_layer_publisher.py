@@ -858,7 +858,7 @@ async def test_publish_unit_translation_writes_publish_fence_span(
     ``publish_fence`` span row to ``reader_runtime_spans`` with
     ``status='succeeded'`` and ``metadata.layer_type='translation'``.
 
-    Covers the P2-c observability contract: the publish wrapper
+    Covers the observability contract: the publish wrapper
     surrounds ``_publish_unit_translation_inner`` with a span that
     records success / fence_violation / publish_exception outcomes.
     """

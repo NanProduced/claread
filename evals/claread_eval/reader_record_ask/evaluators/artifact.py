@@ -1,4 +1,4 @@
-"""Serializable raw artifact view for the R4-A3 reader-record-ask evaluators.
+"""Serializable raw artifact view for the reader-record-ask evaluators.
 
 The evaluators operate on :class:`RawArtifact` — a pure-data, serializable
 projection of :class:`ReadingRecordAskRunResult` plus
@@ -9,7 +9,7 @@ Field names follow the spec (``.trae/specs/reader-record-ask-r4-a3-
 correctness-eval/spec.md`` — Requirement: 11 维确定性 evaluator + 真实模型运行
 策略 + 报告脱敏与可聚合).
 
-P0-1 strict contract (R4-A3 final closure — artifact audit boundary):
+Strict contract (artifact audit boundary):
 Audit-critical fields use ``Strict*`` types + format validators so Pydantic
 coercion CANNOT turn ``run_index=True`` into ``1``, ``budget_exhausted="false"``
 into ``False``, or accept malformed dataset identity SHAs. This is the fail-
@@ -45,12 +45,12 @@ from claread_eval.reader_record_ask.errors import SafeErrorCode
 _SHA256_LOWERCASE_HEX_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{64}$")
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 final gate closure (P0-1): explicit instrumentation lifecycle
+# Explicit instrumentation lifecycle
 # ---------------------------------------------------------------------------
 # Distinguishes 4 mutually-exclusive states WITHOUT inspecting error text
 # or finalized_reason:
 #
-#   1. legacy artifact (pre-R4-A4-0 final gate):
+#   1. legacy artifact:
 #        version=None, capture_status=None
 #        → indeterminate_requires_new_artifact (replay only)
 #        → blocked_incomplete_real_model_run (authoritative aggregate)
@@ -76,7 +76,7 @@ _SHA256_LOWERCASE_HEX_RE: re.Pattern[str] = re.compile(r"^[0-9a-f]{64}$")
 #        → instrumentation/run incomplete blocker (NOT model failure)
 #
 # The version literal is the migration marker — only artifacts produced
-# AFTER R4-A4-0 final gate closure carry it. ``None`` always means legacy.
+# Later artifacts carry it. ``None`` always means legacy.
 # The capture_status literal distinguishes the three new-artifact states
 # without parsing error text or finalized_reason.
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ MODEL_CONTEXT_CAPTURE_STATUS_LITERAL = Literal[
 ]
 
 # ---------------------------------------------------------------------------
-# P0-2: Evaluator-consumed enum literals
+# Evaluator-consumed enum literals
 # ---------------------------------------------------------------------------
 # These mirror the production-side Literal types so a typo'd
 # kind/provenance/status is rejected at the artifact load boundary,
@@ -133,7 +133,7 @@ BASELINE_STATUS_LITERAL = Literal[
 ]
 
 # ---------------------------------------------------------------------------
-# P0-3: Legal (kind, provenance) cross-field invariant
+# Legal (kind, provenance) cross-field invariant
 # ---------------------------------------------------------------------------
 # Mirrors the production contract
 # ``LEGAL_EVIDENCE_KIND_SOURCE`` at
@@ -184,7 +184,7 @@ class RawEvidenceObservation(BaseModel):
     snippet (≤2000 chars) and is the only article content the evaluator
     inspects — never the full article text.
 
-    P0-2 strict contract (R4-A3 final closure — evaluator-input boundary):
+    Strict contract (evaluator-input boundary):
     All four fields are strict. ``handle_id`` rejects bool/int/float AND
     empty/whitespace strings (the evaluator's
     ``{ev.handle_id for ev in ...}`` set-membership check would silently
@@ -222,7 +222,7 @@ class RawEvidenceObservation(BaseModel):
     def _validate_kind_provenance_pair(self) -> RawEvidenceObservation:
         """Reject illegal (kind, provenance) combinations.
 
-        P0-3 cross-field invariant: each ``kind`` has a strictly
+        Cross-field invariant: each ``kind`` has a strictly
         enumerated set of legal ``provenance`` values (see
         :data:`LEGAL_EVIDENCE_KIND_PROVENANCE`). A mismatch is contract
         corruption — e.g. ``kind=article_seed + provenance=search_current_article``
@@ -256,7 +256,7 @@ class RawEvidenceObservation(BaseModel):
 class RawUsage(BaseModel):
     """Agent usage telemetry projected from ``agent_output.usage()``.
 
-    P0-1 strict contract: counters are :class:`StrictInt` (rejects bool /
+    Strict contract: counters are :class:`StrictInt` (rejects bool /
     str / float coercion) and validated non-negative when present. The
     previous lenient ``int`` annotation accepted ``True`` → ``1``,
     ``"3"`` → ``3``, ``1.0`` → ``1`` silently, which would let a
@@ -278,7 +278,7 @@ class RawUsage(BaseModel):
 
 
 class ModelContextSupportObservation(BaseModel):
-    """R4-A4-0 final closure: typed per-fact model-context support observation.
+    """Typed per-fact model-context support observation.
 
     Computed at harness run time against the **actual model-visible
     context** — i.e. ``result.baseline_context.model_context_chunks`` —
@@ -288,7 +288,7 @@ class ModelContextSupportObservation(BaseModel):
     16-chunk cap), so the support observation MUST be computed against
     those exact chunks.
 
-    Contract properties (spec: R4-A4-0 final closure P0-1..P0-4):
+    Contract properties:
 
     - **Reads actual ``model_context_chunks``.** The harness passes the
       real :class:`ModelContextChunk` tuple from
@@ -328,7 +328,7 @@ class ModelContextSupportObservation(BaseModel):
       auto-fail). Old artifacts cannot be authoritatively re-evaluated
       under the new contract; they require a new run.
 
-    P0-1 strict contract: ``fact_id`` is :class:`StrictStr` with a
+    Strict contract: ``fact_id`` is :class:`StrictStr` with a
     non-empty validator. ``support`` is :class:`StrictBool`.
     ``model_context_fingerprint`` is :class:`StrictStr` with the same
     64-lowercase-hex SHA-256 format validator as
@@ -399,12 +399,12 @@ class ModelContextSupportObservation(BaseModel):
 class RawArtifact(BaseModel):
     """Evaluator input — pure data view of one independent agent run.
 
-    Built by the harness (Task 4) from
+    Built by the harness from
     :class:`ReadingRecordAskRunResult`. Contains no runtime object
     references; safe to serialize to JSON and persist under the
     :class:`RunSessionLayout`-managed local ignored run directory.
 
-    P0-1 strict contract (R4-A3 final closure — artifact audit boundary):
+    Strict contract (artifact audit boundary):
 
     Audit-critical fields use ``Strict*`` types so Pydantic coercion
     CANNOT silently turn malformed JSON into a valid-looking artifact:
@@ -431,7 +431,7 @@ class RawArtifact(BaseModel):
       uppercase hex all rejected — the SHA must be comparable to the
       manifest's SHA byte-for-byte.
 
-    P0-2 strict contract (R4-A3 final closure — evaluator-input boundary):
+    Strict contract (evaluator-input boundary):
 
     Evaluator-scored structural fields are ALSO strict, because they
     directly drive evaluator verdicts (see Evaluator-consumed Field
@@ -501,13 +501,13 @@ class RawArtifact(BaseModel):
     thinking_enabled: StrictBool = False
     budget_exhausted: StrictBool = False
 
-    # P0-8: budget telemetry. StrictInt | None — bool/str/float/negative
+    # Budget telemetry. StrictInt | None — bool/str/float/negative
     # all rejected at the model level.
     executed_requests: StrictInt | None = None
     executed_tokens: StrictInt | None = None
 
-    # P0-2 dataset identity. StrictStr | None with format validation —
-    # None allowed for backwards compat with pre-P0-2 artifacts, but
+    # Dataset identity. StrictStr | None with format validation —
+    # None allowed for backwards compatibility with older artifacts, but
     # when present MUST be a valid 64-lowercase-hex SHA so it can be
     # compared byte-for-byte with the manifest's identity.
     dataset_id: StrictStr | None = None
@@ -515,11 +515,11 @@ class RawArtifact(BaseModel):
     dataset_content_sha256: StrictStr | None = None
 
     # ------------------------------------------------------------------
-    # P0-2: Evaluator-scored structural fields (strict)
+    # Evaluator-scored structural fields (strict)
     # ------------------------------------------------------------------
     # These directly drive evaluator verdicts (tool_decision,
     # evidence_minimality, usage_observability, answer_success). See
-    # the class docstring for the full P0-2 strict contract.
+    # the class docstring for the full strict contract.
     # ------------------------------------------------------------------
 
     # Internal-only finalize status — mirrors production FinalizeStatus.
@@ -544,7 +544,7 @@ class RawArtifact(BaseModel):
     resolved_evidence: list[RawEvidenceObservation] = Field(default_factory=list)
     all_evidence_observations: list[RawEvidenceObservation] = Field(default_factory=list)
 
-    # R4-A4-0 final closure (P0-1..P0-4): typed model-context support
+    # Typed model-context support
     # observations computed against the ACTUAL model-visible context
     # (``result.baseline_context.model_context_chunks``), NOT
     # ``document_access.snapshot.units`` and NOT the truncated public
@@ -570,7 +570,7 @@ class RawArtifact(BaseModel):
     # were not in the model context are rejected as
     # ``instrumentation_incomplete`` (fail-closed).
     #
-    # Legacy artifacts predating R4-A4-0 final closure have:
+    # Legacy artifacts predating this instrumentation contract have:
     #   - ``model_context_support = []``
     #   - ``model_context_fingerprint = None``
     #   - ``model_context_handle_ids = []``
@@ -581,23 +581,23 @@ class RawArtifact(BaseModel):
     model_context_support: list[ModelContextSupportObservation] = Field(
         default_factory=list
     )
-    # R4-A4-0 final closure (P0-3): canonical SHA-256 over actual
+    # Canonical SHA-256 over actual
     # ``model_context_chunks``. ``None`` for legacy artifacts or
     # artifacts produced when ``run_reading_record_ask`` raised before
-    # assembling the baseline (P0-4 exception path).
+    # assembling the baseline (exception path).
     model_context_fingerprint: StrictStr | None = None
-    # R4-A4-0 final closure (P0-2): handle_ids of the actual
+    # Handle_ids of the actual
     # model-visible chunks. Empty for legacy artifacts / exception
     # paths. The evaluator uses this to verify that each observation's
     # ``supporting_handle_ids`` came from real chunks.
     model_context_handle_ids: list[StrictStr] = Field(default_factory=list)
 
     # ------------------------------------------------------------------
-    # R4-A4-0 final gate closure (P0-1): explicit instrumentation
+    # Explicit instrumentation
     # lifecycle.
     # ------------------------------------------------------------------
     # ``model_context_instrumentation_version`` is the migration marker:
-    #   - ``None`` → legacy artifact (pre-R4-A4-0 final gate). Evaluator
+    #   - ``None`` → legacy artifact. Evaluator
     #     surfaces as ``indeterminate_requires_new_artifact`` (replay)
     #     or ``blocked_incomplete_real_model_run`` (authoritative).
     #   - ``"reader_record_ask_model_context_v1"`` → new artifact. The
@@ -644,7 +644,7 @@ class RawArtifact(BaseModel):
     finalized_reason: str | None = None
     envelope_fingerprint: str | None = None
 
-    # R4-A4-2R2 P0-2: actual runtime fixture fingerprint persisted for
+    # Actual runtime fixture fingerprint persisted for
     # post-call audit. Deterministic SHA-256 over baseline_status +
     # is_complete + ordered (chunk_ordinal, chunk_text); excludes
     # random handle_ids, paths, UUIDs, timestamps. Computed by the
@@ -654,7 +654,7 @@ class RawArtifact(BaseModel):
     # declared ``expected_runtime_fixture_fingerprint`` and the
     # manifest's per-case identity — three-layer check.
     #
-    # ``None`` is allowed for backwards compat with pre-R4-A4-2R2
+    # ``None`` is allowed for backwards compatibility with older
     # artifacts (the harness MUST populate this for new writes, but
     # old artifacts on disk may lack the field). When present, the
     # SHA MUST be 64 lowercase hex chars — the format validator
@@ -663,15 +663,15 @@ class RawArtifact(BaseModel):
 
     error: str | None = None
 
-    # P1-2 / R4-A4-2R5R Task 4: safe error code — typed Literal from the
+    # Safe error code — typed Literal from the
     # single source of truth in :mod:`claread_eval.reader_record_ask.errors`.
     # Pydantic rejects unknown values, empty strings, and type coercion
     # (e.g. ``True`` → ``"true"``) at the artifact-load boundary. ``None``
-    # is allowed for backwards compat with pre-P1-2 artifacts and for
+    # is allowed for backwards compatibility with older artifacts and for
     # success-path artifacts (no error).
     safe_error_code: SafeErrorCode | None = None
 
-    # P1-2: preflight status — set when harness aborts before any model call.
+    # Preflight status — set when harness aborts before any model call.
     # Values: "ok" / "db_unavailable" / "model_route_invalid" /
     # "thinking_mismatch" / "run_dir_not_writable" / "budget_not_executable".
     # None means preflight was not run (e.g. offline unit test).
@@ -728,7 +728,7 @@ class RawArtifact(BaseModel):
     def _sha256_lowercase_hex_or_none(cls, v: str | None) -> str | None:
         """Require exactly 64 lowercase hex chars when present.
 
-        None is allowed for backwards compat with pre-P0-2 artifacts
+        None is allowed for backwards compatibility with older artifacts
         (the harness MUST populate this for new writes, but old artifacts
         on disk may lack the field). When present, the SHA MUST be
         byte-for-byte comparable to the manifest's identity SHA —
@@ -745,9 +745,9 @@ class RawArtifact(BaseModel):
     @field_validator("runtime_fixture_fingerprint")
     @classmethod
     def _runtime_fixture_fingerprint_hex_or_none(cls, v: str | None) -> str | None:
-        """R4-A4-2R2 P0-2: require 64 lowercase hex chars when present.
+        """Require 64 lowercase hex chars when present.
 
-        ``None`` is allowed for backwards compat with pre-R4-A4-2R2
+        ``None`` is allowed for backwards compatibility with older
         artifacts (the harness MUST populate this for new writes, but
         old artifacts on disk may lack the field). When present, the
         SHA MUST be 64 lowercase hex chars — the same strict format as
@@ -762,7 +762,7 @@ class RawArtifact(BaseModel):
         return v
 
     # ------------------------------------------------------------------
-    # P0-2: Evaluator-scored structural field validators
+    # Evaluator-scored structural field validators
     # ------------------------------------------------------------------
 
     @field_validator("read_range_calls", "search_current_article_calls")
@@ -840,7 +840,7 @@ class RawArtifact(BaseModel):
 
     @model_validator(mode="after")
     def _validate_model_context_instrumentation_lifecycle(self) -> RawArtifact:
-        """R4-A4-0 final gate closure (P0-1): enforce the 4-state
+        """Enforce the four-state
         instrumentation lifecycle invariants.
 
         The 4 mutually-exclusive states are distinguished by
@@ -850,7 +850,7 @@ class RawArtifact(BaseModel):
 
         1. **legacy** — version=None AND capture_status=None. Allowed
            to have empty fingerprint / handle_ids / observations
-           (pre-R4-A4-0 final gate artifact).
+           (older artifact).
         2. **captured** — version=v1 AND capture_status="captured".
            When at least one required atomic fact has source_aliases,
            the harness MUST have produced a fingerprint AND

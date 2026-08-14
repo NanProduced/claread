@@ -1,4 +1,4 @@
-"""T5.4a: pure read-path hydrate of optional snapshot.semantic_outline.
+"""Pure read-path hydrate of optional snapshot.semantic_outline.
 
 Only returns a trusted published ready|partial projection. Fail-closed → None.
 Does not synthesize unavailable/pending/failed/stale envelopes.

@@ -6,7 +6,7 @@ failure, details listing the missing entities (e.g. Thunder Bay).
 Pairs with ``entity_precision`` (type purity) but is scored
 independently.
 
-R4-A4-0 (Task 2) — explicit recall scope contract
+Explicit recall scope contract
 =================================================
 
 The previous implementation unconditionally required every entity in
@@ -18,7 +18,7 @@ where the user question did NOT ask for an exhaustive enumeration.
 The new contract:
 
 - Recall is enforced ONLY when
-  :attr:`ReaderRecordAskR4A3Expected.requires_exhaustive_entity_recall`
+  ``requires_exhaustive_entity_recall``
   is ``True``. The default is ``False``.
 - The scope flag MUST be set explicitly by the case author. The
   evaluator does NOT infer it from ``question_category``, suggestion
@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "exhaustive_completeness"
 
@@ -75,13 +75,13 @@ def _entity_in_text(entity_spec: str, text: str) -> bool:
 
 
 def evaluate_exhaustive_completeness(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     final_text = artifact.final_text or ""
     expected_set = case.expected.expected_entity_set
 
-    # R4-A4-0 (Task 2): only enforce exhaustive recall when the case
+    # Only enforce exhaustive recall when the case
     # author has explicitly opted in. The previous implementation
     # unconditionally required every entity to appear, which wrongly
     # failed main_idea / core_viewpoint / author_intent /

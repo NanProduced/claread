@@ -1,6 +1,6 @@
 """Expected grammar-window window formation for BBC article cd6684a0.
 
-T4.2a-R1: the BBC article is repeated 3x to exceed 2000 words so the grammar
+The BBC article is repeated 3x to exceed 2000 words so the grammar
 route is GROUPED_WINDOWED (not SHORT_BATCH). The expanded article has
 ~2574 words / ~18489 chars / ~111 units.
 

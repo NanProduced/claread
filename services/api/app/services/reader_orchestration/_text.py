@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# R7-1: the Reader-wide default language rule. Missing/blank language
+# Reader-wide default language rule. Missing/blank language
 # defaults to "en" (the same rule the article-ready and stable-ready
 # submission paths apply), so every record has a deterministic
 # language for sentence-segmentation policy resolution. Callers must

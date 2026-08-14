@@ -1,20 +1,20 @@
-# Structured Source Contract — G0–G5 / R2.1 Verification
+# Structured Source Contract — G0–G5 / Verification
 
-**Status**: R2.1 revalidation passed on 2026-08-01; `source_callout full support`
-and G0–G5 are complete for the R2.1 scope. The R1 closure claim was invalidated
+**Status**: revalidation passed on 2026-08-01; `source_callout full support`
+and G0–G5 are complete for the scope. The closure claim was invalidated
 by the multi-region and fingerprint findings and has now been re-frozen after
 the two-callout Chromium + API/PostgreSQL chain and focused quality gates
 passed. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3
 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility
-regression), re-frozen on 2026-07-25 (Markdown ecosystem refactor D2 / A1), and
+regression), re-frozen on 2026-07-25 (Markdown ecosystem refactor), and
 re-frozen on 2026-07-28 (L1 Authoritative Normalization), and re-frozen on
-2026-08-01 (R-G0G5-R2 multi-region fingerprint fusion and display-icon boundary),
-and re-frozen for R-G0G5-R2.1 list fingerprint plus no-stub G5.
+2026-08-01 (R-G0G5-multi-region fingerprint fusion and display-icon boundary),
+and re-frozen for R-G0G5-list fingerprint plus no-stub G5.
 Any change requires
 cross-owner review and must first update `tests/fixtures/markdown_structured_source/**`
 fixtures, then re-freeze this contract.
 
-**Previous-round fixture baseline (2026-08-01; not R1 closure)**: Added `source_callout` and
+**Previous-round fixture baseline (2026-08-01; not closure)**: Added `source_callout` and
 `rich_html_aside` fixtures for the generic callout block tree, restricted
 Notion HTML normalization, inline marks, safe links, and independent trailing
 text. Added `task_list` and `definition_list` fixtures so unsupported
@@ -24,7 +24,7 @@ and `gfm_alert` fixtures to freeze reference semantics, all h1–h6 levels, and
 the GFM alert wrapper. The callout/alert wrapper is structural; descendant
 blocks carry canonical text and inherit the source-callout semantic policy.
 
-**R2.1 verification status (2026-08-01; complete)**:
+**verification status (2026-08-01; complete)**:
 
 - Full Notion dual-MIME `/app/read` uses a real `ClipboardItem` and a
   deterministic DOM/Plate local fusion. Rich HTML remains authoritative for
@@ -50,7 +50,7 @@ blocks carry canonical text and inherit the source-callout semantic policy.
 - Reader projection consumes only wrapper payload metadata and falls back to
   the product default icon when the payload is absent or invalid. It never
   infers the icon from the first body child.
-- R2.1 G5 used a normal `from app.main import app` / Uvicorn startup with no
+- G5 used a normal `from app.main import app` / Uvicorn startup with no
   Ask bootstrap symbol injection or monkeypatch. The deterministic fake
   namespace was applied only by the existing test-side enhancement runner.
 
@@ -442,10 +442,10 @@ Silent deviations (implementation drift from contract without fixture/contract u
 
 ---
 
-## Clause 7 — Capability Matrix (G0–G5 / R2.1 Closure, 2026-08-01)
+## Clause 7 — Capability Matrix (G0–G5 / Closure, 2026-08-01)
 
 **Status**: This matrix reflects the **actual implementation state** after the
-G0–G5/R2 closure checks above. It replaces any prior claims — tracked or untracked
+G0–G5/closure checks above. It replaces any prior claims — tracked or untracked
 — that described planned behaviour as if it were implemented. Future work may
 promote entries from `not_implemented` / `partial` to `supported`, but MUST
 first update this matrix and re-freeze the contract.
@@ -462,13 +462,13 @@ MUST NOT override this matrix when they conflict.
   see the "Gap" column. Consumers MUST NOT assume the missing layer is
   implicit.
 - `not_implemented` — does not exist in production code. Any plan/roadmap
-  mentioning this feature describes future work (R3 or later).
+  mentioning this feature describes future work (later roadmap).
 
 | Capability | Parser | DB payload | Snapshot / Reader projection | Tests | Status | Gap |
 |------------|--------|------------|------------------------------|-------|--------|-----|
 | `paragraph` | supported | supported | supported (ReaderParagraph) | supported | supported | — |
 | `heading` (h2–h6) | supported | supported (`heading_level`) | supported (ReaderHeading) | supported | supported | — |
-| `heading` (h1) | supported | supported | rendered as-is (no demotion) | n/a | partial | **H1 demotion is NOT implemented.** Reader renders h1 verbatim; outline nav includes it. Demoting h1 → h2 (to keep semantic outline sane when the input uses h1 as a document title) is R3 scope. |
+| `heading` (h1) | supported | supported | rendered as-is (no demotion) | n/a | partial | **H1 demotion is NOT implemented.** Reader renders h1 verbatim; outline nav includes it. Demoting h1 → h2 (to keep semantic outline sane when the input uses h1 as a document title) is future work scope. |
 | `list` (ordered / unordered) | supported | supported (`ordered`, `depth`, `start`) | supported (generic stable tree preserves recursive wrappers and metadata) | parser/reload fixtures; projection tests; G3 browser suite | supported | — |
 | `list_item` | supported | supported (`marker`) | supported (ReaderListItem) | supported | supported | — |
 | nested list (≥3 levels) | supported | supported (`parent_block_id` chain) | supported (recursive generic stable tree) | `test_nested_list_parent_chain_survives_reload`; projection tests; G3/G5 browser suites | supported | — |
@@ -481,12 +481,12 @@ MUST NOT override this matrix when they conflict.
 | `code_block` (indented, no language) | supported | supported (`language` empty → DTO `null`) | supported (no badge) | supported | supported | — |
 | `code_block` (unclosed fence) | fail-closed (content_check) | supported (`closed: false`) | supported (`data-closed="false"`) | `unclosed_fence` fixture | partial | Captured as `code_block` but document routes to `candidate_document_required` with `has_unclosed_fence` warning (`content_check`). |
 | `code_line` (Plate internal) | n/a (parser emits `text_content`) | n/a | Web deserialize-only plugin (`ReaderMarkdownCodeLineComponent`) | deserialize tests | partial | Only used by the Web MarkdownTextInput / callout deserialize path. The Stable Document path stores `text_content` as text nodes, not `code_line` elements. |
-| `thematic_break` | supported | supported (`metadata_only` route) | NOT rendered as a Reader reading unit | `test_thematic_break_routes_to_metadata_only_no_unit` | partial | **Stable Document keeps the block as `metadata_only`**, but Reader does not emit a reading unit for it. The `<hr>` is invisible in the Reader projection by design; R3 may add a metadata-only divider affordance. |
+| `thematic_break` | supported | supported (`metadata_only` route) | NOT rendered as a Reader reading unit | `test_thematic_break_routes_to_metadata_only_no_unit` | partial | **Stable Document keeps the block as `metadata_only`**, but Reader does not emit a reading unit for it. The `<hr>` is invisible in the Reader projection by design; may add a metadata-only divider affordance. |
 | `table` (GFM, deterministic) | supported | supported (`table` / `table_row` / `table_cell` hierarchy; `alignments` / `column_count` / `header_rows`) | supported (L1: leaf-cell `tableIsHeader` / `tableAlignment`; wrapper fields when a unit matches) | `gfm_table` fixture; `test_table_code_metadata_reload.py` (real PostgreSQL) | supported | L1: tables with one header row and consistent raw cell counts freeze as `stable_document_ready` (no candidate). |
 | `table` (structure-uncertain) | fail-closed (content_check) | supported (`structure_uncertain: true`) | n/a (candidate path) | `table_structure_uncertain` fixture | supported | L1: row/column mismatch (cells would be padded/dropped) or missing header row routes to `candidate_document_required`. |
 | `table_row` / `table_cell` | supported | supported (`is_header`, `alignment`) | supported (L1: snapshot `tableIsHeader` / `tableAlignment`) | parser fixtures; `test_table_code_metadata_reload.py` | supported | L1: source header-row semantics and per-cell alignment survive the Reading Record Snapshot reload. |
-| `footnote` | supported (mdit-py-plugins `footnote_plugin` enabled) | supported (`footnote` block type, `footnote_id`, `footnote_anchor`) | NOT rendered as a Reader reading unit | `footnote` fixture | partial | **Parser produces degraded/candidate semantics**, not "no parser support". Footnote reference produces `footnote_reference` warning and routes document to `candidate_document_required`. Full footnote rendering (multi-ref / backref / inline footnote) is R3. |
-| `image` | detected by suitability gate (`has_image`) | n/a (not frozen as a first-class block in the first phase) | n/a | `has_image` flag in `input_suitability_gate.py` | partial | **Backend suitability gate routes image-containing inputs to candidate review**, NOT "纯文本 + 暂不支持提示". Frontend renders no image block in the Reader. R3 image block schema/renderer is not implemented. |
+| `footnote` | supported (mdit-py-plugins `footnote_plugin` enabled) | supported (`footnote` block type, `footnote_id`, `footnote_anchor`) | NOT rendered as a Reader reading unit | `footnote` fixture | partial | **Parser produces degraded/candidate semantics**, not "no parser support". Footnote reference produces `footnote_reference` warning and routes document to `candidate_document_required`. Full footnote rendering (multi-ref / backref / inline footnote) is future work. |
+| `image` | detected by suitability gate (`has_image`) | n/a (not frozen as a first-class block in the first phase) | n/a | `has_image` flag in `input_suitability_gate.py` | partial | **Backend suitability gate routes image-containing inputs to candidate review**, NOT "纯文本 + 暂不支持提示". Frontend renders no image block in the Reader. image block schema/renderer is not implemented. |
 | `raw_html` (block / inline) | deterministic sanitize (L1) | text extracted, HTML not preserved; paired rich `<aside>` becomes `source_callout` | visible safe text; paired `<aside>` uses the generic callout tree | `raw_html` / `safe_html_adaptation` / `rich_html_aside`; G5 browser suite | partial | Arbitrary raw HTML is intentionally not a first-class block. Sanitization and adaptation notices are supported; paired rich `<aside>` is covered as `source_callout`. |
 | `definition_list` | deterministic plain-text degradation | paragraph payload only | visible paragraph text | `definition_list` fixture | partial | No definition-list block type exists; the syntax remains visible and carries `definition_list_degraded` as an adaptation notice. |
 | non-HTML placeholders (`vector<T>` / `<name>`) | supported (L1: preserved verbatim, no diagnostic) | supported | supported (plain text) | `safe_html_adaptation` fixture; `test_markdown_safe_normalization.py` | supported | Bare unknown tags without attributes are literal text, not HTML. |
@@ -498,12 +498,12 @@ MUST NOT override this matrix when they conflict.
 | Submit safety (button + Ctrl/Cmd+Enter) | n/a | n/a | `handleSubmit` flush + non-blocking lint notice | `AnalyzeSubmitForm.test.tsx` R2R Issue C | supported | Both entry points share the same recoverable path; backend content-check outcomes still route to candidate review. |
 | Paste fidelity (raw paste submit) | n/a | n/a | `getSubmitText()` returns raw paste text when `!dirty` | `MarkdownTextInput.test.tsx` | supported | Edit-after-paste flips `dirty` and switches to serialize output. |
 | Serialize scheduling (debounce) | n/a | n/a | `handleEditorChange` light/heavy split | lifecycle tests + code review; interactive browser gate pending | partial | Production code defers non-boundary serialization by 150 ms and flush returns one submit snapshot. Test-only component instrumentation was removed; a real browser performance/E2E harness remains follow-up work. |
-| Strict Mode safety | n/a | n/a | `onDegraded` ref guard | `MarkdownTextInput.test.tsx` R2R Phase 3 | supported | Mount notification fires exactly once under `<StrictMode>`. |
+| Strict Mode safety | n/a | n/a | `onDegraded` ref guard | `MarkdownTextInput.test.tsx` R2R | supported | Mount notification fires exactly once under `<StrictMode>`. |
 
 ### 7.1 Specific clarifications
 
 - **H1 demotion**: NOT implemented. Any untracked document claiming h1 → h2
-  demotion in the Reader projection is describing an R3 plan, not current
+  demotion in the Reader projection is describing a plan, not current
   behaviour. The parser preserves h1 as-is; the Reader renders it verbatim
   with the same component family as h2–h6.
 - **Code language**: The parser and DB preserve `payload_json.language`,
@@ -516,7 +516,7 @@ MUST NOT override this matrix when they conflict.
   produces `footnote` / `footnote_ref` / `footnote_anchor` semantics with
   `footnote_reference` warning and `candidate_document_required` outcome.
   The matrix MUST NOT describe this as "no parser support". Full footnote
-  rendering (multi-ref / backref / inline footnote) is R3.
+  rendering (multi-ref / backref / inline footnote) is future work.
 - **Image**: The backend suitability gate (`input_suitability_gate.py`)
   detects `has_image` and routes the input to `candidate_document_required`
   with `image_ocr_uncertain` flag. The matrix MUST NOT describe this as
@@ -552,7 +552,7 @@ MUST NOT override this matrix when they conflict.
 - **Code highlighting**: See "Code language" above. Language projection ≠
   syntax highlighting.
 
-### 7.2 Test coverage matrix (G0–G5 / R2 final-gate snapshot)
+### 7.2 Test coverage matrix (G0–G5 / final-gate snapshot)
 
 | Layer | Test file | Covers |
 |-------|-----------|--------|
@@ -561,19 +561,19 @@ MUST NOT override this matrix when they conflict.
 | G0 parser fixtures | `services/api/tests/test_markdown_source_parser.py` | 20 fixtures covering paragraph/heading h1–h6/marks/links/blockquote/citation-reference/callout/GFM alert/list/table/code/footnote/raw HTML/task list/definition list and explicit candidate/adaptation outcomes |
 | L1 table/code metadata reload | `services/api/tests/test_table_code_metadata_reload.py` | deterministic table + code language stable-ready freeze, DB payload persistence, snapshot `codeLanguage`/`tableIsHeader`/`tableAlignment` build↔reload equivalence (real PostgreSQL) |
 | Web deserialize | `apps/web/src/lib/reader-plate/markdown/deserialize.test.ts` | h1–h3, nested list, code fence language, blockquote (deserialize-only) |
-| Web serialize round-trip | `apps/web/src/app/(private)/app/read/MarkdownTextInput.test.tsx` (`R2R Phase 0/3: real serialize round-trip`) | Markdown → Plate → Markdown preserves h1–h3, nested list, code fence language, blockquote |
+| Web serialize round-trip | `apps/web/src/app/(private)/app/read/MarkdownTextInput.test.tsx` (`R2R/3: real serialize round-trip`) | Markdown → Plate → Markdown preserves h1–h3, nested list, code fence language, blockquote |
 | Web scheduling | `apps/web/src/app/(private)/app/read/MarkdownTextInput.test.tsx` | public lifecycle, flush no-op/dedup, Strict Mode safety, long-document round-trip; real browser performance gate remains pending |
 | Submit lint gate | `apps/web/src/app/(private)/app/read/AnalyzeSubmitForm.test.tsx` (`R2R Issue C: submit lint gate`) | raw HTML / unsafe link / unclosed fence block fetch on button + Ctrl/Cmd+Enter; safe content submits; attached file bypasses lint |
 | Structured source renderer | `apps/web/src/lib/reader-plate/projection/__tests__/structured-source-renderer.test.tsx` | code_block language badge, mermaid badge, table, raw HTML routing, footnote routing |
 | Reader selection/manual operations | `apps/web/tests/e2e/reader-selection-floating-toolbar.spec.ts` | 6 Chromium cases covering native selection, Copy, source_callout, 1280x720/390x844 viewports and dark mode |
 | Translation prompt profiles | `services/api/tests/test_reader_translation_prompt_profiles.py`; `services/api/tests/test_reader_orchestration_translation_worker.py` | 16 current profile/golden/fake-executor tests plus the existing real-PostgreSQL worker suite; policy/profile separation and mixed-batch isolation |
-| R2.1 dual-MIME fingerprint/icon boundary | `apps/web/src/lib/clipboard/clipboard-source-negotiation.test.ts`; `apps/web/src/lib/clipboard/clipboard-source-fusion.ts`; `services/api/tests/test_source_callout_display_icon.py` | 29 Vitest negotiation tests plus API icon/freeze tests: list/lic direct text, ordered/nested lists, list marks/links, URL/structure/unsafe/text mismatch decline, two-callout all-or-nothing fusion, escaped/inline/fenced/unclosed negatives, wrapper payload icon, ordinary emoji negative, and no emoji Unit/Anchor/job target |
-| R2.1 Chromium aside safety | `apps/web/tests/e2e/source-callout-aside.spec.ts` | 13 passed: complete two-callout dual-MIME article with list/nested-list/link/marks, rich structure, trailing text, safe-URL mismatch visible decline, escaped/unclosed/dangerous HTML and no visible markers |
+| dual-MIME fingerprint/icon boundary | `apps/web/src/lib/clipboard/clipboard-source-negotiation.test.ts`; `apps/web/src/lib/clipboard/clipboard-source-fusion.ts`; `services/api/tests/test_source_callout_display_icon.py` | 29 Vitest negotiation tests plus API icon/freeze tests: list/lic direct text, ordered/nested lists, list marks/links, URL/structure/unsafe/text mismatch decline, two-callout all-or-nothing fusion, escaped/inline/fenced/unclosed negatives, wrapper payload icon, ordinary emoji negative, and no emoji Unit/Anchor/job target |
+| Chromium aside safety | `apps/web/tests/e2e/source-callout-aside.spec.ts` | 13 passed: complete two-callout dual-MIME article with list/nested-list/link/marks, rich structure, trailing text, safe-URL mismatch visible decline, escaped/unclosed/dangerous HTML and no visible markers |
 | G5 real product path | `apps/web/tests/e2e/reader-markdown-g5-real-product.spec.ts`; `services/api/tests/reader_markdown_g5_fake_runner.py` | 1 passed without Ask bootstrap/monkeypatch: normal `app.main:app` import/startup, real `ClipboardItem` `/app/read` → BFF/FastAPI/PostgreSQL, deterministic fake enhancement, list hierarchy/Stable Document/snapshot assertions, browser reload equivalence, trailing-text/no-duplicate checks |
 
 ### 7.3 Re-freeze protocol
 
-When an R3 (or later) change promotes a capability from `partial` /
+When a later change promotes a capability from `partial` /
 `not_implemented` to `supported`:
 
 1. Update the corresponding row(s) in the matrix above.

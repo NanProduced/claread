@@ -1,4 +1,4 @@
-# task-history: D6-I4A (renamed from test_d6_i4a_article_rag_index_plan.py)
+# task-history: (renamed from test_d6_i4a_article_rag_index_plan.py)
 """Tests for the Reader Article RAG index plan foundation.
 
 Covers the 14 test requirements from the task spec:
@@ -368,7 +368,7 @@ def _build_base_text_and_offsets(
     Returns (base_text, [(start, end), ...]) where each (start, end) pair
     is the UTF-16 offset range of the corresponding block text within
     base_text.  This ensures canonical offsets always align with the base
-    text for the P1-2 offset validation.
+    text for the offset validation.
     """
     if not block_texts:
         return "", []
@@ -511,7 +511,7 @@ async def test_default_indexable_block_types_produce_chunks(index_env: asyncpg.P
 async def test_default_non_indexable_block_types_excluded(index_env: asyncpg.Pool) -> None:
     """Requirement 2: blocks explicitly routed to metadata_only /
     rag_ask_only are not indexed by default.  Since the Markdown
-    ecosystem refactor (D2 / A1), code_block / table_cell DEFAULT to
+    ecosystem refactor, code_block / table_cell DEFAULT to
     main_reading — this test pins that an explicit rag_ask_only
     override still excludes them (footnote keeps its rag_ask_only
     default).  With only non-indexable blocks, the plan fails closed."""
@@ -1237,12 +1237,12 @@ async def test_chunk_metadata_structure(index_env: asyncpg.Pool) -> None:
 
 
 # ===================================================================
-# P1-1: Empty {} policy materialization per block_type
+# Empty {} policy materialization per block_type
 # ===================================================================
 
 
 async def test_empty_policy_table_excluded(index_env: asyncpg.Pool) -> None:
-    """P1-1: ``{}`` policy on a table block must materialize as
+    """``{}`` policy on a table block must materialize as
     metadata_only / not eligible — not main_reading / eligible."""
     para_text = "Indexable paragraph."
     await _seed_full_environment(index_env, base_text=para_text)
@@ -1280,7 +1280,7 @@ async def test_empty_policy_table_excluded(index_env: asyncpg.Pool) -> None:
 
 
 async def test_empty_policy_image_excluded(index_env: asyncpg.Pool) -> None:
-    """P1-1: ``{}`` policy on an image block must materialize as
+    """``{}`` policy on an image block must materialize as
     metadata_only / not eligible."""
     para_text = "Indexable paragraph."
     await _seed_full_environment(index_env, base_text=para_text)
@@ -1316,7 +1316,7 @@ async def test_empty_policy_image_excluded(index_env: asyncpg.Pool) -> None:
 
 
 async def test_empty_policy_unknown_excluded(index_env: asyncpg.Pool) -> None:
-    """P1-1: ``{}`` policy on an unknown block must materialize as
+    """``{}`` policy on an unknown block must materialize as
     metadata_only / not eligible."""
     para_text = "Indexable paragraph."
     await _seed_full_environment(index_env, base_text=para_text)
@@ -1354,7 +1354,7 @@ async def test_empty_policy_unknown_excluded(index_env: asyncpg.Pool) -> None:
 async def test_empty_policy_footnote_defaults_rag_ask_only(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-1: ``{}`` policy on a footnote block must materialize as
+    """``{}`` policy on a footnote block must materialize as
     rag_ask_only (not main_reading).  Not indexed by default; indexed
     with include_rag_ask_only=True."""
     footnote_text = "Footnote text."
@@ -1390,8 +1390,8 @@ async def test_empty_policy_footnote_defaults_rag_ask_only(
 async def test_empty_policy_code_block_defaults_main_reading(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-1: ``{}`` policy on a code_block must materialize as
-    main_reading / eligible (Markdown ecosystem refactor D2 / A1) —
+    """``{}`` policy on a code_block must materialize as
+    main_reading / eligible (Markdown ecosystem refactor) —
     indexed by default when canonical offsets are present."""
     code_text = "print('hello')"
     await _seed_full_environment(index_env, base_text=code_text)
@@ -1421,7 +1421,7 @@ async def test_empty_policy_code_block_defaults_main_reading(
 async def test_empty_policy_paragraph_defaults_main_reading(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-1: ``{}`` policy on a paragraph must materialize as
+    """``{}`` policy on a paragraph must materialize as
     main_reading / eligible — indexed by default."""
     block_text = "Default policy paragraph."
     await _seed_full_environment(index_env, base_text=block_text)
@@ -1449,7 +1449,7 @@ async def test_empty_policy_paragraph_defaults_main_reading(
 async def test_empty_policy_heading_defaults_main_reading_heading_scope(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-1: ``{}`` policy on a heading must materialize as main_reading
+    """``{}`` policy on a heading must materialize as main_reading
     with heading scope (not main_reading_text)."""
     block_text = "Heading Title"
     await _seed_full_environment(index_env, base_text=block_text)
@@ -1476,8 +1476,8 @@ async def test_empty_policy_heading_defaults_main_reading_heading_scope(
 async def test_empty_policy_table_cell_defaults_main_reading(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-1: ``{}`` policy on a table_cell must materialize as
-    main_reading / eligible (Markdown ecosystem refactor D2 / A1) —
+    """``{}`` policy on a table_cell must materialize as
+    main_reading eligible (Markdown ecosystem refactor) —
     indexed by default when canonical offsets are present."""
     cell_text = "Cell content."
     await _seed_full_environment(index_env, base_text=cell_text)
@@ -1505,12 +1505,12 @@ async def test_empty_policy_table_cell_defaults_main_reading(
 
 
 # ===================================================================
-# P1-2: Canonical offset validation against base text
+# Canonical offset validation against base text
 # ===================================================================
 
 
 async def test_offset_out_of_bounds_fail_closed(index_env: asyncpg.Pool) -> None:
-    """P1-2: canonical end offset exceeds base text UTF-16 length."""
+    """Canonical end offset exceeds base text UTF-16 length."""
     block_text = "Short text."
     await _seed_full_environment(index_env, base_text=block_text)
 
@@ -1534,7 +1534,7 @@ async def test_offset_out_of_bounds_fail_closed(index_env: asyncpg.Pool) -> None
 async def test_offset_start_beyond_base_length_fail_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-2: start offset beyond base text UTF-16 length."""
+    """Start offset beyond base text UTF-16 length."""
     base_text = "Short text."  # 11 UTF-16 code units
     block_text = "ab"  # 2 UTF-16 code units
     await _seed_full_environment(index_env, base_text=base_text)
@@ -1560,7 +1560,7 @@ async def test_offset_start_beyond_base_length_fail_closed(
 async def test_offset_span_length_mismatch_fail_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-2: canonical span length != text_content UTF-16 length."""
+    """Canonical span length != text_content UTF-16 length."""
     base_text = "A longer base text for testing."
     block_text = "Short."
     # block_text is 6 UTF-16 code units, but offsets span 0-15 (15 units).
@@ -1585,7 +1585,7 @@ async def test_offset_span_length_mismatch_fail_closed(
 async def test_offset_slice_content_mismatch_fail_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-2: base text slice at canonical offsets != text_content."""
+    """Base text slice at canonical offsets != text_content."""
     base_text = "ABCDEFGHIJ"  # 10 UTF-16 code units
     block_text = "XYZ"  # 3 UTF-16 code units
     # Span length matches (3), but slice content differs.
@@ -1608,7 +1608,7 @@ async def test_offset_slice_content_mismatch_fail_closed(
 
 
 async def test_offset_valid_alignment_passes(index_env: asyncpg.Pool) -> None:
-    """P1-2: valid offsets (bounds + span + slice all match) produce a chunk."""
+    """Valid offsets (bounds + span + slice all match) produce a chunk."""
     base_text = "PREFIXHello article RAG world."
     block_text = "Hello article RAG world."
     start = utf16_code_unit_length("PREFIX")
@@ -1637,7 +1637,7 @@ async def test_offset_valid_alignment_passes(index_env: asyncpg.Pool) -> None:
 
 
 async def test_offset_bmp_emoji_alignment(index_env: asyncpg.Pool) -> None:
-    """P1-2: UTF-16 alignment with astral plane character (emoji, 2 code units)."""
+    """UTF-16 alignment with astral plane character (emoji, 2 code units)."""
     block_text = "Hello world."
     emoji_prefix = "\U0001F600"  # 1 Python char = 2 UTF-16 code units
     base_text = emoji_prefix + block_text
@@ -1666,7 +1666,7 @@ async def test_offset_bmp_emoji_alignment(index_env: asyncpg.Pool) -> None:
 
 
 # ===================================================================
-# P1-E: V1 characterization baseline + version-aware plan dispatch
+# V1 characterization baseline + version-aware plan dispatch
 # ===================================================================
 
 

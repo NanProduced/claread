@@ -1,4 +1,4 @@
-/** Backend-owned semantic-outline wire consumer and pure T5.2a validator. */
+/** Backend-owned semantic-outline wire consumer and pure validator. */
 
 export type SemanticOutlineStatus =
   | "unavailable"
@@ -342,7 +342,7 @@ export function validateSemanticOutlineProjection(
 }
 
 // ---------------------------------------------------------------------------
-// T5.4b: snapshot wire consumer helpers (null | undefined | object)
+// Snapshot wire consumer helpers (null | undefined | object)
 // ---------------------------------------------------------------------------
 
 /**
@@ -364,7 +364,7 @@ export function hasTrustedSemanticOutline(
 
 /**
  * Source-identity key for any future L2 outline cache (same formula as L0/L1).
- * Pure helper only — T5.4b does not implement L2 state.
+ * Pure helper only — it does not implement L2 state.
  */
 export function buildOutlineSourceIdentityKey(
   baseId: string,

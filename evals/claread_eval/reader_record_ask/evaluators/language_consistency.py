@@ -13,7 +13,7 @@ import re
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "language_consistency"
 
@@ -48,7 +48,7 @@ def _english_ratio(text: str) -> float:
 
 
 def evaluate_language_consistency(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     final_text = artifact.final_text or ""

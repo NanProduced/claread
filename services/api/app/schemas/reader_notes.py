@@ -45,7 +45,7 @@ class ReaderNoteResponse(BaseModel):
     payload_json: dict
     created_at: str
     updated_at: str
-    # D6-U4 Reading Record anchor columns — the only anchor identity.
+    # Reading Record anchor columns — the only anchor identity.
     reading_record_id: UUID | None = None
     base_id: UUID | None = None
     generation: int | None = None

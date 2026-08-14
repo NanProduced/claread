@@ -1,7 +1,7 @@
-"""T4.2a-R2: Execution budget and cutover safety guardrail tests.
+"""Execution budget and cutover safety guardrail tests.
 
 Verifies the deterministic cost ceiling and route-fingerprint fencing
-contracts introduced in T4.2a-R2:
+contracts introduced in
 
 - Per-layer execution budget (planned / consumed / exhausted)
 - Fallback suppression when batch jobs are non-terminal
@@ -27,7 +27,7 @@ Integration (DB-backed):
   8. Budget-exhausted stopped reason is finalizable (not attention_required)
   9. Usage evidence distinguishes outcomes
 
-T4.2a-R2-R1 additions:
+ additions:
   A. Cross-run hard budget (durable, multiple runner.run() calls)
   B. Batch succeeded + legacy per-unit job coexistence
   C. Batch failed_terminal fallback (fail-closed)
@@ -185,7 +185,7 @@ class _CountingVocabularyExecutor(_StaticVocabularyExecutor):
 class _CountingTitleGenerator(_StaticTitleGenerator):
     """Display title generator that counts generate calls.
 
-    T4.2a-R2-R3a: used by Test M to prove display_title is NOT called
+    Used by Test M to prove display_title is NOT called
     when available_at is in the future, and IS called exactly once when
     available_at is reset to NOW().
     """
@@ -201,7 +201,7 @@ class _CountingTitleGenerator(_StaticTitleGenerator):
 class _RouteFlippingBatchTranslator(_StaticBatchTranslator):
     """Batch translator that flips the article_route DURING execution.
 
-    T4.2a-R2-R2: used by Test E extension / Test J to test the worker/
+    Used by Test E extension / Test J to test the worker/
     pipeline catch path. The claim-time fence passes (route is still
     original when the runner claims the job), but the publish-time fence
     fails (route is flipped by the time the worker tries to publish).
@@ -467,14 +467,14 @@ async def _update_run_envelope_route(
 class TestExecutionBudgetUnit:
     """Pure unit tests for the ExecutionBudget tracker (no DB).
 
-    T4.2a-R2-R1: updated for the durable budget model where
+    Updated for the durable budget model where
     ``max_multiplier=3`` (aligning with ``max_attempts=3``) and
     ``is_exhausted`` returns False for layers with no jobs (``max==0``)
     or unknown layers.
     """
 
     def test_from_planned_calls_sets_max_to_triple(self) -> None:
-        # T4.2a-R2-R1: default max_multiplier is now 3 (was 2), aligning
+        # Default max_multiplier is now 3 (was 2), aligning
         # with max_attempts=3 in production.
         budget = ExecutionBudget.from_planned_calls({
             "translation": 3,
@@ -541,7 +541,7 @@ class TestExecutionBudgetUnit:
         assert not budget.is_exhausted("grammar")
 
     def test_zero_planned_means_no_budget_not_exhausted(self) -> None:
-        # T4.2a-R2-R1 fix: a layer with max==0 has no jobs, so it is
+        # Fix: a layer with max==0 has no jobs, so it is
         # NOT exhausted (there is nothing to exhaust). This prevents
         # spurious budget_exhausted when a layer has zero planned calls.
         budget = ExecutionBudget.from_planned_calls({"translation": 0})
@@ -550,7 +550,7 @@ class TestExecutionBudgetUnit:
         assert not budget.consume("translation")
 
     def test_unknown_layer_is_not_exhausted(self) -> None:
-        # T4.2a-R2-R1 fix: unknown layers (not in _max) are NOT
+        # Fix: unknown layers (not in _max) are NOT
         # exhausted — they have no budget tracking at all.
         budget = ExecutionBudget.from_planned_calls({"translation": 5})
         assert not budget.is_exhausted("grammar")  # not in _max → False
@@ -953,7 +953,7 @@ async def test_route_flip_supersedes_old_fingerprint_at_claim(
 async def test_route_flip_rejects_publish_through_real_publisher(
     budget_env: asyncpg.Pool,
 ) -> None:
-    """T4.2a-R2-R1 P2-1: route flip → real publisher rejects publish.
+    """Route flip → real publisher rejects publish.
 
     This test goes through the REAL ``GrammarBundleLayerPublisher`` (not
     just ``_validate_fence`` directly) to verify:
@@ -1275,7 +1275,7 @@ async def test_recover_stale_leases_supersedes_stale_route_jobs(
 async def test_fallback_guard_decision_table_fail_closed(
     budget_env: asyncpg.Pool,
 ) -> None:
-    """T4.2a-R2-R1 P1-2: fallback guard decision table (fail-closed).
+    """Fallback guard decision table (fail-closed).
 
     The guard ``_should_suppress_grammar_per_unit_fallback`` must
     suppress per-unit fallback for ALL batch states EXCEPT
@@ -1326,7 +1326,7 @@ async def test_fallback_guard_decision_table_fail_closed(
         base_id = row["base_id"]
         generation = int(row["expected_generation"])
 
-    # 1. Batch succeeded → suppress (P1-2 fix: succeeded permanently blocks)
+    # 1. Batch succeeded → suppress (fix: succeeded permanently blocks)
     suppress = await runner._should_suppress_grammar_per_unit_fallback(
         record_id=article.record_id,
         base_id=base_id,
@@ -1414,7 +1414,7 @@ async def test_fallback_guard_decision_table_fail_closed(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test A: Cross-run hard budget (durable)
+# Test A: Cross-run hard budget (durable)
 # ---------------------------------------------------------------------------
 
 
@@ -1565,7 +1565,7 @@ async def test_cross_run_hard_budget_durable(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test B: Batch succeeded + legacy per-unit job coexistence
+# Test B: Batch succeeded + legacy per-unit job coexistence
 # ---------------------------------------------------------------------------
 
 
@@ -1574,7 +1574,7 @@ async def test_batch_succeeded_with_legacy_job_suppresses_fallback(
 ) -> None:
     """Test B: Batch succeeded + legacy per-unit job coexistence.
 
-    P1-2 fix: a succeeded batch permanently blocks legacy per-unit fallback.
+     fix: a succeeded batch permanently blocks legacy per-unit fallback.
     Even if a per-unit grammar job exists (from route cutover, upgrade, or
     manual injection), the per-unit executor must NOT be called when the
     batch has succeeded.
@@ -1698,7 +1698,7 @@ async def test_batch_succeeded_with_legacy_job_suppresses_fallback(
         "per-unit grammar executor must not be called when batch succeeded"
     )
 
-    # T4.2a-R2-R2: the legacy per-unit job must be SUPERSEDED (not queued)
+    # The legacy per-unit job must be SUPERSEDED (not queued)
     # by the cleanup service with rationale_code = "batch_path_authoritative".
     # The old assertion (status == "queued") 固化了热循环错误状态.
     async with pool.acquire() as conn:
@@ -1739,7 +1739,7 @@ async def test_batch_succeeded_with_legacy_job_suppresses_fallback(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test C: Batch failed_terminal fallback (fail-closed)
+# Test C: Batch failed_terminal fallback (fail-closed)
 # ---------------------------------------------------------------------------
 
 
@@ -1748,7 +1748,7 @@ async def test_batch_failed_terminal_suppresses_fallback(
 ) -> None:
     """Test C: Batch failed_terminal suppresses fallback (fail-closed).
 
-    P1-2 fix: when a grammar batch job has failed_terminal status, legacy
+     fix: when a grammar batch job has failed_terminal status, legacy
     per-unit fallback must NOT automatically run. Without an explicit
     fallback authorization policy, the system fails closed.
     """
@@ -1857,7 +1857,7 @@ async def test_batch_failed_terminal_suppresses_fallback(
         "per-unit grammar executor must not be called when batch failed_terminal"
     )
 
-    # T4.2a-R2-R2: the legacy per-unit job must be SUPERSEDED (not queued)
+    # The legacy per-unit job must be SUPERSEDED (not queued)
     # with rationale_code = "batch_fallback_not_authorized" (fail-closed).
     async with pool.acquire() as conn:
         legacy_row = await conn.fetchrow(
@@ -1881,7 +1881,7 @@ async def test_batch_failed_terminal_suppresses_fallback(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test D: Partial layer budget exhaustion
+# Test D: Partial layer budget exhaustion
 # ---------------------------------------------------------------------------
 
 
@@ -2005,7 +2005,7 @@ async def test_partial_layer_budget_exhaustion(
         f"got {t_status}"
     )
 
-    # T4.2a-R2-R2: extend to WorkerLoop + Finalizer production chain.
+    # Extend to WorkerLoop + Finalizer production chain.
     # The partial exhaustion must NOT prematurely finalize the record
     # because the translation job is still non-terminal (queued).
     # Non-exhausted layers' jobs must be preserved.
@@ -2033,7 +2033,7 @@ async def test_partial_layer_budget_exhaustion(
         max_ticks=96,
         max_jobs=48,
     )
-    # T4.2a-R2-R2: The finalizer behavior depends on whether non-exhausted
+    # The finalizer behavior depends on whether non-exhausted
     # layers have non-terminal jobs. In this scenario, all non-translation
     # jobs are succeeded, so after force-failing the translation job, all
     # jobs are terminal. The finalizer SHOULD finalize as
@@ -2048,7 +2048,7 @@ async def test_partial_layer_budget_exhaustion(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test E: Real publisher cutover (translation batch)
+# Test E: Real publisher cutover (translation batch)
 # ---------------------------------------------------------------------------
 
 
@@ -2057,7 +2057,7 @@ async def test_route_flip_rejects_translation_batch_publish(
 ) -> None:
     """Test E: Route flip rejects translation batch publish through real publisher.
 
-    P2-1 fix: the publish fence must be tested through the real publisher,
+     fix: the publish fence must be tested through the real publisher,
     not just by calling ``_validate_fence()`` directly. This test claims a
     translation batch job, flips the route, then calls the real
     ``TranslationLayerPublisher.publish_article_translation_batch``.
@@ -2178,7 +2178,7 @@ async def test_route_flip_rejects_translation_batch_publish(
         f"job must remain claimed after fence rejection; got {job_status}"
     )
 
-    # T4.2a-R2-R2: extend to worker/pipeline catch path.
+    # Extend to worker/pipeline catch path.
     # The direct publisher test above proves the fence rejects. Now verify
     # the WORKER catch path: when the worker hits FenceViolationError
     # during publish, it transitions the job to superseded (not just
@@ -2228,7 +2228,7 @@ async def test_route_flip_rejects_translation_batch_publish(
 
 
 # ---------------------------------------------------------------------------
-# T4.2a-R2-R1 Test F: Budget diagnostics observability
+# Test F: Budget diagnostics observability
 # ---------------------------------------------------------------------------
 
 
@@ -2353,7 +2353,7 @@ async def test_budget_diagnostics_observability(
         "budget exhaustion must not be hidden as all_workers_no_job"
     )
 
-    # T4.2a-R2-R2: verify budget diagnostics are persisted in the
+    # Verify budget diagnostics are persisted in the
     # pipeline root span metadata (not just in the Python return value).
     # Run through WorkerLoop to write the span, then query
     # reader_runtime_spans.metadata_json.
@@ -2409,7 +2409,7 @@ async def test_budget_diagnostics_observability(
 
 
 # ===========================================================================
-# T4.2a-R2-R2 Tests G–L: comprehensive review fix verification
+# Tests G–L: comprehensive review fix verification
 # ===========================================================================
 
 
@@ -2423,7 +2423,7 @@ async def test_g_succeeded_batch_cleanup_workerloop_completion(
 ) -> None:
     """Test G: succeeded batch cleanup through full WorkerLoop path.
 
-    T4.2a-R2-R2 P1-1: when a grammar batch has succeeded, legacy per-unit
+     When a grammar batch has succeeded, legacy per-unit
     grammar jobs must be superseded (not left queued) by the cleanup
     service. The WorkerLoop + Finalizer must be able to complete the
     record without a hot-loop.
@@ -2548,7 +2548,7 @@ async def test_g_succeeded_batch_cleanup_workerloop_completion(
     assert legacy_row["status"] == "superseded"
     assert legacy_row["rationale_code"] == "batch_path_authoritative"
 
-    # T4.2a-R2-R3: Strong terminal assertions — the finalizer must have
+    # Strong terminal assertions — the finalizer must have
     # finalized and the record must have reached coverage_complete.
     assert wl_result is not None, "WorkerLoop must process the candidate"
     fin_result = wl_result.completion_finalization_result
@@ -2592,7 +2592,7 @@ async def test_h_failed_batch_fail_closed_cleanup(
 ) -> None:
     """Test H: failed_terminal batch → legacy jobs fail-closed superseded.
 
-    T4.2a-R2-R2 P1-1: when a grammar batch has failed_terminal, legacy
+     When a grammar batch has failed_terminal, legacy
     per-unit jobs must be superseded with ``batch_fallback_not_authorized``
     (fail-closed). No implicit fallback execution.
     """
@@ -2741,7 +2741,7 @@ async def test_i_partial_exhaustion_preserves_other_layers(
 ) -> None:
     """Test I: partial exhaustion only force-fails exhausted layers.
 
-    T4.2a-R2-R2 P1-2: when translation budget is exhausted but vocabulary
+     When translation budget is exhausted but vocabulary
     is retry_later (still has budget), the finalizer must ONLY force-fail
     translation jobs. Vocabulary retry_later must be preserved. The record
     must NOT prematurely finalize.
@@ -2777,7 +2777,7 @@ async def test_i_partial_exhaustion_preserves_other_layers(
 
     # Exhaust translation: reset to queued with attempt_count=max_attempts
     # Set vocabulary to retry_later with future available_at
-    # T4.2a-R2-R3: also delete vocabulary enhancement_layers + events from
+    # Also delete vocabulary enhancement_layers + events from
     # Run 1 so the publisher doesn't reject the re-publish in Run 3 with
     # "vocabulary layer already published for unit X".
     async with pool.acquire() as conn:
@@ -2875,7 +2875,7 @@ async def test_i_partial_exhaustion_preserves_other_layers(
             """,
             article.record_id,
         )
-        # T4.2a-R2-R3: also check translation was force-failed
+        # Also check translation was force-failed
         t_status = await conn.fetchval(
             """
             SELECT status FROM reader_jobs
@@ -2889,7 +2889,7 @@ async def test_i_partial_exhaustion_preserves_other_layers(
         f"vocabulary must remain retry_later (not force-failed); "
         f"got {v_status}"
     )
-    # T4.2a-R2-R3: translation must be failed_terminal (force-failed by
+    # Translation must be failed_terminal (force-failed by
     # finalizer due to budget exhaustion), not left in a non-terminal state.
     assert t_status == "failed_terminal", (
         f"translation must be failed_terminal after budget exhaustion; "
@@ -2935,7 +2935,7 @@ async def test_i_partial_exhaustion_preserves_other_layers(
             )
             break
 
-    # T4.2a-R2-R3: Strong terminal assertions — vocabulary must have
+    # Strong terminal assertions — vocabulary must have
     # succeeded, and the record must have reached a final readiness state.
     async with pool.acquire() as conn:
         v_status_final = await conn.fetchval(
@@ -2973,13 +2973,13 @@ async def test_j_pipeline_level_publish_fence(
 ) -> None:
     """Test J: publish fence through worker/pipeline catch path.
 
-    T4.2a-R2-R2 P1-3 + T4.2a-R2-R3 strong assertions: when a route
+      strong assertions: when a route
     flips DURING worker execution, the publish-time fence must cause
     the worker to transition the job to superseded and mark the run
     as superseded. The summary.superseded must match the DB actual
     count (no virtual max(1,...) reporting).
 
-    Strong assertions (T4.2a-R2-R3):
+    Strong assertions:
     - The specific claimed translation batch job is ``superseded``
     - The reader_run is ``superseded``
     - summary.outcome_counts.superseded >= 1
@@ -3072,7 +3072,7 @@ async def test_j_pipeline_level_publish_fence(
             job_row["run_id"],
         )
 
-    # T4.2a-R2-R3: Strong assertions — the fence must have actually
+    # Strong assertions — the fence must have actually
     # transitioned the job and run, not just counted a virtual supersede.
 
     # 1. The specific translation batch job must be superseded
@@ -3126,7 +3126,7 @@ async def test_k_persistent_budget_observability(
 ) -> None:
     """Test K: budget-denied must be queryable from reader_runtime_spans.
 
-    T4.2a-R2-R2 P2-1: budget_denied, exhausted_layers, budget_diagnostics
+     Budget_denied, exhausted_layers, budget_diagnostics
     must be persisted in the pipeline root span metadata (not just in the
     Python return value). A normal no_job scenario must NOT be marked as
     budget_denied.
@@ -3298,7 +3298,7 @@ async def test_l_multi_fingerprint_determinism(
 ) -> None:
     """Test L: multi-fingerprint budget load must be deterministic.
 
-    T4.2a-R2-R2 P2-2: ExecutionBudget.load_durable() must return a
+     ExecutionBudget.load_durable must return a
     stable sorted fingerprint set per layer, not a last-wins single
     fingerprint. Multiple calls must produce identical results.
     """
@@ -3424,7 +3424,7 @@ async def test_m_full_budget_exhaustion_preserves_display_title(
 ) -> None:
     """Test M: full budget exhaustion does NOT force-fail display-title.
 
-    T4.2a-R2-R3a: when all three budget layers (translation, vocabulary,
+    When all three budget layers (translation, vocabulary,
     grammar) are exhausted, the finalizer must ONLY force-fail budget
     layer jobs. A retryable display_title job must survive, and the
     record must NOT prematurely finalize. When display_title later

@@ -112,7 +112,7 @@ def test_gate_window_cap_rejects_when_window_budget_exhausted():
 
 
 def test_gate_record_density_rejects_when_cap_reached():
-    """gate 5: per-1000-chars density >= density_cap（P2-6 新语义）
+    """gate 5: per-1000-chars density >= density_cap（ 新语义）
 
     base_text_length_utf16=1000，density_denom=1.0
     ledger 已发布 3 个 grammar_note，density=3/1.0=3.0，>= cap 3.0 → reject
@@ -141,7 +141,7 @@ def test_gate_record_budget_rejects_when_total_exhausted():
 
 
 def test_gate_anchor_ratio_rejects_when_threshold_exceeded():
-    """gate 7: projected annotated ratio > 0.30 (P1-4 fix).
+    """gate 7: projected annotated ratio > 0.30 (fix).
 
     With projected ratio, accepting a candidate on a NEW anchor pushes
     the ratio up by 1/total. So 3/10 + new anchor → 4/10=0.40 > 0.30 → reject.
@@ -256,7 +256,7 @@ def test_constants():
 
 
 # ---------------------------------------------------------------------------
-# P1-5: 同 window 内 dedup / anchor / budget 累计 gate 检查
+# 同 window 内 dedup / anchor budget 累计 gate 检查
 # ---------------------------------------------------------------------------
 
 
@@ -290,7 +290,7 @@ def test_selector_rejects_duplicate_semantic_key_within_same_window():
 
 
 def test_selector_rejects_second_item_for_same_anchor_within_same_window():
-    """P1-5: 同 window 内两个 candidate 落在相同 anchor + 相同 item_type，
+    """同 window 内两个 candidate 落在相同 anchor + 相同 item_type，
     第二个必须被 ANCHOR_CAP 拒绝（per_anchor_cap=1）。
 
     旧实现只读 ledger.published_anchor_counts，未累计 window 内已接受的同 anchor
@@ -318,7 +318,7 @@ def test_selector_rejects_second_item_for_same_anchor_within_same_window():
 
 
 def test_selector_rejects_when_window_round_exceeds_record_budget():
-    """P1-5: ledger budget_used 接近 total，window 内多个 candidate 累计后超 total，
+    """Ledger budget_used 接近 total，window 内多个 candidate 累计后超 total，
     第一个通过，第二个必须被 RECORD_BUDGET 拒绝。
 
     旧实现只读 ledger.budget_used，window 内已接受的 candidate 不会累计到 budget
@@ -346,12 +346,12 @@ def test_selector_rejects_when_window_round_exceeds_record_budget():
 
 
 # ---------------------------------------------------------------------------
-# P2-6: density gate 改为 per-1000-chars ratio
+# Density gate 改为 per-1000-chars ratio
 # ---------------------------------------------------------------------------
 
 
 def test_density_gate_uses_per_1000_chars_ratio():
-    """P2-6: density = total_published_count / max(base_text_length_utf16/1000, 1.0)。
+    """Density = total_published_count / max(base_text_length_utf16/1000, 1.0)。
 
     base_text_length_utf16=2000 → density_denom=2.0
     density_cap grammar_note=3.0 → 最多容纳 6 个 grammar_note（density=3.0），
@@ -378,7 +378,7 @@ def test_density_gate_uses_per_1000_chars_ratio():
 
 
 def test_density_gate_rejects_when_density_exceeds_cap():
-    """P2-6: base_text_length_utf16=1000，已发布 3 个 grammar_note（density=3.0），
+    """Base_text_length_utf16=1000，已发布 3 个 grammar_note（density=3.0），
     第 4 个必须被 RECORD_DENSITY 拒绝。
     """
     ledger = SelectorLedger(
@@ -399,12 +399,12 @@ def test_density_gate_rejects_when_density_exceeds_cap():
 
 
 # ---------------------------------------------------------------------------
-# P1-3: anchor_segment_id ∈ target_anchor_ids pre-filter
+# Anchor_segment_id ∈ target_anchor_ids pre-filter
 # ---------------------------------------------------------------------------
 
 
 def test_invalid_anchor_rejected_when_target_anchor_ids_provided():
-    """P1-3: candidate with anchor_segment_id ∉ target_anchor_ids is rejected."""
+    """Candidate with anchor_segment_id ∉ target_anchor_ids is rejected."""
     ledger = SelectorLedger()
     candidate_valid = make_candidate(
         anchor_segment_id="a1", semantic_dedup_key="key1"
@@ -426,7 +426,7 @@ def test_invalid_anchor_rejected_when_target_anchor_ids_provided():
 
 
 def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_none():
-    """P1-3: when target_anchor_ids is None, no pre-filter (backward-compat)."""
+    """When target_anchor_ids is None, no pre-filter (backward-compat)."""
     ledger = SelectorLedger()
     candidate = make_candidate(
         anchor_segment_id="a_unknown", semantic_dedup_key="key1"
@@ -439,7 +439,7 @@ def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_none():
 
 
 def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_empty():
-    """P1-3: empty set is treated as None (defensive, skip pre-filter)."""
+    """Empty set is treated as None (defensive, skip pre-filter)."""
     ledger = SelectorLedger()
     candidate = make_candidate(
         anchor_segment_id="a1", semantic_dedup_key="key1"
@@ -456,12 +456,12 @@ def test_invalid_anchor_not_filtered_when_target_anchor_ids_is_empty():
 
 
 # ---------------------------------------------------------------------------
-# P1-1: gate 7 (ANCHOR_RATIO) cross-window accumulation
+# Gate 7 (ANCHOR_RATIO) cross-window accumulation
 # ---------------------------------------------------------------------------
 
 
 def test_gate7_anchor_ratio_accumulates_across_windows():
-    """P1-4: gate 7 checks projected ratio including current candidate +
+    """Gate 7 checks projected ratio including current candidate +
     same-window accepted anchors (cross item_type).
 
     Per design §7.3: per_record <= 30% anchor ratio. The gate must check
@@ -473,14 +473,14 @@ def test_gate7_anchor_ratio_accumulates_across_windows():
 
     Scenarios:
     - Window 1: ledger has 3/10 annotated (ratio 0.30). Candidate on a4
-      (new anchor) → projected 4/10=0.40 > 0.30 → REJECT (P1-4 fix).
+      (new anchor) → projected 4/10=0.40 > 0.30 → REJECT (fix).
       Candidate on a3 (already annotated) → projected 3/10=0.30 → pass.
     - Window 2: ledger has 2/10 annotated (ratio 0.20). Two candidates on
       a3, a4 (both new) → a3: projected 3/10=0.30, pass; a4: projected
       4/10=0.40 > 0.30, reject (same window, after accepting a3).
     """
     # Window 1: ledger has 3/10 annotated. Candidate on new anchor a4
-    # → projected 4/10=0.40 > 0.30 → REJECT (P1-4 fix)
+    # → projected 4/10=0.40 > 0.30 → REJECT (fix)
     ledger_window1 = SelectorLedger(
         published_anchor_counts_by_type={
             "grammar_note": {"a1": 1, "a2": 1, "a3": 1},
@@ -564,12 +564,12 @@ def test_gate7_anchor_ratio_accumulates_across_windows():
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: density_cap symmetry + cross-type coexist design choice
+# Density_cap symmetry + cross-type coexist design choice
 # ---------------------------------------------------------------------------
 
 
 def test_sentence_analysis_default_density_cap_is_2_0():
-    """Phase 5: sentence_analysis default density_cap is 2.0.
+    """Sentence_analysis default density_cap is 2.0.
 
     Old default 1.0 was asymmetric with grammar_note's 3.0 and caused
     sentence_analysis candidates to be silently rejected by RECORD_DENSITY
@@ -582,7 +582,7 @@ def test_sentence_analysis_default_density_cap_is_2_0():
 
 
 def test_grammar_note_and_sentence_analysis_can_coexist_on_same_anchor():
-    """Phase 5 design choice: backend does not perform cross-type
+    """Design choice: backend does not perform cross-type
     deduplication between grammar_note and sentence_analysis on the same
     anchor *as long as their dedup_hints differ*. They compete at the
     prompt layer (shared teaching contract declares same-point competition

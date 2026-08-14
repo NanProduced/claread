@@ -1,6 +1,6 @@
-"""T5.6b — budget-aware job_id drain for section_v1 translate_article jobs.
+"""budget-aware job_id drain for section_v1 translate_article jobs.
 
-Structure (R1.2 + P1):
+Structure :
   lock + validate section shape / fence
   → load durable ExecutionBudget
   → translation pre-check (force-fail only after shape+fence OK)

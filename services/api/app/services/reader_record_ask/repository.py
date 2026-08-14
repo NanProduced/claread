@@ -24,7 +24,7 @@ from app.services.reader_record_ask.history_projection import (
 
 logger = logging.getLogger(__name__)
 
-# ASK-TURN-LIFECYCLE R1: typed terminal reason for stale-stream
+# ASK-TURN-LIFECYCLE typed terminal reason for stale-stream
 # reconciliation. Used when the host detects a streaming run/message
 # whose owner has gone away (client disconnect, BFF disconnect,
 # generator close without typed terminal, host restart). Never used
@@ -40,7 +40,7 @@ class SubmissionIdempotencyUnavailable(RuntimeError):
         self.cause = cause
 
 
-# ASK-TURN-LIFECYCLE R1: default wall-clock threshold after which a
+# ASK-TURN-LIFECYCLE default wall-clock threshold after which a
 # streaming ``reader_ask_turn_runs`` row is considered orphaned. The
 # in-process lifecycle hook (``_StreamLifecycleContext``) is the
 # primary reconciliation path on generator close; this threshold is the
@@ -50,7 +50,7 @@ class SubmissionIdempotencyUnavailable(RuntimeError):
 # enough that an orphan does not linger for hours.
 DEFAULT_STALE_STREAM_THRESHOLD_SECONDS: int = 300
 
-# ASK-TURN-LIFECYCLE R4-5: heartbeat interval for active streaming turns.
+# ASK-TURN-LIFECYCLE heartbeat interval for active streaming turns.
 # During streaming, the production generator updates ``updated_at`` on the
 # turn_run row at this interval, proving the owner process is alive. The
 # stale-stream reconciler checks ``updated_at`` — a row with a recent
@@ -60,7 +60,7 @@ DEFAULT_STALE_STREAM_THRESHOLD_SECONDS: int = 300
 # (present since 0001_initial_schema.sql) serves as the heartbeat column.
 HEARTBEAT_INTERVAL_SECONDS: int = 15
 
-# ASK-TURN-LIFECYCLE R4-5: a streaming row whose ``updated_at`` is older
+# ASK-TURN-LIFECYCLE a streaming row whose ``updated_at`` is older
 # than this threshold (relative to now) is considered heartbeat-dead — the
 # owner process is gone or stuck. Must be > HEARTBEAT_INTERVAL_SECONDS to
 # avoid false positives from scheduling jitter; 3x gives comfortable margin.
@@ -224,7 +224,7 @@ class ReaderRecordAskRepository:
         conn_pool: Any,
         turn_run_id: UUID,
     ) -> dict[str, Any]:
-        """R4-3: read the actual winning terminal state after CAS loss.
+        """Read the actual winning terminal state after CAS loss.
 
         Returns a dict with ``final_status``, ``terminal_reason``,
         ``user_visible_output_json``, ``envelope_fingerprint``, and
@@ -660,14 +660,14 @@ class ReaderRecordAskRepository:
     ) -> dict[str, Any]:
         """Idempotent success-terminal write.
 
-        ASK-TURN-LIFECYCLE R1: the ``WHERE status = 'streaming'`` guard
+        ASK-TURN-LIFECYCLE the ``WHERE status = 'streaming'`` guard
         makes the write idempotent — a second call after the row already
         transitioned to a terminal state (committed / failed / cancelled)
         returns a typed ``already_terminal`` placeholder instead of
         flipping the row back or asserting. This closes the
         cancel-after-completed / completed-after-cancel race.
 
-        ASK-TURN-LIFECYCLE R4-3: when the CAS fails (``row is None``),
+        ASK-TURN-LIFECYCLE when the CAS fails (``row is None``),
         the method SELECTs the actual winning terminal state so the
         caller can project the real persisted terminal instead of
         fabricating a ``completed``. The returned dict carries
@@ -768,7 +768,7 @@ class ReaderRecordAskRepository:
                         now,
                     )
         if row is None:
-            # R4-3: CAS lost — read the actual winning terminal state so
+            # CAS lost — read the actual winning terminal state so
             # the caller can project the real persisted terminal instead
             # of fabricating a completed. Never returns a fabricated ok.
             winning = await self._read_winning_terminal(
@@ -796,7 +796,7 @@ class ReaderRecordAskRepository:
                 "envelope_fingerprint": winning.get("envelope_fingerprint"),
                 "execution_version": winning.get("execution_version")
                 or EXECUTION_VERSION_AGENTIC_V2,
-                # R4-3: winning terminal state for caller-side CAS
+                # Winning terminal state for caller-side CAS
                 # decisioning. ``winning_final_status`` is the actual
                 # persisted final_status (ok / failed / cancelled /
                 # context_stale). ``winning_terminal_reason`` is the
@@ -830,12 +830,12 @@ class ReaderRecordAskRepository:
     ) -> dict[str, Any]:
         """Persist non-ok terminal (stale / invalid / cancelled / failed).
 
-        ASK-REASONING-R2: ``reasoning_projection_json`` is explicitly
+        ASK-REASONING-``reasoning_projection_json`` is explicitly
         forced to NULL on every terminal path — fail-closed by statement,
         not by relying on fresh rows starting empty. Cancel / validation
         failure / budget / persist failure never persist reasoning.
 
-        ASK-TURN-LIFECYCLE R1: the ``WHERE status = 'streaming'`` guard
+        ASK-TURN-LIFECYCLE the ``WHERE status = 'streaming'`` guard
         makes the write idempotent — a second call after the row already
         transitioned to a terminal state returns a typed
         ``already_terminal`` placeholder. This closes the
@@ -885,7 +885,7 @@ class ReaderRecordAskRepository:
                     now,
                 )
                 if row is not None and owns_message:
-                    # ASK-RETRY-CONTRACT-R4: if regenerate stored a fallback
+                    # ASK-RETRY-CONTRACT-if regenerate stored a fallback
                     # canonical answer, restore it instead of blanking.
                     meta_row = await conn.fetchrow(
                         """
@@ -993,7 +993,7 @@ class ReaderRecordAskRepository:
     ) -> dict[str, Any]:
         """Reconcile a streaming row whose owner has gone away.
 
-        ASK-TURN-LIFECYCLE R1: used by the route ``finally`` and the
+        ASK-TURN-LIFECYCLE used by the route ``finally`` and the
         ``stream_agentic_thread_message`` outer ``finally`` when the
         generator is closed without a typed terminal (client disconnect,
         BFF disconnect, ASGI cancellation, host restart). Always moves
@@ -1023,7 +1023,7 @@ class ReaderRecordAskRepository:
     async def heartbeat_turn_run(self, *, turn_run_id: UUID) -> None:
         """Update ``updated_at`` on a streaming turn_run row.
 
-        ASK-TURN-LIFECYCLE R4-5: proves the owner process is alive during
+        ASK-TURN-LIFECYCLE proves the owner process is alive during
         long-running turns. The stale-stream reconciler checks
         ``updated_at`` — a row with a recent heartbeat is NOT considered
         stale even if ``started_at`` is old. This is the heartbeat half
@@ -1055,13 +1055,13 @@ class ReaderRecordAskRepository:
     ) -> list[dict[str, Any]]:
         """List streaming ``reader_ask_turn_runs`` that are heartbeat-dead.
 
-        ASK-TURN-LIFECYCLE R1/R4-5: the safety-net reconciliation query.
+        ASK-TURN-LIFECYCLE /the safety-net reconciliation query.
         The in-process ``_StreamLifecycleContext`` hook handles per-request
         cleanup on generator close; this method handles rows whose owner
         process is gone (host restart / crash / leaked rows from prior
         deploys).
 
-        R4-5 owner/heartbeat proof: a row is stale ONLY if BOTH:
+         owner/heartbeat proof: a row is stale ONLY if BOTH:
           1. ``started_at < cutoff`` — old enough to be considered stale.
           2. ``updated_at < heartbeat_cutoff`` — no recent heartbeat.
         The heartbeat is written by ``heartbeat_turn_run`` during active
@@ -1133,7 +1133,7 @@ class ReaderRecordAskRepository:
     ) -> dict[str, Any]:
         """Reconcile all stale streaming rows older than the threshold.
 
-        ASK-TURN-LIFECYCLE R1: iterates the rows returned by
+        ASK-TURN-LIFECYCLE iterates the rows returned by
         ``list_stale_streaming_turn_runs`` and reconciles each to
         ``cancelled`` (default) or ``failed`` using the typed
         ``stale_stream_reconciled`` terminal reason. **Never** fabricates
@@ -1296,19 +1296,19 @@ class ReaderRecordAskRepository:
         this thread, is not role='assistant', or no preceding user message
         is found.
 
-        ASK-WEB-G1-R2: the user message dict now carries
+        ASK-WEB-G1-the user message dict now carries
         ``metadata_json`` (parsed dict, never ``None``) so the retry path
         can replay the original turn's ``web_search_mode`` without
         re-deciding it from the current UI toggle. Legacy rows with
         ``metadata_json IS NULL`` surface as ``{}`` — the caller treats
         absent ``web_search_mode`` as ``"disabled"`` (fail-closed).
 
-        ASK-RETRY-CONTRACT-R3: assistant dict also carries
+        ASK-RETRY-CONTRACT-assistant dict also carries
         ``metadata_json`` and the current turn_run ``execution_version``
         (when present) so retry preflight can resolve the immutable lane
         without reading the live feature flag.
 
-        ASK-SUBMISSION-RETRY-R1: submission-bound turns create the user +
+        ASK-SUBMISSION-RETRY-submission-bound turns create the user +
         assistant pair and bind them in ONE transaction sharing one
         ``created_at``, so timestamp ordering can never see the turn's
         own user message. When the retried assistant message is bound in
@@ -1395,18 +1395,18 @@ class ReaderRecordAskRepository:
         message_id: UUID,
         assistant_created_at: Any,
     ) -> Any | None:
-        """Resolve the retry predecessor user row (ASK-SUBMISSION-RETRY-R1).
+        """Resolve the retry predecessor user row (ASK-SUBMISSION-RETRY-).
 
         Binding-first: a submission-bound assistant message resolves its
         turn's own user message through the explicit
-        ``reader_ask_client_submissions`` binding, because the R5 gateway
+        ``reader_ask_client_submissions`` binding, because the gateway
         creates both messages in one transaction sharing one
         ``created_at``. Anomalous bindings (multiple rows, NULL user, or a
         bound user outside this thread / not role='user') fail closed —
         this method then returns ``None`` and never falls back to a
         timestamp guess.
 
-        Non-submission turns keep the pre-R1 strict preceding-user
+        Non-submission turns keep the pre- strict preceding-user
         fallback (``created_at <`` assistant, most recent first). A
         missing submissions table (0026/0027 not applied) also falls
         through to the strict fallback: such a deployment cannot have
@@ -1491,7 +1491,7 @@ class ReaderRecordAskRepository:
     ) -> dict[str, Any]:
         """Begin regenerate without discarding the prior canonical answer.
 
-        ASK-RETRY-CONTRACT-R4:
+        ASK-RETRY-CONTRACT-
         - Keeps ``content_md`` as the visible fallback until a new run
           successfully completes.
         - Snapshots prior status / content / current_turn_run_id into
@@ -1592,7 +1592,7 @@ class ReaderRecordAskRepository:
         assistant_metadata: dict[str, Any],
         orphan_lease_seconds: int = 60,
     ) -> dict[str, Any]:
-        """R5: atomic claim + user/assistant pair + bind in one transaction.
+        """Atomic claim + user/assistant pair + bind in one transaction.
 
         Model invocation must happen ONLY after this method returns with
         ``may_create_model=True``. Duplicate keys return existing pair
@@ -1717,7 +1717,7 @@ class ReaderRecordAskRepository:
                                 "terminal_code": "submission_in_progress",
                             }
                     else:
-                        # R6: INSERT ON CONFLICT DO NOTHING — never catch
+                        # INSERT ON CONFLICT DO NOTHING — never catch
                         # UniqueViolation and continue in the same txn
                         # (Postgres aborts the transaction on 23505).
                         try:

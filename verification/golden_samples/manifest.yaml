@@ -17,7 +17,7 @@
   reading_goal: exam
   reading_variant: ielts_toefl
   notes: |
-    ~970-word Reuters/BBC-style article. The D5 short-form diagnosis
+    ~970-word Reuters/BBC-style article. The short-form diagnosis
     cited this band as the regression case where per-unit fan-out
     produced ~7.8x more tokens and ~10x more latency than the old
     chain. This sample is the fixed corpus for that comparison.

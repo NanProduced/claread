@@ -446,7 +446,7 @@ describe("Reader Plate DTO shapes", () => {
     const snapshot = makeSnapshot();
     expect(typeof snapshot.last_event_sequence).toBe("number");
     expect(snapshot.last_event_sequence).toBe(3);
-    // D4 contract: snapshot must NOT expose projection_version.
+    // Snapshot must NOT expose projection_version.
     expect("projection_version" in snapshot).toBe(false);
   });
 

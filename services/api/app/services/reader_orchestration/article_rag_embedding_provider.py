@@ -1,4 +1,4 @@
-"""D6-I4D: Article RAG DashScope Embedding Adapter.
+"""Article RAG DashScope Embedding Adapter.
 
 Real-adapter foundation for :class:`ArticleRagEmbeddingProvider` that
 wraps the existing ``app.infra.bailian_embedding`` wrapper so we do not
@@ -138,7 +138,7 @@ def _safe_embedding_diagnostics(
         diagnostics["provider_retryable"] = retryable
     ordinal = getattr(exc, "failed_batch_ordinal", None)
     batch_count = getattr(exc, "batch_count", None)
-    # P0 Round 3: ``bool`` is a subclass of ``int`` in Python, so the
+    # ``bool`` is a subclass of ``int`` in Python, so the
     # legacy ``isinstance(value, int) and value > 0`` check accepts
     # ``True`` (== 1) as a valid positive integer.  Reject bool
     # explicitly so ``True``/``False`` cannot leak into diagnostics
@@ -159,7 +159,7 @@ class DashScopeArticleRagEmbeddingProvider:
     """Real DashScope (Bailian) embedding provider for the Article RAG worker.
 
     Implements the :class:`ArticleRagEmbeddingProvider` Protocol defined
-    in D6-I4C. Wraps :func:`app.infra.bailian_embedding.embed_texts_with_metadata`
+    by the indexing pipeline. Wraps :func:`app.infra.bailian_embedding.embed_texts_with_metadata`
     and converts the result into ``ArticleRagEmbedding`` records with a
     *locally-computed* SHA-256.
 
@@ -204,7 +204,7 @@ class DashScopeArticleRagEmbeddingProvider:
 
         effective_model = model or self._model_override
 
-        # P0 safe-return: extract only the whitelisted diagnostic fields
+        # Extract only the whitelisted diagnostic fields
         # inside the except block, then raise the safe outer error AFTER
         # leaving the block.  This ensures both ``__cause__`` (no
         # ``raise ... from exc``) and ``__context__`` (no implicit chain

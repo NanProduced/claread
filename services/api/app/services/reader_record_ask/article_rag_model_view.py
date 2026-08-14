@@ -1,4 +1,4 @@
-"""Article RAG tool model-view scrub (R4-A5-5, offline core).
+"""Article RAG tool model-view scrub (offline core).
 
 Pure offline assembler that turns an **already obtained**
 :class:`ArticleRagSearchOutcome` into a narrow, metered, fail-soft tool
@@ -42,7 +42,7 @@ Contracts
   body, repr, handle id, identity, or raw exception text is surfaced.
 
 No runtime / production stream / wiring / route / legacy prompt
-integration imports this module in R4-A5 (static reverse guards in the
+integration imports this module in (static reverse guards in the
 tests). The legacy Ask prompt-integration bridge is never used.
 """
 

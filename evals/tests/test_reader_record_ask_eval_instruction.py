@@ -1,9 +1,9 @@
-"""Tests for instruction_following evaluator (P1-4 effectiveness).
+"""Tests for instruction_following evaluator effectiveness.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: P1-4 instruction count effectiveness.
+spec.md` — Requirement: instruction count effectiveness.
 
-R4-A4-0 (Task 3) — exercise item count semantics
+Exercise item count semantics
 ================================================
 
 Covers the new contract:
@@ -29,8 +29,8 @@ from claread_eval.reader_record_ask.evaluators.instruction_following import (
     evaluate_instruction_following,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,8 +44,8 @@ def _make_case(
     kind: str,
     question_category: str = "exercise_one",
     allow_subquestions: bool = False,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-instruction",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -53,7 +53,7 @@ def _make_case(
         baseline_mode="complete",
         question="基于文章出一道小练习。",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             requested_count=requested_count,
             requested_count_kind=kind,  # type: ignore[arg-type]
             allow_subquestions=allow_subquestions,
@@ -84,7 +84,7 @@ def test_positive_exercise_items_count_matches() -> None:
 
 
 def test_negative_exercise_items_count_too_many() -> None:
-    """R4-A4-0 (Task 3): count mismatch now uses ``actual_count_mismatch``
+    """Count mismatch now uses ``actual_count_mismatch``
     pattern (distinct from ``indeterminate``).
     """
     case = _make_case(requested_count=1, kind="exercise_items")
@@ -99,7 +99,7 @@ def test_negative_exercise_items_count_too_many() -> None:
     assert result.passed is False
     assert result.severity == "high"
     assert "actual=5" in result.details
-    # R4-A4-0 (Task 3): distinct failure pattern.
+    # Distinct failure pattern.
     assert "actual_count_mismatch" in result.details
     assert "indeterminate" not in result.details
 
@@ -112,7 +112,7 @@ def test_positive_sentences_within_limit() -> None:
 
 
 def test_negative_sentences_exceed_limit() -> None:
-    """R4-A4-0 (Task 3): sentence count mismatch now uses
+    """Sentence count mismatch now uses
     ``actual_count_mismatch`` pattern."""
     case = _make_case(requested_count=1, kind="sentences")
     artifact = _make_artifact(
@@ -146,7 +146,7 @@ def test_ordinal_topic_marker_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4 regression: single unnumbered question → count as 1
+# Regression: single unnumbered question → count as 1
 # ---------------------------------------------------------------------------
 
 
@@ -174,7 +174,7 @@ def test_single_unnumbered_question_with_ascii_question_mark() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4 regression: one question with A/B/C/D options → count as 1
+# Regression: one question with A/B/C/D options → count as 1
 # ---------------------------------------------------------------------------
 
 
@@ -206,7 +206,7 @@ def test_one_question_with_lowercase_abcd_options() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4 regression: five numbered questions → count as 5
+# Regression: five numbered questions → count as 5
 # ---------------------------------------------------------------------------
 
 
@@ -225,7 +225,7 @@ def test_five_numbered_questions_counted_as_five() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4 regression: "第1题" and "1." together → NOT double counted
+# Regression: "第1题" and "1." together → NOT double counted
 # ---------------------------------------------------------------------------
 
 
@@ -245,7 +245,7 @@ def test_ordinal_and_list_marker_on_newline_not_double_counted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4 regression: decimals and abbreviations not falsely split
+# Regression: decimals and abbreviations not falsely split
 # ---------------------------------------------------------------------------
 
 
@@ -282,7 +282,7 @@ def test_abbreviation_not_split_in_sentence_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): indeterminate cases (truly undeterminable)
+# Indeterminate cases (truly undeterminable)
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +300,7 @@ def test_no_markers_no_interrogative_is_indeterminate_fail() -> None:
     assert result.severity == "medium"
     assert "indeterminate" in result.details
     assert "cannot reliably determine" in result.details
-    # R4-A4-0 (Task 3): indeterminate must NOT contain actual_count_mismatch.
+    # Indeterminate must NOT contain actual_count_mismatch.
     assert "actual_count_mismatch" not in result.details
 
 
@@ -313,7 +313,7 @@ def test_indeterminate_with_requested_zero_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): NEW — unnumbered compound block defaults to 1
+# NEW — unnumbered compound block defaults to 1
 # ---------------------------------------------------------------------------
 
 
@@ -378,7 +378,7 @@ def test_unnumbered_compound_block_with_allow_subquestions_true_mismatch() -> No
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): NEW — reference-answer numbering not counted
+# NEW — reference-answer numbering not counted
 # ---------------------------------------------------------------------------
 
 
@@ -416,7 +416,7 @@ def test_no_reference_answer_marker_returns_text_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): NEW — BBC 5/6 numbered questions → fail
+# NEW — BBC 5/6 numbered questions → fail
 # ---------------------------------------------------------------------------
 
 
@@ -463,7 +463,7 @@ def test_bbc_five_numbered_questions_fails_when_requested_one() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): NEW — multiple `?` does NOT auto-equal multiple items
+# NEW — multiple `?` does NOT auto-equal multiple items
 # ---------------------------------------------------------------------------
 
 
@@ -489,7 +489,7 @@ def test_multiple_question_marks_not_auto_multiple_items() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 3): NEW — single question + A/B/C/D = 1
+# NEW — single question + A/B/C/D = 1
 # ---------------------------------------------------------------------------
 
 
@@ -514,7 +514,7 @@ def test_single_question_with_abcd_is_one_item() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-4: sentence counting edge cases
+# Sentence counting edge cases
 # ---------------------------------------------------------------------------
 
 

@@ -7,13 +7,13 @@ from claread_eval.reader_record_ask.evaluators.aggregator import (
 )
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
-def _make_case(case_id: str, qcat: str = "city_enumeration") -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+def _make_case(case_id: str, qcat: str = "city_enumeration") -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         input_mode="manual",
@@ -21,7 +21,7 @@ def _make_case(case_id: str, qcat: str = "city_enumeration") -> ReaderRecordAskR
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category=qcat,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
     )
 
 
@@ -274,14 +274,14 @@ def test_per_config_metrics() -> None:
     assert "pro|thinking=True" in report.per_config
 
     flash_cfg = report.per_config["flash|thinking=False"]
-    # R4-A4-0 (Task 5): ``total_runs`` MUST be explicitly written.
+    # ``total_runs`` MUST be explicitly written.
     assert flash_cfg["total_runs"] == 2
     assert flash_cfg["pass_rate"] == 0.5  # 1 of 2 runs fully passed
     assert flash_cfg["avg_latency"] == 15.0  # (10+20)/2
     assert flash_cfg["avg_tokens"] == 1500.0  # (1000+2000)/2
     assert flash_cfg["total_requests"] == 6  # 2+4
     assert flash_cfg["unsupported_claim_count"] == 1
-    # R4-A4-3: passed run contributes 1.0; failed run keeps parsed 0.50
+    # A passed run contributes 1.0; a failed run keeps parsed 0.50.
     assert flash_cfg["completeness_recall_avg"] == 0.75
     assert flash_cfg["instruction_following_rate"] == 1.0
 
@@ -289,12 +289,12 @@ def test_per_config_metrics() -> None:
     assert pro_cfg["total_runs"] == 1
     assert pro_cfg["pass_rate"] == 1.0
     assert pro_cfg["unsupported_claim_count"] == 0
-    # R4-A4-3: all-passed config averages completeness recall to 1.0
+    # An all-passed config averages completeness recall to 1.0.
     assert pro_cfg["completeness_recall_avg"] == 1.0
 
 
 def test_completeness_recall_avg_all_pass_config_is_one() -> None:
-    """R4-A4-3: when every exhaustive_completeness result passes, avg is 1.0.
+    """When every exhaustive_completeness result passes, avg is 1.0.
 
     Previously only failure details contributed ``recall=…``, so an
     all-pass config silently reported ``completeness_recall_avg=0.0``.

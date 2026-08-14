@@ -17,7 +17,7 @@ import type { CSSProperties } from "react";
 export type ReaderAskSurface = "sidecar" | "floating";
 
 /**
- * Phase 1 design tokens for the Reader Ask presentation. Centralized here so
+ * Design tokens for the Reader Ask presentation. Centralized here so
  * React and CSS share a single source of truth; the Plate can inject these as
  * CSS custom properties on the workspace container via
  * {@link readerAskPresentationCssVars} instead of repeating literals.
@@ -80,7 +80,7 @@ export interface ReaderAskPresentationResult {
 
 /**
  * Compute the px width reserved by the Ask column for a given viewport, using
- * the Phase 1 `clamp(24rem, 29vw, 37.5rem)` rule.
+ * the `clamp(24rem, 29vw, 37.5rem)` rule.
  */
 export function readerAskColumnWidthPx(
   viewportWidthPx: number,

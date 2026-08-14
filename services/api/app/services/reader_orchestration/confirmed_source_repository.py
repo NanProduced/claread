@@ -4,7 +4,7 @@
 ``persist_stable_document_freeze_plan`` 的 fail-closed 先例一致）：
 所有写/锁 helper 强制 ``conn.is_in_transaction()``，拒绝在事务外执行。
 
-锁顺序约定（设计文档 §3.4 R4）：record → source → candidate。
+锁顺序约定（设计文档 §3.4 ）：record → source → candidate。
 ``lock_confirmed_source_for_update`` 只在调用方已持有 record 行
 FOR UPDATE 锁之后调用。
 
@@ -145,7 +145,7 @@ async def lock_confirmed_source_for_update(
     """SELECT ... FOR UPDATE the confirmed-source row for (record, generation).
 
     Returns ``None`` when no row exists (legacy record) — callers branch
-    to legacy behavior on ``None`` (设计文档 §7 R2：以 source 行存在性
+    to legacy behavior on ``None`` (设计文档 §7：以 source 行存在性
     做单一判别）。
     """
     _require_transaction(conn, "lock_confirmed_source_for_update")

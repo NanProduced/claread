@@ -2,16 +2,16 @@
 
 Usage (run from ``evals/``)::
 
-    # Phase 1: real LLM run (requires env gate)
+    # Real LLM run (requires env gate)
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-chat \\
         uv run python scripts/run_reader_record_ask_eval.py --phase 1 --run-id phase1-<ts>
 
-    # Phase 2: prior-run-id points at the Phase 1 run
+    # The prior-run-id points at the initial run
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-chat \\
         uv run python scripts/run_reader_record_ask_eval.py --phase 2 \\
         --run-id phase2-<ts> --prior-run-id phase1-<ts>
 
-    # Phase 3: prior-run-id points at the Phase 2 run
+    # The next follow-up's prior-run-id points at the preceding run
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-pro \\
         CLAREAD_R4_A3_PRO_PROFILE=<pro_profile> \\
         uv run python scripts/run_reader_record_ask_eval.py --phase 3 \\
@@ -25,22 +25,22 @@ TMP-reader-record-ask-r4-a3-eval-2026-07-17.md
 Rework closure (spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-
 eval-closure/spec.md`):
 
-- ``--prior-run-id`` is required for Phase 2/3 and is passed to the
+- ``--prior-run-id`` is required for follow-up stages and is passed to the
   harness via ``CLAREAD_R4_A3_PRIOR_RUN_ID`` env var. No more scanning
-  the runs root for "latest" (P0-1).
+  the runs root for "latest".
 - Aggregate uses :class:`RunSessionLayout` to resolve the artifact
   directory: ``<runs_root>/<run_id>/artifacts/``. This is the same
   resolver the harness uses to write artifacts, so writer and reader
-  cannot diverge (P0-1).
+  cannot diverge.
 - Aggregate uses :func:`evaluate_artifact` as the single 11-dimension
   evaluator entrypoint — the runner no longer duplicates the
-  evaluator list. This was the root cause of P0-3 (terminal-ok
-  artifacts hiding content-quality failures) (P0-3).
+  evaluator list. This was the root cause of terminal-ok artifacts
+  hiding content-quality failures.
 - Aggregate handles ``budget_exhausted`` artifacts: they are NOT
   evaluated (no content to evaluate) and NOT treated as passes.
-  The report shows the cap-triggered state (P0-2).
+  The report shows the cap-triggered state.
 
-Phase 1/2/3 invoke the in-process real-model harness at
+All run stages invoke the in-process real-model harness at
 ``services/api/tests/test_reader_record_ask_real_llm_eval.py`` via
 ``pytest -m real_llm -k phase<N>``. The harness is default-skipped; it
 only runs when the env gate is open.
@@ -75,7 +75,7 @@ REPO_ROOT = EVALS_ROOT.parent
 # ``vocabulary-seed-v1`` only — the Reader Record Ask working dataset is local,
 # env-bound, and never committed.
 #
-# P0 explicit dataset-dir binding: the previous ``DEFAULT_DATASET_DIR``
+# Explicit dataset-dir binding: the previous ``DEFAULT_DATASET_DIR``
 # was used as a silent fallback when neither ``--dataset-dir`` nor
 # ``CLAREAD_R4_A3_DATASET_DIR`` was set. That allowed real runs to
 # accidentally reuse a stale local working dataset. The constant is
@@ -105,7 +105,7 @@ _TRACKER_PATH = (
 # also fail-closes before any paid call when the env is missing.
 DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
 
-# R4-A4-2R P1-Budget: provider request cap env var — SAME name the
+# Provider request cap env var — SAME name the
 # in-process harness reads (services/api/tests/test_reader_record_ask_
 # real_llm_eval.py:_DEFAULT_MAX_REQUESTS + MAX_REQUESTS_ENV).
 # The aggregate reads this env to surface ``request_cap`` in
@@ -120,7 +120,7 @@ MAX_REQUESTS_ENV = "CLAREAD_R4_A3_MAX_REQUESTS"
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-2R P1-Budget: planned logical runs vs provider request cap
+# Planned logical runs vs provider request cap
 # ---------------------------------------------------------------------------
 
 
@@ -162,11 +162,11 @@ def _compute_budget_semantics(
     manifest: Any | None,
     request_cap: int | None,
 ) -> SimpleNamespace:
-    """R4-A4-2R3 P1-Budget: extract the five typed budget-semantics
+    """Extract the five typed budget-semantics
     fields from a manifest (self-contained) + env-configured request
     cap (V1 fallback only).
 
-    R4-A4-2R3 changes from R4-A4-2R2:
+    The current contract changes the earlier contract:
 
     - V2 manifests (``audit_contract_version == "r4-a4-2r3"``): the
       aggregate reads ``planned_logical_runs``, ``request_cap``,
@@ -184,11 +184,11 @@ def _compute_budget_semantics(
       ``request_cap - planned_logical_runs`` (matching the V1
       behavior).
 
-    R4-A4-2R2 changes from R4-A4-2R (retained for V1):
+    Changes retained for V1:
 
     - ``planned_logical_runs`` is read from the manifest's
       ``planned_logical_runs`` field when present. Falls back to
-      ``sum(len(planned_run_indices.values()))`` for pre-R4-A4-2R2
+      ``sum(len(planned_run_indices.values()))`` for older
       manifests.
     - ``request_cap`` is read from the manifest's ``request_cap``
       field when present. Falls back to the env-configured
@@ -218,9 +218,9 @@ def _compute_budget_semantics(
       ``executed_requests < actual_completed_runs`` indicates a
       corrupt manifest and raises ``ValueError`` (fail-closed).
 
-    R4-A4-2R P1-Budget rationale: the previous report conflated
+    The previous report conflated
     ``planned_logical_runs`` (case universe size) with
-    ``request_cap`` (provider call budget). The R4-A4-2 audit found
+    ``request_cap`` (provider call budget). An audit found
     "30 planned runs 共消耗 30 provider requests，但 3 次 output
     retry 导致只完成 27 runs" — the operator could not tell from
     the report whether 27/30 was a coverage gap (3 cases never ran)
@@ -228,7 +228,7 @@ def _compute_budget_semantics(
     retries). The five typed fields make this distinction
     auditable.
 
-    R4-A4-2R3 P1 rationale: the R4-A4-2R2 implementation still fell
+    The earlier implementation still fell
     back to the CURRENT shell env for ``request_cap`` when the
     manifest field was absent. Re-running the aggregate against a
     historical V2 run with different env produced wrong
@@ -252,21 +252,21 @@ def _compute_budget_semantics(
             retry_headroom=request_cap,  # cap - 0 planned
             retries_consumed=0,
         )
-    # R4-A4-2R3 P1: determine manifest version. V2 manifests are
+    # Determine manifest version. V2 manifests are
     # fully self-contained — NO env fallback. V1 manifests retain
     # the env fallback for backwards-compat.
     audit_contract_version = getattr(manifest, "audit_contract_version", None)
     is_v2 = audit_contract_version == "r4-a4-2r3"
 
-    # R4-A4-2R2 P1: prefer manifest's planned_logical_runs field
+    # Prefer the manifest's planned_logical_runs field
     # (self-contained) over recomputing from planned_run_indices.
-    # Falls back to recomputation for pre-R4-A4-2R2 manifests.
+    # Falls back to recomputation for older manifests.
     planned_logical_runs = int(getattr(manifest, "planned_logical_runs", 0))
     if planned_logical_runs == 0:
         planned_logical_runs = sum(
             len(v) for v in manifest.planned_run_indices.values()
         )
-    # R4-A4-2R3 P1: request_cap resolution differs by version.
+    # request_cap resolution differs by version.
     manifest_request_cap = getattr(manifest, "request_cap", None)
     if is_v2:
         # V2: manifest-only — NO env fallback. V2 Rule 18g guarantees
@@ -279,7 +279,7 @@ def _compute_budget_semantics(
         )
     else:
         # V1: prefer manifest's request_cap (self-contained) over the
-        # env-configured fallback. This preserves R4-A4-2R2 behavior
+        # env-configured fallback. This preserves the earlier behavior
         # for V1 manifests.
         if manifest_request_cap is not None:
             effective_request_cap = int(manifest_request_cap)
@@ -296,7 +296,7 @@ def _compute_budget_semantics(
             "manifest (each completed run consumes at least 1 request)"
         )
     retries_consumed = executed_requests - actual_completed_runs
-    # R4-A4-2R3 P1: retry_headroom resolution differs by version.
+    # retry_headroom resolution differs by version.
     manifest_retry_headroom = getattr(manifest, "retry_headroom", None)
     if is_v2:
         # V2: read directly from the manifest. V2 Rule 18f guarantees
@@ -311,7 +311,7 @@ def _compute_budget_semantics(
         )
     else:
         # V1: recompute as request_cap - planned_logical_runs
-        # (matching R4-A4-2R2 behavior). ``None`` when request_cap
+        # (matching the V1 behavior). ``None`` when request_cap
         # is None (manifest + env both absent).
         if effective_request_cap is None:
             retry_headroom = None
@@ -327,7 +327,7 @@ def _compute_budget_semantics(
 
 
 # ---------------------------------------------------------------------------
-# Dataset dir resolution (P0 explicit binding — no silent fallback)
+# Dataset dir resolution (explicit binding — no silent fallback)
 # ---------------------------------------------------------------------------
 
 
@@ -357,7 +357,7 @@ def _resolve_dataset_dir(cli_value: str | None) -> Path | None:
 def _preflight_dataset_dir(dataset_dir: Path | None) -> None:
     """Fail-closed when the dataset dir is missing or has no dataset.yaml.
 
-    P0 explicit dataset-dir binding: real runs MUST have an explicitly
+    Explicit dataset-dir binding: real runs MUST have an explicitly
     configured dataset dir (CLI or env). If neither is provided, or
     the resolved dir doesn't exist or doesn't contain ``dataset.yaml``,
     the runner exits BEFORE invoking the pytest harness subprocess —
@@ -405,12 +405,12 @@ def run_phase(
 
     Sets ``CLAREAD_R4_A3_RUN_ID`` (the run id) and
     ``CLAREAD_R4_A3_PRIOR_RUN_ID`` (the prior phase's run id, required
-    for Phase 2/3) so the harness writes artifacts under
+    for follow-up stages) so the harness writes artifacts under
     ``<runs_dir>/<run_id>/artifacts/`` with the requested run_id and
     reads prior-phase artifacts from
-    ``<runs_dir>/<prior_run_id>/artifacts/`` (P0-1).
+    ``<runs_dir>/<prior_run_id>/artifacts/``.
 
-    P0 explicit dataset-dir binding: ``dataset_dir`` is propagated to
+    Explicit dataset-dir binding: ``dataset_dir`` is propagated to
     the subprocess via ``CLAREAD_R4_A3_DATASET_DIR`` env var so the
     in-process harness resolves the same dataset. ``main()`` calls
     ``_preflight_dataset_dir`` BEFORE this function, so ``dataset_dir``
@@ -419,7 +419,7 @@ def run_phase(
     ``CLAREAD_R4_A3_DATASET_DIR`` is missing, the harness
     ``pytest.skip``s before any provider call.
 
-    R4-A4-2R P0-Path: ``runs_dir`` is normalized to an absolute
+    ``runs_dir`` is normalized to an absolute
     canonical path BEFORE propagating to the subprocess via
     ``CLAREAD_R4_A3_RUNS_DIR`` env var. The subprocess has
     ``cwd=services/api/`` — without normalization, a relative
@@ -431,7 +431,7 @@ def run_phase(
     callers (which already pre-normalize) and direct programmatic
     callers (which may pass a relative path).
     """
-    # R4-A4-2R P0-Path: normalize at function entry — defense-in-depth
+    # Normalize at function entry — defense-in-depth
     # so direct callers (not just main()) are protected.
     runs_dir = runs_dir.resolve()
     env = {
@@ -478,14 +478,14 @@ def _load_artifacts(artifact_dir: Path, run_id: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# P0-2: AggregateReadinessAudit — single source of truth for normal-verdict
+# AggregateReadinessAudit — single source of truth for normal-verdict
 # readiness. Concentrates ALL conditions that must hold before the normal
 # accepted/rework path may be entered. Replaces the parallel ``coverage_ok``
 # check that previously lived in ``aggregate()`` + the duplicated coverage
 # check inside ``_decide_final_verdict``.
 # ---------------------------------------------------------------------------
 
-# R4-A4-0 final gate closure (P1 de-dup): classification reason tags
+# Classification reason tags
 # and the three routing frozensets are imported from
 # :mod:`evaluators.context_support_contract` — the SINGLE source of
 # truth shared by the evaluator, aggregator, and runner. The previous
@@ -500,8 +500,8 @@ def _load_artifacts(artifact_dir: Path, run_id: str) -> list:
 #
 # Legacy is NOT an instrumentation_incomplete reason (the run did not
 # fail — it predates the new contract), but the verdict outcome is
-# the same: blocked_incomplete_real_model_run, allow_r4_a4=False,
-# allow_r4_b1=False. Kept as a separate set
+# the same: blocked_incomplete_real_model_run with both downstream gates
+# disabled. Kept as a separate set
 # (:data:`LEGACY_BLOCKER_CLASSIFICATIONS`) so the
 # ``instrumentation_incomplete_count`` audit field stays semantically
 # narrow (only the 3 instrumentation-incomplete reasons).
@@ -510,8 +510,8 @@ def _load_artifacts(artifact_dir: Path, run_id: str) -> list:
 class AggregateReadinessAudit:
     """Typed audit result concentrating ALL normal-verdict preconditions.
 
-    Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
-    Requirement: Evaluation Completeness (P0-2 final closure).
+    Spec: aggregate readiness contract.
+    Requirement: Evaluation Completeness.
 
     The normal accepted/rework path (via :func:`_decide_normal_verdict`)
     is ONLY reachable when ``ready_for_normal_verdict`` returns ``True``.
@@ -550,20 +550,20 @@ class AggregateReadinessAudit:
       :class:`CoverageAuditResult`. Must be equal for readiness.
     - ``unknown_planned_case_count``: count of manifest-planned case
       IDs that do NOT exist in the current dataset's ``cases_by_id``.
-      P0-2 dataset case binding — a manifest planning unknown cases
+      Dataset case binding — a manifest planning unknown cases
       indicates the manifest was written against a different dataset
       version and MUST NOT be stitched together with the current run.
     - ``unknown_artifact_case_count``: count of valid artifacts whose
       ``case_id`` is NOT in the current dataset's ``cases_by_id``.
-      P0-2 dataset case binding — an artifact referencing an unknown
+      Dataset case binding — an artifact referencing an unknown
       case cannot be evaluated and MUST NOT be silently skipped
       (the previous ``warn + continue`` path let ``case_results=[]``
       reach ``_decide_normal_verdict``, which returned ``accepted``
       via ``all([])``).
     - ``evaluated_case_result_count``: ``len(case_results)`` after
       the evaluator gate. Must equal ``planned_count`` AND be > 0.
-    - ``instrumentation_incomplete_count``: R4-A4-0 final gate closure
-      (P0-2). Count of evaluated ``context_support`` dimensions whose
+    - ``instrumentation_incomplete_count``: Count of evaluated
+      ``context_support`` dimensions whose
       typed ``classification`` falls in
       :data:`INSTRUMENTATION_INCOMPLETE_REASONS` (``baseline_unavailable``
       / ``runtime_exception`` / ``instrumentation_incomplete``). These
@@ -572,11 +572,11 @@ class AggregateReadinessAudit:
       as ``confirmed_model_failure``, and MUST NOT cluster as
       ``fact-not-grounded``. The verdict falls to
       ``blocked_incomplete_real_model_run`` with
-      ``allow_r4_a4 = allow_r4_b1 = False`` via precedence row 9.5
+      both downstream gates disabled via precedence row 9.5
       in :func:`_decide_final_verdict`. ``fact_not_supported`` /
       ``fact_not_cited`` classifications are NOT counted here — they
       are real model failures that DO enter rework.
-    - ``legacy_artifact_count``: R4-A4-0 final gate closure (P0-2).
+    - ``legacy_artifact_count``: Count of legacy artifacts.
       Count of evaluated ``context_support`` dimensions whose typed
       ``classification`` is ``legacy_artifact`` (version=None,
       status=None — predates the new contract). Per user spec, legacy
@@ -611,17 +611,17 @@ class AggregateReadinessAudit:
         "unknown_planned_case_count",
         "unknown_artifact_case_count",
         "evaluated_case_result_count",
-        # R4-A4-0 final gate closure (P0-2): instrumentation-incomplete
+        # Instrumentation-incomplete
         # blocker count. See class docstring above.
         "instrumentation_incomplete_count",
-        # R4-A4-0 final gate closure (P0-2): legacy-artifact blocker
+        # Legacy-artifact blocker
         # count. Legacy artifacts (version=None, status=None) cannot
         # be authoritatively re-evaluated under the new contract —
         # the authoritative aggregate MUST block them and require new
         # artifacts. NOT counted under ``instrumentation_incomplete_count``
         # because the run did not fail — it predates the contract.
         "legacy_artifact_count",
-        # R4-A4-2R2 P0-2: three-layer runtime fixture identity
+        # Three-layer runtime fixture identity
         # mismatch count (dataset expected != manifest identity OR
         # manifest identity != artifact actual OR dataset expected !=
         # artifact actual). Artifacts failing this check are dropped
@@ -698,14 +698,14 @@ class AggregateReadinessAudit:
             and self.unknown_artifact_case_count == 0
             and self.evaluated_case_result_count == self.planned_count
             and self.evaluated_case_result_count > 0
-            # R4-A4-0 final gate closure (P0-2): instrumentation-incomplete
+            # Instrumentation-incomplete
             # blockers (capture_status=unavailable/failed, fingerprint
             # mismatch, missing required observation, duplicate/unknown
             # observation, supporting handle not in model context) MUST
             # NOT reach the normal accepted/rework path. They are NOT
             # model correctness failures.
             and self.instrumentation_incomplete_count == 0
-            # R4-A4-0 final gate closure (P0-2): legacy artifacts also
+            # Legacy artifacts also
             # MUST NOT reach the normal accepted/rework path — they
             # cannot be authoritatively re-evaluated under the new
             # contract. The authoritative aggregate MUST block them
@@ -713,7 +713,7 @@ class AggregateReadinessAudit:
             # aggregate 若 dataset identity 恰好匹配，也不得 accepted；
             # 应 blocked_incomplete_real_model_run").
             and self.legacy_artifact_count == 0
-            # R4-A4-2R2 P0-2: three-layer runtime fixture identity
+            # Three-layer runtime fixture identity
             # mismatch (dataset expected != manifest identity !=
             # artifact actual) is a typed blocker — the artifact
             # cannot be authoritatively evaluated because the runtime
@@ -773,9 +773,9 @@ def _build_case_result(case, artifact):
     """Build a CaseEvalResult from an artifact + 11 dim results.
 
     Uses :func:`evaluate_artifact` as the single 11-dimension evaluator
-    entrypoint (P0-3). The runner no longer duplicates the evaluator
+    entrypoint. The runner no longer duplicates the evaluator
     list — divergence between the runner and the harness was the root
-    cause of P0-3.
+    cause of the divergence.
     """
     from claread_eval.reader_record_ask.evaluation import evaluate_artifact
     from claread_eval.reader_record_ask.evaluators import CaseEvalResult
@@ -788,7 +788,7 @@ def _build_case_result(case, artifact):
         output_tokens = artifact.agent_usage.output_tokens or 0
         total_tokens = input_tokens + output_tokens
         total_requests = artifact.agent_usage.requests or 0
-    # P0-8: prefer BudgetedUsageModel counters when agent_usage is None
+    # Prefer BudgetedUsageModel counters when agent_usage is None
     # or zero (the wrapper's counters are the source of truth).
     if (total_requests is None or total_requests == 0) and artifact.executed_requests:
         total_requests = artifact.executed_requests
@@ -833,7 +833,7 @@ def _decide_normal_verdict(case_results, *, readiness=None):
     - No identity mismatch (the dataset fingerprint matches all artifacts).
     - Real-model run was not blocked (some real artifacts exist).
 
-    P0-2 final closure (defense-in-depth):
+    Defense-in-depth:
     - Empty ``case_results`` MUST NOT return ``accepted``. The previous
       ``all([])`` returned ``True``, which let the unknown-case path
       (artifact.case_id not in dataset → warn + continue → empty
@@ -874,7 +874,7 @@ def _decide_normal_verdict(case_results, *, readiness=None):
     )
     if all_passed and high_severity_failures == 0:
         return "accepted", True, True
-    # rework: R4-A4 conditionally allowed, R4-B1 deferred regardless of
+    # rework: the first downstream gate is conditionally allowed; the second is deferred regardless of
     # high-severity failure count.
     return "rework", True, False
 
@@ -893,10 +893,8 @@ def _decide_final_verdict(
 ):
     """Single source of truth for the final aggregate verdict.
 
-    Implements the verdict/gate table (frozen contract, spec
-    `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
-    Requirement: Final Verdict Gate Contract). Each row's ``(a4, b1)``
-    pair is ``(allow_r4_a4, allow_r4_b1)``:
+    Implements the frozen verdict/gate table (Final Verdict Gate Contract).
+    Each row's gate pair is shown as two booleans:
 
     1. identity mismatch                              → blocked_dataset_identity_mismatch (F, F)
     2. manifest corrupt (any artifacts)               → blocked_incomplete_real_model_run  (F, F)
@@ -926,7 +924,7 @@ def _decide_final_verdict(
     11. completed manifest + full coverage + all pass → accepted                           (T, T)
     12. completed manifest + full coverage + qual fail→ rework                             (T, F)
 
-    R4-A4-2R P0-Identity — precedence 5.5 is the runtime fixture
+    Precedence 5.5 is the runtime fixture
     identity fence. It fires when at least one loaded artifact's
     runtime ``envelope_fingerprint`` does not match the case's
     declared ``expected_envelope_fingerprint`` (or is missing on a
@@ -938,7 +936,7 @@ def _decide_final_verdict(
     facts from live article text. The artifacts are dropped from the
     evaluable set in :func:`aggregate` and the verdict falls here.
 
-    R4-A4-0 final gate closure (P0-2) — precedence 9.5 is the typed
+    Precedence 9.5 is the typed
     blocker row. It fires AFTER 9 (count mismatch) and BEFORE 10
     (never-ran), so:
 
@@ -982,7 +980,7 @@ def _decide_final_verdict(
 
     2. Manifest corrupt (file exists but unparseable / invalid) →
        ``("blocked_incomplete_real_model_run", False, False)``.
-       P1 fix: a corrupt manifest indicates the run started but its
+       A corrupt manifest indicates the run started but its
        audit trail is broken.
 
     3. Manifest absent + some artifacts on disk →
@@ -997,12 +995,12 @@ def _decide_final_verdict(
 
     4. Manifest valid but foreign (``run_id`` mismatch) →
        ``("blocked_incomplete_real_model_run", False, False)``.
-       P0-2 fix: a foreign/copied manifest MUST NOT be stitched
+       A foreign/copied manifest MUST NOT be stitched
        together with the current run's artifacts.
 
     5. Artifact load invalid/corrupt/foreign (from ArtifactLoadResult)
        → ``("blocked_incomplete_real_model_run", False, False)``.
-       P0-1 final closure: corrupt/invalid/foreign artifacts cannot
+       Corrupt/invalid/foreign artifacts cannot
        be silently dropped — the audit trail is broken and the verdict
        must reflect it. This is checked BEFORE budget_exhausted and
        coverage_gap because a corrupt artifact file is a stronger
@@ -1020,7 +1018,7 @@ def _decide_final_verdict(
        not exist in the current dataset, OR an artifact's case_id
        is not in the current dataset →
        ``("blocked_incomplete_real_model_run", False, False)``.
-       P0-2 final closure: dataset case binding must be enforced at
+       Dataset case binding must be enforced at
        the verdict seam, NOT via ``warn + continue`` in the evaluator
        loop. This catches both manifest-vs-dataset drift AND
        artifact-vs-dataset drift that the identity fence might miss
@@ -1030,7 +1028,7 @@ def _decide_final_verdict(
     9. Evaluated case result count mismatch —
        ``evaluated_case_result_count != planned_count`` →
        ``("blocked_incomplete_real_model_run", False, False)``.
-       P0-2 final closure: structural fix for the ``all([]) → accepted``
+       Structural fix for the ``all([]) → accepted``
        bug. The previous path let unknown-case artifacts be skipped,
        producing ``case_results=[]`` with ``planned_count=1``, and
        ``_decide_normal_verdict([])`` returned accepted. This row
@@ -1038,7 +1036,7 @@ def _decide_final_verdict(
 
     10. No manifest + no artifacts (not yet real-run) →
         ``("blocked_by_real_model_run", False, False)``.
-        NOTE: ``allow_r4_a4 = False`` per the frozen contract (bug fix:
+        NOTE: the first downstream gate remains disabled per the frozen contract (bug fix:
         previous implementation incorrectly returned ``True``).
 
     11/12. Completed manifest + full coverage → normal path
@@ -1080,13 +1078,13 @@ def _decide_final_verdict(
             these rows are skipped — the previous precedence applies.
 
     Returns:
-        ``(verdict, allow_r4_a4, allow_r4_b1)``.
+        The verdict plus two gate booleans.
     """
     # Precedence 1: identity mismatch wins over everything.
     if identity_mismatched_count > 0:
         return "blocked_dataset_identity_mismatch", False, False
 
-    # Precedence 2: corrupt manifest → incomplete (P1 fix).
+    # Precedence 2: corrupt manifest → incomplete.
     # A corrupt manifest indicates the run started but its audit trail
     # is broken. This is strictly worse than absent and MUST NOT be
     # folded into the absent path.
@@ -1107,7 +1105,7 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 4: manifest valid but foreign (run_id mismatch).
-    # P0-2 fix: a foreign manifest MUST NOT be stitched together with
+    # A foreign manifest MUST NOT be stitched together with
     # the current run's artifacts. NOT classified as identity mismatch
     # unless the dataset identity itself mismatches.
     if (
@@ -1118,12 +1116,12 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 5: artifact load invalid/corrupt/foreign — the audit
-    # trail is broken at the file level. P0-1 final closure: corrupt
+    # trail is broken at the file level. Corrupt
     # artifacts cannot be silently dropped.
     if readiness is not None and not readiness.artifact_load_clean:
         return "blocked_incomplete_real_model_run", False, False
 
-    # Precedence 5.5: R4-A4-2R P0-Identity — runtime fixture identity
+    # Precedence 5.5: runtime fixture identity
     # mismatch. At least one loaded artifact's runtime
     # ``envelope_fingerprint`` does not match the case's declared
     # ``expected_envelope_fingerprint`` (or is missing on a declared
@@ -1140,7 +1138,7 @@ def _decide_final_verdict(
     if runtime_identity_mismatch_count > 0:
         return "blocked_incomplete_real_model_run", False, False
 
-    # Precedence 5.6: R4-A4-2R2 P0-2 — three-layer runtime fixture
+    # Precedence 5.6: three-layer runtime fixture
     # identity mismatch. The three-layer contract is
     #   dataset expected == manifest identity == artifact actual.
     # Any deviation (missing/empty/mismatch/foreign identity in any
@@ -1159,14 +1157,14 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 6: budget_exhausted manifest → incomplete (NOT
-    # accepted/rework). This is the P0-2 bug fix: previously a partial
+    # accepted/rework). Previously, a partial
     # budget-exhausted run with some case_results could fall through to
     # accepted/rework.
     if has_budget_exhausted:
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 7: completed manifest but coverage gap OR is_complete
-    # False OR evaluable != planned. P0-1 defense-in-depth: coverage_ok
+    # False OR evaluable != planned. Defense-in-depth: coverage_ok
     # now requires manifest.is_complete() AND
     # evaluable_artifact_count == planned_count, not just zero error
     # counts.
@@ -1183,7 +1181,7 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 8: unknown dataset case — manifest planned or artifact
-    # references a case_id not in the current dataset. P0-2 final closure.
+    # references a case_id not in the current dataset.
     if readiness is not None and (
         readiness.unknown_planned_case_count > 0
         or readiness.unknown_artifact_case_count > 0
@@ -1191,7 +1189,7 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 9: evaluated_case_result_count mismatch — the evaluator
-    # produced fewer/more results than planned. P0-2 final closure:
+    # produced fewer/more results than planned. Structural fix:
     # structural fix for ``all([]) → accepted``.
     #
     # This precedence ONLY fires when ``planned_count > 0`` — i.e., there
@@ -1212,7 +1210,7 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 9.5: instrumentation_incomplete OR legacy_artifact —
-    # R4-A4-0 final gate closure (P0-2). The evaluator ran and produced
+    # Typed blocker row. The evaluator ran and produced
     # the expected number of case_results, BUT at least one
     # ``context_support`` dimension carries a typed ``classification``
     # in :data:`INSTRUMENTATION_INCOMPLETE_REASONS`
@@ -1252,7 +1250,7 @@ def _decide_final_verdict(
         return "blocked_incomplete_real_model_run", False, False
 
     # Precedence 10: no manifest + no artifacts → blocked_by_real_model_run.
-    # NOTE: allow_r4_a4=False per the frozen contract (bug fix:
+    # NOTE: the first downstream gate remains disabled per the frozen contract (bug fix:
     # previous implementation incorrectly returned True).
     if real_model_blocked or (
         not coverage_audit.manifest_present and total_artifacts_loaded == 0
@@ -1268,7 +1266,7 @@ def _decide_final_verdict(
 
 
 def _runtime_identity_mismatches(artifact, cases_by_id: dict) -> bool:
-    """R4-A4-2R P0-Identity: check if artifact's runtime envelope_fingerprint
+    """Check whether an artifact's runtime envelope_fingerprint
     mismatches the case's declared ``expected_envelope_fingerprint``.
 
     Returns ``True`` when:
@@ -1290,7 +1288,7 @@ def _runtime_identity_mismatches(artifact, cases_by_id: dict) -> bool:
     live article text — it only compares the artifact's recorded
     runtime identity against the dataset's declared expected identity.
 
-    R4-A4-2R2: this envelope-only check is RETAINED for defense-in-
+    This envelope-only check is RETAINED for defense-in-
     depth. The PRIMARY identity contract is now
     ``runtime_fixture_fingerprint`` (verified by
     :func:`_runtime_fixture_identity_mismatches`), which binds the
@@ -1319,7 +1317,7 @@ def _runtime_fixture_identity_mismatches(
     cases_by_id: dict,
     manifest: Any | None,
 ) -> tuple[bool, str | None]:
-    """R4-A4-2R3 P0-2: three-layer runtime fixture identity check.
+    """Three-layer runtime fixture identity check.
 
     Verifies the contract:
 
@@ -1338,11 +1336,11 @@ def _runtime_fixture_identity_mismatches(
          is None or empty. This is a hard contract violation: ALL
          real_phase1 cases MUST declare the field (harness preflight
          fail-closes on this; the aggregate re-checks defense-in-depth).
-         R4-A4-2R3 P0-2 expands this from BBC-only to ALL real_phase1
+         The strict contract expands this from BBC-only to ALL real_phase1
          cases (including synthetic).
       2. ``missing_artifact_actual`` — case declares expected but
          artifact's ``runtime_fixture_fingerprint`` is None or empty.
-         The artifact was written by a pre-R4-A4-2R2 harness, the
+         The artifact was written by an older harness, the
          runtime raised an exception (capture_status="failed"), or the
          baseline assembly yielded 0 chunks (capture_status=
          "unavailable") — fail-closed.
@@ -1368,7 +1366,7 @@ def _runtime_fixture_identity_mismatches(
          valid SHA-256 but does not match either dataset expected
          or artifact actual (a "foreign" identity from another run).
 
-    R4-A4-2R3 P0-2 manifest version strategy:
+    Manifest version strategy:
 
     - V2 (``audit_contract_version == "r4-a4-2r3"``): the three-layer
       check is MANDATORY. The manifest's ``runtime_fixture_identities``
@@ -1384,7 +1382,7 @@ def _runtime_fixture_identity_mismatches(
 
     The case is treated as a ``real_phase1`` case when
     ``"real_phase1" in case.phase_tags``. This covers BOTH BBC and
-    synthetic real_phase1 cases — R4-A4-2R3 P0-2 requires ALL of them
+    synthetic real_phase1 cases; all of them are required
     to declare ``expected_runtime_fixture_fingerprint``.
     """
     case = cases_by_id.get(artifact.case_id)
@@ -1397,7 +1395,7 @@ def _runtime_fixture_identity_mismatches(
     if expected is None or not str(expected).strip():
         if is_real_phase1:
             # Check 1: ALL real_phase1 cases (BBC + synthetic) MUST
-            # declare the field. R4-A4-2R3 P0-2 expands this from
+            # declare the field. The strict contract expands this from
             # BBC-only to ALL real_phase1 cases.
             return True, "missing_dataset_expected"
         # Non-real_phase1 case without declaration — backwards-compat.
@@ -1417,7 +1415,7 @@ def _runtime_fixture_identity_mismatches(
         # Check 3: artifact actual != dataset expected.
         return True, "dataset_artifact_mismatch"
 
-    # Three-layer manifest checks. R4-A4-2R3 P0-2: use EXPLICIT
+    # Three-layer manifest checks use EXPLICIT
     # ``audit_contract_version`` to decide whether to perform the
     # three-layer check — NOT the empty-dict heuristic. V2 manifests
     # MUST carry the identity map (Rule 18a); V1 manifests may have
@@ -1456,27 +1454,27 @@ def aggregate(
     dataset_dir: Path,
     report_output: Path,
     *,
-    # R4-A4-0 (Task 5): parameterized report inputs so the runner no
+    # Parameterized report inputs so the runner no
     # longer relies on hardcoded date / file list / tracker path. CLI
     # optional flags flow through here.
     report_date: str | None = None,
     modified_files: list[str] | None = None,
-    task_label: str = "Task 5",
+    evaluation_heading: str = "current evaluation",
     tracker_path: str | None = None,
 ) -> int:
     """Load artifacts, run 11 evaluators, aggregate, generate report.
 
     Uses :class:`RunSessionLayout` to resolve the artifact directory
-    (P0-1) and :func:`evaluate_artifact` as the single evaluator
-    entrypoint (P0-3). Budget-exhausted artifacts are NOT evaluated
-    (P0-2) and NOT treated as passes.
+    and :func:`evaluate_artifact` as the single evaluator
+    entrypoint. Budget-exhausted artifacts are NOT evaluated
+    and NOT treated as passes.
 
-    P1-b: the dataset and its :class:`DatasetIdentity` are loaded via
-    :func:`load_r4_a3_dataset_with_snapshot` — the identity is bound
+    The dataset and its :class:`DatasetIdentity` are loaded via
+    the snapshot-loading entrypoint — the identity is bound
     to the same bytes the parser consumed, so a disk mutation between
     load and identity computation cannot desynchronize the fingerprint.
 
-    P1-a: the final verdict is decided by :func:`_decide_final_verdict`,
+    The final verdict is decided by :func:`_decide_final_verdict`,
     the SINGLE source of truth for the verdict precedence. The previous
     implementation set ``blocked_dataset_identity_mismatch`` then
     overwrote it with ``blocked_by_real_model_run`` when all artifacts
@@ -1491,7 +1489,7 @@ def aggregate(
     )
     from claread_eval.reader_record_ask.evaluators import aggregate_results
     from claread_eval.reader_record_ask.loader import (
-        load_r4_a3_dataset_with_snapshot,
+        load_reader_record_ask_dataset_with_snapshot,
     )
     from claread_eval.reader_record_ask.report import generate_eval_report
     from claread_eval.reader_record_ask.run_manifest import (
@@ -1502,21 +1500,21 @@ def aggregate(
     )
     from claread_eval.reader_record_ask.session import RunSessionLayout
 
-    # P1-b: load dataset + identity from a SINGLE byte capture. The
+    # Load dataset + identity from a SINGLE byte capture. The
     # snapshot's ``dataset`` and ``identity`` are derived from the same
     # bytes — a disk mutation after this point cannot desync them.
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
     dataset = snapshot.dataset
     dataset_identity = snapshot.identity
     cases_by_id = {c.id: c for c in dataset.cases}
 
-    # P0-1: use RunSessionLayout to resolve the artifact directory.
+    # Use RunSessionLayout to resolve the artifact directory.
     # The same resolver the harness uses to write — writer and reader
     # cannot diverge.
     session = RunSessionLayout(runs_root=runs_dir, run_id=run_id)
     artifact_dir = session.artifact_dir
 
-    # P0-1 final closure: use the typed artifact-load seam as the
+    # Use the typed artifact-load seam as the
     # SINGLE source of truth for parsing on-disk artifacts. This
     # replaces the old ``_load_artifacts`` that did ``warn + continue``
     # for invalid/corrupt/foreign files — those files are now COUNTED
@@ -1529,9 +1527,9 @@ def aggregate(
     artifact_load_clean = load_result.is_clean
 
     # ------------------------------------------------------------------
-    # P1-c + P1 + P0-2: Coverage Audit with three manifest states.
+    # Coverage Audit with three manifest states.
     # ------------------------------------------------------------------
-    # P1 fix: read the manifest via read_manifest_with_state, which
+    # Read the manifest via read_manifest_with_state, which
     # distinguishes absent / valid / corrupt. The previous code caught
     # RunManifestError and folded corrupt → absent, which caused
     # "corrupt manifest + no artifacts" to be misclassified as
@@ -1539,7 +1537,7 @@ def aggregate(
     # blocked_incomplete_real_model_run (the "ran but unauditable"
     # verdict).
     #
-    # P0-2 fix: after a VALID read, verify manifest.run_id == session.run_id
+    # After a VALID read, verify manifest.run_id == session.run_id
     # BEFORE consulting the manifest for coverage audit. A foreign
     # manifest (wrong run_id) MUST NOT be stitched together with the
     # current run's artifacts. The run_id check happens BEFORE coverage
@@ -1548,7 +1546,7 @@ def aggregate(
     manifest_state = manifest_read.state
     manifest = manifest_read.manifest  # None unless VALID
 
-    # P0-2: run_id binding check. Only meaningful when manifest is
+    # run_id binding check. Only meaningful when manifest is
     # VALID (loaded successfully). A foreign manifest is treated as a
     # coverage failure → blocked_incomplete_real_model_run. NOT
     # classified as identity mismatch unless the dataset identity
@@ -1574,7 +1572,7 @@ def aggregate(
         else:
             manifest_for_audit = manifest
     elif manifest_state == ManifestState.CORRUPT:
-        # P1: corrupt manifest — do NOT crash, do NOT fold into absent.
+        # Corrupt manifest — do NOT crash, do NOT fold into absent.
         # Pass manifest=None so validate_manifest_coverage reports
         # manifest_present=False, but propagate manifest_state="corrupt"
         # so the verdict function distinguishes corrupt (ran but
@@ -1599,7 +1597,7 @@ def aggregate(
         manifest_run_id_matches=manifest_run_id_matches,
     )
 
-    # P0-2: separate budget_exhausted artifacts from real artifacts.
+    # Separate budget_exhausted artifacts from real artifacts.
     # Budget-exhausted artifacts were never run, so there is nothing
     # to evaluate. They are NOT treated as passes — the report shows
     # the cap-triggered state separately.
@@ -1609,7 +1607,7 @@ def aggregate(
         coverage_audit.manifest_status == "budget_exhausted"
     )
 
-    # R4-A4-2R P1-Budget: compute the five typed budget-semantics
+    # Compute the five typed budget-semantics
     # fields for operator observability. The manifest is the
     # authoritative source for planned/completed counts and
     # executed_requests; the env-configured request cap is read via
@@ -1652,7 +1650,7 @@ def aggregate(
             retries_consumed=0,
         )
 
-    # P0-2 dataset identity fence: artifacts whose identity is missing
+    # Dataset identity fence: artifacts whose identity is missing
     # or does NOT match the current dataset are NOT silently skipped
     # and NOT treated as pass/fail. They are segregated so the verdict
     # reflects the identity mismatch (spec §二.5).
@@ -1682,7 +1680,7 @@ def aggregate(
         ]
 
     # ------------------------------------------------------------------
-    # R4-A4-2R P0-Identity: runtime fixture identity fence.
+    # Runtime fixture identity fence.
     # ------------------------------------------------------------------
     # For each artifact whose case declares ``expected_envelope_fingerprint``,
     # verify the artifact's runtime ``envelope_fingerprint`` matches
@@ -1721,7 +1719,7 @@ def aggregate(
         ]
         print(
             f"WARN: {runtime_identity_mismatch_count} artifact(s) failed "
-            "R4-A4-2R P0-Identity runtime identity verification — "
+            "  runtime identity verification — "
             "artifact envelope_fingerprint does not match the case's "
             "declared expected_envelope_fingerprint. These artifacts "
             "are NOT evaluated and NOT counted as passes. Verdict will "
@@ -1730,7 +1728,7 @@ def aggregate(
         )
 
     # ------------------------------------------------------------------
-    # R4-A4-2R2 P0-2: three-layer runtime fixture identity check.
+    # Three-layer runtime fixture identity check.
     # ------------------------------------------------------------------
     # For each artifact, verify:
     #   dataset expected == manifest identity == artifact actual
@@ -1784,7 +1782,7 @@ def aggregate(
         )
         print(
             f"WARN: {runtime_fixture_identity_mismatch_count} artifact(s) "
-            "failed R4-A4-2R2 P0-2 three-layer runtime fixture identity "
+            "failed three-layer runtime fixture identity "
             "verification (dataset expected == manifest identity == "
             "artifact actual). Typed reasons: " + reasons_summary + ". "
             "These artifacts are NOT evaluated and NOT counted as "
@@ -1794,7 +1792,7 @@ def aggregate(
         )
 
     # ------------------------------------------------------------------
-    # P0-2 final closure: dataset case binding.
+    # Dataset case binding.
     # ------------------------------------------------------------------
     # Manifest's planned_run_indices.keys() MUST be a subset of the
     # current dataset's cases_by_id. A manifest planning unknown cases
@@ -1827,7 +1825,7 @@ def aggregate(
     )
 
     # ------------------------------------------------------------------
-    # P0-2 final closure: build AggregateReadinessAudit (pre-evaluator).
+    # Build AggregateReadinessAudit (pre-evaluator).
     # ------------------------------------------------------------------
     # This is the SINGLE source of truth for normal-verdict readiness.
     # The previous parallel ``coverage_ok`` check in ``aggregate()``
@@ -1871,7 +1869,7 @@ def aggregate(
     # is True. Otherwise skip — the verdict will be a blocked_* variant
     # decided by _decide_final_verdict via the readiness audit.
     #
-    # P0-2 final closure: unknown case_id artifacts are NO LONGER
+    # Unknown case_id artifacts are NO LONGER
     # silently skipped via ``warn + continue``. The
     # ``unknown_artifact_case_count`` in the readiness audit forces
     # ``pre_evaluator_ready=False``, so the evaluator is skipped
@@ -1914,7 +1912,7 @@ def aggregate(
             case_results.append(_build_case_result(case, artifact))
 
     # ------------------------------------------------------------------
-    # P0-2 final closure: rebuild readiness with actual
+    # Rebuild readiness with actual
     # evaluated_case_result_count, instrumentation_incomplete_count,
     # and legacy_artifact_count, then pass to _decide_final_verdict.
     # ------------------------------------------------------------------
@@ -1925,7 +1923,7 @@ def aggregate(
     # ``legacy_artifact_count`` are computed from ``case_results`` —
     # all other fields are carried over from ``pre_eval_readiness``.
     #
-    # R4-A4-0 final gate closure (P0-2): ``instrumentation_incomplete_count``
+    # ``instrumentation_incomplete_count``
     # is the count of evaluated ``context_support`` dimensions whose
     # typed ``classification`` falls in
     # :data:`INSTRUMENTATION_INCOMPLETE_REASONS` (``baseline_unavailable``
@@ -2012,16 +2010,16 @@ def aggregate(
         ),
     ] if real_model_blocked else None
 
-    # P1-a: SINGLE source of truth for the verdict precedence. No
+    # SINGLE source of truth for the verdict precedence. No
     # caller-side overrides — _decide_final_verdict returns the final
-    # (verdict, allow_r4_a4, allow_r4_b1) tuple in one place.
+    # verdict and two gate booleans in one place.
     #
-    # P0-1 final closure: ``total_artifacts_loaded`` is now
+    # ``total_artifacts_loaded`` is now
     # ``discovered_file_count`` (the count of ``*.json`` files found
     # BEFORE filtering by validity/foreign). This means "absent
     # manifest + 1 corrupt artifact file" correctly falls to row 3
     # (incomplete) instead of row 10 (blocked_by_real_model_run).
-    verdict, allow_r4_a4, allow_r4_b1 = _decide_final_verdict(
+    verdict, allow_correctness_followup, allow_streaming_provider_followup = _decide_final_verdict(
         case_results=case_results,
         coverage_audit=coverage_audit,
         identity_mismatched_count=identity_mismatched_count,
@@ -2069,8 +2067,8 @@ def aggregate(
             "passed/skipped 计数。"
         ),
         verdict=verdict,
-        allow_r4_a4=allow_r4_a4,
-        allow_r4_b1=allow_r4_b1,
+        allow_correctness_followup=allow_correctness_followup,
+        allow_streaming_provider_followup=allow_streaming_provider_followup,
         run_metadata={
             "run_id": run_id,
             "artifact_dir": str(artifact_dir),
@@ -2084,7 +2082,7 @@ def aggregate(
             "total_budget_exhausted_artifacts": len(budget_exhausted_artifacts),
             "has_budget_exhausted": has_budget_exhausted,
             "identity_mismatched_artifacts": identity_mismatched_count,
-            # R4-A4-2R P0-Identity: runtime fixture identity mismatch
+            # Runtime fixture identity mismatch
             # count. > 0 means at least one loaded artifact's runtime
             # ``envelope_fingerprint`` does not match the case's
             # declared ``expected_envelope_fingerprint``. Those
@@ -2096,7 +2094,7 @@ def aggregate(
             "runtime_identity_mismatched_artifacts": (
                 runtime_identity_mismatch_count
             ),
-            # P0-1 final closure: ArtifactLoadResult typed counts.
+            # ArtifactLoadResult typed counts.
             # Surfaces invalid_json / invalid_schema / foreign_run_id
             # counts so the operator can see WHY the verdict fell to
             # blocked_incomplete_real_model_run (instead of a vague
@@ -2110,7 +2108,7 @@ def aggregate(
                 "invalid_artifact_count": invalid_artifact_count,
                 "is_clean": artifact_load_clean,
             },
-            # P0-2 final closure: AggregateReadinessAudit typed signals.
+            # AggregateReadinessAudit typed signals.
             # Concentrates ALL normal-verdict preconditions in one
             # place so the operator can see exactly which gate failed.
             "readiness_audit": {
@@ -2132,7 +2130,7 @@ def aggregate(
                 "evaluated_case_result_count": (
                     readiness.evaluated_case_result_count
                 ),
-                # R4-A4-0 final gate closure (P0-2): typed
+                # Typed
                 # instrumentation-incomplete blocker count. > 0 means
                 # the verdict falls to
                 # ``blocked_incomplete_real_model_run`` via precedence
@@ -2141,13 +2139,13 @@ def aggregate(
                 "instrumentation_incomplete_count": (
                     readiness.instrumentation_incomplete_count
                 ),
-                # R4-A4-0 final gate closure (P0-2): legacy-artifact
+                # Legacy-artifact
                 # blocker count. Per user spec, legacy artifacts MUST
                 # also be blocked in the authoritative aggregate.
                 "legacy_artifact_count": readiness.legacy_artifact_count,
                 "pre_evaluator_ready": readiness.pre_evaluator_ready,
                 "ready_for_normal_verdict": readiness.ready_for_normal_verdict,
-                # R4-A4-2R2 P0-2: three-layer runtime fixture identity
+                # Three-layer runtime fixture identity
                 # mismatch count. > 0 means at least one loaded
                 # artifact's runtime_fixture_fingerprint (or the
                 # manifest's runtime_fixture_identities entry) does
@@ -2197,11 +2195,11 @@ def aggregate(
                     coverage_audit.unexpected_run_indices
                 ),
             },
-            # R4-A4-2R P1-Budget: planned logical runs vs provider
+            # Planned logical runs vs provider
             # request cap semantics. The five typed fields let the
             # operator distinguish a coverage gap (planned >
             # actual_completed) from a retry-overflow
-            # (retries_consumed > 0). The R4-A4-2 audit found "30
+            # (retries_consumed > 0). An earlier audit found "30
             # planned, 30 requests, 27 completed" was ambiguous —
             # these fields make the cause auditable. ``request_cap``
             # is ``None`` when the env var is unset (the harness may
@@ -2222,7 +2220,7 @@ def aggregate(
             else str(HARNESS_TEST_PATH),
             "tracker_path": _TRACKER_PATH,
         },
-        # R4-A4-0 (Task 5): parameterize previously hardcoded values.
+        # Parameterize previously hardcoded values.
         # The report no longer carries stale date / file list / tracker
         # path from the previous round. ``report_date`` defaults to
         # today when caller does not pass it; ``modified_files`` and
@@ -2230,7 +2228,7 @@ def aggregate(
         # canonical defaults).
         report_date=report_date,
         modified_files=modified_files,
-        task_label=task_label,
+        evaluation_heading=evaluation_heading,
         tracker_path=tracker_path,
     )
 
@@ -2238,8 +2236,8 @@ def aggregate(
     report_output.write_text(report, encoding="utf-8")
     print(f"Report written to: {report_output}")
     print(
-        f"verdict={verdict} allow_r4_a4={allow_r4_a4} "
-        f"allow_r4_b1={allow_r4_b1} artifacts={len(artifacts)} "
+        f"verdict={verdict} allow_correctness_followup={allow_correctness_followup} "
+        f"allow_streaming_provider_followup={allow_streaming_provider_followup} artifacts={len(artifacts)} "
         f"real={len(real_artifacts)} budget_exhausted={len(budget_exhausted_artifacts)} "
         f"runtime_identity_mismatched={runtime_identity_mismatch_count}"
     )
@@ -2273,7 +2271,7 @@ def aggregate(
         f"identity_mismatch={coverage_audit.identity_mismatch_count} "
         f"evaluable={coverage_audit.evaluable_artifact_count}"
     )
-    # R4-A4-2R P1-Budget: planned logical runs vs provider request cap.
+    # Planned logical runs vs provider request cap.
     # ``planned`` is the (case × repetition) universe; ``cap`` is the
     # configured provider call budget; ``headroom`` = cap − planned
     # (negative = structurally insufficient); ``retries_consumed`` =
@@ -2300,7 +2298,7 @@ def main() -> int:
         "--phase",
         required=True,
         choices=["1", "2", "3", "aggregate"],
-        help="Phase 1/2/3 invoke the real-model harness; "
+        help="Stages 1/2/3 invoke the real-model harness; "
         "'aggregate' runs the offline evaluators and writes the report.",
     )
     parser.add_argument(
@@ -2311,7 +2309,7 @@ def main() -> int:
     parser.add_argument(
         "--prior-run-id",
         default=None,
-        help="Prior phase's run id (required for Phase 2/3; "
+        help="Prior stage run id (required for stages 2/3; "
         "passed to harness via CLAREAD_R4_A3_PRIOR_RUN_ID env var).",
     )
     parser.add_argument(
@@ -2319,7 +2317,7 @@ def main() -> int:
         default=None,
         help=(
             "Path to the evaluation dataset directory. REQUIRED for real runs "
-            "(Phase 1/2/3) and aggregate. Priority: "
+            "(stages 1/2/3) and aggregate. Priority: "
             "CLI --dataset-dir > env CLAREAD_R4_A3_DATASET_DIR. "
             "If neither is set, the runner exits with code 2 before any "
             "subprocess/paid call. Suggested local working dir: "
@@ -2356,8 +2354,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--task-label",
-        default="Task 5",
-        help="Task label rendered in §2.1 header (default: 'Task 5').",
+        dest="evaluation_heading",
+        default="current evaluation",
+        help="Task label rendered in §2.1 header (default: 'current evaluation').",
     )
     parser.add_argument(
         "--tracker-path",
@@ -2369,8 +2368,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # P0 explicit dataset-dir binding: resolve dataset dir from CLI > env.
-    # No silent fallback — real runs (Phase 1/2/3) AND aggregate must
+    # Explicit dataset-dir binding: resolve dataset dir from CLI > env.
+    # No silent fallback — real runs and aggregate must
     # explicitly declare the dataset they are using. ``_preflight_dataset_dir``
     # fails closed (exit code 2) when neither source is set, or the dir
     # is missing or has no dataset.yaml — before any subprocess invocation
@@ -2382,8 +2381,8 @@ def main() -> int:
     if args.phase == "aggregate":
         # ``_preflight_dataset_dir`` above already exits with code 2 if
         # ``dataset_dir`` is None, so this assert is for type checkers.
-        assert dataset_dir is not None  # noqa: S101
-        # R4-A4-2R P0-Path: normalize ``--runs-dir`` to an absolute
+        assert dataset_dir is not None
+        # Normalize ``--runs-dir`` to an absolute
         # canonical path BEFORE the aggregate function consumes it.
         # Aggregate runs in this main process (cwd=``evals/`` when
         # invoked from the typical workflow). Without normalization,
@@ -2401,10 +2400,10 @@ def main() -> int:
             report_output=Path(args.report_output),
             report_date=args.report_date,
             modified_files=args.modified_file,
-            task_label=args.task_label,
+            evaluation_heading=args.evaluation_heading,
             tracker_path=args.tracker_path,
         )
-    # Phase 2/3 require --prior-run-id.
+    # Follow-up stages require --prior-run-id.
     if args.phase in ("2", "3") and not args.prior_run_id:
         parser.error(
             f"--prior-run-id is required for --phase {args.phase} "
@@ -2413,8 +2412,8 @@ def main() -> int:
         )
     # ``_preflight_dataset_dir`` above already exits with code 2 if
     # ``dataset_dir`` is None, so this assert is for type checkers.
-    assert dataset_dir is not None  # noqa: S101
-    # R4-A4-2R P0-Path: normalize ``--runs-dir`` to an absolute
+    assert dataset_dir is not None
+    # Normalize ``--runs-dir`` to an absolute
     # canonical path BEFORE propagating it to the pytest subprocess
     # via ``CLAREAD_R4_A3_RUNS_DIR`` env var. The subprocess cwd is
     # ``services/api/`` (HARNESS_CWD). Without normalization, a

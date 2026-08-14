@@ -12,7 +12,7 @@ Verifies:
   4. ``generate`` raises ``GrammarWindowExecutionError`` on LLM failure.
   5. Empty target_anchors returns empty list without LLM call.
 
-P1-2: the legacy ``_convert_output`` static method was removed (dead code
+The legacy ``_convert_output`` static method was removed (dead code
 after the LLM candidate schema took over). Tests that exercised it are
 removed; the remaining tests cover the live ``generate`` path.
 """
@@ -60,7 +60,7 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
     target anchor 属于同一 unit，LLM 输出 1 grammar_note + 1 sentence_analysis。
     _run_agent 应只被调用一次（window-scoped single call）。
 
-    P1-2: candidates carry the 3-field self-rating contract
+    Candidates carry the 3-field self-rating contract
     (``quality_score`` / ``reading_blocker`` / ``dedup_hint``). The legacy
     ``reason_code`` / ``confidence`` fields are gone.
     """
@@ -180,7 +180,7 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
         assert len(grammar_note.spans) == 1
         assert grammar_note.spans[0]["anchor_segment_id"] == "anchor-1"
         assert grammar_note.spans[0]["selected_text"] == "team"
-        # P1-2: dedup_hint is propagated so the window selector can dedup.
+        # Dedup_hint is propagated so the window selector can dedup.
         assert grammar_note.dedup_hint == "subject_verb_agreement"
         # 验证 sentence_analysis self-rating
         sent_analysis = next(c for c in result.candidates if c.item_type == "sentence_analysis")

@@ -806,7 +806,7 @@ function MessageBubble({
   onRetry: (messageId: string) => void;
   onResend?: (localAssistantId: string) => void;
   onDisableWebSearchAndResend?: (localAssistantId: string) => void;
-  /** R8: pending recovery may force resend for UUID bubbles. */
+  /** Pending recovery may force resend for UUID bubbles. */
   resolveRetryTarget: (
     messageId: string,
   ) => ReturnType<typeof classifyRetryTarget>;
@@ -825,7 +825,7 @@ function MessageBubble({
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
-  // ASK-TURN-LIFECYCLE R2 — pick the visible answer text based on
+  // Pick the visible answer text based on
   // streaming state. While streaming, the provisional preview
   // accumulated from `message.delta` is shown. Once committed
   // (completed / interrupted / failed / cold history), the canonical
@@ -877,7 +877,7 @@ function MessageBubble({
       className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}
     >
       {isAssistant ? (
-        // P1 — vertical rhythm between answer/process/sources/actions.
+        // Vertical rhythm between answer/process/sources/actions.
         // 4/8 spacing: tighter than the old space-y-4, so the process
         // disclosure sits closer to the answer it belongs to.
         <div className="min-w-0 w-full space-y-3">

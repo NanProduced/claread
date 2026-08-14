@@ -1,9 +1,9 @@
 """Dimension 7/11 — instruction_following.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: P1-4 instruction count effectiveness.
+spec.md` — Requirement: instruction count effectiveness.
 
-R4-A4-0 (Task 3) — exercise item count semantics
+Exercise item count semantics
 ================================================
 
 The previous implementation had two bugs:
@@ -54,7 +54,7 @@ from dataclasses import dataclass
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "instruction_following"
 
@@ -74,7 +74,7 @@ MULTIPLE_CHOICE_RE = re.compile(r"(?:^|\n)\s*[A-Da-d]\s*[.、)]")
 # Interrogative punctuation (Chinese ？ and ASCII ?)
 INTERROGATIVE_RE = re.compile(r"[？?]")
 
-# R4-A4-0 (Task 3): reference-answer section marker. When the answer
+# Reference-answer section marker. When the answer
 # contains a "参考答案" / "答案" / "参考解答" header, everything AFTER
 # the marker is the reference answer and must NOT be counted as new
 # exercise items. The marker itself is the boundary.
@@ -112,7 +112,7 @@ class _CountResult:
 def _strip_reference_answer(text: str) -> str:
     """Strip the reference-answer section from ``text``.
 
-    R4-A4-0 (Task 3): when the model's answer includes a "参考答案："
+    When the model's answer includes a "参考答案："
     or equivalent marker, everything after the marker is the reference
     answer (sample solution) and its ``1. 2. 3.`` numbering must NOT
     be counted as new exercise items.
@@ -133,7 +133,7 @@ def _count_exercise_items(
 ) -> _CountResult:
     """Count distinct exercise items in ``text``.
 
-    R4-A4-0 (Task 3) contract:
+    Contract:
 
     - Top-level numbered markers (Q1, 第N题, 1.) are AUTHORITATIVE.
       When present, they determine the count via max-across-signals
@@ -149,7 +149,7 @@ def _count_exercise_items(
       - No markers, no interrogatives, no multiple-choice →
         ``indeterminate``.
     """
-    # R4-A4-0 (Task 3): strip the reference-answer section before
+    # Strip the reference-answer section before
     # counting so its ``1. 2. 3.`` numbering is not误计为新题.
     counting_text = _strip_reference_answer(text)
 
@@ -197,7 +197,7 @@ def _count_exercise_items(
                     "interrogative markers counted as separate items"
                 ),
             )
-        # R4-A4-0 (Task 3): default behavior — an unnumbered block
+        # Default behavior — an unnumbered block
         # with multiple related sub-questions is ONE top-level
         # exercise. The previous implementation returned indeterminate
         # here, which was a false positive.
@@ -252,7 +252,7 @@ def _count_sentences(text: str) -> _CountResult:
 
 
 def evaluate_instruction_following(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     """Evaluate whether the answer satisfies the requested count constraint.
@@ -314,7 +314,7 @@ def evaluate_instruction_following(
                     f"requested={requested}; {result.reason}"
                 ),
             )
-        # R4-A4-0 (Task 3): distinct failure pattern for count mismatch.
+        # Distinct failure pattern for count mismatch.
         return EvalDimensionResult(
             dimension=DIMENSION,
             passed=False,

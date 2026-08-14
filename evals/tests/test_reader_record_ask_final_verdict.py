@@ -1,6 +1,6 @@
-"""Final verdict gate contract tests (R4-A3 final closure Task 4 SubTask 4.8).
+"""Final verdict gate contract tests.
 
-Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
+Spec: the accepted final-verdict closure contract.
 Requirement: Final Verdict Gate Contract.
 
 Drives :func:`run_reader_record_ask_eval._decide_final_verdict` directly
@@ -9,7 +9,7 @@ mocks. Covers all 7 rows of the frozen verdict/gate table plus
 identity-mismatch precedence and the single-seam contract.
 
 Frozen 7-row verdict/gate table. Each row's ``(a4, b1)`` pair is
-``(allow_r4_a4, allow_r4_b1)``:
+``(quality-gate allowed, streaming-gate allowed)``:
 
 1. identity mismatch                              → blocked_dataset_identity_mismatch (F, F)
 2. manifest missing + partial artifacts present   → blocked_incomplete_real_model_run  (F, F)
@@ -91,7 +91,7 @@ def _coverage_audit(
     ``manifest_state`` defaults to ``"absent"`` when
     ``manifest_present=False`` and ``"valid"`` when
     ``manifest_present=True``. Callers can override to ``"corrupt"``
-    to test the P1 three-state contract.
+    to test the manifest three-state contract.
     """
     if manifest_state is None:
         manifest_state = "valid" if manifest_present else "absent"
@@ -198,7 +198,7 @@ def test_verdict_identity_mismatch_blocks_everything() -> None:
 
 # ---------------------------------------------------------------------------
 # Row 5: no manifest + no artifact → blocked_by_real_model_run, False, False
-# (This is the bug-fix row — was incorrectly True for allow_r4_a4.)
+# (This is the bug-fix row — the quality gate was incorrectly allowed.)
 # ---------------------------------------------------------------------------
 
 
@@ -206,7 +206,7 @@ def test_verdict_no_manifest_no_artifact_blocked_by_real_model_run() -> None:
     """manifest_present=False, total_artifacts=0 →
     blocked_by_real_model_run, False, False.
 
-    Critical: allow_r4_a4 MUST be False per the frozen 7-row contract.
+    Critical: the quality gate MUST be disabled per the frozen 7-row contract.
     The previous implementation incorrectly returned True here — this
     test is the regression guard for that bug fix.
     """
@@ -228,7 +228,7 @@ def test_verdict_no_manifest_no_artifact_blocked_by_real_model_run() -> None:
     )
     assert verdict == "blocked_by_real_model_run"
     assert allow_a4 is False, (
-        "BUG FIX: blocked_by_real_model_run MUST return allow_r4_a4=False "
+        "BUG FIX: blocked_by_real_model_run MUST return allow_correctness_followup=False "
         "per the frozen 7-row contract. Previous implementation incorrectly "
         "returned True."
     )
@@ -282,7 +282,7 @@ def test_verdict_budget_exhausted_blocked_incomplete() -> None:
     blocked_incomplete_real_model_run, False, False.
 
     Budget stop is NOT a completed run. The partial case_results MUST
-    NOT enter accepted/rework — this is the P0-2 bug fix.
+    NOT enter accepted/rework — this is the run-id binding bug fix.
     """
     audit = _coverage_audit(
         manifest_present=True,
@@ -639,11 +639,11 @@ def test_verdict_mock_factories_produce_expected_types() -> None:
 
 
 # ===========================================================================
-# P0-2 / P1 adversarial tests — foreign manifest, corrupt manifest, and
+# Adversarial tests — foreign manifest, corrupt manifest, and
 # three-state verdict routing. ALL tests drive the production
 # ``_decide_final_verdict`` seam (no copied verdict branches). The tests
-# assert the 9-row verdict/gate table including the new P0-2 (foreign
-# manifest) and P1 (corrupt manifest) rows.
+# assert the 9-row verdict/gate table including the foreign-manifest
+# and corrupt-manifest rows.
 # ===========================================================================
 
 
@@ -654,7 +654,7 @@ def test_verdict_mock_factories_produce_expected_types() -> None:
 
 
 def test_verdict_foreign_manifest_with_matching_artifacts_blocked() -> None:
-    """P0-2: a foreign manifest (valid content but wrong run_id) MUST
+    """A foreign manifest (valid content but wrong run_id) MUST
     NOT be stitched together with the current run's artifacts, even
     when dataset identity, case ids, and run indices all match.
 
@@ -662,7 +662,7 @@ def test_verdict_foreign_manifest_with_matching_artifacts_blocked() -> None:
     ``blocked_dataset_identity_mismatch`` — the dataset identity itself
     matches; only the run_id is wrong).
 
-    ``allow_r4_a4 = False`` and ``allow_r4_b1 = False`` per the frozen
+    both optional gates disabled per the frozen
     9-row contract (precedence 4).
 
     Drives the production ``_decide_final_verdict`` seam directly:
@@ -701,7 +701,7 @@ def test_verdict_foreign_manifest_with_matching_artifacts_blocked() -> None:
 
 
 def test_verdict_foreign_manifest_zero_artifacts_still_blocked_incomplete() -> None:
-    """P0-2 boundary: foreign manifest + zero artifacts → still
+    """Boundary: foreign manifest + zero artifacts → still
     ``blocked_incomplete_real_model_run`` (NOT
     ``blocked_by_real_model_run``). The presence of a foreign manifest
     file indicates a previous run existed — the operator needs to see
@@ -736,10 +736,10 @@ def test_verdict_foreign_manifest_zero_artifacts_still_blocked_incomplete() -> N
 
 
 def test_verdict_corrupt_manifest_no_artifacts_blocked_incomplete() -> None:
-    """P1: corrupt manifest (file exists but unparseable / invalid) +
+    """A corrupt manifest (file exists but unparseable / invalid) +
     NO artifacts → ``blocked_incomplete_real_model_run``.
 
-    This is the P1 fix: previously corrupt was folded into absent,
+    This is the manifest-state fix: previously corrupt was folded into absent,
     causing "corrupt + no artifacts" to be misclassified as
     ``blocked_by_real_model_run`` (the "never ran" verdict). A corrupt
     manifest indicates the run started but its audit trail is broken
@@ -756,7 +756,7 @@ def test_verdict_corrupt_manifest_no_artifacts_blocked_incomplete() -> None:
         completed_count=0,
         evaluable_artifact_count=0,
         dataset_identity=None,
-        manifest_state="corrupt",  # ← P1 three-state
+        manifest_state="corrupt",  # ← corrupt manifest state
         manifest_run_id_matches=None,
     )
     verdict, allow_a4, allow_b1 = _RUNNER._decide_final_verdict(
@@ -783,7 +783,7 @@ def test_verdict_corrupt_manifest_no_artifacts_blocked_incomplete() -> None:
 
 
 def test_verdict_corrupt_manifest_partial_artifacts_blocked_incomplete() -> None:
-    """P1: corrupt manifest + partial artifacts on disk →
+    """Corrupt manifest + partial artifacts on disk →
     ``blocked_incomplete_real_model_run``.
 
     The corrupt manifest cannot audit the artifacts — the run is
@@ -802,7 +802,7 @@ def test_verdict_corrupt_manifest_partial_artifacts_blocked_incomplete() -> None
         completed_count=0,
         evaluable_artifact_count=3,  # partial artifacts exist
         dataset_identity=None,
-        manifest_state="corrupt",  # ← P1 three-state
+        manifest_state="corrupt",  # ← corrupt manifest state
         manifest_run_id_matches=None,
     )
     verdict, allow_a4, allow_b1 = _RUNNER._decide_final_verdict(
@@ -825,7 +825,7 @@ def test_verdict_corrupt_manifest_partial_artifacts_blocked_incomplete() -> None
 # ---------------------------------------------------------------------------
 # Adversarial 18: absent manifest + no artifacts → blocked_by_real_model_run
 # (regression — already exists as test_verdict_no_manifest_no_artifact_*
-# but we add an explicit manifest_state="absent" variant for the P1
+# but we add an explicit manifest_state="absent" variant for the absent-manifest
 # three-state contract.)
 # ---------------------------------------------------------------------------
 
@@ -833,11 +833,11 @@ def test_verdict_corrupt_manifest_partial_artifacts_blocked_incomplete() -> None
 def test_verdict_absent_manifest_no_artifacts_remains_blocked_by_real_model_run() -> (
     None
 ):
-    """P1 regression: absent manifest + no artifacts MUST stay
+    """Regression: absent manifest + no artifacts MUST stay
     ``blocked_by_real_model_run`` (NOT be reclassified as
     ``blocked_incomplete_real_model_run`` by accident).
 
-    This is the "never ran" path — distinct from corrupt. The P1 fix
+    This is the "never ran" path — distinct from corrupt. The manifest-state fix
     adds the corrupt state but MUST NOT change the absent path.
     """
     audit = _coverage_audit(
@@ -869,7 +869,7 @@ def test_verdict_absent_manifest_no_artifacts_remains_blocked_by_real_model_run(
 
 
 def test_verdict_identity_mismatch_precedence_over_corrupt_manifest() -> None:
-    """P1 precedence: identity mismatch (precedence 1) wins over
+    """Identity-mismatch precedence wins over
     corrupt manifest (precedence 2). When BOTH signals are present,
     the operator sees the dataset drift reason, not the corrupt-manifest
     reason — fixing the drift is the prerequisite.
@@ -902,17 +902,17 @@ def test_verdict_identity_mismatch_precedence_over_corrupt_manifest() -> None:
 # Adversarial 20: completed manifest + full coverage + all pass → accepted
 # (regression — already exists as test_verdict_completed_full_coverage_*,
 # but we add an explicit manifest_state="valid" + manifest_run_id_matches=True
-# variant for the P0-2 contract.)
+# variant for the run-id binding contract.)
 # ---------------------------------------------------------------------------
 
 
 def test_verdict_completed_full_coverage_valid_match_accepted_no_regression() -> (
     None
 ):
-    """P0-2 regression: completed manifest + full coverage + all pass +
+    """Regression: completed manifest + full coverage + all pass +
     manifest_state="valid" + manifest_run_id_matches=True → accepted.
 
-    The new P0-2 (run_id binding) and P1 (three-state) checks MUST NOT
+    The new run-id binding and manifest three-state checks MUST NOT
     break the normal accepted path. The ``coverage_ok`` gate in
     production ``aggregate()`` requires both
     ``manifest_state == "valid"`` AND ``manifest_run_id_matches is True``
@@ -929,8 +929,8 @@ def test_verdict_completed_full_coverage_valid_match_accepted_no_regression() ->
         unexpected_count=0,
         identity_mismatch_count=0,
         evaluable_artifact_count=1,
-        manifest_state="valid",  # ← P0-2 contract
-        manifest_run_id_matches=True,  # ← P0-2 contract
+        manifest_state="valid",  # ← valid manifest state
+        manifest_run_id_matches=True,  # ← matching run binding
     )
     verdict, allow_a4, allow_b1 = _RUNNER._decide_final_verdict(
         case_results=[_passing_case_result()],
@@ -949,14 +949,14 @@ def test_verdict_completed_full_coverage_valid_match_accepted_no_regression() ->
 # Adversarial 21: budget_exhausted partial run → blocked_incomplete
 # (regression — already exists as test_verdict_budget_exhausted_*,
 # but we add an explicit manifest_state="valid" + manifest_run_id_matches=True
-# variant for the P0-2 contract.)
+# variant for the run-id binding contract.)
 # ---------------------------------------------------------------------------
 
 
 def test_verdict_budget_exhausted_partial_run_no_regression() -> None:
-    """P0-2 regression: budget_exhausted partial run with
+    """Regression: budget_exhausted partial run with
     manifest_state="valid" + manifest_run_id_matches=True →
-    ``blocked_incomplete_real_model_run``. The new P0-2 / P1 checks
+    ``blocked_incomplete_real_model_run``. The new binding and state checks
     MUST NOT change the budget_exhausted path.
     """
     audit = _coverage_audit(
@@ -988,7 +988,7 @@ def test_verdict_budget_exhausted_partial_run_no_regression() -> None:
 
 
 def test_verdict_corrupt_beats_absent_partial_precedence() -> None:
-    """P1 precedence: corrupt manifest (precedence 2) beats
+    """Corrupt-manifest precedence beats
     absent + partial artifacts (precedence 3). When the manifest is
     corrupt, the verdict is ``blocked_incomplete_real_model_run``
     regardless of artifact count — the corrupt audit trail blocks
@@ -1025,7 +1025,7 @@ def test_verdict_corrupt_beats_absent_partial_precedence() -> None:
 
 
 def test_verdict_foreign_manifest_beats_budget_exhausted_precedence() -> None:
-    """P0-2 precedence: foreign manifest (precedence 4) beats
+    """Foreign-manifest precedence beats
     budget_exhausted (precedence 5). When the manifest is foreign AND
     status="budget_exhausted", the operator sees
     ``blocked_incomplete_real_model_run`` via the foreign-manifest

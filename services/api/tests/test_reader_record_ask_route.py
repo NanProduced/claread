@@ -86,7 +86,7 @@ def _make_execution_config(
     and return this config so service.py still propagates a real model
     + budget into ``stream_agentic_thread_message``.
 
-    ASK-M1-R1: the config now also carries ``model_settings_payload``
+    ASK-M1-the config now also carries ``model_settings_payload``
     (with ``max_tokens``) and ``usage_limits`` so budget-capture tests
     can assert both the provider cap and the host guard.
     """
@@ -250,7 +250,7 @@ class TestReaderRecordAskService:
         request.content = "summarize"
         request.entry_action = "ask_about_this"
         request.model = None
-        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # ASK-WEB-G1-route forwards web_search_mode to the execution
         # config resolver. Set an explicit value so the assertion can
         # verify it is plumbed through.
         request.web_search_mode = "disabled"
@@ -310,7 +310,7 @@ class TestReaderRecordAskService:
         assert chunks == ["event: message.completed\ndata: {}\n\n"]
         mock_resolve.assert_awaited_once()
         assert mock_resolve.await_args.kwargs["requested_key"] is None
-        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # ASK-WEB-G1-route forwards web_search_mode to the execution
         # config resolver alongside the resolved model option.
         mock_resolve_exec.assert_called_once_with(
             flash_option, web_search_mode="disabled"
@@ -395,7 +395,7 @@ class TestReaderRecordAskService:
         request.content = "deep analysis"
         request.entry_action = "ask_about_this"
         request.model = "deepseek-pro"
-        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # ASK-WEB-G1-route forwards web_search_mode to the execution
         # config resolver. Set an explicit value so the assertion can
         # verify it is plumbed through.
         request.web_search_mode = "disabled"
@@ -449,7 +449,7 @@ class TestReaderRecordAskService:
 
         assert chunks
         assert mock_resolve.await_args.kwargs["requested_key"] == "deepseek-pro"
-        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # ASK-WEB-G1-route forwards web_search_mode to the execution
         # config resolver alongside the resolved model option.
         mock_resolve_exec.assert_called_once_with(
             pro_option, web_search_mode="disabled"
@@ -668,12 +668,12 @@ class TestReaderRecordAskService:
         mock_agentic.assert_not_called()
 
 # ---------------------------------------------------------------------------
-# ASK-M1-R1: Retry preflight + Send/Retry budget capture
+# ASK-M1-Retry preflight + Send/Retry budget capture
 # ---------------------------------------------------------------------------
 
 
 class TestReaderRecordAskRetryPreflight:
-    """ASK-M1-R1: Retry must preflight before StreamingResponse.
+    """ASK-M1-Retry must preflight before StreamingResponse.
 
     Retry now mirrors Send's fail-closed HTTP semantics: if the
     execution config cannot be resolved (model build failure,
@@ -774,7 +774,7 @@ class TestReaderRecordAskRetryPreflight:
 
 
 class TestReaderRecordAskBudgetCapture:
-    """ASK-M1-R1: Send and Retry must propagate the exact resolved model
+    """ASK-M1-Send and Retry must propagate the exact resolved model
     + budget into the agentic stream.
 
     Captures the kwargs passed to ``stream_agentic_thread_message``

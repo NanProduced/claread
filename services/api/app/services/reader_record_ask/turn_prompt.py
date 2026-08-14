@@ -1,4 +1,4 @@
-"""Turn-frame prompt capability — unique metering boundary (R4-A5-7).
+"""Turn-frame prompt capability — unique metering boundary.
 
 :class:`TurnFramePromptCapability` is the **only** holder of the initial
 system instructions + trusted user-frame composition for production Ask.
@@ -54,7 +54,7 @@ from app.services.reader_record_ask.selection_model_view import (
 )
 
 if TYPE_CHECKING:
-    # A1/A2 build thread_memory package; A3 only consumes the render
+    # build thread_memory package; only consumes the render
     # contract. Lazy import at call time avoids a hard dependency on
     # files that may not exist yet during parallel development.
     pass
@@ -275,9 +275,9 @@ def _build_memory_section(
 ) -> RenderedModelView | None:
     """Render + charge the thread-memory block for the ``memory`` account.
 
-    R1A integration seam. The snapshot is a ``ThreadMemorySnapshot`` (A1
+    R1A integration seam. The snapshot is a ``ThreadMemorySnapshot`` (
     schema). The actual rendering is delegated to
-    ``thread_memory.render.render_memory_block`` (A2 contract) which
+    ``thread_memory.render.render_memory_block`` (contract) which
     returns a renderer-minted :class:`RenderedModelView` wrapped in
     ``<transcript_data role="data" not_instructions="true">``.
 
@@ -294,7 +294,7 @@ def _build_memory_section(
     if snapshot is None:
         return None
 
-    # Lazy import — A2 owns thread_memory/render.py. The contract is
+    # Lazy import — owns thread_memory/render.py. The contract is
     # ``render_memory_block(snapshot, budget_chars=N) -> RenderedModelView | None``.
     # The returned view is renderer-minted and therefore chargeable.
     from app.services.reader_record_ask.thread_memory.render import (
@@ -502,7 +502,7 @@ def build_production_agent_user_prompt(
     Optional capability args are validated for origin consistency with the
     turn frame's embedded untrusted bodies when provided.
 
-    ASK-UX-COT-COMPOSER-R3 P2: ``focus_section`` is the coordinator-
+    ASK-UX-COT-COMPOSER- ``focus_section`` is the coordinator-
     rendered focus selections block (untrusted article text, charged to
     the selection account, deliberately absent from the request_frame
     trusted surface). When non-empty it is appended to the frame prompt

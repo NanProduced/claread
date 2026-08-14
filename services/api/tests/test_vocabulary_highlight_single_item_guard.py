@@ -1,4 +1,4 @@
-"""R7-2 regression tests: vocabulary_highlight single-lexical-item contract.
+"""Regression tests: vocabulary_highlight single-lexical-item contract.
 
 Covers:
 - ACCEPT matrix: deadline, missed, well-known, don't (curly), students',

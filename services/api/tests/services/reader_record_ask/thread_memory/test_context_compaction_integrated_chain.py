@@ -1,9 +1,9 @@
-"""ASK-COMPACTION-INTEGRATED-R1 — real integrated context-compaction chain.
+"""ASK-COMPACTION-INTEGRATED- — real integrated context-compaction chain.
 
 Opt-in real-PostgreSQL integration (``CLAREAD_RUN_THREAD_MEMORY_DB_TESTS=1``).
 Drives the **real** repository / manager / runtime / production_stream with a
 deterministic fake compactor and a deterministic fake (recording) answer model
-— zero provider calls — and proves the full chain on a disposable thread:
+zero provider calls — and proves the full chain on a disposable thread:
 
     real PG canonical history (>20 pairs)
     → production service/runtime → ThreadMemoryManager

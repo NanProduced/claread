@@ -1,8 +1,8 @@
-"""Thread memory snapshot schema（Pydantic v2 镜像 R0.1 §6）。
+"""Thread memory snapshot schema（Pydantic v2 镜像 §6）。
 
 真相源永远是 ``reader_ask_messages`` + ``reader_ask_turn_runs(final_status='ok')``。
 本对象（``ThreadMemorySnapshot``）是派生只读视图，可凭 canonical messages
-完全重建（R0.1 §4.2(e)）；丢失不造成任何事实损失。
+完全重建（ §4.2(e)）；丢失不造成任何事实损失。
 
 严格 Typed JSON，无自由文本真相位——每个事实必须携带来源指针（冻结决策 #1）。
 模型风格对齐 ``services/api/app/services/reader_ask/model_options.py:49-67``
@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 排除内容标记（R0.1 §6 Episode.excluded_content_markers）：声明本 episode
+# 排除内容标记（ §6 Episode.excluded_content_markers）：声明本 episode
 # 依法排除了哪些类别，供审计与评测核对，不含任何被排除内容本身。
 ExcludedContentMarker = Literal[
     "reasoning",
@@ -27,7 +27,7 @@ ExcludedContentMarker = Literal[
 
 
 class TurnRange(BaseModel):
-    """Canonical turn 序号闭区间（R0.1 §6 序号定义 / H4）。
+    """Canonical turn 序号闭区间（ §6 序号定义 H4）。
 
     canonical turn 序号 = user message 在 thread 内按 ``created_at ASC`` 的
     1-based 序号；retry 不增加序号（同一 user message 的多次 retry 共享同一
@@ -41,9 +41,9 @@ class TurnRange(BaseModel):
 
 
 class SourceBinding(BaseModel):
-    """来源绑定（R0.1 §6 SourceBinding）。
+    """来源绑定（ §6 SourceBinding）。
 
-    仅由 Host 从 ok turn 的 ``resolved_evidence_json`` 派生（审计 P7）；
+    仅由 Host 从 ok turn 的 ``resolved_evidence_json`` 派生（审计 ）；
     compactor 绝对无权创建 binding——防捏造 provenance 的结构性保证。
     """
 
@@ -62,7 +62,7 @@ class SourceBinding(BaseModel):
 
 
 class StructuredFact(BaseModel):
-    """结构化事实（R0.1 §6 StructuredFact）。
+    """结构化事实（ §6 StructuredFact）。
 
     冻结决策 #1：历史事实必须来源绑定，禁止自由文本摘要成为事实 truth。
     ``text`` 仅为人类可读标签（≤280 字符），真相 = ``source_ids`` 指向的
@@ -74,7 +74,7 @@ class StructuredFact(BaseModel):
     fact_id: str = Field(min_length=1)
     # 事实文本，≤280 字符。
     text: str = Field(max_length=280)
-    # prior_mention：fence 失效的 fact 降级为此类型（R0.1 §4.2d 步骤 7 / §8.1），
+    # prior_mention：fence 失效的 fact 降级为此类型（ §4.2d 步骤 7 §8.1），
     # 禁作 citation truth，仅渲染"此前讨论过"。
     source_type: Literal[
         "article",
@@ -95,13 +95,13 @@ class StructuredFact(BaseModel):
     # 仅 user_correction 使用：指向被本纠正取代的 fact_id 列表。
     # 被取代 fact 不删除（episode 不可变），仅在注入渲染时标注 superseded。
     supersedes: list[str] | None = None
-    # protected facts 不参与 recency 淘汰（R0.1 §4.2f）：
+    # protected facts 不参与 recency 淘汰（ §4.2f）：
     # user_correction 与 unresolved_question 标记为 protected，收缩时全保留。
     protected: bool = False
 
 
 class Episode(BaseModel):
-    """Episode（R0.1 §6 Episode）——append-only，旧 episode 永不改写。
+    """Episode（ §6 Episode）——append-only，旧 episode 永不改写。
 
     防漂移核心约束（§4.2(f)）：压缩只为新 turn range 追加新 episode；
     旧 episode 的 ``structured_facts`` 永不重写。预算收缩只做 fact 淘汰 /
@@ -114,7 +114,7 @@ class Episode(BaseModel):
     # canonical turn 序号闭区间（见 TurnRange）。
     turn_range: TurnRange
     structured_facts: list[StructuredFact]
-    # 仅 Host 从 ok turn 的 resolved_evidence_json 派生（审计 P7）。
+    # 仅 Host 从 ok turn 的 resolved_evidence_json 派生（审计 ）。
     source_bindings: list[SourceBinding]
     excluded_content_markers: list[ExcludedContentMarker]
     # 'none' = 纯确定性 emergency（无 LLM 调用）。
@@ -127,10 +127,10 @@ class Episode(BaseModel):
 
 
 class ThreadMemorySnapshot(BaseModel):
-    """Thread memory 派生只读视图（R0.1 §6 ThreadMemorySnapshot）。
+    """Thread memory 派生只读视图（ §6 ThreadMemorySnapshot）。
 
     真相源 = ``reader_ask_messages`` + ``reader_ask_turn_runs(final_status='ok')``。
-    本对象可凭 canonical messages 完全重建（R0.1 §4.2(e)）；watermark 按
+    本对象可凭 canonical messages 完全重建（ §4.2(e)）；watermark 按
     message_id 维度，``final_status`` 取 supersedes 链上最新 ok run（H2/H3）。
     作用域：仅此 thread（冻结决策 #2），禁止跨 thread 引用。
     """

@@ -1,4 +1,4 @@
-"""ASK-RETRY-CONTRACT-R5 — durable submission claim/reconcile gateway.
+"""ASK-RETRY-CONTRACT- — durable submission claim/reconcile gateway.
 
 Lifecycle (DB-authoritative):
 
@@ -87,7 +87,7 @@ def build_retry_snapshot(
 ) -> dict[str, Any]:
     """Immutable retry snapshot persisted on user+assistant messages.
 
-    ASK-UX-COT-COMPOSER-R3 P2 — ``focus_anchors`` persists the full
+    ASK-UX-COT-COMPOSER- — ``focus_anchors`` persists the full
     gate-validated anchor set (canonical dicts) so regenerate replays
     exactly the user focus the original turn saw. Replay re-validates
     every anchor against the live document (fail-closed on staleness).
@@ -118,7 +118,7 @@ async def ensure_submission_for_send(
 ) -> SubmissionEnsureResult | None:
     """Ensure durable claim+pair for the v2 Reading Record Ask path.
 
-    Returns ``None`` only when ``client_submission_id`` is absent (pre-R2
+    Returns ``None`` only when ``client_submission_id`` is absent (pre-
     clients). When present, fails closed if the submissions table is
     missing (typed 503).
     """
@@ -200,11 +200,11 @@ async def mark_submission_terminal(
 
 @dataclass(slots=True)
 class SubmissionTerminalHook:
-    """R6/R7: internal typed hook so lanes sync submission status without
+    """/internal typed hook so lanes sync submission status without
     parsing public SSE text. Exactly-once CAS via claim_generation /
     assistant_message_id; stale owners never overwrite a new generation.
 
-    R7: separates **intended** model terminal from **synced** DB write.
+    Separates **intended** model terminal from **synced** DB write.
     ``mark()`` returns success only when the DB write completes; failures
     leave ``_synced=False`` so finally can retry with the same intended
     status (never rewrite completed → cancelled on sync failure).
@@ -317,7 +317,7 @@ class SubmissionTerminalHook:
     ) -> bool:
         """Map assistant message row status → submission terminal.
 
-        R8: unknown / streaming / None does **not** default to cancelled
+        Unknown streaming None does **not** default to cancelled
         unless ``unknown_as_cancelled=True`` (explicit disconnect paths).
         Read failures must leave the submission unsynced for safe recovery.
         """

@@ -1,4 +1,4 @@
-"""ASK-REASONING-R1/R2: the single approved reasoning projection chokepoint.
+"""ASK-REASONING-/the single approved reasoning projection chokepoint.
 
 Provider reasoning (``ThinkingPart`` content) is raw provider output. Raw
 reasoning must never be logged, persisted, or published — not into SSE,
@@ -21,7 +21,7 @@ This module is the ONLY path by which reasoning may become user-visible:
   runtime events that production stream maps 1:1 onto SSE and, on
   successful turns, persists atomically with the final answer.
 
-Fail-closed overflow semantics (R2): when an unterminated sensitive
+Fail-closed overflow semantics: when an unterminated sensitive
 region exceeds its scan ceiling, or a single ambiguous token exceeds the
 pending ceiling, the redactor SEALS permanently — it never resumes
 ordinary output for the rest of the turn. Leaking raw sensitive content
@@ -52,7 +52,7 @@ from app.services.reader_record_ask.runtime_events import (
 PROJECTION_POLICY_VERSION: str = "reasoning_projection_v1"
 
 # Host-side quota for one turn's visible projection (code points).
-# ASK-TURN-LIFECYCLE R3: raised from 4_000 to 14_000 (within the audit-
+# ASK-TURN-LIFECYCLE raised from 4_000 to 14_000 (within the audit-
 # recommended 12K–16K band). Long agentic turns with thinking + article
 # RAG + web search + retry routinely produce >4K reasoning; the old cap
 # guaranteed truncation on every long turn. 14K balances visibility with
@@ -82,7 +82,7 @@ def _resolve_projection_char_cap() -> int:
 
 DEFAULT_PROJECTION_CHAR_CAP: int = _resolve_projection_char_cap()
 
-# ASK-TURN-LIFECYCLE R4-4: the hard round-0 sub-cap (former
+# ASK-TURN-LIFECYCLE the hard round-0 sub-cap (former
 # ``ROUND0_CAP_FRACTION = 0.65``) was removed because it silently dropped
 # up to 35% of round-0 reasoning without setting ``truncated=True``,
 # producing an undeclared gap in the visible projection. The turn-level
@@ -352,7 +352,7 @@ def _redact_block(block: str) -> str:
 
 
 class IncrementalRedactor:
-    """Streaming state-machine redactor (R2).
+    """Streaming state-machine redactor.
 
     States:
 
@@ -529,7 +529,7 @@ class ReasoningProjectionBuffer:
     truncation appends ``TRUNCATION_MARKER`` once and then stays silent;
     after the quota is reached no further raw reasoning is fed or bufferred.
 
-    ASK-TURN-LIFECYCLE R4-4: the per-round sub-cap was removed. The
+    ASK-TURN-LIFECYCLE the per-round sub-cap was removed. The
     turn-level total cap is the ONLY quota. ``truncated=True`` iff the
     total cap was hit (marker appended exactly once at the end).
     ``advance_round()`` is a no-op retained for backward-compat with
@@ -558,7 +558,7 @@ class ReasoningProjectionBuffer:
     def advance_round(self) -> None:
         """No-op retained for backward-compat with thinking_transport.
 
-        R4-4: the per-round sub-cap was removed. The turn-level total
+        The per-round sub-cap was removed. The turn-level total
         cap is the only quota. This method is now a no-op so callers
         (thinking_transport tool-result boundary) don't need changes.
         """
@@ -586,7 +586,7 @@ class ReasoningProjectionBuffer:
             # and preserves concat(deltas) == persisted text.
             return ""
         marker_len = len(TRUNCATION_MARKER)
-        # R4-4: total cap is the ONLY quota. Provable:
+        # Total cap is the ONLY quota. Provable:
         #   no marker   ⇒ text ≤ char_cap − marker_len
         #   with marker ⇒ text == char_cap exactly, marker at end, once
         # Hence truncated=True ⇔ marker at end, and truncated=False ⇒ no
@@ -629,7 +629,7 @@ class ReasoningProjectionBuffer:
 
 
 # ---------------------------------------------------------------------------
-# Canonical snapshot validation (R2): one validator shared by the write
+# Canonical snapshot validation: one validator shared by the write
 # path (persistence) and the cold-read path (history projection).
 # ---------------------------------------------------------------------------
 
@@ -666,7 +666,7 @@ def validate_reasoning_snapshot(payload: Any) -> dict[str, Any] | None:
     truncated = payload["truncated"]
     if not isinstance(truncated, bool):
         return None
-    # Truncation-marker invariants (R3 exact-cap protocol):
+    # Truncation-marker invariants (exact-cap protocol):
     #   truncated=True  ⇔ marker present, exactly once, at the text end
     #   truncated=False ⇒ marker appears nowhere
     marker_count = text.count(TRUNCATION_MARKER)
@@ -808,7 +808,7 @@ class ReasoningProjectorObserver:
     def advance_round(self) -> None:
         """Signal a tool/retry boundary to the projection buffer.
 
-        ASK-TURN-LIFECYCLE R4-4: the per-round sub-cap was removed. The
+        ASK-TURN-LIFECYCLE the per-round sub-cap was removed. The
         turn-level total cap is the ONLY quota. This method is now a no-op
         retained for backward-compat with thinking_transport boundary
         calls — the buffer ignores it entirely. Idempotent.

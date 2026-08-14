@@ -1,7 +1,7 @@
-"""Tests for R4-A3 runner dataset-dir explicit binding (P0-1).
+"""Tests for explicit runner dataset-dir binding.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: real runs (Phase 1/2/3) AND aggregate MUST explicitly
+Requirement: real runs and aggregate MUST explicitly
 declare the dataset directory via ``--dataset-dir`` CLI or
 ``CLAREAD_R4_A3_DATASET_DIR`` env. No silent fallback to
 ``evals/tmp/reader-record-ask-r4-a3/``.
@@ -193,7 +193,7 @@ def test_aggregate_requires_explicit_dataset_dir(
     """Aggregate phase must also have explicit dataset-dir.
 
     This test verifies that the runner's main() flow applies preflight
-    to aggregate too (not just Phase 1/2/3). We patch ``aggregate`` to
+    to aggregate too (not just the run stages). We patch ``aggregate`` to
     track invocation and verify preflight fires first.
     """
     aggregate_invoked = {"count": 0}

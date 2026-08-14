@@ -1,4 +1,4 @@
-"""T5.8b — DI-only real semantic outline generator (PydanticAI).
+"""DI-only real semantic outline generator (PydanticAI).
 
 Never the production default. Inject via ``SemanticOutlineWorkerService(generator=...)``.
 No repair provider calls; agent output retries forced to 0.

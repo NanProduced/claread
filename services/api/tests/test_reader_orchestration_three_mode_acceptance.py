@@ -562,7 +562,7 @@ async def test_short_batch_acceptance_through_worker_loop(
     assert int(event["output_tokens"]) == 30, (
         f"output_tokens={event['output_tokens']!r}, expected 30"
     )
-    # R7-3 contract: a grammar batch model call that completes AND
+    # Contract: a grammar batch model call that completes AND
     # publishes is persisted with terminal status ``layer_published``
     # (never ``succeeded``); see grammar_worker GRAMMAR_USAGE_STATUS_*.
     assert event["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED, (

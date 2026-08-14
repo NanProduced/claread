@@ -1,4 +1,4 @@
-# task-history: D6-I3C (renamed from test_d6_i3c_stable_ready_input_application_service.py)
+# task-history: (renamed from test_d6_i3c_stable_ready_input_application_service.py)
 from __future__ import annotations
 
 import asyncio
@@ -459,7 +459,7 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
             # L1: three-level adaptation records (none for this plain input).
             "adaptations": [],
         },
-        # T1/T5 — plain text path has no structured-source parser, so
+        # Plain text path has no structured-source parser, so
         # parser_identity must be explicitly None (not omitted) to
         # avoid false provenance attribution.
         "parser_identity": None,
@@ -535,14 +535,14 @@ The closing paragraph explains how the revised decision was communicated to loca
     assert "Weekly Review" in plan.canonical_text
     assert "Readers compare background evidence before revising a public plan in writing." in plan.canonical_text
     assert "The closing paragraph explains how the revised decision was communicated to local readers." in plan.canonical_text
-    # D2 (e9678eba): code_block defaults to main_reading — code is
+    # (e9678eba): code_block defaults to main_reading — code is
     # first-class reading content and enters canonical text; only the
     # fence markers are stripped.
     assert "return a + b" in plan.canonical_text
     assert "```python" not in plan.canonical_text
     assert "---" not in plan.canonical_text
 
-    # T5 / G1 验收条款 4 — parser version identity MUST appear in
+    # G1 验收条款 4 parser version identity MUST appear in
     # frozen document metadata (source_profile_json) for the
     # markdown_file path. Document-level metadata must not rely on
     # block-level quality_json inference.

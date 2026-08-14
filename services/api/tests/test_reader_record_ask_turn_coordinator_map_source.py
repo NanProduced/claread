@@ -1,6 +1,6 @@
 """Turn-coordinator map-source ingress tests.
 
-# task-history: M3 stage C / C2
+# task-history: M3 stage C /
 Contract: docs/initiatives/reader-agentic-orchestration/modules/
 ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
@@ -22,7 +22,7 @@ Covers the Ask-owner side of map-source material consumption —
   * §5.4.3 — overflow drop: drop highest ``order_index`` body units;
     no descriptor-for-body substitution.
   * §3.5.1.1 — ``include_rag_ask_only`` is fixed to ``False`` in M3
-    stage C (B3 heading baseline + wiring skeleton only).
+    stage C (heading baseline + wiring skeleton only).
 
 No DB, no asyncpg, no embedding, no Zilliz, no real LLM. A fake
 provider duck-types ``MapSourceMaterialProvider.load``.
@@ -301,17 +301,17 @@ class TestMaterialFenceFailureFallback:
             material=_material(
                 fence_ok=False,
                 headings=(HeadingEnrichment(unit_id="u1", heading="H1"),),
-                descriptors=(ArticleMapEntrySource(heading="D1"),),
+                descriptors=(ArticleMapEntrySource(heading="MAP-DESC-SENTINEL"),),
                 reason="plan_build_failed",
             )
         )
         coord = _coordinator(provider=provider)
         assembly = await coord.assemble_turn()
         assert assembly.map_result.is_ok
-        # No entry label should contain the heading "H1" or descriptor "D1".
+        # No entry label should contain the heading "H1" or descriptor sentinel.
         for entry in assembly.map_result.entries:
             assert "H1" not in entry.label
-            assert "D1" not in entry.label
+            assert "MAP-DESC-SENTINEL" not in entry.label
         # Provider was called during preflight.
         assert len(provider.calls) == 1
 
@@ -516,7 +516,7 @@ class TestHardCaps:
         assert len(sources) == 11
         # First 3 are body.
         assert sources[0].window_text == _UNIT_A
-        # Descriptors are D0..D7 (first 8).
+        # Descriptors are.. (first 8).
         for i in range(8):
             assert sources[3 + i].heading == f"D{i}"
 
@@ -549,7 +549,7 @@ class TestHardCaps:
 
 class TestPreflightIncludeRagAskOnlyFalse:
     """§3.5.1.1 + M3 stage C — ``include_rag_ask_only`` is fixed to
-    ``False`` in the map-source skeleton (B3 heading baseline only)."""
+    ``False`` in the map-source skeleton (heading baseline only)."""
 
     @pytest.mark.asyncio
     async def test_preflight_calls_load_with_include_rag_ask_only_false(self):

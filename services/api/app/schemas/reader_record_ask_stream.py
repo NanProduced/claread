@@ -272,7 +272,7 @@ class ReaderRecordAskRunStartedDTO(BaseModel):
     thread_id: str
     turn_run_id: str
     has_initial_selection: bool
-    # ASK-WEB-G1-R2: echoes the **resolved** web search capability mode
+    # Echoes the **resolved** web search capability mode
     # (not the raw request toggle). ``allowed`` only when a real provider
     # was wired and ``enabled_for_turn=True`` at send time — the frontend
     # gates Search toggle visibility/enablement on this signal, not on
@@ -409,7 +409,7 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
-    # ASK-LEARNER-REASONING-PROJECTOR-R1: public learner summary fields.
+    # Public learner summary fields.
     learner_reasoning_text: str | None = None
     learner_reasoning_status: Literal["streaming", "completed"] | None = None
     learner_reasoning_stage: (

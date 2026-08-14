@@ -584,7 +584,7 @@ def test_resolver_does_not_rewrite_deepseek_wire_fields() -> None:
     is the provider factory's responsibility — the resolver only forwards
     the merged ``ModelSettings`` produced by ``RunModelSettings.with_max_tokens``.
     This test asserts the resolver never references DeepSeek-specific wire
-    fields as code identifiers, so existing A5-8A1R3 contracts stay intact.
+    fields as code identifiers, so existing contracts stay intact.
     Docstring mentions of these words are fine; only real code references fail.
     """
     src = _execution_config_source()
@@ -662,7 +662,7 @@ def test_execution_config_is_frozen() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. ASK-M1-R1: sensitive-field boundary — non-default provider extras
+# 8. ASK-M1-sensitive-field boundary — non-default provider extras
 #    preserved, but sentinels never reach repr(config) or snapshot.
 # ---------------------------------------------------------------------------
 
@@ -747,7 +747,7 @@ def _sentinel_settings() -> Settings:
 def test_model_settings_preserves_non_default_temperature_extra_body_extra_headers() -> None:
     """Outbound ``ModelSettings`` retains provider-level non-default fields.
 
-    ASK-M1-R1: the resolver applies ``max_tokens`` on top of the
+    ASK-M1-the resolver applies ``max_tokens`` on top of the
     resolved profile's ``model_settings`` via
     ``RunModelSettings.with_max_tokens``. That must override *only*
     ``max_tokens`` — ``temperature``, ``extra_body`` (DeepSeek thinking
@@ -773,7 +773,7 @@ def test_model_settings_preserves_non_default_temperature_extra_body_extra_heade
 def test_model_settings_returns_independent_deep_copy() -> None:
     """``model_settings()`` returns an independent copy each call.
 
-    ASK-M1-R1: callers (provider factory normalisation, tests) may
+    ASK-M1-callers (provider factory normalisation, tests) may
     mutate the returned ``ModelSettings`` — nested ``extra_body`` /
     ``extra_headers`` dicts included. That mutation must not bleed back
     into the execution config's ``model_settings_payload`` and affect
@@ -812,7 +812,7 @@ def test_model_settings_returns_independent_deep_copy() -> None:
 def test_repr_excludes_model_and_settings_payload_and_sentinels() -> None:
     """``repr(config)`` must not surface model / payload / sentinels.
 
-    ASK-M1-R1: ``model`` and ``model_settings_payload`` are marked
+    ASK-M1-``model`` and ``model_settings_payload`` are marked
     ``repr=False``. The raw ``Model`` instance may carry provider auth
     / base_url inside; the payload dict may carry ``extra_headers``
     with auth sentinels. Neither is "safely loggable" — operators
@@ -839,7 +839,7 @@ def test_repr_excludes_model_and_settings_payload_and_sentinels() -> None:
 def test_snapshot_excludes_all_sensitive_sentinels() -> None:
     """Snapshot carries only safe identity + policy — never sentinels.
 
-    ASK-M1-R1: even with non-default temperature, extra_body
+    ASK-M1-even with non-default temperature, extra_body
     (thinking payload), and extra_headers (auth header) declared at
     the provider level, the snapshot must only echo identity (option
     key, provider name, model name, profile, adapter) + budget policy
@@ -873,7 +873,7 @@ def test_snapshot_excludes_all_sensitive_sentinels() -> None:
 def test_model_settings_payload_not_described_as_safely_loggable() -> None:
     """Reverse guard: the payload field docstring must not claim it is safe to log.
 
-    ASK-M1-R1: the merged settings dict may carry ``extra_headers``
+    ASK-M1-the merged settings dict may carry ``extra_headers``
     with auth sentinels. The dataclass field docstring / module
     docstring must not call it "safely loggable" — only ``snapshot``
     is purpose-built for logging.

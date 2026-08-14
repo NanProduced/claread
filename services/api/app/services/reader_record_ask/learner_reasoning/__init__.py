@@ -1,4 +1,4 @@
-"""Learner reasoning summary projector (ASK-LEARNER-REASONING-PROJECTOR-R1).
+"""Learner reasoning summary projector (ASK-LEARNER-REASONING-PROJECTOR-).
 
 User-visible content is a short Chinese stage summary, never raw provider
 reasoning. Raw text exists only in turn-local memory and is scrubbed before

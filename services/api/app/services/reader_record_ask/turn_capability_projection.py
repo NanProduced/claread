@@ -1,4 +1,4 @@
-"""Port-derived TurnCapabilityProjection (R4-A5-1 foundation).
+"""Port-derived TurnCapabilityProjection (foundation).
 
 Construction rule
 -----------------
@@ -20,9 +20,9 @@ The projection deliberately excludes:
 - scores, content hashes, plan/content sha256;
 - record / base / user / document UUIDs and envelope fingerprint.
 
-A5-2 selection model-view supplies ``SelectionCapabilityView`` metadata
+ selection model-view supplies ``SelectionCapabilityView`` metadata
 only; the live production runtime still uses
-``envelope.to_agent_projection()`` until A5-7 production wiring.
+``envelope.to_agent_projection`` until production wiring.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class SelectionCapabilityView:
 
 @dataclass(frozen=True, slots=True)
 class ArticleMapCapabilityView:
-    """Map presence metadata only — labels live in untrusted map blocks (A5-4)."""
+    """Map presence metadata only — labels live in untrusted map blocks."""
 
     present: bool
     entry_count: int = 0
@@ -192,7 +192,7 @@ def build_turn_capability_projection(
         product_search_enabled=product_search_enabled,
     )
 
-    # A5-1: selection body is not yet switched into model chunks. Metadata
+    # Selection body is not yet switched into model chunks. Metadata
     # only — handle_id may be pre-registered by the host when present.
     if not selection_present:
         selection = SelectionCapabilityView(present=False)

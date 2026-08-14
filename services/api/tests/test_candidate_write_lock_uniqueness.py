@@ -1,4 +1,4 @@
-"""S1 Write-side candidate uniqueness tests.
+"""Write-side candidate uniqueness tests.
 
 Covers the two split helpers ``lock_record_for_candidate_write`` and
 ``supersede_ready_candidates_for_locked_record`` and their two call paths:

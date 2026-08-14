@@ -536,7 +536,7 @@ def test_message_row_to_history_legacy_row_is_quarantined() -> None:
 
 
 def test_message_row_to_history_user_message_preserves_content_md_with_agentic_metadata() -> None:
-    """ASK-UX-HISTORY-COT-R2 P0-1: cold-loaded user messages must keep
+    """ASK-UX-HISTORY-COT- cold-loaded user messages must keep
     their ``content_md`` even when ``metadata_json`` carries an
     ``execution_version`` marker from the retry snapshot.
 
@@ -624,7 +624,7 @@ def test_message_row_to_history_user_message_preserves_content_md_with_agentic_m
 
 
 # ---------------------------------------------------------------------------
-# ASK-REASONING-R1: cold-history reasoning projection
+# ASK-REASONING-cold-history reasoning projection
 # ---------------------------------------------------------------------------
 
 _REASONING_PROJECTION = {
@@ -721,7 +721,7 @@ def test_terminal_turn_never_resurrects_reasoning() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-REASONING-R2: canonical snapshot validation at the cold-read boundary
+# ASK-REASONING-canonical snapshot validation at the cold-read boundary
 # ---------------------------------------------------------------------------
 
 
@@ -802,7 +802,7 @@ def _bad_snapshot_cases() -> tuple:
 
 
 def test_ok_turn_with_invalid_snapshot_never_shows_reasoning() -> None:
-    """R2 fail-closed: any canonical-validation failure yields no cold
+    """Fail-closed: any canonical-validation failure yields no cold
     reasoning element — and never a degraded display of the raw payload."""
     for bad in _bad_snapshot_cases():
         projected = project_agentic_history_message(

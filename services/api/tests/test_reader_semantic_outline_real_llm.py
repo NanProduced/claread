@@ -1,4 +1,4 @@
-# task-history: T5.8c (renamed from test_reader_semantic_outline_t58c_real_llm.py)
+# task-history: (renamed from test_reader_semantic_outline_t58c_real_llm.py)
 """Opt-in real-LLM smoke harness for semantic outline.
 
 Skipped by default. Runs only when ALL three gates are open:
@@ -35,7 +35,7 @@ Contract (see ``docs/operations/testing.md`` — Ask Claread real-LLM triple gat
    and trusted; ``navigation.units`` unchanged before/after; healthy DB
    has one auditable usage event.
 8. Invalid-output / timeout / usage-writer-failure paths are NOT executed
-   in this round. They are covered by the existing T5.8b DB/unit seam
+   in this round. They are covered by the existing DB/unit seam
    (``test_reader_semantic_outline_adapter.py``) and referenced here
    only as documentation.
 9. Never logs API key, endpoint, full prompt, or full provider payload.
@@ -321,7 +321,7 @@ def _emit_smoke_report(
     Never includes: API key, endpoint, full prompt, full provider payload.
     """
     parts = [
-        "T5.8c semantic outline real-LLM smoke report",
+        "semantic outline real-LLM smoke report",
         f"  job_id={job_id}",
         f"  run_id={run_id}",
         f"  model_name={model_name}",

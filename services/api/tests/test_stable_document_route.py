@@ -1,4 +1,4 @@
-# task-history: D6-I2E (renamed from test_d6_i2e_stable_document_route.py)
+# task-history: (renamed from test_d6_i2e_stable_document_route.py)
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch

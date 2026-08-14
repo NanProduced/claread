@@ -1,4 +1,4 @@
-"""T3.5 completion state finalizer.
+"""Completion state finalizer.
 
 When the enhancement pipeline reports ``all_workers_no_job`` for a record,
 the worker loop must distinguish two scenarios that the pipeline summary
@@ -52,7 +52,7 @@ Design invariants:
   (the candidate scan only re-picks records with runnable jobs).
 - The ``product_state`` is intentionally left at ``readable_enhancing``
   on the clean / partial-no_op / completed-with-failures paths. v1
-  grammar window ``failed`` outcomes are captured by T3.4a diagnostics;
+  grammar window ``failed`` outcomes are captured by diagnostics;
   forcing ``product_state = failed`` would lock users out of articles
   whose translation + vocabulary succeeded.
 """
@@ -104,7 +104,7 @@ COMPLETION_TARGET_READINESS_STATE = "coverage_complete"
 # - ``max_ticks`` / ``max_jobs``: the pipeline runner checks those caps
 #   AFTER incrementing the processed count, so the last succeeding job
 #   can land exactly on the budget.
-# - ``budget_exhausted`` (T4.2a-R2): when the execution budget is
+# - ``budget_exhausted``: when the execution budget is
 #   exhausted, remaining non-terminal jobs are force-failed by the
 #   finalizer (via the existing non-terminal guard), and the record
 #   finalizes as ``completed_with_failures``.
@@ -115,7 +115,7 @@ NON_FINALIZABLE_STOPPED_REASONS: frozenset[PipelineStoppedReason] = frozenset({
 })
 
 # Failure metadata written into ``analysis_windows.coverage`` when the
-# finalizer force-fails stuck non-terminal windows. Mirrors the T3.4a
+# finalizer force-fails stuck non-terminal windows. Mirrors the
 # diagnostics convention so diagnostic queries surface the forced-fail
 # reason without a schema migration.
 FINALIZER_FORCED_WINDOW_FAILURE_CODE = "finalizer_forced_window_failure"
@@ -124,7 +124,7 @@ FINALIZER_FORCED_WINDOW_FAILURE_REASON = (
     "terminal state; the window worker could not make progress"
 )
 
-# T4.2a-R2: Failure metadata written into job diagnostics when the
+# Failure metadata written into job diagnostics when the
 # finalizer force-fails non-terminal jobs due to budget exhaustion.
 BUDGET_EXHAUSTED_FAILURE_CODE = "budget_exhausted"
 BUDGET_EXHAUSTED_FAILURE_REASON = (
@@ -132,7 +132,7 @@ BUDGET_EXHAUSTED_FAILURE_REASON = (
     "force-failed by the completion finalizer"
 )
 
-# T4.2a-R2-R2: Maps budget layer names to the job_types that belong to
+# Maps budget layer names to the job_types that belong to
 # that layer. Used by the finalizer to force-fail ONLY the exhausted
 # layers' jobs during ``partial_budget_exhausted``, preserving
 # non-exhausted layers' retry_later / queued jobs.
@@ -334,12 +334,12 @@ class CompletionFinalizer:
             for status in NON_TERMINAL_JOB_STATUSES
         )
         if non_terminal_job_count > 0:
-            # T4.2a-R2-R2: When the pipeline stopped due to budget
+            # When the pipeline stopped due to budget
             # exhaustion, force-fail non-terminal jobs so the record
             # can finalize as ``completed_with_failures`` instead of
             # being wedged.
             #
-            # T4.2a-R2-R3 fix: BOTH ``budget_exhausted`` (full) and
+            # Fix: BOTH ``budget_exhausted`` (full) and
             # ``partial_budget_exhausted`` must ONLY force-fail jobs
             # in budget layers (translation / vocabulary / grammar).
             # ``display_title`` is NOT a budget layer and must NEVER
@@ -401,7 +401,7 @@ class CompletionFinalizer:
                 job_status_counts.get(STATUS_FAILED_TERMINAL, 0)
                 + force_failed_job_count
             )
-            # T4.2a-R2-R2: for partial exhaustion, only zero out the
+            # For partial exhaustion, only zero out the
             # non-terminal counts for the force-failed types. For full
             # budget exhaustion, zero out all (all types were
             # force-failed). We approximate by zeroing all non-terminal
@@ -416,7 +416,7 @@ class CompletionFinalizer:
             # survive (non-exhausted layers), we must NOT finalize
             # yet — the record still has in-flight work. Return
             # non_terminal_jobs_present so the worker loop re-scans.
-            # T4.2a-R2-R3: same applies to full exhaustion when a
+            # Same applies to full exhaustion when a
             # non-budget-layer job (e.g. display_title) survives.
             if summary.stopped_reason in (
                 "partial_budget_exhausted",
@@ -454,7 +454,7 @@ class CompletionFinalizer:
             # durable state is truthful, then finalize as
             # ``completed_with_failures`` — mirroring the v1 design that
             # grammar window issues do not block ``coverage_complete``
-            # (T3.4a diagnostics capture the failure).
+            # (diagnostics capture the failure).
             force_failed_window_count = (
                 await self._repository.force_fail_non_terminal_analysis_windows(
                     conn,

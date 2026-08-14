@@ -1,4 +1,4 @@
-"""Internal translation worker runner for D4.
+"""Internal translation worker runner for.
 
 Drives translation ticks on top of :class:`ReaderOrchestrator` without
 exposing any public HTTP endpoint and without starting a background
@@ -6,15 +6,15 @@ process. The runner is a callable service intended for tests, internal
 admin tooling, or future internal routes that carry their own permission
 guards.
 
-D4 auth/permission boundary
+ auth/permission boundary
 ---------------------------
-No public HTTP endpoint is added in D4:
+No public HTTP endpoint is added in
 
 - Ticks are explicit and driven by tests or internal service calls.
-- D4 does not run a background worker process; the PostgreSQL
+- does not run a background worker process; the PostgreSQL
   run/job/event tables remain the durable control plane.
 - An internal admin route would require auth infrastructure (service
-  accounts, rate limiting, audit logging) that is out of scope for D4.
+  accounts, rate limiting, audit logging) that is out of scope for.
 - When a future internal route is needed, it MUST be permission-guarded
   (service-account or admin role) and MUST NOT accept unauthenticated
   public traffic. The runner itself stays transport-agnostic so the

@@ -19,7 +19,7 @@ class ModelProviderError(ValueError):
 
 
 class DeepSeekProfileConflictError(ModelProviderError):
-    """Raised when an explicit DeepSeek profile conflicts with protocol fields (R4-A5-8A1R3).
+    """Raised when an explicit DeepSeek profile conflicts with protocol fields.
 
     Recognisable Direct/DashScope DeepSeek must carry canonical values for
     ``openai_chat_thinking_field``, ``openai_chat_send_back_thinking_parts``
@@ -130,7 +130,7 @@ _FRAMEWORK_DEFAULT_SEND_BACK: frozenset[str] = frozenset({"auto"})
 def _ensure_deepseek_thinking_fields(
     profile: OpenAIModelProfile | None,
 ) -> OpenAIModelProfile:
-    """Enforce DeepSeek protocol-required thinking fields (R4-A5-8A1R3).
+    """Enforce DeepSeek protocol-required thinking fields.
 
     Recognisable Direct/DashScope DeepSeek must always carry:
     - ``openai_chat_thinking_field="reasoning_content"``
@@ -222,7 +222,7 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
       4. None — the OpenAIChatModel will use its own defaults.
 
     For recognisable Direct/DashScope DeepSeek, protocol-required thinking
-    fields are enforced on the resolved profile (R4-A5-8A1R3): missing
+    fields are enforced on the resolved profile: missing
     fields are floor-merged to canonical values; explicit non-canonical
     values are rejected fail-closed via
     :class:`DeepSeekProfileConflictError`. This covers all three paths:
@@ -307,7 +307,7 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
 def _dashscope_native_profile() -> ModelProfile:
     """Conservative default profile for DashScope native streaming.
 
-    ASK-WEB-R4-R1 (Qwen strategy correction): Qwen3.7-Max officially
+    Qwen3.7-Max officially
     supports ``thinking`` + ``json_object`` response_format per DashScope
     official documentation. The previous claim that "DashScope native
     Qwen / GLM do not advertise strict JSON schema" was inaccurate.

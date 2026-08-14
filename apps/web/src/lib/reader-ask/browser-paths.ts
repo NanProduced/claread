@@ -1,5 +1,5 @@
 /**
- * ASK-RETRY-CONTRACT-R0/R4 — single source of truth for Browser → Next BFF
+ * Single source of truth for Browser → Next BFF
  * Ask paths. UI code must never hand-write FastAPI upstream paths
  * (especially `/retry/stream`); that suffix exists only on the BFF →
  * FastAPI adapter in `services/api/reader-ask.ts`.
@@ -22,7 +22,7 @@ export function isLocalOptimisticMessageId(messageId: string): boolean {
 }
 
 /**
- * ASK-RETRY-CONTRACT-R4 — strict UUID only for regenerate targets.
+ * Strict UUID only for regenerate targets.
  * Arbitrary non-`local-*` strings (e.g. `msg-assistant-1`) are NOT
  * persisted server identities.
  */

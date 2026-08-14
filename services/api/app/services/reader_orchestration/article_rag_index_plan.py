@@ -1,4 +1,4 @@
-"""D6-I4A: Reader Article RAG Index Plan Foundation.
+"""Reader Article RAG Index Plan Foundation.
 
 Pure, read-only service that builds a deterministic index plan from the
 Reader truth layer (stable_reading_documents / stable_document_blocks /

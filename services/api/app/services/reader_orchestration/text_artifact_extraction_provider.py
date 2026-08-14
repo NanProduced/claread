@@ -1,4 +1,4 @@
-"""Deterministic text artifact extraction provider (D6-I3M + D6-I3Q).
+"""Deterministic text artifact extraction provider (+).
 
 Wraps an injectable :class:`StorageObjectReader` to download object bytes and
 decode them as UTF-8 text. Supports ``text/plain``, ``text/markdown``,
@@ -7,7 +7,7 @@ filename ends with ``.txt`` or ``.md``).
 
 This provider performs **no** OCR, PDF parsing — all storage access goes
 through the injected reader. In tests, a ``FakeStorageObjectReader`` is used;
-in production, :class:`AliyunOssObjectReader` (D6-I3Q) is wired via
+in production, :class:`AliyunOssObjectReader` is wired via
 :class:`ArtifactInputPipelineWorkerService`.
 
 Validation rules (all fail-terminal, non-retryable):
@@ -58,7 +58,7 @@ FAILURE_CODE_DECODE_ERROR = "decode_error"
 FAILURE_CODE_EMPTY_TEXT = "extraction_empty_text"
 FAILURE_CODE_STORAGE_READ_ERROR = "storage_read_error"
 
-# AliyunOssObjectReader failure codes (D6-I3Q)
+# AliyunOssObjectReader failure codes
 FAILURE_CODE_OSS_SDK_MISSING = "oss_sdk_missing"
 FAILURE_CODE_OSS_OBJECT_NOT_FOUND = "oss_object_not_found"
 FAILURE_CODE_OSS_ACCESS_DENIED = "oss_access_denied"
@@ -92,7 +92,7 @@ class StorageObjectReader(Protocol):
 
 
 class AliyunOssObjectReader:
-    """Aliyun OSS object reader using ``oss2`` (lazy import, D6-I3Q).
+    """Aliyun OSS object reader using ``oss2`` (lazy import).
 
     Fail-closed: if ``oss2`` is not installed or credentials are missing,
     :meth:`read_object` raises :class:`ArtifactExtractionError` with

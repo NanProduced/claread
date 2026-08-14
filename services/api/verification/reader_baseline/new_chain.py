@@ -234,7 +234,7 @@ def _count_layer_items(layer: ReaderSnapshotLayer) -> int:
         return 0
     try:
         if layer.layer_type == "translation":
-            # T1 acceptance: the published layer stores
+            # Acceptance: the published layer stores
             # ``TranslationLayerOutput`` (with ``group_id`` /
             # ``source_text_hash``), not the LLM generation schema
             # ``TranslationLayerGenerationOutput`` (``extra="forbid"``).

@@ -1,6 +1,6 @@
-"""Deterministic gate for ``reader_parse_eval_artifact.v1`` (R1 split).
+"""Deterministic gate for ``reader_parse_eval_artifact.v1`` (split).
 
-R1 changes from the previous monolithic ``parse_eval_gate.py``:
+ changes from the previous monolithic ``parse_eval_gate.py``:
 
 1. ``run_gate`` now receives a separate :class:`CanonicalTextEvidence`
    alongside the artifact. The evidence carries the **full canonical
@@ -32,7 +32,7 @@ R1 changes from the previous monolithic ``parse_eval_gate.py``:
    :class:`ZeroHashRegressionNegatives` helper produces such
    corrupted artifacts for the negative test path.
 
-3. **Key-only forbidden marker scan.** Per the R1 spec
+3. **Key-only forbidden marker scan.** Per the spec
    ("forbidden 检查只针对 key / 非法 payload shape，不扫描用户文本
    或 notes"), the scan walks the JSON **keys** only (not free-form
    string values). This prevents false positives when a legitimate
@@ -45,7 +45,7 @@ R1 changes from the previous monolithic ``parse_eval_gate.py``:
    failure as fatal.
 
 The gate does NOT verify semantic quality. It is structural and
-deterministic only, per the Task 5A spec.
+deterministic only, per the spec.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ from .schema import (
 )
 
 # ---------------------------------------------------------------------------
-# R3: Known fixture-grade producer modules
+# Known fixture-grade producer modules
 # ---------------------------------------------------------------------------
 #
 # Any artifact claiming real execution (executor_mode="real" or
@@ -119,7 +119,7 @@ class CanonicalTextEvidence:
       canonical-text slices and verify they match the artifact's
       ``text_hash`` fields.
 
-    R2 (P1-4): the evidence also carries ``sidecar_payloads`` — a
+    The evidence also carries ``sidecar_payloads`` — a
     mapping from ``sidecar_ref`` (the string stored in
     :class:`~.schema.PublishedLayerFact.sidecar_ref`) to the canonical
     JSON string of the sidecar content. The gate resolves each
@@ -291,7 +291,7 @@ def _scan_forbidden_markers_keys_only(
 ) -> list[GateFinding]:
     """Scan the serialized artifact JSON for forbidden key markers.
 
-    Per the R1 spec, the scan inspects **keys only** — it does not
+    Per the spec, the scan inspects **keys only** — it does not
     scan free-form string values like ``notes`` or
     ``unavailable_reason``. This prevents false positives when a
     legitimate user-supplied string happens to contain a forbidden
@@ -392,7 +392,7 @@ def _check_canonical_text_evidence(
 ) -> list[GateFinding]:
     """Recompute canonical-text facts from the evidence and compare.
 
-    This is the R1 cross-check the previous gate could not perform
+    This is the cross-check the previous gate could not perform
     because it did not have the full canonical text. We verify:
 
     - SHA-256 over the full canonical text.
@@ -538,7 +538,7 @@ def _check_anchor_map_consistency(
 
     # 2. Recompute FNV-1a32 hash for each navigation unit's UTF-16
     #    slice and compare to the embedded text_hash. This is the
-    #    R1 cross-check the previous gate could not perform.
+    # Cross-check the previous gate could not perform.
     for unit in anchor_map.navigation_units:
         try:
             slice_text = _utf16_slice(
@@ -810,7 +810,7 @@ def _check_published_layers(
             )
         seen_layer_ids.add(layer.layer_id)
 
-    # R1: each non-empty layer MUST carry reviewable evidence
+    # Each non-empty layer MUST carry reviewable evidence
     # (normalized_output OR sidecar_ref). The Pydantic validator
     # already enforces this, but the gate re-checks in case a future
     # producer path bypasses the model validator.
@@ -873,7 +873,7 @@ def _check_published_layers(
                     )
                 )
             else:
-                # R2 (P1-4): resolve sidecar_ref via the evidence's
+                # Resolve sidecar_ref via the evidence's
                 # sidecar_payloads mapping. The sidecar_ref MUST
                 # resolve to a canonical JSON string whose SHA-256
                 # equals sidecar_sha256. Without this check,
@@ -1039,7 +1039,7 @@ def _check_prompt_revision_provenance(
 
 
 def _check_forbidden_markers(artifact: ParseEvalArtifactV1) -> list[GateFinding]:
-    """Key-only forbidden marker scan (R1)."""
+    """Key-only forbidden marker scan."""
     return _scan_forbidden_markers_keys_only(artifact)
 
 
@@ -1147,7 +1147,7 @@ def _check_artifact_provenance(
                 ),
             )
         )
-    # R2 (P1-1): recompute the artifact_id from the declared semantic
+    # Recompute the artifact_id from the declared semantic
     # inputs and verify it matches the artifact's declared artifact_id.
     # Without this check the gate would only verify that the semantic
     # inputs are *internally consistent* with each other — a malicious
@@ -1181,7 +1181,7 @@ def _check_artifact_provenance(
 def _check_provenance_producer_policy(
     artifact: ParseEvalArtifactV1,
 ) -> list[GateFinding]:
-    """R3: An artifact claiming real execution MUST NOT come from a
+    """An artifact claiming real execution MUST NOT come from a
     fixture-grade producer module, and MUST come from the official
     adapter producer.
 
@@ -1203,7 +1203,7 @@ def _check_provenance_producer_policy(
           ``artifact_provenance.real_artifact_from_non_adapter_producer``.
 
     2. If the artifact does NOT claim real execution, no check fires
-       — fixture producers are allowed to emit ``executor_mode="fake"``
+       fixture producers are allowed to emit ``executor_mode="fake"``
        artifacts.
 
     This check is structural and deterministic. It does not verify
@@ -1458,7 +1458,7 @@ class ZeroHashRegressionNegatives:
     ) -> ParseEvalArtifactV1:
         """Return a copy with ``artifact_id`` set to all-zeros.
 
-        R2 (P1-1) regression negative: the gate MUST recompute
+         regression negative: the gate MUST recompute
         ``derive_artifact_id(...)`` from the declared semantic inputs
         and reject any artifact whose declared ``artifact_id`` does
         not match. Setting ``artifact_id`` to all-zeros (a valid
@@ -1477,7 +1477,7 @@ class ZeroHashRegressionNegatives:
     ) -> ParseEvalArtifactV1:
         """Return a copy with ``artifact_id`` set to a wrong value.
 
-        R2 (P1-1) regression negative: if ``wrong_id`` is None, the
+         regression negative: if ``wrong_id`` is None, the
         helper flips the last hex character of the real artifact_id
         so the result is a valid 64-hex string but does NOT match
         the value recomputed from the semantic inputs.

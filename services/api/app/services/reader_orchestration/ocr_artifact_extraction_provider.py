@@ -1,4 +1,4 @@
-"""OCR-based image artifact extraction provider (D6-I3T + D6-I3U).
+"""OCR-based image artifact extraction provider (+).
 
 Wraps an injectable :class:`StorageObjectReader` to download image bytes and
 a :class:`OcrTextExtractor` to recognise text in the image. Supports
@@ -7,7 +7,7 @@ subtypes fail closed with ``unsupported_ocr_image_type``.
 
 The default :class:`UnconfiguredOcrTextExtractor` always raises
 ``ocr_provider_unconfigured`` (terminal). The real
-:class:`QwenOcrTextExtractor` (D6-I3U) delegates to an injectable
+:class:`QwenOcrTextExtractor` delegates to an injectable
 :class:`QwenOcrClient` (default :class:`DashScopeQwenOcrClient`) so tests
 can wire a fake client without touching the network. The DashScope client
 lazily imports the SDK and never logs the API key.
@@ -83,7 +83,7 @@ FAILURE_CODE_OCR_PROVIDER_UNCONFIGURED = "ocr_provider_unconfigured"
 FAILURE_CODE_OCR_NO_TEXT_DETECTED = "ocr_no_text_detected"
 FAILURE_CODE_OCR_EXTRACTION_ERROR = "ocr_extraction_error"
 FAILURE_CODE_UNSUPPORTED_OCR_IMAGE_TYPE = "unsupported_ocr_image_type"
-# D6-I3U: real Qwen OCR adapter error classification
+# Real Qwen OCR adapter error classification
 FAILURE_CODE_OCR_BACKEND_TRANSIENT = "ocr_backend_transient"
 FAILURE_CODE_OCR_PERMISSION_DENIED = "ocr_permission_denied"
 FAILURE_CODE_OCR_REQUEST_INVALID = "ocr_request_invalid"
@@ -149,7 +149,7 @@ class UnconfiguredOcrTextExtractor:
 
 
 # ---------------------------------------------------------------------------
-# D6-I3U: Qwen OCR client protocol + DashScope implementation
+# Qwen OCR client protocol + DashScope implementation
 # ---------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ def _parse_dashscope_response(resp: Any) -> QwenOcrResponse:
 
 
 class DashScopeQwenOcrClient:
-    """Real DashScope-backed Qwen OCR client (D6-I3U).
+    """Real DashScope-backed Qwen OCR client.
 
     Lazily imports the ``dashscope`` SDK on first ``recognize`` call so
     the module is importable without the SDK installed (tests use a fake
@@ -435,12 +435,12 @@ class DashScopeQwenOcrClient:
 
 
 # ---------------------------------------------------------------------------
-# QwenOcrTextExtractor (real adapter, D6-I3U)
+# QwenOcrTextExtractor (real adapter)
 # ---------------------------------------------------------------------------
 
 
 class QwenOcrTextExtractor:
-    """Qwen / DashScope OCR extractor (D6-I3U real adapter).
+    """Qwen / DashScope OCR extractor (real adapter).
 
     Delegates the actual OCR call to an injectable :class:`QwenOcrClient`.
     When no client is injected, :class:`DashScopeQwenOcrClient` is
@@ -450,7 +450,7 @@ class QwenOcrTextExtractor:
     Behaviour:
 
     - If ``api_key`` is empty → ``ocr_provider_unconfigured`` (terminal).
-      This preserves the D6-I3T fail-closed contract for missing
+      This preserves the fail-closed contract for missing
       ``DASHSCOPE_API_KEY``.
     - If ``api_key`` is set → delegates to ``client.recognize(...)`` and
       maps :class:`QwenOcrClientError` subclasses to

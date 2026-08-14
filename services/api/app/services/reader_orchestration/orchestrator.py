@@ -1,7 +1,7 @@
-"""Reader orchestration integration for D5-G1.
+"""Reader orchestration integration for.
 
-Provides the minimal orchestration layer that connects the D4-P0
-``article_ready`` backend path to the D4-P1 translation worker and
+Provides the minimal orchestration layer that connects the
+``article_ready`` backend path to the translation worker and
 keeps translation parsed decisions aligned with the translation publish
 transaction.
 
@@ -61,8 +61,8 @@ class TranslationTickResult:
 class OrphanedTranslationDecision:
     """A published translation layer missing its parsed_decision row.
 
-    D5-G1 writes translation parsed decisions in the same transaction as
-    the layer publish. Any orphan now indicates legacy pre-D5 data or a
+     writes translation parsed decisions in the same transaction as
+    the layer publish. Any orphan now indicates legacy pre- data or a
     manually introduced partial state, and should be treated as a
     diagnostic finding instead of a normal crash window.
     """
@@ -202,7 +202,7 @@ class ReaderOrchestrator:
     ) -> list[OrphanedTranslationDecision]:
         """Find published translation layers missing a parsed_decision row.
 
-        D5-G1 writes translation parsed decisions in the publisher
+         writes translation parsed decisions in the publisher
         transaction. Any hit should therefore be treated as legacy data
         or a manually introduced partial state.
 

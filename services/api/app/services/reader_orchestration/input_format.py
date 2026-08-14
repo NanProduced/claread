@@ -8,7 +8,7 @@
   的块结构唯一决定（parser 是块结构的 single source of truth）。
 
 gate、candidate 块构造、normalizer 三方共用同一判定与同一份
-``MarkdownParseResult``（每请求只解析一次，见 A4 preparsed 机制）。
+``MarkdownParseResult``（每请求只解析一次，见 preparsed 机制）。
 禁止再用 ``source_type == "markdown_file"`` 决定是否保留结构。
 """
 

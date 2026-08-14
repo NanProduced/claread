@@ -235,22 +235,22 @@ def _validate_layer_target(
     if layer.layer_type == "translation" and layer.target_scope not in {"unit", "anchor_segment"}:
         raise ValueError(
             "translation snapshot layer "
-            f"{layer.layer_id} must target a unit or anchor segment in D4"
+            f"{layer.layer_id} must target a unit or anchor segment in the snapshot target-scope contract"
         )
     if layer.layer_type == "vocabulary" and layer.target_scope != "unit":
         raise ValueError(
             "vocabulary snapshot layer "
-            f"{layer.layer_id} must target a unit in D5-V2"
+            f"{layer.layer_id} must target a unit in the snapshot target-scope contract"
         )
     if layer.layer_type == "grammar_note" and layer.target_scope != "unit":
         raise ValueError(
             "grammar_note snapshot layer "
-            f"{layer.layer_id} must target a unit in D5-V5"
+            f"{layer.layer_id} must target a unit in the snapshot target-scope contract"
         )
     if layer.layer_type == "sentence_analysis" and layer.target_scope != "unit":
         raise ValueError(
             "sentence_analysis snapshot layer "
-            f"{layer.layer_id} must target a unit in D5-V5"
+            f"{layer.layer_id} must target a unit in the snapshot target-scope contract"
         )
 
     if layer.target_scope == "unit":
@@ -705,7 +705,7 @@ def _build_source_block(
 
 
 def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
-    """A5: project stable block metadata onto the ``reader_source_block``
+    """Project stable block metadata onto the ``reader_source_block``
     payload.
 
     Returns an empty dict when the unit has no stable block annotation
@@ -739,7 +739,7 @@ def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
     }
     if unit.stable_block_id is not None:
         fields["stableBlockId"] = unit.stable_block_id
-    # P3: automatic-policy projection only — does not imply job loading /
+    # Automatic-policy projection only — does not imply job loading
     # published / error. Legacy units omit these keys when no contract.
     if unit.semantic_contract_version is not None:
         fields["contentRole"] = unit.content_role

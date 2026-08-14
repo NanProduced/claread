@@ -4,10 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, StrictBool, StrictStr
 
-# R4-A4-2R5R3 Issue #2: shared typed Literal for loader-owned
+# Shared typed Literal for loader-owned
 # atomic_facts provenance. This is the SINGLE source of truth — the
-# PrivateAttr on :class:`ReaderRecordAskR4A3Case` AND the public
-# :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` property both
+# case PrivateAttr AND the public ``atomic_facts_origin`` property both
 # use this Literal. The ``real_phase1`` preflight guard accepts ONLY
 # ``"explicit"``; any other value fail-closes BEFORE the model builder
 # or provider is called.
@@ -29,7 +28,7 @@ class AtomicExpectedFact(BaseModel):
     """One atomic expected fact for the context_support evaluator.
 
     Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-    spec.md` — Requirement: context_support atomic fact contract（P0-6）.
+    spec.md` — Requirement: context_support atomic fact contract.
 
     Replaces the prior ``required_article_facts: list[str]`` contract
     which required a hand-rewritten full sentence to appear verbatim in
@@ -47,15 +46,15 @@ class AtomicExpectedFact(BaseModel):
     - ``severity``: failure severity when ``required=True`` and the fact
       is not mentioned.
 
-    R4-A4-0 final closure (P1-1): ``required`` is now
+    ``required`` is now
     :class:`StrictBool` — rejects ``"false"`` / ``"true"`` / ``0`` /
     ``1`` / ``0.0`` / ``1.0``. The previous lenient ``bool`` allowed
     ``required=0`` to silently coerce to ``required=False``, weakening
     the contract.
 
-    R4-A4-2R5R2 Task 4: the ``origin`` field has been REMOVED from this
+    The ``origin`` field has been REMOVED from this
     model. Provenance is now LOADER-OWNED — see
-    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin`. Dataset JSON
+    the case's ``atomic_facts_origin`` property. Dataset JSON
     authors CANNOT declare or forge provenance on individual
     :class:`AtomicExpectedFact` entries; only the loader decides
     provenance by inspecting the raw JSON (does the case file declare
@@ -72,23 +71,23 @@ class AtomicExpectedFact(BaseModel):
     severity: Literal["high", "medium", "low"] = "high"
 
 
-class ReaderRecordAskR4A3Expected(BaseModel):
-    """Per-case expected facts for the R4-A3 reader-record-ask eval.
+class ReaderRecordAskExpected(BaseModel):
+    """Per-case expected facts for the reader-record-ask eval.
 
-    Each field maps to one or more of the 11 R4-A3 evaluator dimensions.
+    Each field maps to one or more of the 11 evaluator dimensions.
     Fields are intentionally permissive (defaults) so a case only declares
     the constraints it actually wants to assert.
     """
 
     # exhaustive_completeness: type -> expected entity set.
     #
-    # R4-A4-0 (Task 2): each entity entry may use ``|``-separated alias
+    # Each entity entry may use ``|``-separated alias
     # lists (e.g. ``"Thunder Bay|雷霆湾|桑德贝"``). Any alias in the
     # list matching the final_text counts as a hit. This mirrors the
     # ``entity_catalog`` alias contract so recall and precision share
     # the same alias vocabulary.
     expected_entity_set: dict[str, list[str]] = Field(default_factory=dict)
-    # exhaustive_completeness (R4-A4-0 Task 2): explicit recall scope.
+    # exhaustive_completeness: explicit recall scope.
     # When ``False`` (default), the evaluator does NOT require every
     # entity in ``expected_entity_set`` to appear in the answer. Only
     # when the user question explicitly asks for an exhaustive list
@@ -99,7 +98,7 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     # The evaluator MUST NOT infer the scope from ``question_category``,
     # suggestion text, or keywords — only this explicit field.
     #
-    # R4-A4-0 final closure (P1-1): now :class:`StrictBool` — rejects
+    # :class:`StrictBool` rejects
     # ``"false"`` / ``"true"`` / ``0`` / ``1`` / ``0.0`` / ``1.0``.
     # The previous lenient ``bool`` allowed ``requires_exhaustive_entity_recall=1``
     # to silently coerce to ``True`` even when the case author meant a
@@ -113,7 +112,7 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     # instruction_following
     requested_count: int | None = None
     requested_count_kind: Literal["exercise_items", "sentences", "none"] = "none"
-    # instruction_following (R4-A4-0 Task 3): explicit subquestion
+    # instruction_following: explicit subquestion
     # permission for ``exercise_one`` cases. When ``False`` (default),
     # an unnumbered single exercise block containing multiple related
     # sub-questions (separated by ``?``) is counted as ONE top-level
@@ -128,19 +127,19 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     # exercises. ``allow_subquestions`` only affects how an unnumbered
     # block with multiple ``?`` is interpreted.
     #
-    # R4-A4-0 final closure (P1-1): now :class:`StrictBool`.
+    # ``allow_subquestions`` is a :class:`StrictBool`.
     allow_subquestions: StrictBool = False
     # entity_precision: type -> allowed entity set (legacy field — still
     # respected by the evaluator; ``entity_catalog`` below is the
     # preferred typed catalog going forward).
     allowed_entities_by_type: dict[str, list[str]] = Field(default_factory=dict)
-    # entity_precision (P0-7): typed entity catalog. Supersedes
+    # entity_precision: typed entity catalog. Supersedes
     # ``allowed_entities_by_type`` for the type-confusion check. When
     # present, the evaluator uses this to detect non-city entities
     # leaking into a city answer (e.g. region "纽约州西部部分地区"
     # listed as a city).
     entity_catalog: dict[str, list[str]] = Field(default_factory=dict)
-    # context_support (P0-6): atomic facts with alias groups. Supersedes
+    # context_support: atomic facts with alias groups. Supersedes
     # ``required_article_facts`` (kept for backwards compat — loader
     # converts old facts to single-alias AtomicExpectedFact entries).
     atomic_facts: list[AtomicExpectedFact] = Field(default_factory=list)
@@ -161,8 +160,8 @@ class ReaderRecordAskR4A3Expected(BaseModel):
     must_distinguish_external_knowledge: bool = False
 
 
-class ReaderRecordAskR4A3Case(BaseModel):
-    """A single R4-A3 reader-record-ask eval case."""
+class ReaderRecordAskCase(BaseModel):
+    """A single reader-record-ask eval case."""
 
     id: str
     source_kind: Literal[
@@ -195,18 +194,18 @@ class ReaderRecordAskR4A3Case(BaseModel):
         "absent_year",
         "multiple_choice_one",
     ]
-    expected: ReaderRecordAskR4A3Expected
+    expected: ReaderRecordAskExpected
     tags: list[str] = Field(default_factory=list)
-    # P0-5: explicit phase manifest. Each case declares which phases it
+    # Explicit phase manifest. Each case declares which phases it
     # belongs to. Recognized tags:
-    # - ``real_phase1``: candidate for Phase 1 real-model runs
+    # - ``real_phase1``: candidate for initial real-model runs
     # - ``offline_only``: evaluator-only; never selected for real-model
-    #   runs (used for ``known_bbc`` cases until R4-A4 lands the
+    #   runs (used for ``known_bbc`` cases until the
     #   trusted-source-metadata injection seam)
-    # - ``targeted_phase2_candidate``: expected to fail in Phase 1 and
-    #   enter Phase 2
+    # - ``targeted_phase2_candidate``: expected to fail an initial run and
+    #   enter a targeted follow-up run
     phase_tags: list[str] = Field(default_factory=list)
-    # R4-A4-2R P0-Identity: explicit, auditable model-visible fixture
+    # Explicit, auditable model-visible fixture
     # identity for real-BBC cases. When present, the harness preflight
     # verifies that the runtime envelope's ``envelope_fingerprint``
     # matches ``expected_envelope_fingerprint`` EXACTLY before any model
@@ -231,11 +230,11 @@ class ReaderRecordAskR4A3Case(BaseModel):
     # preflight.
     #
     # ``None`` (default) preserves backwards compat with cases authored
-    # before R4-A4-2R — no preflight check is performed, no aggregate
+    # before this identity contract — no preflight check is performed, no aggregate
     # check is performed. New cases SHOULD declare this field.
     expected_envelope_fingerprint: StrictStr | None = None
 
-    # R4-A4-2R2 P0-1: true model-visible fixture identity. Deterministic
+    # True model-visible fixture identity. Deterministic
     # SHA-256 over ``baseline_status + is_complete + ordered
     # (chunk_ordinal, chunk_text)``. Excludes random evidence handle_ids,
     # absolute paths, record UUIDs, base_ids, stable_document_ids, and
@@ -264,11 +263,11 @@ class ReaderRecordAskR4A3Case(BaseModel):
     #
     # Supersedes ``expected_envelope_fingerprint`` as the final
     # identity contract. ``expected_envelope_fingerprint`` is retained
-    # for backwards compat with cases authored under R4-A4-2R; the
+    # for backwards compatibility with older cases; the
     # harness checks BOTH when both are present (defense-in-depth).
     expected_runtime_fixture_fingerprint: StrictStr | None = None
 
-    # R4-A4-2R5R2 Task 4 + R4-A4-2R5R3 Issue #2: LOADER-OWNED
+    # Loader-owned
     # provenance for atomic_facts.
     #
     # This is a Pydantic ``PrivateAttr`` — it is NOT parsed from JSON
@@ -295,7 +294,7 @@ class ReaderRecordAskR4A3Case(BaseModel):
     # dataset author could set ``origin="explicit"`` on individual
     # AtomicExpectedFact entries to bypass the guard.
     #
-    # R4-A4-2R5R3 Issue #2: the field type is now the shared
+    # The field type is the shared
     # :data:`AtomicFactsOrigin` Literal (was ``str``). This removes
     # the ``# type: ignore[return-value]`` from the property — the
     # PrivateAttr and the property now share the SAME typed Literal,
@@ -310,7 +309,7 @@ class ReaderRecordAskR4A3Case(BaseModel):
     #   2. Is NOT parsed from input JSON (dataset authors cannot set
     #      it).
     #   3. Defaults to ``"explicit"`` for backwards compat with cases
-    #      constructed directly in tests (e.g., ``ReaderRecordAskR4A3Case(...)``
+    #      constructed directly in tests (e.g., the case model
     #      without going through the loader).
     _atomic_facts_origin: AtomicFactsOrigin = PrivateAttr(default="explicit")
 
@@ -323,7 +322,7 @@ class ReaderRecordAskR4A3Case(BaseModel):
         :data:`AtomicFactsOrigin` Literal; the loader is the only
         writer.
 
-        R4-A4-2R5R3 Issue #2: the return type is now the shared
+        The return type is the shared
         :data:`AtomicFactsOrigin` Literal (matching the PrivateAttr
         type). The previous ``# type: ignore[return-value]`` is
         REMOVED — both sides use the same typed Literal, so the
@@ -332,12 +331,12 @@ class ReaderRecordAskR4A3Case(BaseModel):
         return self._atomic_facts_origin
 
 
-class ReaderRecordAskR4A3Dataset(BaseModel):
-    """Top-level R4-A3 reader-record-ask dataset manifest."""
+class ReaderRecordAskDataset(BaseModel):
+    """Top-level reader-record-ask dataset manifest."""
 
     id: str = "reader-record-ask-r4-a3"
     schema_version: str = "r4-a3-dataset-v1"
     description: str = ""
     case_globs: list[str] = Field(default_factory=lambda: ["cases/*.json"])
     tags: list[str] = Field(default_factory=list)
-    cases: list[ReaderRecordAskR4A3Case] = Field(default_factory=list)
+    cases: list[ReaderRecordAskCase] = Field(default_factory=list)

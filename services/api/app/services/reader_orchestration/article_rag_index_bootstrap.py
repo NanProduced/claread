@@ -1,4 +1,4 @@
-"""D6-I4B: Article RAG Index Job Bootstrap + Index State Foundation.
+"""Article RAG Index Job Bootstrap + Index State Foundation.
 
 Enqueues a base-scoped ``article_rag_index_build`` reader_job and
 persists the index state row in ``reader_article_rag_index_runs``.
@@ -441,7 +441,7 @@ class ArticleRagIndexBootstrapService:
 
         # 4. Insert index state row (status='queued').
         #    embedding_model / vector_store_provider / vector_collection
-        #    are left NULL — D6-I4B does not call embedding / vector
+        #    are left NULL — bootstrap does not call embedding / vector
         #    stores.
         index_run_id = await conn.fetchval(
             """

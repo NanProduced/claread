@@ -122,7 +122,7 @@ class ReaderAskAnchorRef(BaseModel):
 
 
 class ReaderAskReadingRecordAnchor(UserEditorialAssetAnchor):
-    """D6-A3 Ask write-proposal anchor.
+    """Ask write-proposal anchor.
 
     This intentionally inherits the UserEditorialAssetAnchor contract so Ask
     proposals can carry the new Reading Record anchor payload without wiring it
@@ -684,7 +684,7 @@ class ReaderAskSelectedModel(BaseModel):
     model_name: str | None = None
     replan_model_name: str | None = None
     price_multiplier: float = 1.0
-    # ASK-WEB-G1-R2: server-declared Web Search capability for this model
+    # Server-declared Web Search capability for this model
     # option. ``"available"`` only when a real provider is wired via
     # the current ResolvedModelConfig binding — never inferred
     # from the request toggle or scope. The frontend gates Search toggle
@@ -754,14 +754,14 @@ class ReaderAskMessageRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     # Optional model key for thread option resolution compatibility only.
-    # ASK-RETRY-CONTRACT-R3: must NOT invent a new lane or override the
+    # Must NOT invent a new lane or override the
     # original turn's capability snapshot. Lane is always the persisted
     # execution_version of the target assistant message.
     model: str | None = None
 
 
 class ReaderAskSubmissionPublicMessage(BaseModel):
-    """Safe public projection of a message for reconcile hydrate (R5)."""
+    """Safe public projection of a message for reconcile hydrate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -780,7 +780,7 @@ class ReaderAskSubmissionPublicMessage(BaseModel):
 
 
 class ReaderAskSubmissionReconcileResponse(BaseModel):
-    """ASK-RETRY-CONTRACT-R5 — typed reconciliation with optional hydrate."""
+    """Typed reconciliation with optional hydrate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -816,12 +816,12 @@ class ReaderAskFollowUpSuggestion(BaseModel):
 
 
 class ReaderRecordAskMessageRequest(BaseModel):
-    """D6-A6: new Reading Record Ask message request contract.
+    """Reading Record Ask message request contract.
 
     This is the canonical Reading Record Ask v2 request contract.
     It accepts Reading Record anchors only.
 
-    ASK-UX-COT-COMPOSER-R3 P2 — plural focus anchors:
+    Plural focus anchors:
     - ``focus_anchors`` is the canonical multi-selection field (≤4: one
       auto-ingested selection plus up to three user-pinned selections). New
       Web clients send every auto/manual selection anchor here.
@@ -844,19 +844,19 @@ class ReaderRecordAskMessageRequest(BaseModel):
         default=None, max_length=4
     )
     model: str | None = None
-    # User-visible Web Search authorization (G1-R1). ``allowed`` only grants
+    # User-visible Web Search authorization. ``allowed`` only grants
     # turn capability; it never forces a search. The agent decides whether
     # to invoke ``search_web``; Retry replays the original turn's mode
     # instead of re-reading current UI state.
     web_search_mode: Literal["disabled", "allowed"] = "disabled"
-    # ASK-RETRY-CONTRACT-R2: client-generated UUID for idempotent claim.
+    # Client-generated UUID for idempotent claim.
     # Same value re-submitted after a network blip must not create a
     # second user/assistant pair or re-call the model.
     client_submission_id: UUID | None = None
 
 
 class ReaderRecordAskActionConfirmRequest(BaseModel):
-    """D6-A6: confirm request for a Reading Record Ask action proposal."""
+    """Confirm request for a Reading Record Ask action proposal."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -864,7 +864,7 @@ class ReaderRecordAskActionConfirmRequest(BaseModel):
 
 
 class ReaderRecordAskPendingResponse(BaseModel):
-    """D6-A6: stable pending/disabled response for the new Reading Record Ask path.
+    """Stable pending/disabled response for the Reading Record Ask path.
 
     The route returns HTTP 409 with this body while the execution / write
     path remains disabled.

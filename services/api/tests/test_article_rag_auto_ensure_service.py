@@ -1,4 +1,4 @@
-# task-history: D6-I4V (renamed from test_d6_i4v_article_rag_auto_ensure_service.py)
+# task-history: (renamed from test_d6_i4v_article_rag_auto_ensure_service.py)
 """Tests for the Article RAG index auto-ensure hook.
 
 Covers:

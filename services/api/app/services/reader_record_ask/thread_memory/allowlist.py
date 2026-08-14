@@ -1,6 +1,6 @@
 """Allowlist validation for thread memory snapshots.
 
-Implements the Host side of R0.1 §4.2(d) ten-step algorithm. The model
+Implements the Host side of §4.2(d) ten-step algorithm. The model
 compactor receives an allowlist at input-assembly time; this module
 validates the model's output (or emergency output) against the same
 allowlist. Bindings are never created here — they are Host-derived
@@ -8,7 +8,7 @@ upstream via ``derive_source_bindings`` (H6) — so any binding_id in the
 snapshot that the Host did not pre-derive triggers whole-snapshot
 rejection.
 
-R1.6 P0-2: ``validate_snapshot`` now receives a Host binding **map**
+ ``validate_snapshot`` now receives a Host binding **map**
 (``binding_id -> SourceBinding``) instead of a bare id set. This lets
 the Host detect tampering: a snapshot binding whose
 source_type/source_id/fence_type/fence_values/validity_check differ
@@ -42,7 +42,7 @@ from app.services.reader_record_ask.thread_memory.schema import (
     ThreadMemorySnapshot,
 )
 
-# R0.1 §4.2(d) step 8: if more than 20% of facts are stripped due to
+# §4.2(d) step 8: if more than 20% of facts are stripped due to
 # allowlist violation, the whole snapshot is rejected.
 _ALLOWLIST_VIOLATION_REJECT_RATIO: float = 0.20
 
@@ -51,7 +51,7 @@ def build_allowlist(
     thread_messages: list[dict[str, Any]],
     ok_turn_runs: list[dict[str, Any]],
 ) -> set[str]:
-    """Compute the Host allowlist (R0.1 §4.2(d) steps 1–3).
+    """Compute the Host allowlist (§4.2(d) steps 1–3).
 
     ``ALLOW = A_msg ∪ A_cit ∪ A_bind`` where:
     - ``A_msg`` = every canonical message id in the thread (user + ok
@@ -114,7 +114,7 @@ def build_allowlist(
 def build_host_bindings(
     ok_turn_runs: list[dict[str, Any]],
 ) -> dict[str, SourceBinding]:
-    """R1.6 P0-2: derive the Host binding map from canonical ok turn runs.
+    """Derive the Host binding map from canonical ok turn runs.
 
     Returns ``{binding_id: SourceBinding}``. This map is the single
     source of truth for binding content — the compactor (model or
@@ -122,7 +122,7 @@ def build_host_bindings(
     bindings. ``validate_snapshot`` uses this map to detect tampering.
 
     Only the LATEST canonical ok run per assistant message contributes
-    bindings (R1.6 P0-3). The caller is responsible for passing only
+    bindings. The caller is responsible for passing only
     canonical ok runs (``list_ok_turn_runs_with_bindings`` already
     applies ``DISTINCT ON (message_id)``).
     """
@@ -146,14 +146,14 @@ def _binding_matches_host(
     snapshot_binding: SourceBinding,
     host_binding: SourceBinding,
 ) -> bool:
-    """R1.6 P0-2: check whether a snapshot binding matches the Host copy.
+    """Check whether a snapshot binding matches the Host copy.
 
     Compares source_type, source_id, fence_type, and fence_values. Any
     mismatch → tampering detected → reject. The comparison is exact (no
     fuzzy matching) because Host bindings are deterministically derived
     from canonical evidence.
 
-    R1.6.1 P0-2: ``validity_check`` is NOT compared. It is a runtime-
+     ``Validity_check`` is NOT compared. It is a runtime-
     computed field owned by the Host fence layer (fence.py), not a
     binding identity field. After fence runs, ``validity_check`` is
     updated (e.g. from ``'unchecked'`` to ``'invalid'``); comparing it
@@ -173,7 +173,7 @@ def _binding_matches_host(
 def _article_fact_has_host_article_binding(
     fact: StructuredFact, host_bindings: dict[str, SourceBinding]
 ) -> bool:
-    """R0.1 §4.2(d) step 6 + R1.6 P0-2: article facts must reference a
+    """§4.2(d) step 6 + article facts must reference a
     Host binding with ``source_type='article'``.
 
     A message id, web binding, or pseudo-binding cannot satisfy article
@@ -193,7 +193,7 @@ def _materialize_host_bindings_for_episode(
     host_bindings: dict[str, SourceBinding],
     fence_results: dict[str, Any] | None,
 ) -> list[SourceBinding]:
-    """R1.6.1 P0-2: materialize Host ``SourceBinding`` for an episode.
+    """Materialize Host ``SourceBinding`` for an episode.
 
     The model/snapshot's ``source_bindings`` is NEVER the authority —
     only the Host map is. This function derives the authoritative
@@ -206,7 +206,7 @@ def _materialize_host_bindings_for_episode(
         instances (never the model's), with ``validity_check`` updated
         from ``fence_results`` when available.
 
-    Bindings not referenced by any fact are excluded (R1.6.1 P0-2:
+    Bindings not referenced by any fact are excluded (
     "未被任何 fact 引用的 binding 不进入 episode").
     """
     fence_results = fence_results or {}
@@ -229,18 +229,18 @@ def _materialize_host_bindings_for_episode(
 
 
 # ---------------------------------------------------------------------------
-# R1.6 P0-1: canonical revision watermark
+# Canonical revision watermark
 # ---------------------------------------------------------------------------
 
 
 def _message_revision_digest(message: dict[str, Any]) -> str:
     """Per-message revision digest (no raw content leaks).
 
-    R1.6 P0-1: the digest is a SHA-256 hash — the raw text/query/provider
+     The digest is a SHA-256 hash — the raw text/query/provider
     payload is NEVER written to the watermark, logs, DTO, or DB. Only the
     final hash is retained.
 
-    R1.6.1 P0-1 fixes:
+      fixes:
       - Use ``canonical_turn_run_id`` (from repository LATERAL JOIN of the
         latest ok turn_run) instead of the message row's
         ``current_turn_run_id`` (which may point to a failed retry).
@@ -273,7 +273,7 @@ def _message_revision_digest(message: dict[str, Any]) -> str:
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
     if role == "assistant":
-        # R1.6.1 P0-1: use canonical_turn_run_id (LATERAL JOIN of latest ok
+        # Use canonical_turn_run_id (LATERAL JOIN of latest ok
         # turn_run), NOT the message row's current_turn_run_id (which may
         # point to a failed retry). Fall back to current_turn_run_id only
         # for legacy callers that haven't been updated yet.
@@ -297,7 +297,7 @@ def _message_revision_digest(message: dict[str, Any]) -> str:
         web_outcome = ""
         if isinstance(web, dict):
             web_outcome = str(web.get("outcome") or "").strip()
-        # R1.6.1 P0-1: structured serialization (no separator-based join).
+        # Structured serialization (no separator-based join).
         # This fixes the single-element join bug and makes the digest
         # input unambiguous: canonical_run_id, ordered answer texts, and
         # web outcome are serialized as a deterministic JSON object.
@@ -318,7 +318,7 @@ def _message_revision_digest(message: dict[str, Any]) -> str:
 def compute_watermark(canonical_messages: list[dict[str, Any]]) -> str:
     """SHA-256 over deterministic (message_id, role, revision_digest) pairs.
 
-    R1.6 P0-1: watermark follows canonical revision, not just message_id.
+     Watermark follows canonical revision, not just message_id.
 
     - **assistant**: includes the latest canonical ok turn_run identity
       and a safe-visible output revision digest. Successful regenerate
@@ -356,13 +356,13 @@ def validate_snapshot(
 ) -> tuple[ThreadMemorySnapshot, dict[str, Any]]:
     """Validate a snapshot against the Host binding map + allowlist.
 
-    R1.6 P0-2: ``host_bindings`` is the Host-derived
+     ``Host_bindings`` is the Host-derived
     ``binding_id -> SourceBinding`` map. It is the single source of
     truth for binding content. Any binding in the snapshot that is not
     in the map, or whose content differs from the Host copy, triggers
     whole-snapshot rejection.
 
-    R1.6.1 P0-2: after the tampering check, episode ``source_bindings``
+     After the tampering check, episode ``source_bindings``
     are **materialized** from the KEPT facts' ``source_ids ∩
     host_bindings`` — not back-filled from the snapshot's own bindings.
     This closes the hole where an article fact references a real Host
@@ -415,9 +415,9 @@ def validate_snapshot(
     }
     metrics["fence_invalid_bindings"] = len(fence_invalid_ids)
 
-    # R1.6 P0-2: check every snapshot binding against the Host map.
+    # Check every snapshot binding against the Host map.
     # Any unknown binding or content mismatch → whole-snapshot reject.
-    # R1.6.1 P0-2: validity_check is NOT compared (see _binding_matches_host).
+    # Validity_check is NOT compared (see _binding_matches_host).
     for episode in snapshot.episodes:
         for sb in episode.source_bindings:
             host_b = host_bindings.get(sb.binding_id)
@@ -453,7 +453,7 @@ def validate_snapshot(
                 metrics["allowlist_violation"] += 1
                 metrics["stripped_facts"] += 1
                 stripped = True
-            # Step 6b + R1.6 P0-2: article fact must reference a Host
+            # Step 6b + article fact must reference a Host
             # article binding (message id / web binding / pseudo-binding
             # cannot satisfy article provenance).
             elif (
@@ -467,7 +467,7 @@ def validate_snapshot(
                 stripped = True
             if not stripped:
                 kept_facts.append(fact)
-        # R1.6.1 P0-2: materialize Host bindings from KEPT facts'
+        # Materialize Host bindings from KEPT facts'
         # source_ids ∩ host_bindings. This replaces the old "back-fill
         # from episode.source_bindings" which failed to fence-check
         # bindings that the model omitted. The materialized list is

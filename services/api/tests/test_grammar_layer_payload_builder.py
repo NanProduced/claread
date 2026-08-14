@@ -1,4 +1,4 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: grammar_note extended ``layer_published`` payload builder tests.
+"""Grammar_note extended ``layer_published`` payload builder tests.
 
 验证 :func:`build_grammar_layer_published_payload` 从 typed
 :class:`GrammarNoteLayerOutput` 正确派生 ``insertions[]`` descriptors。
@@ -347,7 +347,7 @@ def test_builder_does_not_accept_caller_assembled_id_lists() -> None:
     # 2. 即使调用方试图在 typed_output 的 item 中注入 ``item_id`` 字段，
     #    GrammarNoteItem 的 extra="forbid" 会拒绝该字段。
     #    items 非空但无法解析 → 视为合同违反，抛出 GrammarLayerPayloadError
-    #    触发同事务回滚（P1 fix：非空 corrupt output 不再静默回退到 base_payload）。
+    # 触发同事务回滚（ fix：非空 corrupt output 不再静默回退到 base_payload）。
     item_dict = item.model_dump(mode="json")
     item_dict["item_id"] = "caller_injected_fake_id"
     typed_output_with_injection = {

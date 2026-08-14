@@ -1,4 +1,4 @@
-"""D6-I4D: Article RAG Zilliz / Milvus Vector Writer Adapter.
+"""Article RAG Zilliz / Milvus Vector Writer Adapter.
 
 Real-adapter foundation for :class:`ArticleRagVectorWriter` that
 upserts Article RAG vectors into a Zilliz / Milvus collection.
@@ -10,7 +10,7 @@ Zilliz is **only** an index replica.  Citation truth always returns to
 Postgres's ``stable_document_blocks`` / ``reading_bases.text`` /
 ``reading_units`` / ``anchor_segments``.  Concretely:
 
-* ``ArticleRagVectorChunk`` (D6-I4C) has NO ``text`` field.  This
+* ``ArticleRagVectorChunk`` has NO ``text`` field.  This
   module reads only the dataclass's six defined fields plus the
   citation + metadata dicts.
 * Vector payload never carries chunk text, Plate JSON, Markdown, DOM
@@ -37,7 +37,7 @@ Contract
   raised.
 * ``upsert_count`` returned by pymilvus propagates **verbatim** to
   ``ArticleRagVectorWriteResult``.  Partial upserts (``upsert_count
-  != len(chunks)``) are NOT silently coerced — D6-I4C's Phase-4 check
+  != len(chunks)``) are NOT silently coerced — the worker's pre-write check
   surfaces them as retryable ``FAILURE_CODE_VECTOR_WRITE_FAILED``.
 * Constructor does **not** open a network connection.  The first
   :meth:`upsert_chunks` call lazily constructs the
@@ -81,7 +81,7 @@ from .article_rag_index_worker import (
     UnconfiguredArticleRagVectorWriter,
 )
 
-# P1-G: Zilliz writer defence-in-depth failure codes.  All
+# Zilliz writer defence-in-depth failure codes.  All
 # retryable=False, fixed safe message that does NOT echo the malicious
 # model, vector content, chunk text, URI, token, collection name, or
 # any caller-supplied value.
@@ -93,37 +93,37 @@ FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH = (
 )
 FAILURE_CODE_VECTOR_WRITER_MODEL_MISMATCH = "vector_writer_model_mismatch"
 
-# P1-G: fixed safe messages for writer defence-in-depth failures.
+# Fixed safe messages for writer defence-in-depth failures.
 # Must NOT echo URI, token, collection name, dim value, model name,
 # vector content, chunk text, or SDK error.
-_P1G_MSG_WRITER_COLLECTION_MISMATCH = (
+_MSG_WRITER_COLLECTION_MISMATCH = (
     "Article RAG vector writer collection does not match the configured "
     "writer collection or the metadata collection"
 )
-_P1G_MSG_WRITER_DIMENSION_MISMATCH = (
+_MSG_WRITER_DIMENSION_MISMATCH = (
     "Article RAG vector writer dimension contract is violated across "
     "writer configuration, metadata, chunk embedding, or vector length"
 )
-_P1G_MSG_WRITER_MODEL_MISMATCH = (
+_MSG_WRITER_MODEL_MISMATCH = (
     "Article RAG vector writer chunk embedding model does not match the "
     "metadata embedding model"
 )
 
-# P1-G-R1: fixed safe message for writer constructor dim rejection.
+# Fixed safe message for writer constructor dim rejection.
 # Must NOT echo dim value, repr(dim), or any caller-supplied sentinel.
-_P1G_R1_MSG_WRITER_UNCONFIGURED_DIM = (
+_MSG_WRITER_UNCONFIGURED_DIM = (
     "ZillizArticleRagVectorWriter requires a positive integer dim"
 )
-# P1-G-R1: fixed safe message for writer contract metadata mismatch.
+# Fixed safe message for writer contract metadata mismatch.
 # Used when the 4 contract fields (collection, model, dim, text_type)
 # do not match the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  Must NOT
 # echo any caller-supplied value (model, text type, collection, dim).
-_P1G_R1_MSG_WRITER_CONTRACT_MISMATCH = (
+_MSG_WRITER_CONTRACT_MISMATCH = (
     "Article RAG vector writer metadata does not match the frozen "
     "embedding + vector-space contract"
 )
 
-# P1-G-R1: failure code for writer contract metadata mismatch.
+# Failure code for writer contract metadata mismatch.
 FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH = (
     "vector_writer_contract_mismatch"
 )
@@ -157,7 +157,7 @@ _ARTICLE_RAG_VECTOR_INDEX_NAME = "article_rag_vector_autoin"
 _ARTICLE_RAG_VECTOR_INDEX_TYPE = "AUTOINDEX"
 _ARTICLE_RAG_VECTOR_METRIC_TYPE = "COSINE"
 
-# Forbidden keys — sourced from D6-I4C test 3 (input_json denylist) +
+# Forbidden keys — sourced from the input_json denylist tests +
 # safety extensions for vector payload.  Any overlap between the row
 # keys we build or the JSON-serialised citation/metadata dicts and this
 # set is a truth-boundary violation and raises a non-retryable error.
@@ -234,7 +234,7 @@ class ZillizArticleRagVectorWriterError(ArticleRagIndexWorkerError):
 # ---------------------------------------------------------------------------
 
 
-# Citation keys verified by D6-I4C test 14 (9 keys, exact set).  We
+# Citation keys verified by the citation contract tests (9 keys, exact set).  We
 # build the citation dict explicitly from these to avoid leaking any
 # extra key the caller might shove onto ``ArticleRagCitationRef``.
 _ARTICLE_RAG_CITATION_KEYS = (
@@ -765,8 +765,8 @@ def _ensure_pymilvus_vector_index(client: Any, *, collection: str) -> None:
 class ZillizArticleRagVectorWriter:
     """Real Zilliz / Milvus vector writer for the Article RAG worker.
 
-    Implements the :class:`ArticleRagVectorWriter` Protocol defined in
-    D6-I4C.  Lazy-imports :mod:`pymilvus` on the first
+    Implements the :class:`ArticleRagVectorWriter` Protocol defined by
+    the worker.  Lazy-imports :mod:`pymilvus` on the first
     :meth:`upsert_chunks` call so the deployment can opt-in to the
     real adapter only when the SDK is installed and credentials are
     present.
@@ -785,7 +785,7 @@ class ZillizArticleRagVectorWriter:
 
     Partial upserts: the ``upsert_count`` returned by pymilvus is
     propagated **verbatim** to
-    :class:`ArticleRagVectorWriteResult`.  The D6-I4C Phase-4 check
+    :class:`ArticleRagVectorWriteResult`.  The worker's vector-write check
     surfaces any ``upserted_count != len(chunks)`` mismatch as a
     retryable error.
     """
@@ -819,7 +819,7 @@ class ZillizArticleRagVectorWriter:
                 failure_class="configuration",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
             )
-        # P1-G-R1: explicitly reject bool — Python ``bool`` is a subclass
+        # Explicitly reject bool — Python ``bool`` is a subclass
         # of ``int``, so ``isinstance(True, int)`` returns True.  The
         # legacy ``not isinstance(dim, int)`` check let ``dim=True``
         # through (True > 0).  We now reject bool explicitly.  The error
@@ -828,7 +828,7 @@ class ZillizArticleRagVectorWriter:
         # malicious sentinel cannot leak into error surfaces.
         if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
             raise ZillizArticleRagVectorWriterError(
-                _P1G_R1_MSG_WRITER_UNCONFIGURED_DIM,
+                _MSG_WRITER_UNCONFIGURED_DIM,
                 retryable=False,
                 failure_class="configuration",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
@@ -896,10 +896,10 @@ class ZillizArticleRagVectorWriter:
 
         ``upsert_count`` is propagated verbatim — partial upserts
         surface to the worker as retryable
-        :data:`FAILURE_CODE_VECTOR_WRITE_FAILED` via D6-I4C's Phase-4
+        :data:`FAILURE_CODE_VECTOR_WRITE_FAILED` via the worker's pre-write
         check.
 
-        P1-G defence-in-depth: BEFORE any client / network / upsert
+        Defence-in-depth: BEFORE any client / network / upsert
         call, validate the full frozen vector-space contract:
 
           1. ``collection == self._collection == metadata.collection``
@@ -918,7 +918,7 @@ class ZillizArticleRagVectorWriter:
         ``retryable=False``, and the appropriate stable
         ``failure_code``.  ``client.upsert_calls`` stays empty.
         """
-        # P1-G check 1: three-way collection identity.  No strip, no
+        # Check three-way collection identity.  No strip, no
         # case-normalisation, no fallback.  Fixed safe message; no
         # echo of collection name (caller or configured or metadata).
         if (
@@ -927,13 +927,13 @@ class ZillizArticleRagVectorWriter:
             or collection != metadata.collection
         ):
             raise ZillizArticleRagVectorWriterError(
-                _P1G_MSG_WRITER_COLLECTION_MISMATCH,
+                _MSG_WRITER_COLLECTION_MISMATCH,
                 retryable=False,
                 failure_class="vector_writer_collection_mismatch",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_COLLECTION_MISMATCH,
             )
 
-        # P1-G-R1 check 2: frozen embedding + vector-space contract.
+        # Validate the frozen embedding + vector-space contract.
         # Validate all 4 contract fields (collection, model, dim,
         # text_type) against the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
         # This MUST happen BEFORE the empty-batch early return so that
@@ -955,13 +955,13 @@ class ZillizArticleRagVectorWriter:
             != contract.document_embedding_text_type
         ):
             raise ZillizArticleRagVectorWriterError(
-                _P1G_R1_MSG_WRITER_CONTRACT_MISMATCH,
+                _MSG_WRITER_CONTRACT_MISMATCH,
                 retryable=False,
                 failure_class="vector_writer_contract_mismatch",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH,
             )
 
-        # P1-G check 2 (legacy): metadata.embedding_dimension must be a
+        # Legacy dimension check: metadata.embedding_dimension must be a
         # non-bool int and equal the writer's configured dim.  This is
         # now redundant with the contract check above (which validates
         # dim == contract.document_embedding_dimension == 1024 ==
@@ -971,20 +971,20 @@ class ZillizArticleRagVectorWriter:
         metadata_dim = metadata.embedding_dimension
         if isinstance(metadata_dim, bool) or not isinstance(metadata_dim, int):
             raise ZillizArticleRagVectorWriterError(
-                _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                _MSG_WRITER_DIMENSION_MISMATCH,
                 retryable=False,
                 failure_class="vector_writer_dimension_mismatch",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
             )
         if metadata_dim != self._dim:
             raise ZillizArticleRagVectorWriterError(
-                _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                _MSG_WRITER_DIMENSION_MISMATCH,
                 retryable=False,
                 failure_class="vector_writer_dimension_mismatch",
                 failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
             )
 
-        # P1-G-R1: empty batch early return.  This MUST come AFTER the
+        # Empty batch early return.  This MUST come AFTER the
         # metadata + profile validation so that invalid metadata fails
         # closed even when the batch is empty.  A valid empty batch
         # returns ``upserted_count=0`` without any client/network call.
@@ -996,7 +996,7 @@ class ZillizArticleRagVectorWriter:
             )
 
         metadata_model = metadata.embedding_model
-        # P1-G checks 3-5: per-chunk dim / vector-len / model
+        # Validate per-chunk dim / vector-len / model
         # validation.  Any single bad chunk fails the whole batch
         # before any client call (no partial upsert).
         for chunk in chunks_with_embeddings:
@@ -1004,28 +1004,28 @@ class ZillizArticleRagVectorWriter:
             chunk_dim = emb.dim
             if isinstance(chunk_dim, bool) or not isinstance(chunk_dim, int):
                 raise ZillizArticleRagVectorWriterError(
-                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    _MSG_WRITER_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="vector_writer_dimension_mismatch",
                     failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
                 )
             if chunk_dim != metadata_dim:
                 raise ZillizArticleRagVectorWriterError(
-                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    _MSG_WRITER_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="vector_writer_dimension_mismatch",
                     failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
                 )
             if len(emb.vector) != metadata_dim:
                 raise ZillizArticleRagVectorWriterError(
-                    _P1G_MSG_WRITER_DIMENSION_MISMATCH,
+                    _MSG_WRITER_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="vector_writer_dimension_mismatch",
                     failure_code=FAILURE_CODE_VECTOR_WRITER_DIMENSION_MISMATCH,
                 )
             if not isinstance(emb.model, str) or emb.model != metadata_model:
                 raise ZillizArticleRagVectorWriterError(
-                    _P1G_MSG_WRITER_MODEL_MISMATCH,
+                    _MSG_WRITER_MODEL_MISMATCH,
                     retryable=False,
                     failure_class="vector_writer_model_mismatch",
                     failure_code=FAILURE_CODE_VECTOR_WRITER_MODEL_MISMATCH,

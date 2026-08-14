@@ -5,13 +5,13 @@ from claread_eval.reader_record_ask.evaluators.tool_decision import (
     evaluate_tool_decision,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
-def _make_case(expect_tool_calls: str) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+def _make_case(expect_tool_calls: str) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-tool-decision",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -19,7 +19,7 @@ def _make_case(expect_tool_calls: str) -> ReaderRecordAskR4A3Case:
         baseline_mode="complete",
         question="这篇文章主要说了什么？",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(expect_tool_calls=expect_tool_calls),  # type: ignore[arg-type]
+        expected=ReaderRecordAskExpected(expect_tool_calls=expect_tool_calls),  # type: ignore[arg-type]
     )
 
 

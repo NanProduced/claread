@@ -6,7 +6,7 @@ Contract modules (round 1):
 Independent runtime (round 2+):
 - document access, read_range, initial_anchor, agent, finalizer
 - Article RAG port/adapter + ``search_current_article`` (round 3)
-- Baseline context assembler + ``article_seed`` evidence (round 4-A1)
+- Baseline context assembler + ``article_seed`` evidence (round 4-)
 
 The production HTTP path is owned by this package: model options, threads,
 submissions, history, stream, retry, and citation navigation stay behind the

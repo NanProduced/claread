@@ -57,7 +57,7 @@ def _is_dev_error_mode() -> bool:
 class _StreamLifecycleContext:
     """Mutable lifecycle hook shared between the route and the generator.
 
-    ASK-TURN-LIFECYCLE R1: the generator (``stream_agentic_thread_message``)
+    Turn lifecycle: the generator (``stream_agentic_thread_message``)
     sets ``turn_run_id`` / ``message_id`` as soon as the rows are persisted.
     The route's ``finally`` block reads them to reconcile any still-
     streaming row when the FastAPI generator is closed (client disconnect,
@@ -119,7 +119,7 @@ def _streaming_response(
 ) -> StreamingResponse:
     """Wrap an async generator in a StreamingResponse with terminal cleanup.
 
-    ASK-TURN-LIFECYCLE R1: the ``finally`` clause guarantees that any
+    Turn lifecycle: the ``finally`` clause guarantees that any
     streaming ``reader_ask_turn_runs`` / ``reader_ask_messages`` row
     created during the generator is reconciled to a terminal state when
     the FastAPI generator is closed — cleanly, via cancellation, or via
@@ -357,7 +357,7 @@ async def reconcile_reading_record_ask_submission(
     client_submission_id: UUID,
     current_user: AuthUserDep,
 ) -> ReaderAskSubmissionReconcileResponse:
-    """ASK-RETRY-CONTRACT-R5 — typed reconcile + safe public message hydrate."""
+    """Typed retry reconciliation with safe public-message hydration."""
     from app.schemas.reader_ask import ReaderAskSubmissionPublicMessage
     from app.services.reader_record_ask.submission_gateway import (
         build_reconcile_view,
@@ -448,7 +448,7 @@ async def retry_reading_record_ask_message(
     body: ReaderAskMessageRetryRequest,
     current_user: AuthUserDep,
 ) -> StreamingResponse:
-    # ASK-M1-R1: run the retry preflight BEFORE constructing the
+    # Run the retry preflight BEFORE constructing the
     # StreamingResponse so a config-unavailable option (or unknown
     # model key, or missing record) surfaces as a real HTTP 503 / 422 /
     # 400 instead of an SSE error frame. The generator never re-

@@ -1,4 +1,4 @@
-# task-history: T5.8a (renamed from test_reader_semantic_outline_t58a_registration.py)
+# task-history: (renamed from test_reader_semantic_outline_t58a_registration.py)
 """Semantic outline route / settings / prompt / capability registration.
 
 Default-off registration only. No real adapter, no provider calls.
@@ -135,10 +135,10 @@ def test_default_eligibility_still_false() -> None:
 
 
 def test_generation_enabled_field_is_not_live_kill_switch() -> None:
-    """Document contract: settings field exists but T5.8a does not wire it.
+    """Document contract: settings field exists but does not wire it.
 
     Presence of semantic_outline_generation_enabled=False must not be confused
-    with bootstrap/executor dual-check kill-switch (T5.8b/d).
+    with bootstrap/executor dual-check kill-switch (d).
     """
     settings = Settings(semantic_outline_generation_enabled=False)
     assert settings.semantic_outline_generation_enabled is False

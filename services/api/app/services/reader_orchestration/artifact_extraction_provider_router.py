@@ -1,4 +1,4 @@
-"""Artifact extraction provider router (D6-I3S + D6-I3T).
+"""Artifact extraction provider router.
 
 Routes :class:`ArtifactExtractionJobContext` to the appropriate extraction
 provider based on ``content_type`` / ``source_filename``:

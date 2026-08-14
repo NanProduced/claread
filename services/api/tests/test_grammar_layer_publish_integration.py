@@ -1,4 +1,4 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: grammar_note publish path integration tests.
+"""Grammar_note publish path integration tests.
 
 聚焦 grammar_note 首发路径的三个集成场景：
 
@@ -372,7 +372,7 @@ async def env_no_candidates() -> AsyncIterator[
 
 
 # ---------------------------------------------------------------------------
-# Task 5 #1: validator 失败时同事务回滚
+# #1: validator 失败时同事务回滚
 # ---------------------------------------------------------------------------
 
 
@@ -499,7 +499,7 @@ async def test_validator_failure_rolls_back_layer_event_and_sequence(
 
 
 # ---------------------------------------------------------------------------
-# Task 5 #2: 空 grammar output 保持现有 no-op 路径
+# #2: 空 grammar output 保持现有 no-op 路径
 # ---------------------------------------------------------------------------
 
 
@@ -575,7 +575,7 @@ async def test_empty_grammar_output_follows_existing_noop_path(
 
 
 # ---------------------------------------------------------------------------
-# Task 5 #3: payload 脱敏测试（纯单元测试）
+# #3: payload 脱敏测试（纯单元测试）
 # ---------------------------------------------------------------------------
 
 

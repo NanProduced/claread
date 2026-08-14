@@ -1,4 +1,4 @@
-# task-history: D6-I3Q (renamed from test_d6_i3q_oss_artifact_io.py)
+# task-history: (renamed from test_d6_i3q_oss_artifact_io.py)
 """Tests for OSS-backed text/markdown artifact IO.
 
 Covers:
@@ -911,7 +911,7 @@ def test_init_upload_with_fake_presigner_returns_presigned_url(
     # Object ref is still correct
     assert body["bucket"] == _BUCKET
     assert body["object_key"] == _INIT_UPLOAD_OBJECT_KEY
-    # D6-I3Q P1 fix: in presigned mode the response headers MUST come from
+    # Fix: in presigned mode the response headers MUST come from
     # the presigner (signed headers), not from _build_source_artifact_upload_headers.
     # FakePresigner signs x-oss-content-sha256, so the response must carry it
     # (not the non-signed content-sha256 hint).

@@ -15,7 +15,7 @@ EVENT_ERROR = "error"
 EVENT_AGENTIC_PROGRESS = "agentic.progress"
 EVENT_AGENTIC_RUN_STARTED = "agentic.run_started"
 EVENT_AGENTIC_TERMINAL = "agentic.terminal"
-# Reasoning projection (ASK-REASONING-R1): safe projected provider
+# Reasoning projection (ASK-REASONING-): safe projected provider
 # reasoning, produced exclusively by the server-side reasoning projection
 # chokepoint (reader_record_ask.reasoning_projection). Raw reasoning never
 # enters SSE/DTO/DB/logs — only the deterministic redacted, quota-bounded

@@ -269,7 +269,7 @@ def test_record_snapshot_load_duration_none_in_non_record_modes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI timing boundary tests (LP-R3.1)
+# CLI timing boundary tests
 # ---------------------------------------------------------------------------
 
 
@@ -389,7 +389,7 @@ def test_record_id_failure_load_snapshot_raises_returns_nonzero(
 
 
 # ---------------------------------------------------------------------------
-# CLI --repeat N tests (LP-R3.1)
+# CLI --repeat N tests
 # ---------------------------------------------------------------------------
 
 

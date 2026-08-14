@@ -1,8 +1,8 @@
-"""P1-a: aggregate verdict precedence tests.
+"""Aggregate verdict precedence tests.
 
 Spec: ``docs/tmp/reader-orchestration/review/...
-TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (rework §二 P1-a) +
-``.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md``
+TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (aggregate-verdict rework) +
+the accepted aggregate-verdict closure specification
 (7-row verdict/gate table).
 
 Background: the prior aggregate() implementation set
@@ -18,7 +18,7 @@ The rework establishes a SINGLE source of truth —
 the 7-row verdict/gate table (frozen contract)::
 
     1. dataset/manifest/artifact identity mismatch
-       → blocked_dataset_identity_mismatch, allow_r4_a4=False, allow_r4_b1=False
+       → blocked_dataset_identity_mismatch, both optional gates disabled
     2. manifest missing but partial artifacts present
        → blocked_incomplete_real_model_run, False, False
     3. manifest.status="budget_exhausted"
@@ -58,8 +58,8 @@ from claread_eval.reader_record_ask.run_manifest import (
     write_manifest_atomic,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 from claread_eval.reader_record_ask.session import RunSessionLayout
 
@@ -136,8 +136,8 @@ def _make_failing_case_result(
 ) -> CaseEvalResult:
     """Build a CaseEvalResult with a high-severity failure.
 
-    The normal-path verdict for this input is ``rework`` (R4-A4
-    conditionally allowed, R4-B1 deferred).
+    The normal-path verdict for this input is ``rework`` (quality gate
+    conditionally allowed, streaming gate deferred).
     """
     return CaseEvalResult(
         case_id=case_id,
@@ -165,7 +165,7 @@ def _make_artifact(
     run_id: str = "phase1-test",
     dataset_id: str | None = "test-dataset",
     dataset_schema_version: str | None = "test-schema-v1",
-    # P0-1 strict contract: default must be a valid 64-lowercase-hex SHA
+    # Strict contract: default must be a valid 64-lowercase-hex SHA
     # so the helper produces a schema-valid RawArtifact by default.
     # Callers that want to test identity mismatch pass a different
     # valid 64-hex SHA (e.g. ``"0" * 64``) or ``None``.
@@ -187,15 +187,15 @@ def _make_case(
     *,
     case_id: str = "case-a",
     article_text: str = "Hello world.",
-) -> ReaderRecordAskR4A3Case:
-    # R4-A4-2R3: ``phase_tags`` is intentionally empty. These tests
+) -> ReaderRecordAskCase:
+    # ``phase_tags`` is intentionally empty. These tests
     # exercise the aggregate VERDICT precedence (identity mismatch,
     # budget exhaustion, coverage gap, normal path) — NOT the runtime
     # fixture identity contract. Tagging the case as ``real_phase1``
-    # would trigger the R4-A4-2R3 strict requirement that
+    # would trigger the strict runtime-fixture requirement that
     # ``expected_runtime_fixture_fingerprint`` be declared, which is
     # orthogonal to what these tests verify.
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         article_text=article_text,
@@ -207,7 +207,7 @@ def _make_case(
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         tags=[],
         phase_tags=[],
     )
@@ -216,7 +216,7 @@ def _make_case(
 def _write_dataset_dir(
     dataset_dir: Path,
     *,
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskCase],
     dataset_id: str = "test-dataset",
     schema_version: str = "test-schema-v1",
 ) -> Path:
@@ -285,7 +285,7 @@ def _make_coverage_audit(
     ``manifest_state`` defaults to ``"absent"`` when
     ``manifest_present=False`` and ``"valid"`` when
     ``manifest_present=True``. Callers can override to ``"corrupt"``
-    to test the P1 three-state contract.
+    to test the manifest's three-state contract.
 
     ``manifest_run_id_matches`` defaults to ``True`` when the manifest
     is present+valid (foreign-manifest tests override to ``False``).
@@ -375,7 +375,7 @@ class TestDecideFinalVerdictPrecedence:
     """
 
     def test_partial_mismatch_wins_over_blocked_by_real_model_run(self) -> None:
-        """P1-a: partial mismatch (some valid + some mismatched) → verdict
+        """Partial mismatch (some valid + some mismatched) → verdict
         MUST be ``blocked_dataset_identity_mismatch`` even when
         ``real_model_blocked`` is True.
 
@@ -406,7 +406,7 @@ class TestDecideFinalVerdictPrecedence:
         assert allow_b1 is False
 
     def test_all_mismatch_does_not_downgrade_to_blocked_by_real_model_run(self) -> None:
-        """P1-a: when ALL artifacts mismatch, ``real_artifacts`` is empty
+        """When ALL artifacts mismatch, ``real_artifacts`` is empty
         and ``real_model_blocked`` is True. The verdict MUST stay
         ``blocked_dataset_identity_mismatch`` — NOT be downgraded to
         ``blocked_by_real_model_run``.
@@ -437,7 +437,7 @@ class TestDecideFinalVerdictPrecedence:
         assert allow_b1 is False
 
     def test_all_artifacts_missing_identity_treated_as_mismatch(self) -> None:
-        """P1-a: artifacts with missing identity fields (old pre-P0-2
+        """Artifacts with missing identity fields from older runs
         artifacts) are flagged as mismatched by
         ``find_identity_mismatched_artifacts``. The verdict MUST be
         ``blocked_dataset_identity_mismatch``.
@@ -468,14 +468,14 @@ class TestDecideFinalVerdictPrecedence:
         assert verdict == "blocked_dataset_identity_mismatch"
 
     def test_no_artifacts_no_mismatch_yields_blocked_by_real_model_run(self) -> None:
-        """P1-a: when no artifacts exist AND no identity mismatch is
+        """When no artifacts exist AND no identity mismatch is
         present, the verdict is ``blocked_by_real_model_run``.
 
         This is the "gate never opened" / "first run before any real
         artifacts exist" path. Per the frozen 7-row contract,
-        ``allow_r4_a4=False`` (BUG FIX: previous implementation
+        the quality gate remains disabled (BUG FIX: previous implementation
         incorrectly returned ``True`` — the deterministic
-        harness/evaluator/dataset being accepted does NOT unlock R4-A4
+        harness/evaluator/dataset being accepted does NOT unlock the quality gate
         when the real-model validation is entirely absent).
         """
         verdict, allow_a4, allow_b1 = _RUNNER._decide_final_verdict(
@@ -495,17 +495,17 @@ class TestDecideFinalVerdictPrecedence:
         )
         assert verdict == "blocked_by_real_model_run"
         assert allow_a4 is False, (
-            "BUG FIX: blocked_by_real_model_run MUST return allow_r4_a4=False "
+            "BUG FIX: blocked_by_real_model_run MUST return allow_correctness_followup=False "
             "per the frozen 7-row contract. Previous implementation incorrectly "
             "returned True."
         )
         assert allow_b1 is False
 
     def test_all_valid_artifacts_yields_normal_accepted_verdict(self) -> None:
-        """P1-a: when case_results is non-empty and no identity mismatch
+        """When case_results is non-empty and no identity mismatch
         is present, the verdict follows the normal path
         (``_decide_normal_verdict``). For all-passing results, the
-        verdict is ``accepted`` with R4-A4 and R4-B1 both allowed.
+        verdict is ``accepted`` with both optional gates allowed.
 
         This is the non-regression test: the precedence fix MUST NOT
         break the normal accepted path. The coverage_audit signal here
@@ -536,11 +536,11 @@ class TestDecideFinalVerdictPrecedence:
         assert allow_b1 is True
 
     def test_all_valid_artifacts_with_failure_yields_rework(self) -> None:
-        """P1-a: normal-path with a high-severity failure → ``rework``
-        (R4-A4 conditionally allowed, R4-B1 deferred).
+        """A normal-path high-severity failure yields ``rework``
+        (quality gate conditionally allowed, streaming gate deferred).
 
         Rework is the normal verdict when real-model validation
-        surfaced actionable failures. R4-B1 is False to avoid streaming
+        surfaced actionable failures. The streaming gate is False to avoid streaming
         + correctness churn while rework is in flight. The coverage
         audit reflects row 7 of the 7-row table (completed + full
         coverage + quality failure).
@@ -569,7 +569,7 @@ class TestDecideFinalVerdictPrecedence:
         assert allow_b1 is False
 
     def test_identity_mismatch_wins_over_budget_exhausted(self) -> None:
-        """P1-a: precedence 1 (identity mismatch) wins over precedence 2
+        """Identity mismatch wins over budget exhaustion
         (budget exhausted / incomplete run).
 
         Even if the run was budget-exhausted AND had identity drift,
@@ -593,7 +593,7 @@ class TestDecideFinalVerdictPrecedence:
         assert verdict == "blocked_dataset_identity_mismatch"
 
     def test_identity_mismatch_wins_over_normal_accepted(self) -> None:
-        """P1-a: precedence 1 (identity mismatch) wins over precedence 4
+        """Identity mismatch wins over a normal accepted verdict
         (normal accepted).
 
         Even if case_results is non-empty and would otherwise produce
@@ -700,13 +700,13 @@ class TestAggregateEndToEndVerdictPrecedence:
         # computed identity. We need to load the dataset first to get
         # the actual content_sha256.
         from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
+            load_reader_record_ask_dataset_with_snapshot,
         )
 
         cases = [_make_case(case_id="case-a"), _make_case(case_id="case-b")]
         dataset_dir = tmp_path / "dataset"
         _write_dataset_dir(dataset_dir, cases=cases)
-        snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+        snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
         identity = snapshot.identity
 
         # case-a: matches identity.
@@ -793,7 +793,7 @@ class TestAggregateEndToEndVerdictPrecedence:
     def test_aggregate_all_artifacts_missing_identity_yields_blocked_dataset_identity_mismatch(
         self, tmp_path: Path
     ) -> None:
-        """End-to-end: all artifacts are pre-P0-2 (missing identity
+        """End-to-end: all artifacts are from older runs (missing identity
         fields). The aggregate MUST treat them as mismatched and report
         ``blocked_dataset_identity_mismatch``.
 
@@ -839,7 +839,7 @@ class TestAggregateEndToEndVerdictPrecedence:
         ``blocked_by_real_model_run``.
 
         This is the "gate never opened" / "first run before any real
-        artifacts exist" path. R4-A4 is conditionally allowed.
+        artifacts exist" path. The quality gate is conditionally allowed.
         """
         cases = [_make_case(case_id="case-a")]
         dataset_dir = tmp_path / "dataset"
@@ -885,7 +885,7 @@ class TestAggregateEndToEndVerdictPrecedence:
         test MUST write a completed manifest matching the dataset
         identity to reach the normal path.
 
-        R4-A4-0 final gate closure (P0-1/P0-2): "all-valid" under the
+        Final gate closure: "all-valid" under the
         new contract means the artifact carries the explicit captured
         lifecycle (``model_context_instrumentation_version=v1``,
         ``model_context_capture_status=captured``). Legacy artifacts
@@ -896,13 +896,13 @@ class TestAggregateEndToEndVerdictPrecedence:
         normal-path precedence row is reachable.
         """
         from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
+            load_reader_record_ask_dataset_with_snapshot,
         )
 
         cases = [_make_case(case_id="case-a")]
         dataset_dir = tmp_path / "dataset"
         _write_dataset_dir(dataset_dir, cases=cases)
-        snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+        snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
         identity = snapshot.identity
 
         # Artifact carries the matching identity AND the captured

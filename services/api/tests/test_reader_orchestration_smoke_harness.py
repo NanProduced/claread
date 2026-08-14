@@ -29,9 +29,9 @@ from tests.reader_orchestration_test_support import (
 
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
-# based on grammar-window plan existence in ``layer_analysis_plans`` (Task C3).
+# based on grammar-window plan existence in ``layer_analysis_plans`` (Task).
 
-# T1.1 short-article batch path: migration 0017 adds the new batch job types
+# Short-article batch path: migration 0017 adds the new batch job types
 # and worker types to the CHECK constraints (see pipeline runner fixture).
 
 
@@ -361,7 +361,7 @@ def test_build_pipeline_runner_real_mode_uses_production_topology(
 ) -> None:
     """``_build_pipeline_runner(real)`` must use ``enable_grammar_window=True``.
 
-    T4.2a-R1: Verifies that the real-mode runner is constructed with the
+    Verifies that the real-mode runner is constructed with the
     production route-aware split, not the legacy per-unit-only path. This
     is a construction-only test — it does not call the real LLM.
     """

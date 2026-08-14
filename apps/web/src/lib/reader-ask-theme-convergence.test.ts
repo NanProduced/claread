@@ -1,5 +1,5 @@
 /**
- * Static contract tests for Task 3B/3C: Reader / Ask neutral theme convergence.
+ * Static contract tests for Reader / Ask neutral theme convergence.
  * Asserts that Reader and Ask components no longer reference paper semantics,
  * warm gradients, raw HEX/RGBA, or dark: color patches.
  *
@@ -17,7 +17,7 @@ function readAppFile(rel: string): string {
   return readFileSync(resolve(ROOT, rel), "utf8");
 }
 
-// Files cleaned in Task 3B (non-conflict) and Task 3C (formerly conflict).
+// Theme-converged files, including formerly conflicting surfaces.
 const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   // Reader settings
   { rel: "src/components/reader/settings/ReaderSettingsPanel.tsx", label: "ReaderSettingsPanel" },
@@ -39,7 +39,7 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/app/(private)/app/reader/[recordId]/FavoriteButton.tsx", label: "FavoriteButton (page)" },
   { rel: "src/app/(private)/app/read/page.tsx", label: "read page" },
   { rel: "src/app/(private)/app/read/CandidateConfirmDialog.tsx", label: "CandidateConfirmDialog" },
-  // Task 3C — formerly conflict files, now converged
+  // Formerly conflicting files, now converged
   { rel: "src/app/(private)/app/read/AnalyzeSubmitForm.tsx", label: "AnalyzeSubmitForm" },
   { rel: "src/components/reader/AiWorkspacePanel.tsx", label: "AiWorkspacePanel" },
   { rel: "src/components/reader/plate/ReaderRecordPlateSurface.tsx", label: "ReaderRecordPlateSurface" },
@@ -69,7 +69,7 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /dark:bg-muted/, label: "dark: muted background patch" },
   { re: /dark:hover:bg-zinc/, label: "dark: hover zinc patch" },
   { re: /dark:hover:bg-muted/, label: "dark: hover muted patch" },
-  // Task 3C — broader patterns for formerly conflict files
+  // Broader patterns for formerly conflicting files
   { re: /linear-gradient\(/, label: "linear-gradient() in any context" },
   { re: /radial-gradient\(/, label: "radial-gradient() in any context" },
   { re: /rgba\(/, label: "raw rgba() color value" },

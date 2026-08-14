@@ -265,13 +265,13 @@ export function projectMarkdownOutlineView(
   // whenever the backend counts a unit as a heading, the frontend does too.
   //
   // Acceptance criteria (any one):
-  //   - `unit_type === "heading"` (backend canonical; covers A5-annotated
+  //   - `unit_type === "heading"` (backend canonical; covers annotated
   //     snapshots AND legacy heuristic-classified snapshots)
-  //   - `stable_block_type === "heading"` (defensive: A5 payload mirror;
+  //   - `stable_block_type === "heading"` (defensive payload mirror;
   //     present whenever a StableBlockAnnotation matched, even if the
   //     snapshot was built before `unit_type` was overridden)
   //
-  // `heading_level` resolution (P0 legacy heuristic support):
+  // `heading_level` resolution (legacy heuristic support):
   //   - `null` / `undefined` (not provided) → DEFAULT to 1. The backend
   //     heuristic `_classify_unit_type` detects headings without extracting
   //     a level, and legacy snapshots carry `unit_type === "heading"` with
@@ -294,7 +294,7 @@ export function projectMarkdownOutlineView(
       unit.unit_type === "heading" || unit.stable_block_type === "heading";
     if (!isHeading) continue;
     const rawLevel = unit.heading_level;
-    // Missing/null → default to 1 (P0 legacy heuristic path).
+    // Missing/null → default to 1 (legacy heuristic path).
     if (rawLevel === null || rawLevel === undefined) {
       picks.push({
         unitId: unit.unit_id,

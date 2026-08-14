@@ -45,13 +45,13 @@ def _resolve_reader_ask_model_option_or_422(
 def _selected_model_payload(
     option: model_options_svc.ResolvedReaderAskModelOption,
 ) -> dict[str, Any]:
-    # ASK-WEB-G3-R1: project the server-declared Web Search capability
+    # ASK-WEB-G3-project the server-declared Web Search capability
     # via the canonical ``resolve_web_search_availability_for_option``
     # helper in ``web_search_common``. The helper resolves the model
     # config from ``option.selection``, calls the production registry
     # exactly once, and projects the binding to ``"available"`` /
     # ``"unavailable"``. There is no duplicate resolver here — the
-    # previous local copy was removed in G3-R1 to collapse all
+    # previous local copy was removed in G3- to collapse all
     # capability projection into a single canonical call chain.
     web_search_capability: Literal["unavailable", "available"] = (
         web_search_common.resolve_web_search_availability_for_option(option)

@@ -1,4 +1,4 @@
-"""S2: Candidate Recovery read model tests.
+"""Candidate Recovery read model tests.
 
 Covers the full test matrix from the spec §8.1:
 - 404 four collapsed causes (not found / not owner / soft-deleted / no
@@ -457,7 +457,7 @@ async def test_409_open_reader_coverage_complete(read_env: asyncpg.Pool) -> None
     """Record advanced to readable_enhancing + coverage_complete +
     active_base_id → 409 open_reader.
 
-    P1-2 regression: coverage_complete is also a readable state when
+     regression: coverage_complete is also a readable state when
     paired with active_base_id, so the user should still be sent to
     Reader rather than Library.
     """

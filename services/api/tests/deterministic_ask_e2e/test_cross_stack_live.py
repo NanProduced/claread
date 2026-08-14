@@ -335,11 +335,11 @@ def test_retry_canonical_route_preserves_identity_and_persists(api_ctx):
 def test_retry_after_submission_id_turn(api_ctx, send_result):
     """Composer-shape turn (client_submission_id) → retry must work.
 
-    ASK-SUBMISSION-RETRY-R1: the submission gateway binds user +
+    ASK-SUBMISSION-RETRY-the submission gateway binds user +
     assistant in ONE transaction sharing one ``created_at``; retry must
     resolve the predecessor through the explicit
     ``reader_ask_client_submissions`` binding instead of timestamp
-    ordering. Regression guard for the pre-R1 404.
+    ordering. Regression guard for the pre- 404.
     """
     client: httpx.Client = api_ctx["client"]
     record_id = api_ctx["record_id"]
@@ -445,7 +445,7 @@ def test_bff_send_new_message_over_sse_and_bff_retry_abi(api_ctx, web_ctx):
         f"/api/web/reader/records/{record_id}/ask/threads/{thread_id}/messages/stream",
         # Composer-shape body required by the BFF DTO (page_identity +
         # attachments + entry_action).
-        # R1: real composer shape INCLUDING client_submission_id — the
+        # Real composer shape INCLUDING client_submission_id — the
         # submission-bound turn is exactly what the real Web composer
         # sends, and retry over it must succeed (binding-first
         # predecessor resolution).

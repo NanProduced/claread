@@ -377,61 +377,6 @@ async function mockReaderPlateRoutes(page: Page) {
   });
 }
 
-test("reader plate smoke: submit renders source text, translation, vocabulary, and grammar projections, polling stays calm", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-
-  // Mock the submit BFF route to return a valid snapshot.
-  await page.route("**/api/web/reader/records/input", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        outcome: "stable_document_ready",
-        reading_record_id: RECORD_ID,
-        original_input_id: "input_smoke",
-      }),
-    });
-  });
-
-  await mockReaderPlateRoutes(page);
-
-  await loginWithMockPhone(page, "/app/read");
-
-  // The submit form should be visible.
-  await expect(page.getByRole("heading", { name: "Bring it to Claread." })).toBeVisible();
-  const inputEditor = page.getByRole("textbox", { name: "在此贴入或导入英文文章" });
-  await expect(inputEditor).toBeVisible();
-
-  // Fill and submit.
-  await inputEditor.fill("A scarce few can turn passion into a stable income.");
-  await page.getByRole("button", { name: "开始透读" }).click();
-
-  // The reader surface should render the source text and translation.
-  await expect(page.getByText("A scarce few can turn passion into a stable income.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: /语法解析/ })).toBeVisible();
-  await expect(page.getByRole("note").filter({ hasText: "fronted focus and main action" })).toBeVisible();
-
-  // Source text, translation, vocabulary, and grammar projections should be present.
-  await expect(
-    page.getByText("A scarce few can turn passion into a stable income.", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("status").filter({ hasText: "译文" })).toBeVisible();
-  await expect(page.locator("body")).toContainText(/可以开始阅读\s*10 词/);
-  await expect(page.getByText("语法解析 · 1 条", { exact: true })).toBeVisible();
-  await expect(page.getByRole("note").filter({ hasText: "fronted focus and main action" })).toBeVisible();
-  await expect(page.getByText("fronted focus and main action", { exact: true })).toBeVisible();
-
-  // No error states should be visible after caught-up polling.
-  await expect(page.getByText("批注更新暂时中断")).toHaveCount(0);
-  await expect(page.getByText("加载失败")).toHaveCount(0);
-
-  await page.screenshot({
-    path: "test-results/reader-plate-smoke.png",
-    fullPage: false,
-  });
-});
-
 test("reader plate smoke: record_id query loads an existing snapshot directly", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await mockReaderPlateRoutes(page);

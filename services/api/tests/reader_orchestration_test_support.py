@@ -30,7 +30,7 @@ _WORD_RE = re.compile(r"[A-Za-z]+")
 class CompatTranslationLayerPublisher:
     """Compatibility wrapper used by pipeline runner tests.
 
-    T1.1 short-article batch path: the translation batch worker calls
+     short-article batch path: the translation batch worker calls
     ``publish_article_translation_batch`` on the layer publisher. The real
     ``TranslationLayerPublisher`` implements it, but tests that want to
     observe published outputs need a compat wrapper that records both

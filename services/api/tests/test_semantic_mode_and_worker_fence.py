@@ -1,4 +1,4 @@
-# task-history: R2 (renamed from test_semantic_mode_and_worker_fence_r2.py)
+# task-history: (renamed from test_semantic_mode_and_worker_fence_r2.py)
 """Frozen mode, mode-aware worker fence, real worker services.
 
 Proves off/shadow/enforce do not collapse to enforce at worker time, and
@@ -2035,7 +2035,7 @@ async def test_grammar_window_bootstrap_three_modes_persist_mode(
 
 
 # ---------------------------------------------------------------------------
-# R2.2: section identity cannot bypass non-translation / bad target bind
+# Section identity cannot bypass non-translation / bad target bind
 # ---------------------------------------------------------------------------
 
 
@@ -2455,7 +2455,7 @@ async def test_translation_section_loaded_units_mismatch_zero_executor(
 
 
 # ---------------------------------------------------------------------------
-# R2.3: layer identity fail-closed + DB geometry bind
+# Layer identity fail-closed + DB geometry bind
 # ---------------------------------------------------------------------------
 
 

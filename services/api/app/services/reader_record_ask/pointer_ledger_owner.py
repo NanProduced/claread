@@ -1,4 +1,4 @@
-"""Process-scoped ExpansionPointerLedger owner (R4-A5-7 / A5-7R2 / R3).
+"""Process-scoped ExpansionPointerLedger owner.
 
 Production default obtains one shared :class:`ExpansionPointerLedger`
 instance for the process so a new turn can **recognize** pointers minted
@@ -21,7 +21,7 @@ Retention / capacity boundary (explicit, non-persistent)
   (foreign marker now owns the token) drops the local queue entry only
   and never deletes the current ledger record.
 
-Transition capacity timing (A5-7R3)
+Transition capacity timing
 -----------------------------------
 :meth:`CapacityAwarePointerLedger.transition_pointers` **suppresses**
 capacity registration and eviction for the whole base-class transition

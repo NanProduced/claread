@@ -1,6 +1,6 @@
-"""D6-I4C: Article RAG Index Worker Foundation.
+"""Article RAG Index Worker Foundation.
 
-Claims ``article_rag_index_build`` reader_jobs (enqueued by D6-I4B
+Claims ``article_rag_index_build`` reader_jobs (enqueued by the index bootstrap
 bootstrap), reloads the truth-layer index plan via
 ``ArticleRagIndexPlanService``, calls an embedding provider and a vector
 writer, and transitions the index state row from ``queued`` →
@@ -14,15 +14,15 @@ This worker does NOT:
   * modify I4A citation truth rules
 
 Transaction model:
-  * Phase 1 (DB tx): lock ``reader_article_rag_index_runs`` FOR UPDATE,
+  * Initial DB transaction: lock ``reader_article_rag_index_runs`` FOR UPDATE,
     validate state, transition ``queued``/``indexing`` → ``indexing``.
-  * Phase 2 (DB tx, read-only): rebuild the plan via
+  * Read-only DB transaction: rebuild the plan via
     ``ArticleRagIndexPlanService.build_index_plan_in_transaction``,
     validate ``plan_content_sha256`` + ``chunk_count``.
-  * Phase 3 (no DB): call embedding provider with chunk texts.
-  * Phase 4 (no DB): call vector writer with chunks + embeddings
+  * Outside DB: call embedding provider with chunk texts.
+  * Outside DB: call vector writer with chunks + embeddings
     (no chunk text — only hashes + citation metadata).
-  * Phase 5 (DB tx): lock index run FOR UPDATE again, re-validate
+  * Final DB transaction: lock index run FOR UPDATE again, re-validate
     lease/fence, transition ``indexing`` → ``indexed``, transition job
     to ``succeeded``.
 
@@ -73,9 +73,9 @@ from .job_runtime import (
 
 DEFAULT_ARTICLE_RAG_INDEX_LEASE_DURATION = timedelta(seconds=60)
 DEFAULT_ARTICLE_RAG_INDEX_RETRY_DELAY = timedelta(minutes=2)
-ARTICLE_RAG_INDEX_WORKER_VERSION = "d6-i4c-article-rag-index-worker"
+ARTICLE_RAG_INDEX_WORKER_VERSION = "article-rag-index-worker"
 
-# Job payload source tag — must match D6-I4B bootstrap.
+# Job payload source tag — must match the index bootstrap.
 ARTICLE_RAG_INDEX_JOB_SOURCE = "article_rag_index_bootstrap"
 
 # Default vector store metadata (fake — no real Zilliz/Milvus connection).
@@ -138,38 +138,38 @@ FAILURE_CODE_INDEXED_IDENTITY_MISMATCH = "index_run_indexed_identity_mismatch"
 # Fixed safe error messages for input-hash / linkage validation failures.
 # These strings are intentionally generic and free of any caller-supplied
 # value so a malicious payload cannot leak through error surfaces.
-_P1D_MSG_INPUT_HASH_MISMATCH = (
+_MSG_INPUT_HASH_MISMATCH = (
     "Article RAG index job input_hash does not match the canonical algorithm"
 )
 # Cardinality / linkage failure message.  Must NOT echo job_id,
 # index_run_id, row count, hash, payload, URI/key/sentinel.
-_P1D_MSG_INDEX_RUN_LINK_INVALID = (
+_MSG_INDEX_RUN_LINK_INVALID = (
     "Article RAG index job link to index run is not resolvable"
 )
 
 # Fixed safe messages for embedding/vector-write contract failures.
 # Must NOT echo provider-returned model, vector content, chunk text,
 # collection name, dim value, or any caller-supplied value.
-_P1G_MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED = (
+_MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED = (
     "Article RAG document embedding text_type is not supported by the frozen contract"
 )
-_P1G_MSG_VECTOR_COLLECTION_MISMATCH = (
+_MSG_VECTOR_COLLECTION_MISMATCH = (
     "Article RAG worker runtime collection does not match the frozen contract vector collection"
 )
-_P1G_MSG_EMBEDDING_MODEL_MISMATCH = (
+_MSG_EMBEDDING_MODEL_MISMATCH = (
     "Article RAG embedding provider returned a model that does not match the frozen contract"
 )
-_P1G_MSG_EMBEDDING_DIMENSION_MISMATCH = (
+_MSG_EMBEDDING_DIMENSION_MISMATCH = (
     "Article RAG embedding provider returned a dimension or vector "
     "length that does not match the frozen contract"
 )
-_P1G_MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
+_MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
     "Article RAG vector writer returned a collection that does not "
     "match the frozen contract vector collection"
 )
 # Fixed safe message for indexed idempotent identity drift.
 # Must NOT echo persisted model, collection, or any caller-supplied sentinel.
-_P1G_R1_MSG_INDEXED_IDENTITY_MISMATCH = (
+_MSG_INDEXED_IDENTITY_MISMATCH = (
     "Article RAG index run indexed identity does not match the "
     "frozen contract"
 )
@@ -646,7 +646,7 @@ class ArticleRagIndexWorkerService:
             # cannot trigger paid embedding work for a wrong vector space.
             if self._default_vector_collection != context.vector_namespace:
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_VECTOR_COLLECTION_MISMATCH,
+                    _MSG_VECTOR_COLLECTION_MISMATCH,
                     retryable=False,
                     failure_class="vector_collection_mismatch",
                     failure_code=FAILURE_CODE_VECTOR_COLLECTION_MISMATCH,
@@ -660,24 +660,24 @@ class ArticleRagIndexWorkerService:
             # independent task.
             if context.document_embedding_text_type != "provider_default":
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED,
+                    _MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED,
                     retryable=False,
                     failure_class="embedding_text_type_unsupported",
                     failure_code=FAILURE_CODE_EMBEDDING_TEXT_TYPE_UNSUPPORTED,
                     rationale_code=FAILURE_CODE_EMBEDDING_TEXT_TYPE_UNSUPPORTED,
                 )
 
-            # Phase 1: mark indexing (or detect idempotent no-op).
+            # Mark indexing (or detect idempotent no-op).
             idempotent = await self._mark_indexing_or_detect_noop(claim, context)
             if idempotent is not None:
                 return idempotent
 
-            # Phase 2: reload plan + validate hash.
+            # Reload plan + validate hash.
             plan, index_run_snapshot = await self._reload_and_validate_plan(
                 claim, context
             )
 
-            # Phase 3: embed (outside DB tx).
+            # Embed outside the DB transaction.
             # Explicitly pass the contract document_embedding_model so
             # provider factory ``model_override`` / settings cannot
             # silently substitute a different model.
@@ -697,7 +697,7 @@ class ArticleRagIndexWorkerService:
                 index_run_snapshot=index_run_snapshot,
             )
 
-            # Phase 4: vector write (outside DB tx).
+            # Write vectors outside the DB transaction.
             # Collection is sourced from the contract vector_collection,
             # not from the worker's default_vector_collection (which has
             # already been validated to equal it above).
@@ -736,7 +736,7 @@ class ArticleRagIndexWorkerService:
             # cannot be trusted — refuse to mark indexed.
             if write_result.collection != context.vector_namespace:
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH,
+                    _MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH,
                     retryable=False,
                     failure_class="vector_write_result_collection_mismatch",
                     failure_code=(
@@ -747,7 +747,7 @@ class ArticleRagIndexWorkerService:
                     ),
                 )
 
-            # Phase 5: mark indexed + transition job succeeded (one tx).
+            # Mark indexed + transition job succeeded in one transaction.
             # Persist contract-derived embedding_model and
             # vector_collection — NOT embeddings[0].model or
             # write_result.collection (both have already been validated
@@ -816,7 +816,7 @@ class ArticleRagIndexWorkerService:
         # and is re-entered on the next claim.
 
     # ------------------------------------------------------------------
-    # Phase 1: mark indexing / detect idempotent no-op
+    # Mark indexing / detect idempotent no-op
     # ------------------------------------------------------------------
 
     async def _mark_indexing_or_detect_noop(
@@ -1029,7 +1029,7 @@ class ArticleRagIndexWorkerService:
             or persisted_collection != context.vector_namespace
         ):
             raise ArticleRagIndexWorkerError(
-                _P1G_R1_MSG_INDEXED_IDENTITY_MISMATCH,
+                _MSG_INDEXED_IDENTITY_MISMATCH,
                 retryable=False,
                 failure_class="index_run_indexed_identity_mismatch",
                 failure_code=FAILURE_CODE_INDEXED_IDENTITY_MISMATCH,
@@ -1037,7 +1037,7 @@ class ArticleRagIndexWorkerService:
             )
 
     # ------------------------------------------------------------------
-    # Phase 2: reload plan + validate hash
+    # Reload plan + validate hash
     # ------------------------------------------------------------------
 
     async def _reload_and_validate_plan(
@@ -1108,7 +1108,7 @@ class ArticleRagIndexWorkerService:
         return plan, snapshot
 
     # ------------------------------------------------------------------
-    # Phase 3/4 helpers
+    # Embedding and vector-write helpers
     # ------------------------------------------------------------------
 
     def _validate_embedding_coverage(
@@ -1120,13 +1120,13 @@ class ArticleRagIndexWorkerService:
     ) -> None:
         """Verify embedding count + per-chunk text_sha256 coverage.
 
-        P1-G: also verify that every returned embedding's ``model`` is
+        Also verify that every returned embedding's ``model`` is
         a ``str`` and precisely equals ``context.document_embedding_model``,
         that ``dim`` is a non-bool ``int`` and precisely equals
         ``context.document_embedding_dimension``, and that
         ``len(vector)`` precisely equals ``context.document_embedding_dimension``.
 
-        All P1-G failures use fixed safe messages that do NOT echo the
+        All validation failures use fixed safe messages that do NOT echo the
         provider-returned model, the dim, the vector content, or any
         chunk text / sha.  Any single bad embedding fails the whole
         batch before the vector writer is called.
@@ -1152,24 +1152,24 @@ class ArticleRagIndexWorkerService:
                     failure_class="embedding_coverage",
                     failure_code=FAILURE_CODE_EMBEDDING_FAILED,
                 )
-            # P1-G: model must be a str and precisely match the profile.
+            # Model must be a str and precisely match the profile.
             # bool is not a valid model.  None / int / trailing space /
             # trailing LF are all rejected.  Fixed safe message; no echo.
             if not isinstance(emb.model, str) or emb.model != expected_model:
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_EMBEDDING_MODEL_MISMATCH,
+                    _MSG_EMBEDDING_MODEL_MISMATCH,
                     retryable=False,
                     failure_class="embedding_model_mismatch",
                     failure_code=FAILURE_CODE_EMBEDDING_MODEL_MISMATCH,
                     rationale_code=FAILURE_CODE_EMBEDDING_MODEL_MISMATCH,
                 )
-            # P1-G: dim must be a non-bool int and precisely match the
+            # Dim must be a non-bool int and precisely match the
             # profile.  ``True`` / ``False`` are ints in Python; reject
             # them explicitly so a malicious provider cannot pass a
             # boolean where a dimension is expected.
             if isinstance(emb.dim, bool) or not isinstance(emb.dim, int):
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_EMBEDDING_DIMENSION_MISMATCH,
+                    _MSG_EMBEDDING_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="embedding_dimension_mismatch",
                     failure_code=FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH,
@@ -1177,18 +1177,18 @@ class ArticleRagIndexWorkerService:
                 )
             if emb.dim != expected_dim:
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_EMBEDDING_DIMENSION_MISMATCH,
+                    _MSG_EMBEDDING_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="embedding_dimension_mismatch",
                     failure_code=FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH,
                     rationale_code=FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH,
                 )
-            # P1-G: len(vector) must precisely equal the profile dim.
+            # len(vector) must precisely equal the profile dim.
             # A wrong-length vector is rejected even when dim is correct
             # (defence in depth: a provider could lie about dim).
             if len(emb.vector) != expected_dim:
                 raise ArticleRagIndexWorkerError(
-                    _P1G_MSG_EMBEDDING_DIMENSION_MISMATCH,
+                    _MSG_EMBEDDING_DIMENSION_MISMATCH,
                     retryable=False,
                     failure_class="embedding_dimension_mismatch",
                     failure_code=FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH,
@@ -1228,7 +1228,7 @@ class ArticleRagIndexWorkerService:
         return vector_chunks
 
     # ------------------------------------------------------------------
-    # Phase 4 guard: validate before vector-store side effects
+    # Validate before vector-store side effects
     # ------------------------------------------------------------------
 
     async def _validate_before_vector_write(
@@ -1312,7 +1312,7 @@ class ArticleRagIndexWorkerService:
                 )
 
     # ------------------------------------------------------------------
-    # Phase 5: mark indexed + transition job succeeded
+    # Mark indexed + transition job succeeded
     # ------------------------------------------------------------------
 
     async def _mark_indexed_and_succeed(
@@ -1611,7 +1611,7 @@ class ArticleRagIndexWorkerService:
         representation event is published; ``article_ready`` and the reader
         truth layer (base / Unit / anchor / stable document) are untouched.
 
-        P1-D: when ``context is None`` (validation failed before
+        When ``context is None`` (validation failed before
         :meth:`_load_job_context` could return), the handler cannot
         trust ``input_json.index_run_id``.  Instead it looks up the
         linked index-run via the trusted DB relationship
@@ -1654,7 +1654,7 @@ class ArticleRagIndexWorkerService:
                         error_json=error_json,
                     )
                 else:
-                    # P1-D-R1: context=None — do NOT trust the potentially
+                    # context=None — do NOT trust the potentially
                     # corrupt ``input_json.index_run_id``.  Look up the
                     # linked index-run via the trusted DB relationship
                     # ``reader_article_rag_index_runs.job_id = claim.job_id``
@@ -1863,7 +1863,7 @@ class ArticleRagIndexWorkerService:
             or _SHA256_HEX_PATTERN.fullmatch(persisted_input_hash) is None
         ):
             raise ArticleRagIndexWorkerError(
-                _P1D_MSG_INPUT_HASH_MISMATCH,
+                _MSG_INPUT_HASH_MISMATCH,
                 retryable=False,
                 failure_class="job_input_hash_mismatch",
                 failure_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,
@@ -1897,7 +1897,7 @@ class ArticleRagIndexWorkerService:
             or UUID(str(linked_index_run_rows[0]["id"])) != payload_index_run_id
         ):
             raise ArticleRagIndexWorkerError(
-                _P1D_MSG_INDEX_RUN_LINK_INVALID,
+                _MSG_INDEX_RUN_LINK_INVALID,
                 retryable=False,
                 failure_class="index_run_link_invalid",
                 failure_code=FAILURE_CODE_INDEX_RUN_LINK_INVALID,
@@ -1913,7 +1913,7 @@ class ArticleRagIndexWorkerService:
         )
         if persisted_input_hash != expected_input_hash:
             raise ArticleRagIndexWorkerError(
-                _P1D_MSG_INPUT_HASH_MISMATCH,
+                _MSG_INPUT_HASH_MISMATCH,
                 retryable=False,
                 failure_class="job_input_hash_mismatch",
                 failure_code=FAILURE_CODE_JOB_INPUT_HASH_MISMATCH,

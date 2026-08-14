@@ -1,4 +1,4 @@
-"""R7-1 sentence segmentation regression tests.
+"""Sentence segmentation regression tests.
 
 Covers the fix for record cb62a337-60c4-40a7-8858-35554b5da077 where
 ``... media in the U.K. It led to ...`` was split into anchors ending
@@ -62,7 +62,7 @@ EXPECTED_HARRY_SENTENCES = [
     "It led to more bad blood between Harry and his family.",
 ]
 
-# Fragment segments that must NEVER appear as anchors (the R7-1 bug
+# Fragment segments that must NEVER appear as anchors (the bug
 # produced exactly these for "... U.K. It ...").
 FORBIDDEN_INITIALISM_FRAGMENTS = {"U.", "K.", "S.", "Ph.", "D."}
 
@@ -98,7 +98,7 @@ def _unit_segment_texts(result, unit_index: int = 0) -> list[str]:
 
 def _assert_anchor_invariants(result) -> None:
     """Order / non-overlap / whitespace-gap coverage / slice round-trip /
-    UTF-16 offsets / canonical hash invariants (R7-1 requirement 5)."""
+    UTF-16 offsets / canonical hash invariants (requirement 5)."""
     base_text = result.base.text
 
     # Canonical text is untouched: hash + UTF-16 length match the text.
@@ -321,7 +321,7 @@ _BOUNDARY_CORPUS = [
     ),
 ]
 
-# R7-1 rework counter-examples: title-case continuations after a
+# Rework counter-examples: title-case continuations after a
 # sentence-medial initialism must NOT be split, on either path. No
 # content-word exclusion lists: the rule is a closed pronoun class
 # (see _INITIALISM_SENTENCE_STARTERS in base_builder).
@@ -527,7 +527,7 @@ def test_explicit_v2_identity_runs_regex_v2_without_loading_spacy(monkeypatch) -
 
 
 def test_explicit_v1_identity_runs_frozen_regex_v1_verbatim() -> None:
-    """R7-1 rework: the v1 algorithm label is no longer the AUTO policy
+    """The v1 algorithm label is no longer the AUTO policy
     sentinel. Requesting it explicitly must run the FROZEN regex v1
     (with its historical U.K. mis-split, proving v1 really ran) and
     persist the label verbatim."""
@@ -672,7 +672,7 @@ def test_translation_groups_for_uk_it_base_have_no_stray_initialism_fragments() 
     assert anchor_texts == EXPECTED_HARRY_SENTENCES
 
     # No translation group starts with a stray "K." or ends with a
-    # stray "U." (the R7-1 mis-grouping signature).
+    # stray "U." (the mis-grouping signature).
     assert groups
     for group in groups:
         assert not group.source_text.startswith("K."), group.source_text
@@ -725,7 +725,7 @@ def test_snapshot_projection_for_uk_it_base_has_no_stray_initialism_leaves() -> 
     assert _collect_text(source_block["children"]) == result.units[0].text
 
     # Each anchor segment node rebuilds exactly its segment text, and
-    # no anchor node is a bare initialism fragment (the R7-1 bug
+    # no anchor node is a bare initialism fragment (the bug
     # rendered "... in the U." and "K. It led ..." as separate blocks).
     anchor_nodes = [
         child

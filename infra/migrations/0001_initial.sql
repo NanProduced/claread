@@ -1,4 +1,4 @@
--- Claread single fresh-init baseline (DATA-SCHEMA-BASELINE D2).
+-- Claread single fresh-init baseline (DATA-SCHEMA-BASELINE).
 -- Squashed from migrations 0001-0029 + LLM Config control plane +
 -- Example Lab final schema. Legacy analysis tables, legacy Eval
 -- control-plane tables, reader_ask_eval_traces and the confirmed
@@ -541,7 +541,7 @@ CREATE TABLE enhancement_layers (
     CONSTRAINT enhancement_layers_target_scope_check CHECK ((target_scope = ANY (ARRAY['unit'::text, 'anchor_segment'::text, 'unit_range'::text, 'record'::text])))
 );
 
-COMMENT ON CONSTRAINT enhancement_layers_layer_type_check ON enhancement_layers IS 'T5.3a: adds semantic_outline as a record-scoped optional enhancement layer.';
+COMMENT ON CONSTRAINT enhancement_layers_layer_type_check ON enhancement_layers IS 'Adds semantic_outline as a record-scoped optional enhancement layer.';
 
 CREATE TABLE IF NOT EXISTS eval_example_lab_entries (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -941,9 +941,9 @@ COMMENT ON TABLE reader_article_rag_index_runs IS 'Persistent state for Article 
 
 COMMENT ON COLUMN reader_article_rag_index_runs.plan_content_sha256 IS 'SHA-256 of the deterministic plan content (chunk ids, content hashes, citation refs). Computed by compute_plan_content_sha256 in article_rag_index_plan.py.';
 
-COMMENT ON COLUMN reader_article_rag_index_runs.embedding_model IS 'Nullable placeholder. Populated only when a later milestone calls an embedding provider. D6-I4B leaves this NULL.';
+COMMENT ON COLUMN reader_article_rag_index_runs.embedding_model IS 'Nullable placeholder. Populated only when a later milestone calls an embedding provider. The current baseline leaves this NULL.';
 
-COMMENT ON COLUMN reader_article_rag_index_runs.vector_store_provider IS 'Nullable placeholder. Populated only when a later milestone writes to Zilliz / Milvus. D6-I4B leaves this NULL.';
+COMMENT ON COLUMN reader_article_rag_index_runs.vector_store_provider IS 'Nullable placeholder. Populated only when a later milestone writes to Zilliz / Milvus. The current baseline leaves this NULL.';
 
 CREATE TABLE reader_ask_client_submissions (
     thread_id uuid NOT NULL,
@@ -959,9 +959,9 @@ CREATE TABLE reader_ask_client_submissions (
     CONSTRAINT reader_ask_client_submissions_status_check CHECK ((status = ANY (ARRAY['claimed'::text, 'streaming'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
-COMMENT ON TABLE reader_ask_client_submissions IS 'ASK-RETRY-CONTRACT-R5: atomic client submission claim. PK (thread_id, client_submission_id) prevents duplicate turns. status: claimed → streaming → completed|failed|cancelled. claim_generation CAS prevents stale-owner bind after reclaim.';
+COMMENT ON TABLE reader_ask_client_submissions IS 'Ask retry contract: atomic client submission claim. PK (thread_id, client_submission_id) prevents duplicate turns. status: claimed → streaming → completed|failed|cancelled. claim_generation CAS prevents stale-owner bind after reclaim.';
 
-COMMENT ON COLUMN reader_ask_client_submissions.claim_generation IS 'R5/R6 CAS token. bind/terminal UPDATE must match generation.';
+COMMENT ON COLUMN reader_ask_client_submissions.claim_generation IS 'Claim-generation CAS token. bind/terminal UPDATE must match generation.';
 
 CREATE TABLE reader_ask_messages (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1033,7 +1033,7 @@ CREATE TABLE reader_ask_thread_memory (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-COMMENT ON TABLE reader_ask_thread_memory IS 'ASK-CONTEXT-COMPACTION-R1: Ask thread memory snapshot——派生只读视图，可凭 canonical messages (reader_ask_messages + reader_ask_turn_runs final_status=ok) 完全重建（R0.1 §4.2e）。snapshot_json 形状见 R0.1 §6 ThreadMemorySnapshot。version 自增用于 CAS 守卫（防并发轮竞争）。本表不替代 canonical messages 作为真相源；丢失不造成事实损失。';
+COMMENT ON TABLE reader_ask_thread_memory IS 'Ask thread memory snapshot——派生只读视图，可凭 canonical messages (reader_ask_messages + reader_ask_turn_runs final_status=ok) 完全重建。snapshot_json 形状见 ThreadMemorySnapshot 合同。version 自增用于 CAS 守卫（防并发轮竞争）。本表不替代 canonical messages 作为真相源；丢失不造成事实损失。';
 
 CREATE TABLE reader_ask_threads (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1447,7 +1447,7 @@ CREATE TABLE source_artifacts (
 );
 
 -- stable_document_blocks.interpretation_policy_json DEFAULT '{}'::jsonb is a
--- storage placeholder only (D6-I2 contract): the D6-I2 service code is
+-- storage placeholder only (interpretation-policy storage contract): the service code is
 -- responsible for writing the Python-model-generated per-block-type policy
 -- (see default_interpretation_policy_for) into the column, so the DB default
 -- is never relied on at runtime. Do not "fix" the DB default to match the

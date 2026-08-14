@@ -1521,10 +1521,10 @@ async def test_transition_writes_job_event(
 async def test_claim_allows_input_artifact_extraction_job_with_null_base(
     job_runtime_env: asyncpg.Pool,
 ) -> None:
-    """Extraction jobs with null base_id can now be claimed (D6-I3L).
+    """Extraction jobs with null base_id can now be claimed.
 
-    D6-I3K bootstraps ``input_artifact_extraction`` jobs with ``base_id IS NULL``
-    (the artifact has not been extracted into a reading base yet). D6-I3L updates
+     bootstraps ``input_artifact_extraction`` jobs with ``base_id IS NULL``
+    (the artifact has not been extracted into a reading base yet). updates
     ``_validate_fence`` to allow ``input_artifact_extraction`` + ``record`` +
     null ``base_id``, so the extraction worker can claim and execute the job.
 
@@ -1674,9 +1674,9 @@ async def test_claim_supersedes_extraction_job_when_active_base_already_exists(
 
 
 # ---------------------------------------------------------------------------
-# Tests: article_rag_index_build fence tripwire (D6-I4C)
+# Tests: article_rag_index_build fence tripwire
 #
-# ``article_rag_index_build`` is a base-scoped job_type added in D6-I4B. It
+# ``article_rag_index_build`` is a base-scoped job_type added in. It
 # must NOT be in the build_base / extraction / materialization allow-list,
 # so the runtime fence must enforce:
 #   * base_id IS NOT NULL (DB CHECK constraint catches this at insert time)
@@ -1854,7 +1854,7 @@ async def test_claim_supersedes_article_rag_index_build_with_active_base_mismatc
 
 
 # ---------------------------------------------------------------------------
-# P0-B: public atomic in-transaction retry terminalization seam
+# Public atomic in-transaction retry terminalization seam
 # ---------------------------------------------------------------------------
 
 
@@ -2234,7 +2234,7 @@ async def test_transition_retryable_failure_in_transaction_repeat_call_fail_clos
 
 
 # ---------------------------------------------------------------------------
-# P0-B round 2: active-transaction guard (caller-owned tx is mandatory)
+# Round 2: active-transaction guard (caller-owned tx is mandatory)
 # ---------------------------------------------------------------------------
 
 

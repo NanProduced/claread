@@ -6,7 +6,7 @@ import type {
 } from "@/types/api/reader-plate";
 
 /**
- * D6-A1 read-only anchor draft projection.
+ * Read-only anchor draft projection.
  *
  * The canonical `/app/reader/{recordId}` surface must be able to convert a
  * a read-only source selection into the new Reading Record anchor shape
@@ -17,8 +17,8 @@ import type {
  * This module is a pure helper. It returns either a well-formed draft or
  * `null`. It does not throw and it does not call any persistence endpoint.
  * The UI write surfaces (Ask / note / highlight / feedback) remain disabled
- * at the SelectionToolbar layer; this helper exists so that once D6-A5/A6
- * enables those writes, the anchor payload is already in the new shape.
+ * at the SelectionToolbar layer; this helper keeps the anchor payload ready
+ * in the new shape when those writes are enabled.
  */
 
 export type ReaderRecordAnchorScope =

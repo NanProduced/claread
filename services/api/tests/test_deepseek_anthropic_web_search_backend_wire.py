@@ -665,12 +665,12 @@ class TestSearchWebNoUrlInference:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §III: Secret-safe adapter repr
+# G3- §III: Secret-safe adapter repr
 # ---------------------------------------------------------------------------
 
 
 class TestReprSecretSafety:
-    """G3-R1 §III: ``api_key`` uses ``field(repr=False)`` — repr, log,
+    """G3- §III: ``api_key`` uses ``field(repr=False)`` — repr, log,
     and exception output must never leak the credential, the
     ``x-api-key`` header sentinel, or the ``Authorization`` sentinel.
     """
@@ -714,12 +714,12 @@ class TestReprSecretSafety:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §IV: Stream resource lifecycle (no aclosing, httpx stream context)
+# G3- §IV: Stream resource lifecycle (no aclosing, httpx stream context)
 # ---------------------------------------------------------------------------
 
 
 class TestStreamResourceLifecycle:
-    """G3-R1 §IV: the ``aclosing()`` wrapper was removed. The httpx
+    """G3- §IV: the ``aclosing`` wrapper was removed. The httpx
     ``client.stream(...)`` context manager owns the response lifecycle
     and closes it on normal exit, exception, early return, and
     cancellation. No ``RuntimeWarning`` / mypy ``aclosing`` type errors.

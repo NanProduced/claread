@@ -312,7 +312,7 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
 // ===========================================================================
 // Web-side structural fixtures (deserialize equivalence).
 //
-// These fixtures mirror the backend Phase 4 reload tests in
+// These fixtures mirror the backend reload tests in
 // `services/api/tests/test_reader_snapshot_stable_block_reload.py` for
 // `code_block` / `thematic_break` / `nested_list`. The web side verifies
 // that Plate + MarkdownKit (remark-gfm) deserializes the same Markdown

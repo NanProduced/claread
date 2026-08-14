@@ -30,7 +30,7 @@ from typing import Any
 from claread_eval.reader_record_ask.evaluators.aggregator import AggregatedReport
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Dataset,
+    ReaderRecordAskDataset,
 )
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ from claread_eval.reader_record_ask.schema import (
 
 _MAX_SNIPPET_CHARS = 200
 
-# R4-A4-0 (Task 5): canonical A/B comparison phases. The model name is
+# Canonical A/B comparison phases. The model name is
 # NOT hardcoded — it is matched as a case-insensitive regex against
 # ``aggregated.per_config`` keys, so the report renders real run data
 # for whatever model actually ran (e.g. ``deepseek-v4-flash``) while
@@ -66,10 +66,10 @@ REQUIRED_SECTION_HEADERS: tuple[str, ...] = (
     "8. unsupported claim / 完整性 / 指令遵循逐项结果",
     "9. Flash non-thinking / Flash thinking / Pro 对照",
     "10. 明确失败簇",
-    "11. R4-A4 候选修复建议",
-    "12. R4-A3 最终裁决",
-    "13. 是否允许进入 R4-A4 和 R4-B1",
-    "14. R4 tracker 更新",
+    "11. 候选修复建议",
+    "12. 最终裁决",
+    "13. 是否允许进入 correctness follow-up 和 streaming-provider follow-up",
+    "14. tracker 更新",
     "15. 未 commit",
     "16. 能力边界声明",
     "17. 真实覆盖状态",
@@ -112,12 +112,12 @@ def _render_files_and_dirty_tree(
     rejected_harness: str,
     rejected_reason: str,
     modified_files: list[str] | None,
-    task_label: str,
+    evaluation_heading: str,
 ) -> str:
     """Sections 2 + 3: 本轮文件 + 并行脏树 + harness 方案.
 
-    R4-A4-0 (Task 5): ``modified_files`` is now parameterized — the
-    report no longer hardcodes the previous round's Task 5 file list.
+   Parameterized ``modified_files`` is parameterized — the
+    report no longer hardcodes the previous round's file list.
     Callers pass the actual modified-files list for the current round.
     """
     dirty_tree_lines = (
@@ -131,7 +131,7 @@ def _render_files_and_dirty_tree(
         modified_lines = "- (未提供)"
     return (
         f"## 2. 本轮文件与并行脏树区分\n\n"
-        f"### 2.1 本轮修改文件（{task_label}）\n\n"
+        f"### 2.1 本轮修改文件（{evaluation_heading}）\n\n"
         f"{modified_lines}\n\n"
         f"### 2.2 并行脏树（不在本轮允许路径，未修改）\n\n"
         f"{dirty_tree_lines}\n\n"
@@ -144,7 +144,7 @@ def _render_files_and_dirty_tree(
     )
 
 
-def _render_dataset_cases(dataset: ReaderRecordAskR4A3Dataset) -> str:
+def _render_dataset_cases(dataset: ReaderRecordAskDataset) -> str:
     """Section 4: dataset case 清单."""
     header = (
         "| case_id | source_kind | question_category | input_mode | "
@@ -359,7 +359,7 @@ def _render_ab_comparison(
 ) -> str:
     """Section 9: Flash non-thinking / Flash thinking / Pro 对照.
 
-    R4-A4-0 (Task 5): the per-config rows are no longer looked up by
+   The per-config rows are no longer looked up by
     hardcoded model name. Each canonical phase (Flash non-thinking /
     Flash thinking / Pro thinking) is matched against
     ``aggregated.per_config`` keys via a case-insensitive regex on the
@@ -388,7 +388,7 @@ def _render_ab_comparison(
         )
 
     def _find_phase_keys(model_pattern: str, thinking_flag: str) -> list[str]:
-        """R4-A4-0 final closure (P1-2): return ALL matching config keys.
+        """Return ALL matching config keys.
 
         Returns:
             - Empty list: 0 matches → caller renders ``N/A (no data)``.
@@ -416,7 +416,7 @@ def _render_ab_comparison(
                 f"| {label} | N/A (no data) | N/A | N/A | N/A | N/A | N/A | N/A |"
             )
         if len(keys) > 1:
-            # R4-A4-0 final closure (P1-2): >1 match is ambiguous —
+            # More than one match is ambiguous —
             # fail-closed. Do NOT silently pick the first key.
             joined = ", ".join(keys)
             return (
@@ -443,7 +443,7 @@ def _render_ab_comparison(
     table = "\n".join([header, sep, *rows])
     return (
         "## 9. Flash non-thinking / Flash thinking / Pro 对照\n\n"
-        "R4-A4-0 (Task 5): per-config rows are matched by regex against "
+        " (current evaluation): per-config rows are matched by regex against "
         "real ``aggregated.per_config`` keys (no hardcoded model names). "
         "Phases that did not run show ``N/A (no data)``.\n\n"
         f"{table}\n"
@@ -460,7 +460,7 @@ def _render_failure_clusters(
             "## 10. 明确失败簇\n\n"
             "**状态: N/A (blocked / 无真实运行数据)**\n\n"
             "- 真实模型未运行，无法形成真实失败簇。\n"
-            "- 基于 spec 假设的预期失败簇（仅作 R4-A4 候选修复参考，"
+            "- 基于 spec 假设的预期失败簇（仅作 correctness follow-up 候选修复参考，"
             "不构成真实运行证据）:\n"
             "  - `unsupported_temporal_claims × city_enumeration × "
             "2025-year-hallucination` (BBC case 中预期出现)\n"
@@ -497,7 +497,7 @@ def _render_remediation_candidates(
     aggregated: AggregatedReport,
     real_model_blocked: bool,
 ) -> str:
-    """Section 11: R4-A4 候选修复建议（仅建议不实施）."""
+    """Section 11: 候选修复建议（仅建议不实施）."""
     if real_model_blocked:
         # Use spec-anticipated failure patterns as candidate basis.
         candidates = [
@@ -587,7 +587,7 @@ def _render_remediation_candidates(
             candidates.append(
                 (
                     "(无明确失败簇)",
-                    "本轮真实运行未形成需 R4-A4 修复的失败簇；"
+                    "本轮真实运行未形成需 correctness follow-up 修复的失败簇；"
                     "候选修复建议为空。",
                     "(none)",
                 )
@@ -598,20 +598,20 @@ def _render_remediation_candidates(
         lines.append(f"### 11.{idx} {title}\n")
         lines.append(f"- **候选方向**: {suggestion}\n")
         lines.append(f"- **来源失败簇**: {source}\n")
-        lines.append("- **状态**: 不实施，待 R4-A4 立项。\n")
+        lines.append("- **状态**: 不实施，待 correctness follow-up 立项。\n")
 
     body = "\n".join(lines)
     return (
-        "## 11. R4-A4 候选修复建议\n\n"
-        "本节仅给出候选修复方向，**不实施**。所有候选均待 R4-A4 立项后再评估。\n\n"
+        "## 11. 候选修复建议\n\n"
+        "本节仅给出候选修复方向，**不实施**。所有候选均待 correctness follow-up 立项后再评估。\n\n"
         f"{body}"
     )
 
 
 def _render_verdict(verdict: str) -> str:
-    """Section 12: R4-A3 最终裁决."""
+    """Section 12: 最终裁决."""
     return (
-        "## 12. R4-A3 最终裁决\n\n"
+        "## 12. 最终裁决\n\n"
         f"**verdict: {verdict}**\n\n"
         "- `accepted`: 确定性测试全通过 + 真实模型无高严重度失败簇。\n"
         "- `rework`: 确定性测试通过但真实模型出现可修复失败簇。\n"
@@ -620,35 +620,35 @@ def _render_verdict(verdict: str) -> str:
 
 
 def _render_next_step_decision(
-    allow_r4_a4: bool,
-    allow_r4_b1: bool,
+    allow_correctness_followup: bool,
+    allow_streaming_provider_followup: bool,
     verdict: str,
 ) -> str:
-    """Section 13: 是否允许进入 R4-A4 和 R4-B1."""
+    """Section 13: 是否允许进入后续阶段."""
     a4_text = (
         "条件允许"
-        if verdict == "blocked" and allow_r4_a4
-        else ("允许" if allow_r4_a4 else "不允许")
+        if verdict == "blocked" and allow_correctness_followup
+        else ("允许" if allow_correctness_followup else "不允许")
     )
-    b1_text = "允许" if allow_r4_b1 else "暂不允许"
+    b1_text = "允许" if allow_streaming_provider_followup else "暂不允许"
     a4_suffix = (
-        "但 R4-A3 真实模型验证未完成，需解除阻塞后再签收。"
+        "但 evaluation run 真实模型验证未完成，需解除阻塞后再签收。"
         if verdict == "blocked"
         else ""
     )
     b1_suffix = (
-        "但建议先解除 R4-A3 阻塞以避免 streaming 与 correctness 同时变更。"
-        if not allow_r4_b1
+        "但建议先解除 evaluation run 阻塞以避免 streaming 与 correctness 同时变更。"
+        if not allow_streaming_provider_followup
         else ""
     )
     return (
-        "## 13. 是否允许进入 R4-A4 和 R4-B1\n\n"
-        f"- **R4-A4**: {a4_text}\n"
+        "## 13. 是否允许进入 correctness follow-up 和 streaming-provider follow-up\n\n"
+        f"- **correctness follow-up**: {a4_text}\n"
         f"  - 说明: harness/dataset/deterministic evaluator 已 accepted；"
         f"{a4_suffix}\n"
-        f"- **R4-B1**: {b1_text}\n"
-        f"  - 说明: R4-B1 为 Pydantic AI streaming provider spike，"
-        f"依赖 R4-A2 不依赖 R4-A3 真实模型；"
+        f"- **streaming-provider follow-up**: {b1_text}\n"
+        f"  - 说明: streaming-provider follow-up 为 Pydantic AI streaming provider spike，"
+        f"依赖已验收的 harness/provider 前置能力，不依赖 evaluation run 真实模型；"
         f"{b1_suffix}\n"
     )
 
@@ -665,23 +665,23 @@ def _render_tracker_update(
     tracker_path: str | None = None,
     report_date: str | None = None,
 ) -> str:
-    """Section 14: R4 tracker 更新.
+    """Section 14: tracker 更新.
 
-    R4-A4-0 (Task 5): ``tracker_path`` and ``report_date`` are now
+   Parameterized ``tracker_path`` and ``report_date`` are
     parameterized — the report no longer hardcodes the previous round's
     tracker file path or decision-log date.
     """
     path = tracker_path or _DEFAULT_TRACKER_PATH
     date = report_date or "2026-07-17"
     return (
-        "## 14. R4 tracker 更新\n\n"
+        "## 14. tracker 更新\n\n"
         f"- tracker 文件: `{path}`\n"
-        f"- §6 任务板 R4-A3 行状态: `{verdict}`\n"
-        f"- §11 决策日志: 追加一行 (日期={date}, 决策=R4-A3 裁决="
+        f"- §6 任务板 evaluation run 行状态: `{verdict}`\n"
+        f"- §11 决策日志: 追加一行 (日期={date}, 决策=evaluation run 裁决="
         f"{verdict}, 原因=详见本评测报告)。\n"
-        f"- §12 per-round 模板: 追加 R4-A3 轮次记录。\n"
-        f"- 仅追加，不重写已签收的 R4-0/R4-A1/R4-A2 段落。\n"
-        f"- 注: Task 6 (tracker 更新) 不在本 Task 5 范围内；本节为指向说明。\n"
+        f"- §12 per-round 模板: 追加 evaluation run 轮次记录。\n"
+        f"- 仅追加，不重写已签收的既有轮次段落。\n"
+        f"- 注: tracker 更新操作本身不在本 evaluation report 范围内；本节为指向说明。\n"
     )
 
 
@@ -754,7 +754,7 @@ def _render_capability_boundary() -> str:
 
 
 def _render_coverage_status(
-    dataset: ReaderRecordAskR4A3Dataset,
+    dataset: ReaderRecordAskDataset,
     artifacts: list[RawArtifact],
 ) -> str:
     """Section 17: 真实覆盖状态.
@@ -898,18 +898,18 @@ def _render_thinking_verification(real_model_blocked: bool) -> str:
     return (
         "## 19. thinking 验证方式\n\n"
         f"{verification_status}"
-        "### 19.1 Phase 1 (Flash non-thinking)\n\n"
+        "### 19.1 non-thinking evaluation (Flash non-thinking)\n\n"
         "- 断言 `model_config.model_settings.thinking_enabled() is False`\n"
         "- artifact.thinking_enabled 来自 resolved settings（非手写标签）\n"
-        "- 离线 e2e 测试验证：Phase 1 artifact 的 thinking_enabled=False\n\n"
-        "### 19.2 Phase 2 (Flash thinking)\n\n"
+        "- 离线 e2e 测试验证：non-thinking evaluation artifact 的 thinking_enabled=False\n\n"
+        "### 19.2 thinking evaluation (Flash thinking)\n\n"
         "- 断言 `thinking_config.model_settings.thinking_enabled() is True`\n"
         "- artifact.thinking_enabled 来自 resolved settings\n"
-        "- 离线 e2e 测试验证：Phase 2 artifact 的 thinking_enabled=True\n\n"
-        "### 19.3 Phase 3 (Pro thinking)\n\n"
+        "- 离线 e2e 测试验证：thinking evaluation artifact 的 thinking_enabled=True\n\n"
+        "### 19.3 Pro evaluation (Pro thinking)\n\n"
         "- 实际加载 `CLAREAD_R4_A3_PRO_PROFILE` 并验证 model_name + thinking\n"
         "- artifact.thinking_enabled 来自 resolved settings\n"
-        "- Phase 3 真实运行需开放 env gate 后执行\n\n"
+        "- Pro evaluation 真实运行需开放 env gate 后执行\n\n"
         "### 19.4 thinking_enabled() 实现\n\n"
         "- `RunModelSettings.thinking_enabled()` 检查 "
         "`extra_body.enable_thinking` 或 "
@@ -926,7 +926,7 @@ def _render_thinking_verification(real_model_blocked: bool) -> str:
 def generate_eval_report(
     *,
     aggregated: AggregatedReport,
-    dataset: ReaderRecordAskR4A3Dataset,
+    dataset: ReaderRecordAskDataset,
     artifacts: list[RawArtifact],
     start_head: str,
     end_head: str,
@@ -940,15 +940,15 @@ def generate_eval_report(
     deterministic_tests_passed: bool,
     deterministic_tests_summary: str,
     verdict: str,
-    allow_r4_a4: bool,
-    allow_r4_b1: bool,
+    allow_correctness_followup: bool,
+    allow_streaming_provider_followup: bool,
     run_metadata: dict[str, Any] | None = None,
-    # R4-A4-0 (Task 5) — parameterize previously hardcoded values so
+    # — parameterize previously hardcoded values so
     # the report no longer carries stale date / file list / tracker
     # path from the previous round.
     report_date: str | None = None,
     modified_files: list[str] | None = None,
-    task_label: str = "Task 5",
+    evaluation_heading: str = "current evaluation",
     tracker_path: str | None = None,
 ) -> str:
     """Generate the Reader Record Ask evaluation markdown report.
@@ -973,14 +973,14 @@ def generate_eval_report(
     # Title
     total_runs = aggregated.total_runs
     total_cases = aggregated.total_cases
-    # R4-A4-0 (Task 5): use parameterized ``report_date`` instead of
+    # Use parameterized ``report_date`` instead of
     # the hardcoded "2026-07-17" from the previous round.
     if report_date is None:
         from datetime import date as _date
 
         report_date = _date.today().isoformat()
     sections.append(
-        "# TMP — Reader Record Ask R4-A3 评测报告\n\n"
+        "# TMP — Reader Record Ask 评测报告\n\n"
         f"> 生成时间: {report_date}  \n"
         f"> dataset: `{dataset.id}`  \n"
         f"> 总 cases: {total_cases}  \n"
@@ -998,7 +998,7 @@ def generate_eval_report(
             rejected_harness=rejected_harness,
             rejected_reason=rejected_reason,
             modified_files=modified_files,
-            task_label=task_label,
+            evaluation_heading=evaluation_heading,
         )
     )
     sections.append(_render_dataset_cases(dataset))
@@ -1040,8 +1040,8 @@ def generate_eval_report(
     sections.append(_render_verdict(verdict))
     sections.append(
         _render_next_step_decision(
-            allow_r4_a4=allow_r4_a4,
-            allow_r4_b1=allow_r4_b1,
+            allow_correctness_followup=allow_correctness_followup,
+            allow_streaming_provider_followup=allow_streaming_provider_followup,
             verdict=verdict,
         )
     )

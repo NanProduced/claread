@@ -1,7 +1,7 @@
 """Tests for ``ReaderSpanRecorder`` and ``LangSmithIdBridgeProcessor``.
 
-Covers the observability contract introduced by P2-c (publish_fence span)
-and P3 (LangSmith run_id backfill):
+Covers the observability contract introduced by (publish_fence span)
+and (LangSmith run_id backfill):
 
 - ``start_span`` / ``end_span`` lifecycle writes one INSERT + one UPDATE
 - ``use_span`` binds the parent so callers can pick it up via

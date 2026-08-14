@@ -148,7 +148,7 @@ class TestFavoriteRoutes:
         """Service-level round-trip for the reading_record favorite target.
 
         The real-DB chain (against the fresh baseline CHECK) is locked by
-        the D2 fresh-init acceptance.
+        the fresh-init acceptance.
         """
         pool, conn = _mock_db_pool()
         mock_pool.acquire = pool.acquire

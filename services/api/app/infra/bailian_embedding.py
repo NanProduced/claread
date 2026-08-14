@@ -106,7 +106,7 @@ def _safe_provider_status(value: object) -> int | None:
     return None
 
 
-# P0 Round 3: explicit allowlist of DashScope provider codes that the
+# Explicit allowlist of DashScope provider codes that the
 # wrapper may surface in ``EmbeddingError.provider_code``.  Anything not
 # in this set is dropped to ``None`` — never echoed, truncated, or
 # logged.  This replaces the legacy ``isalnum()`` + length check, which
@@ -117,7 +117,7 @@ def _safe_provider_status(value: object) -> int | None:
 # Add new codes here ONLY after confirming they appear in the official
 # DashScope error-code reference.  Unknown codes fail-closed to None.
 #
-# P0 Closure Cleanup: removed ``InternalServerError`` and
+# Closure cleanup removed ``InternalServerError`` and
 # ``ServiceUnavailable`` because no first-party DashScope
 # TextEmbedding endpoint documentation link could be provided to
 # confirm them as current Model Studio codes.  They can be re-added
@@ -204,7 +204,7 @@ def _call_embedding_sync(
     Raises:
         EmbeddingError: 调用失败时
     """
-    # P0 SDK-raise closure: ``dashscope.TextEmbedding.call`` can raise
+    # ``dashscope.TextEmbedding.call`` can raise
     # an ordinary exception BEFORE returning a response object — e.g.
     # on transport, auth, or serialisation failures that surface as a
     # plain ``RuntimeError`` (or other ``Exception`` subclass) whose

@@ -89,13 +89,13 @@ class ContextCompactionEvent(BaseModel):
 
 
 class AnswerDeltaEvent(BaseModel):
-    """Safe streaming delta: answer_text prefix increment only (R4-A6).
+    """Safe streaming delta: answer_text prefix increment only.
 
     Carries user-visible answer text increments — never reasoning text,
     length, hash, or provider payloads. Production stream maps it 1:1 to
     ``message.delta`` SSE and never projects it as agentic progress.
 
-    R4-2: ``generation_id`` is a monotonically increasing counter that
+    ``Generation_id`` is a monotonically increasing counter that
     identifies which model-response generation this delta belongs to.
     The counter starts at 0 for the first generation and increments on
     every tool-result / ModelRetry boundary (see
@@ -111,7 +111,7 @@ class AnswerDeltaEvent(BaseModel):
 
 
 class AnswerPreviewResetEvent(BaseModel):
-    """Safe signal: the answer preview MUST be reset (R4-2).
+    """Safe signal: the answer preview MUST be reset.
 
     Emitted by the thinking transport when a tool result, tool-argument
     ModelRetry, or output-validator ModelRetry boundary is reached and a
@@ -300,7 +300,7 @@ class WebSearchResultEvent(BaseModel):
     any provider payload. Production stream projects
     ``ok`` / ``unavailable`` / ``failed`` / ``timeout`` activity only.
 
-    ASK-WEB-R4: attempt vs turn-level outcome separation.
+    ASK-WEB-attempt vs turn-level outcome separation.
 
     - ``outcome`` is the **per-attempt** outcome (this single call's
       result). Used for telemetry only.

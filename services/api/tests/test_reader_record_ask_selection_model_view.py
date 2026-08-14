@@ -1,4 +1,4 @@
-"""R4-A5-2 / A5-2R: selection cost-fit + sealed inject/cite/prompt boundary.
+"""/ selection cost-fit + sealed inject/cite/prompt boundary.
 
 Offline seam only. No runtime, production stream, real LLM, expand/map/RAG.
 """
@@ -900,7 +900,7 @@ def test_preflight_rejects_duplicate_handle_without_charge() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-3R: assembler-minted expansion seed (server-only source integrity)
+# Assembler-minted expansion seed (server-only source integrity)
 # ---------------------------------------------------------------------------
 
 

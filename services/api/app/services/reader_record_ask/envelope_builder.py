@@ -34,7 +34,7 @@ def build_envelope_from_facts(
 ) -> ReadingRecordAskContextEnvelope:
     """Construct envelope after route-level record/anchor validation.
 
-    R3 P2: ``focus_anchors`` is the full canonical anchor set (≤4,
+     ``Focus_anchors`` is the full canonical anchor set (≤4,
     already gate-validated by the service layer). Each entry is mapped to
     an :class:`EnvelopeInitialAnchor` (unit-local offsets + validated
     text/hash). Base-relative spans are only derived for the primary

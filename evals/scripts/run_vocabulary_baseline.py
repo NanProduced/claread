@@ -67,7 +67,7 @@ def main() -> None:
         runs_root=args.runs_root,
         workflow_version=args.workflow_version,
         prompt_version=BASELINE_PROMPT_VERSION,
-        note="D5 vocabulary eval baseline (deterministic)",
+        note=" vocabulary eval baseline (deterministic)",
     )
 
     output_path = Path(args.output)

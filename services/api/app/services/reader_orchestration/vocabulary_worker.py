@@ -104,7 +104,7 @@ FAKE_VOCABULARY_MODEL_NAME = "fake-vocabulary-model"
 
 logger = logging.getLogger(__name__)
 MAX_VOCABULARY_ITEMS = 5
-# T3.2 P1-1: The LLM candidate schema allows more candidates than the
+# The LLM candidate schema allows more candidates than the
 # published cap (MAX_VOCABULARY_ITEMS) so duplicates / grounding failures
 # don't consume published slots. The worker applies the duplicate policy
 # first, then caps at MAX_VOCABULARY_ITEMS. Keeping the candidate bound
@@ -130,7 +130,7 @@ _PHRASE_GLOSS_GUARD_REASON_CODE = "phrase_gloss_sentence_like"
 # phrase_gloss; do not auto-convert — skip with a diagnostic.
 _CONTEXT_GLOSS_NOT_SINGLE_LEXICAL_ITEM = "context_gloss_not_single_lexical_item"
 
-# R7-2: vocabulary_highlight is a single lexical item only (a word or
+# Vocabulary_highlight is a single lexical item only (a word or
 # one of its forms). A single-word headword must never package a
 # multiword selected_text ("missed a deadline" / headword "deadline"):
 # Quick Peek queries the dictionary by headword, so a multiword mark
@@ -175,8 +175,8 @@ _PHRASE_GLOSS_RULES_SECTION = (
     "</phrase_gloss_rules>\n"
 )
 
-# T7 strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.
-# T7 reads them back and validates against the live resolver output. Missing
+# Strategy metadata keys that bootstrap writes into reader_jobs.input_json.
+# Reads them back and validates against the live resolver output. Missing
 # keys or hash mismatch fail closed; legacy bare-fingerprint jobs without
 # strategy metadata are rejected as validation errors, never silently
 # downgraded to a default strategy.
@@ -221,8 +221,8 @@ class VocabularyJobContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[VocabularyAnchorSegmentContext, ...]
-    # T7 strategy fields. Populated by _load_job_context from
-    # reader_jobs.input_json (written by T5 bootstrap) and cross-validated
+    # Strategy fields. Populated by _load_job_context from
+    # reader_jobs.input_json (written by bootstrap) and cross-validated
     # against resolve_reader_variant_strategy(). Fail-closed contract:
     # missing metadata or hash mismatch never falls back to a default.
     reading_goal: str
@@ -245,7 +245,7 @@ class VocabularyCandidateItemBase(BaseModel):
 
 class VocabularyHighlightCandidateItem(VocabularyCandidateItemBase):
     item_type: Literal["vocab_highlight"] = "vocab_highlight"
-    # R7-2: the description is an LLM-facing generation constraint (the
+    # The description is an LLM-facing generation constraint (the
     # single-lexical-item contract is ALSO enforced post-hoc by the
     # deterministic backend guard ``_vocab_highlight_guard_reason_code``;
     # no Pydantic validator is used, so one illegal candidate is skipped
@@ -342,7 +342,7 @@ class VocabularyCandidateOutput(BaseModel):
 class VocabularyBatchUnitCandidateOutput(BaseModel):
     """Per-unit vocabulary candidate output within a batch result.
 
-    T1.1 short-article batch path: a single LLM call covers all units of a
+     short-article batch path: a single LLM call covers all units of a
     short article. Each entry pairs a ``unit_id`` with the vocabulary
     candidate items emitted for that unit.
     """
@@ -600,7 +600,7 @@ class UnconfiguredVocabularyExecutor:
 
 
 # ---------------------------------------------------------------------------#
-# T1.1 short-article batch path: batch compute, unit publish.
+# Short-article batch path: batch compute, unit publish.
 # ---------------------------------------------------------------------------#
 
 
@@ -786,13 +786,13 @@ def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
     strategy_section = _format_vocabulary_batch_strategy_section(context)
     units_section = _format_vocabulary_batch_units_section(context)
     return (
-        # T3.3: wording generalized from "short article batch" to
+        # Wording generalized from "short article batch" to
         # "reading unit batch/window" since the batch path now also covers
-        # non-short article vocabulary windows (T3.2b).
+        # non-short article vocabulary windows.
         "Generate vocabulary highlights for the following reading units of a "
         "reading unit batch/window.\n"
         f"source_language: {context.source_language}\n"
-        # T3.2a P2: surface the per-unit published cap and the LLM candidate
+        # Surface the per-unit published cap and the LLM candidate
         # cap explicitly in the batch prompt, mirroring the per-unit prompt.
         # The schema (VocabularyBatchUnitCandidateOutput.items max_length)
         # already enforces MAX_VOCABULARY_CANDIDATE_ITEMS, but the prompt
@@ -802,7 +802,7 @@ def _build_vocabulary_batch_prompt(context: VocabularyBatchJobContext) -> str:
         f"max_published_items_per_unit: {MAX_VOCABULARY_ITEMS}\n"
         f"max_candidate_items_per_unit: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
-        # T3.3: universal phrase_gloss selection rules. Grounding parity
+        # Universal phrase_gloss selection rules. Grounding parity
         # with the per-unit prompt: both now carry segment text + the same
         # phrase_gloss rules so the LLM can anchor selected_text against
         # the actual segment text and avoid marking whole sentences.
@@ -836,7 +836,7 @@ def _format_vocabulary_batch_units_section(
         parts.append(unit.source_text)
         parts.append("</source_text>")
         parts.append("<target_segments>")
-        # T3.3: include the anchor segment text (mirroring the per-unit
+        # Include the anchor segment text (mirroring the per-unit
         # prompt's anchor_segments_json `text` field) so the LLM can ground
         # selected_text against the actual segment text. Without this the
         # batch prompt only exposed segment metadata, which led to
@@ -927,14 +927,14 @@ def _build_vocabulary_batch_outputs(
             per_unit_context,
             unit_candidate,
         )
-        # T3.2 P1-2: collect per-unit diagnostics, enriched with unit_id.
+        # Collect per-unit diagnostics, enriched with unit_id.
         for diag in unit_diagnostics.get("skipped_items", []):
             enriched = dict(diag)
             enriched["unit_id"] = batch_unit.unit_id
             batch_diagnostics.append(enriched)
         outputs.append((batch_unit.unit_id, output))
 
-    # T3.2: Cross-unit duplicate pass. Per-unit dedup already ran inside
+    # Cross-unit duplicate pass. Per-unit dedup already ran inside
     # _build_vocabulary_output_from_candidates; this pass removes duplicates
     # across units. Sort by unit reading order (order_index) BEFORE dedup
     # so "first occurrence wins" follows the article's reading flow, not
@@ -1112,7 +1112,7 @@ def _build_vocabulary_batch_quality_json(
         quality_json["model_provider"] = execution.model_provider
     if execution.model_name is not None:
         quality_json["model_name"] = execution.model_name
-    # T3.2 P1-2: surface batch duplicate / candidate-limit diagnostics into
+    # Surface batch duplicate / candidate-limit diagnostics into
     # the published layer quality_json so reviewers can trace skipped items
     # across per-unit resolve + cross-unit dedup. Truncate to the same cap
     # used by the per-unit path for parity.
@@ -1621,7 +1621,7 @@ class VocabularyWorkerService:
             await heartbeat.stop()
 
     # ------------------------------------------------------------------#
-    # T1.1 short-article batch path: claim / process / context loading.
+    # Short-article batch path: claim / process context loading.
     # ------------------------------------------------------------------#
 
     async def claim_vocabulary_batch_job_for_record(
@@ -2919,7 +2919,7 @@ class VocabularyWorkerService:
                 failure_code="missing_anchor_segments",
             )
 
-        # T7: read strategy metadata written by T5 bootstrap from
+        # Read strategy metadata written by bootstrap from
         # input_json and cross-validate against the live resolver. Missing
         # metadata or hash mismatch fail closed; legacy bare-fingerprint
         # jobs without strategy metadata are rejected, never silently
@@ -3040,7 +3040,7 @@ def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:
         f"max_published_items: {MAX_VOCABULARY_ITEMS}\n"
         f"max_candidate_items: {MAX_VOCABULARY_CANDIDATE_ITEMS}\n"
         f"{strategy_section}"
-        # T3.3: universal phrase_gloss selection rules. Both per-unit and
+        # Universal phrase_gloss selection rules. Both per-unit and
         # batch prompts carry the same section so phrase_gloss semantics
         # are consistent across execution paths.
         f"{_PHRASE_GLOSS_RULES_SECTION}"
@@ -3255,7 +3255,7 @@ def _context_gloss_guard_reason_code(
 
 
 def _is_single_lexical_item(text: str) -> bool:
-    """R7-2: whether the trimmed ``text`` is exactly one lexical item.
+    """Whether the trimmed ``text`` is exactly one lexical item.
 
     One lexical item = one orthographic word. Hyphenated words
     (``well-known``), ASCII/curly apostrophe forms and possessives
@@ -3274,7 +3274,7 @@ def _vocab_highlight_guard_reason_code(
     item: VocabularyHighlightCandidateItem,
 ) -> str | None:
     """Fail-closed guard: vocab_highlight must be a single lexical item
-    (R7-2).
+   .
 
     After trim, ``selected_text`` must be one lexical item (see
     :func:`_is_single_lexical_item`): hyphens, ASCII/curly apostrophes,
@@ -3465,7 +3465,7 @@ def _build_vocabulary_output_from_candidates(
         # NOTE: The MAX_VOCABULARY_ITEMS cap is intentionally NOT applied
         # here. It is applied AFTER the duplicate highlight policy so that
         # duplicate candidates don't consume item slots and push later
-        # unique items into candidate_limit_exceeded. See T3.2 P1-1 fix.
+        # unique items into candidate_limit_exceeded. See fix.
 
         anchor = ReaderTextRangeAnchor(
             base_id=str(context.base_id),
@@ -3526,7 +3526,7 @@ def _build_vocabulary_output_from_candidates(
         )
     ]
 
-    # T3.2 P1-1: Apply duplicate highlight policy AFTER span dedup and
+    # Apply duplicate highlight policy AFTER span dedup and
     # resolved-item construction, but BEFORE the MAX_VOCABULARY_ITEMS cap.
     # This ensures duplicate candidates don't consume item slots and push
     # later unique items into candidate_limit_exceeded. Items are already
@@ -3536,7 +3536,7 @@ def _build_vocabulary_output_from_candidates(
     )
     skipped_items.extend(duplicate_skipped)
 
-    # T3.2 P1-1: Apply MAX_VOCABULARY_ITEMS cap AFTER dedup. Excess items
+    # Apply MAX_VOCABULARY_ITEMS cap AFTER dedup. Excess items
     # are skipped with reason_code=candidate_limit_exceeded so diagnostics
     # still record them.
     if len(resolved_items) > MAX_VOCABULARY_ITEMS:
@@ -3631,7 +3631,7 @@ def _vocabulary_item_priority(item_type: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# T3.2 Vocabulary duplicate highlight policy
+# Vocabulary duplicate highlight policy
 # ---------------------------------------------------------------------------
 #
 # A Translation Group is a semantic reading group; a vocabulary highlight is

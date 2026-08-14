@@ -5,7 +5,7 @@ turn's registered evidence and confirmed article coverage into the canonical
 block provenance validator, then attaches its immutable result privately.
 Failures raise ``ModelRetry``; no block is reclassified or silently repaired.
 
-ASK-WEB-R4: ``article_scope`` is no longer a model-generated field. The
+ASK-WEB-``article_scope`` is no longer a model-generated field. The
 host conservatively derives it for ``basis="article"`` blocks (default
 ``evidence_bounded``) and sets ``None`` for general/web blocks. The
 internal :data:`ArticleScope` type is retained for provenance/coverage.
@@ -35,14 +35,14 @@ from app.services.reader_record_ask.answer_block_provenance import (
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 
-# ASK-WEB-R4-R1: the hard cap on cited evidence handles (formerly
+# ASK-WEB-the hard cap on cited evidence handles (formerly
 # ``MAX_CITED_EVIDENCE_HANDLES=6``) has been removed. Tool output and
 # the model-view budget control how many handles the model can see; the
 # validator does NOT reject an answer for citing "too many" handles.
 # Duplicate handles are deduped silently at the draft boundary. There is
 # no arbitrary numeric cap on legal unique handles.
 
-# ASK-WEB-R4: conservative host-derived article scope for ``basis=article``
+# ASK-WEB-conservative host-derived article scope for ``basis=article``
 # blocks. ``evidence_bounded`` is always present in
 # ``confirmed_article_scopes`` (the coordinator seeds it unconditionally),
 # so an article block with at least one valid article evidence handle
@@ -62,7 +62,7 @@ _EVIDENCE_KIND_TO_SOURCE_KIND: Final[dict[str, Literal["article"]]] = {
 class AgentAnswerBlockOutput(BaseModel):
     """Thin model-output adapter for one provenance-explicit answer block.
 
-    ASK-WEB-R4: ``article_scope`` is NOT a model field. The host derives
+    ASK-WEB-``article_scope`` is NOT a model field. The host derives
     it conservatively in :meth:`to_block_draft` — ``evidence_bounded``
     for ``basis="article"`` and ``None`` otherwise. This removes a
     non-safety preference (which coverage scope to claim) from the model
@@ -79,7 +79,7 @@ class AgentAnswerBlockOutput(BaseModel):
     def to_block_draft(self) -> AnswerBlockDraft:
         """Project model syntax into the canonical provenance block draft.
 
-        ASK-WEB-R4: host derives ``article_scope`` conservatively and
+        ASK-WEB-host derives ``article_scope`` conservatively and
         dedupes repeated evidence handles (preserving first-seen order)
         instead of raising ``ModelRetry`` on duplicates.
         """
@@ -202,7 +202,7 @@ def build_evidence_validation_context(
 ) -> EvidenceValidationContext:
     """Project the current article + web registries into the canonical context.
 
-    ASK-WEB-G1-R2: the context now includes both article evidence (from
+    ASK-WEB-G1-the context now includes both article evidence (from
     :attr:`ReaderRecordAskDeps.evidence_registry`) and web evidence (from
     :attr:`ReaderRecordAskDeps.web_evidence_registry`). Each evidence kind
     is projected with its own ``source_kind`` so the block provenance
@@ -270,7 +270,7 @@ async def grounding_validator(
     ``retries["output"]``). Never silently truncates evidence or repairs
     citation scope — those are finalizer responsibilities.
 
-    R4-A4-2R5R2 Task 1: PRECISE retry evidence. The observation
+     PRECISE retry evidence. The observation
     container (when attached) now tracks TWO counters:
 
     - ``output_validation_final_attempts``: incremented ONLY when the
@@ -298,7 +298,7 @@ async def grounding_validator(
         # only nudge the model to include response_kind early. No
         # grounding checks — the draft may be incomplete.
         #
-        # R4-A4-2R5R2 Task 1: partial-mode calls do NOT increment
+        # Partial-mode calls do NOT increment
         # ``output_validation_final_attempts`` or
         # ``output_validation_retry_requests``. Only FINAL-mode calls
         # count toward the retry-exhaustion taxonomy.
@@ -317,7 +317,7 @@ async def grounding_validator(
         previous_execution_stage = observation.execution_stage
         observation.execution_stage = "output_validation"
 
-    # R4-A4-2R5R2 Task 1: wrap ALL final-mode validation in a
+    # Wrap ALL final-mode validation in a
     # try/except ``ModelRetry`` so we increment
     # ``output_validation_retry_requests`` on EVERY raise site —
     # covering grounding checks, handle verification, and provenance
@@ -369,7 +369,7 @@ async def _grounding_validator_final_body(
 
     try:
         blocks = tuple(block.to_block_draft() for block in draft.answer_blocks)
-        # ASK-WEB-R4-R1: no arbitrary handle-count ModelRetry and no
+        # ASK-WEB-no arbitrary handle-count ModelRetry and no
         # duplicate-handle ModelRetry. ``to_block_draft`` already dedupes
         # handles per block; tool output + model-view budget control how
         # many handles the model can see. Unknown / foreign / wrong-kind

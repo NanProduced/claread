@@ -1,4 +1,4 @@
-"""Focused tests for the D4 worker runner hardening.
+"""Focused tests for the worker runner hardening.
 
 Covers:
 - no job available

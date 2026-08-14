@@ -1,23 +1,23 @@
-"""Thread memory persistence seam（R0.1 H1 + H2 处理约定）。
+"""Thread memory persistence seam（ H1 + H2 处理约定）。
 
-H1 处理约定（R0.1 §4.2(d) 步骤 3 注释 / §13.2 H1）：
+H1 处理约定（ §4.2(d) 步骤 3 注释 §13.2 H1）：
     cold-load 下 ``history_projection.py:319`` 显式 ``del resolved_evidence_json``，
     compactor 不能复用 history_projection 路径。本 repository 直接 SELECT
     ``reader_ask_turn_runs.resolved_evidence_json``，仅 server-side，不投影到 wire
     （不进入客户端可见 DTO）。
 
-H2 处理约定（R0.1 §4.2(d) 步骤 3 注释 / §13.2 H2）：
+H2 处理约定（ §4.2(d) 步骤 3 注释 §13.2 H2）：
     retry 失败时 ``current_turn_run_id`` 切到 failed run，但原 ok run 的 binding
     仍在 DB。本 repository 扫描 ``supersedes_run_id`` 链上所有 ``final_status='ok'``
     的 turn_run，不跟随 ``current_turn_run_id``；canonical run = supersedes 链
     最新 ok run。
 
-R1.6 P0-3: 每个 assistant message 只取最新 canonical ok run（DISTINCT ON
+ 每个 assistant message 只取最新 canonical ok run（DISTINCT ON
     (message_id)）。成功 regenerate 后旧 ok run 的 binding 从 Host map /
     allowlist 中消失。failed/cancelled retry 回退到该 message 之前最新 ok run
     （DISTINCT ON 自然实现：旧 ok run 仍是该 message 最新 ok run）。
 
-R1.6 P1-3: 0028 未应用且 memory flag 被误开时，snapshot table 缺失必须
+ 0028 未应用且 memory flag 被误开时，snapshot table 缺失必须
     typed fail-soft 为"无 memory"，不得让整个 Ask 500。
 
 agentic lane 独立：不导入 legacy Ask persistence。
@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Typed write result (R1.5 P0-1): replaces the old ``-> None`` return so
-# callers (R2 CAS loop) can distinguish applied vs. conflict without a
+# Typed write result: replaces the old ``-> None`` return so
+# callers (CAS loop) can distinguish applied vs. conflict without a
 # follow-up SELECT. Mirrors the SQL ``RETURNING`` semantics.
 # ---------------------------------------------------------------------------
 
@@ -318,7 +318,7 @@ class ThreadMemoryRepository:
     async def list_canonical_messages(
         self, *, thread_id: UUID
     ) -> list[dict[str, Any]]:
-        """列出 canonical messages（R0.1 §4.2(e) 准入规则 + H2）。
+        """列出 canonical messages（ §4.2(e) 准入规则 + H2）。
 
         返回 user message（总是允许，即使对应回答失败——冻结决策 #5）+
         assistant message（``status='completed'`` 且其 supersedes 链上存在
@@ -326,12 +326,12 @@ class ThreadMemoryRepository:
         ——retry 失败时 current_turn_run_id 切到 failed run，但原 ok run 仍在
         DB（H2）。按 ``created_at ASC`` 排序。
 
-        R1.5 P0-3: 对于 assistant message，LATERAL JOIN 最新 ok turn_run 的
+         对于 assistant message，LATERAL JOIN 最新 ok turn_run 的
         ``user_visible_output_json``，提取安全可见的 ``answer_blocks`` 和
         ``web_search`` 字段。**禁止**读取 ``reasoning_projection_json`` /
-        ``tool_trace_json`` / raw provider payload（R0.1 §4.2(e) 准入规则）。
+        ``tool_trace_json`` raw provider payload（ §4.2(e) 准入规则）。
 
-        R1.6.1 P0-1: LATERAL JOIN 必须返回真实 ok run 的 ``id`` 作为
+         LATERAL JOIN 必须返回真实 ok run 的 ``id`` 作为
         ``canonical_turn_run_id``，并使用 ``ORDER BY created_at DESC, id DESC``
         做稳定排序。**不得**使用消息行的 ``m.current_turn_run_id`` 代表
         canonical ok run —— 该字段在 failed/cancelled retry 后会指向失败 run，
@@ -346,14 +346,14 @@ class ThreadMemoryRepository:
     async def list_ok_turn_runs_with_bindings(
         self, *, thread_id: UUID
     ) -> list[dict[str, Any]]:
-        """列出 canonical ok turn_run（R1.6 P0-3：每 message 最新 ok run）。
+        """列出 canonical ok turn_run（ ：每 message 最新 ok run）。
 
-        R1.6 P0-3 修复：原实现返回 thread 内全部 ``final_status='ok'`` run，
+          修复：原实现返回 thread 内全部 ``final_status='ok'`` run，
         成功 regenerate 后旧 ok run 的 binding 仍进入 allowlist。现使用
         ``DISTINCT ON (message_id) ... ORDER BY message_id, created_at DESC, id DESC``
         只取每个 assistant message 的最新 ok run。
 
-        R1.6.1 P0-1: ``ORDER BY`` 增加 ``id DESC`` 作为稳定 tiebreaker，
+         ``ORDER BY`` 增加 ``id DESC`` 作为稳定 tiebreaker，
         确保同一 ``created_at`` 的 run 也有确定性顺序。
 
         行为：
@@ -411,9 +411,9 @@ class ThreadMemoryRepository:
     async def _fetch_ok_bindings(
         self, pool: Any, thread_id: UUID
     ) -> list[Any]:
-        # R1.6 P0-3: DISTINCT ON (message_id) — same canonical rule as
+        # DISTINCT ON (message_id) — same canonical rule as
         # list_ok_turn_runs_with_bindings.
-        # R1.6.1 P0-1: id DESC stable tiebreaker.
+        # Id DESC stable tiebreaker.
         async with pool.acquire() as conn:
             return await conn.fetch(
                 """
@@ -430,8 +430,8 @@ class ThreadMemoryRepository:
     async def _fetch_ok_bindings_before(
         self, pool: Any, thread_id: UUID, before_turn_id: UUID
     ) -> list[Any]:
-        # R1.6 P0-3: DISTINCT ON (message_id) with cutoff — same rule.
-        # R1.6.1 P0-1: id DESC stable tiebreaker.
+        # DISTINCT ON (message_id) with cutoff — same rule.
+        # Id DESC stable tiebreaker.
         async with pool.acquire() as conn:
             return await conn.fetch(
                 """
@@ -457,13 +457,13 @@ class ThreadMemoryRepository:
     ) -> ThreadMemorySnapshot | None:
         """读取 thread memory snapshot（单行，按 thread_id PK）。
 
-        R1.5 P0-1: 解析 ``snapshot_json`` 为 :class:`ThreadMemorySnapshot`。
+         解析 ``snapshot_json`` 为 :class:`ThreadMemorySnapshot`。
         异版（``version`` ≠ ``'thread_memory_v1'``）或非法 JSON → fail-soft
         返回 ``None``，调用方（coordinator）转 deterministic rebuild，绝不
         注入模型。这是防御深度：DB 中的 snapshot 是派生视图，真相源永远是
-        canonical messages，可凭其完全重建（schema §6 / R0.1 §4.2(e)）。
+        canonical messages，可凭其完全重建（schema §6 §4.2(e)）。
 
-        R1.6 P1-3: 0028 未应用且 memory flag 被误开时，``reader_ask_thread_memory``
+         0028 未应用且 memory flag 被误开时，``reader_ask_thread_memory``
         表缺失 → asyncpg 抛 ``UndefinedTableError``。此处 typed fail-soft
         为 ``None``（→ coordinator 转 deterministic rebuild），不得让整个
         Ask 500。同样适用于 ``list_canonical_messages`` /
@@ -483,7 +483,7 @@ class ThreadMemoryRepository:
                     thread_id,
                 )
         except Exception as exc:  # noqa: BLE001 — table-missing / DB error
-            # R1.6 P1-3: fail-soft — log and return None so the
+            # Fail-soft — log and return None so the
             # coordinator falls back to deterministic rebuild. Never
             # let a missing 0028 table crash the entire Ask pipeline.
             logger.warning(
@@ -506,7 +506,7 @@ class ThreadMemoryRepository:
     ) -> SnapshotWriteResult:
         """UPSERT thread memory snapshot（version 自增 + CAS 守卫）。
 
-        R1.5 P0-1: 返回 :class:`SnapshotWriteResult` 使后续 R2 能正确处理
+         返回 :class:`SnapshotWriteResult` 使后续 能正确处理
         watermark/version CAS。INSERT 时 ``version=1``；ON CONFLICT 时
         ``version = version + 1``，仅在当前 DB ``version`` == 传入 ``version``
         时更新（CAS 守卫，防并发轮竞争）。CAS 失配 → ``applied=False``，且

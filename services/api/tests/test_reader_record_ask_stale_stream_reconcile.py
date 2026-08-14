@@ -1,4 +1,4 @@
-"""ASK-TURN-LIFECYCLE R1 — stale-stream batch reconciliation tests.
+"""ASK-TURN-LIFECYCLE — stale-stream batch reconciliation tests.
 
 Verifies the safety-net reconciliation contract:
 
@@ -56,7 +56,7 @@ def _row(
 
 
 class TestStaleStreamReconciliationContract:
-    """R1 contract: stale-stream batch reconciliation safety guarantees."""
+    """Contract: stale-stream batch reconciliation safety guarantees."""
 
     def test_default_threshold_is_conservative(self) -> None:
         """The default threshold must be >= 60s so no healthy turn is

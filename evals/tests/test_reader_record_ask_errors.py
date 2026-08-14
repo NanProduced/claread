@@ -1,7 +1,7 @@
-"""Tests for safe error projection (P1-2).
+"""Tests for safe error projection.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: 安全错误投影（P1-2）.
+spec.md` — Requirement: 安全错误投影.
 
 Covers:
 - ``project_exception`` returns allowlisted ``safe_code`` only.
@@ -109,7 +109,7 @@ def test_project_exception_does_not_read_str_exc() -> None:
     """
 
     class _BrokenStrException(Exception):
-        def __str__(self) -> str:  # noqa: D401
+        def __str__(self) -> str:  # String conversion intentionally fails.
             raise RuntimeError("str(exc) is broken on purpose")
 
     exc = _BrokenStrException("never read this")

@@ -48,7 +48,7 @@ TOOL_EXPAND_EVIDENCE: Literal["expand_evidence"] = "expand_evidence"
 # is True (the runtime decides; the model never reads capability state).
 TOOL_SEARCH_WEB: Literal["search_web"] = "search_web"
 
-# Production agent tools (R4-A5-7): expand_evidence + search_current_article.
+# Production agent tools: expand_evidence + search_current_article.
 # ``read_range`` remains as a legacy contract name for offline schemas only.
 # G1-b4: ``search_web`` is conditionally registered when the resolved
 # web search capability has ``enabled_for_turn=True``.
@@ -335,7 +335,7 @@ def assert_no_server_owned_fields(payload: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Expand-evidence schemas (R4-A5-3; isolated — NOT wired to any runtime)
+# Expand-evidence schemas (isolated — NOT wired to any runtime)
 # ---------------------------------------------------------------------------
 
 EXPANSION_CURSOR_PREFIX: str = "cur_"
@@ -489,7 +489,7 @@ class ExpandEvidenceToolInput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# RAG search tool-view schema (R4-A5-5; isolated — NOT wired to any runtime)
+# RAG search tool-view schema (isolated — NOT wired to any runtime)
 # ---------------------------------------------------------------------------
 
 RagSearchStatus = Literal[

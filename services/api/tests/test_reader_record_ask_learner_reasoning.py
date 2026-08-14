@@ -1,4 +1,4 @@
-"""ASK-LEARNER-REASONING-PROJECTOR-R1.1 focused gates (no real providers)."""
+"""ASK-LEARNER-REASONING-PROJECTOR- focused gates (no real providers)."""
 
 from __future__ import annotations
 

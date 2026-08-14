@@ -82,11 +82,11 @@ from tests.reader_orchestration_test_support import (
 
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
-# based on grammar-window plan existence in ``layer_analysis_plans`` (Task C3), and the
+# based on grammar-window plan existence in ``layer_analysis_plans`` (Task), and the
 # pipeline runner's worker_order dispatch depends on whether a window worker
 # is registered (Task C4).
 
-# T1.1 short-article batch path: migration 0017 adds ``translate_article`` and
+# Short-article batch path: migration 0017 adds ``translate_article`` and
 # ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
 # constraint, and ``translation_batch`` / ``vocabulary_batch`` to the
 # ``reader_runtime_spans.worker_type`` CHECK constraint.
@@ -186,7 +186,7 @@ class _MutatingTranslator:
 
 
 class _MutatingBatchTranslator:
-    """T1.1 batch version of _MutatingTranslator: mutates the base during
+    """Batch version of _MutatingTranslator: mutates the base during
     the batch LLM call so the publish fence fails with superseded.
     """
 
@@ -255,7 +255,7 @@ class _MutatingBatchTranslator:
 
 
 class _UnconfiguredVocabularyBatchExecutor:
-    """T1.1 batch version of UnconfiguredVocabularyExecutor: always raises
+    """Batch version of UnconfiguredVocabularyExecutor: always raises
     vocabulary_executor_unconfigured so the fail-closed path is exercised.
     """
 
@@ -385,7 +385,7 @@ class _StaticGrammarExecutor:
 
 
 class _StaticGrammarBatchExecutor:
-    """T4.1c fake batch executor: 1 LLM call → N per-unit grammar outputs.
+    """Fake batch executor: 1 LLM call → N per-unit grammar outputs.
 
     Mirrors :class:`_StaticGrammarExecutor` but accepts the batch context
     and returns one :class:`GrammarBundleOutput` per unit.
@@ -438,7 +438,7 @@ class _StaticGrammarBatchExecutor:
                                 spans=[word_anchor],
                                 grammar_point="core verb",
                                 pattern="SVO",
-                                note="Batch grammar note for T4.1c pipeline test.",
+                                note="Batch grammar note for pipeline test.",
                             )
                         ],
                         sentence_analyses=[
@@ -469,13 +469,13 @@ class _StaticGrammarBatchExecutor:
 
 
 class _StaticBatchTranslator:
-    """T1.1 fake batch translator: 1 LLM call → N per-unit translation groups.
+    """Fake batch translator: 1 LLM call → N per-unit translation groups.
 
     Mirrors :class:`_StaticTranslator` but accepts the batch context and
     returns :class:`TranslationBatchGenerationOutput` with one
     :class:`TranslationBatchUnitOutput` per unit.
 
-    Semantic-grouping contract (T1.1a): the backend pre-defines semantic
+    Semantic-grouping contract: the backend pre-defines semantic
     translation groups via :func:`build_deterministic_translation_groups`
     (paragraph boundaries + sentence clustering; never one-unit-one-group /
     one-sentence-one-group / one-anchor-one-group). The fake echoes exactly
@@ -511,7 +511,7 @@ class _StaticBatchTranslator:
 
 
 class _StaticBatchVocabularyExecutor:
-    """T1.1 fake batch vocabulary executor: 1 LLM call → N per-unit candidates.
+    """Fake batch vocabulary executor: 1 LLM call → N per-unit candidates.
 
     Mirrors :class:`_StaticVocabularyExecutor` but accepts the batch context
     and returns :class:`VocabularyBatchCandidateOutput` with one
@@ -620,7 +620,7 @@ def _make_runner(
     grammar_batch_executor: object | None = None,
     enable_grammar_window: bool = False,
 ) -> ReaderEnhancementPipelineRunner:
-    # T1.1 short-article batch path: 短文现在走 batch worker 而非 per-unit。
+    # Short-article batch path: 短文现在走 batch worker 而非 per-unit。
     # 即使测试传入 per-unit translator / vocabulary_executor，我们也必须
     # 注入 fake batch executors，否则 batch worker 会回退到
     # PydanticAITranslationBatchExecutor 并尝试调用真实 LLM。
@@ -665,7 +665,7 @@ def _make_runner(
     # enable_grammar_window 默认 False: legacy 4-worker 路径测试期望
     # bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker 顺序处理。
     # grammar-window window 路由由 test_pipeline_runner_window_dispatch.py 和
-    # test_grammar_window_worker.py 单独覆盖。T4.1c 测试传
+    # test_grammar_window_worker.py 单独覆盖。 测试传
     # enable_grammar_window=True 激活 route-aware grammar split。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
@@ -840,7 +840,7 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
     )
     assert unit_count == 3
     assert first.job_counts.display_title == 1
-    # T1.1 short-article batch path: 短文走 batch，translation/vocabulary
+    # Short-article batch path: 短文走 batch，translation/vocabulary
     # 各创建 1 个 batch job（而非 per-unit N 个）。
     assert first.job_counts.translation == 1
     assert first.job_counts.vocabulary == 1
@@ -863,7 +863,7 @@ async def test_bootstrap_missing_jobs_covers_all_units_and_is_idempotent(
         article.record_id,
         "generate_display_title_zh",
     ) == 1
-    # T1.1: short article creates translate_article batch job, not per-unit
+    # Short article creates translate_article batch job, not per-unit
     assert await _count_jobs(
         pipeline_runner_env,
         article.record_id,
@@ -928,7 +928,7 @@ async def test_run_only_drains_jobs_for_target_record(
         user_id=user_id,
         lease_owner="pipeline-record-scope",
         lease_duration=LEASE_DURATION,
-        # T1.1: worker_order 现在包含 batch workers（6 个 worker），
+        # Worker_order 现在包含 batch workers（6 个 worker），
         # 需要 6 个 tick 才能在一轮内完成 4 个 job（display_title,
         # translation_batch, vocabulary_batch, grammar_bundle）。
         max_ticks=6,
@@ -941,7 +941,7 @@ async def test_run_only_drains_jobs_for_target_record(
     assert summary.total_ticks == 6
     assert summary.stopped_reason == "max_jobs_reached"
     assert summary.outcome_counts.succeeded == 4
-    # T1.1: translation 和 vocabulary per-unit worker 在短文路径下 no_job
+    # Translation 和 vocabulary per-unit worker 在短文路径下 no_job
     assert summary.outcome_counts.no_job == 2
 
     assert await _count_layers(
@@ -1020,7 +1020,7 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
         user_id=user_id,
         lease_owner="pipeline-success",
         lease_duration=LEASE_DURATION,
-        # T1.1: batch path 下 5 jobs (display_title + translation_batch
+        # Batch path 下 5 jobs (display_title + translation_batch
         # + vocabulary_batch + 2 grammar_bundle), 6 workers per round.
         # 3 rounds = 18 ticks; max_ticks=19 lets round 3 finish so the
         # ``all_workers_no_job`` check fires instead of ``max_ticks_reached``.
@@ -1028,7 +1028,7 @@ async def test_run_with_fake_executors_publishes_all_layers_and_snapshot_reload_
         max_jobs=12,
     )
 
-    # T1.1: 短文走 batch，translation/vocabulary 各 1 个 batch job
+    # 短文走 batch，translation/vocabulary 各 1 个 batch job
     assert summary.bootstrapped_job_counts.translation == 1
     assert summary.bootstrapped_job_counts.vocabulary == 1
     assert summary.bootstrapped_job_counts.grammar_bundle == 2
@@ -1260,7 +1260,7 @@ async def test_run_reports_superseded_when_publish_fence_fails(
     runner = _make_runner(
         pipeline_runner_env,
         translator=_MutatingTranslator(pipeline_runner_env),
-        # T1.1: 短文走 batch 路径，需要用 batch mutating translator 触发 fence
+        # 短文走 batch 路径，需要用 batch mutating translator 触发 fence
         batch_translator=_MutatingBatchTranslator(pipeline_runner_env),
         vocabulary_executor=_StaticVocabularyExecutor(),
         grammar_executor=_StaticGrammarExecutor(),
@@ -1276,7 +1276,7 @@ async def test_run_reports_superseded_when_publish_fence_fails(
     )
 
     assert summary.stopped_reason == "attention_required"
-    # T1.1: 短文走 batch 路径，fence violation 来自 translation_batch worker
+    # 短文走 batch 路径，fence violation 来自 translation_batch worker
     assert summary.stopped_worker_type == "translation_batch"
     assert summary.stopped_outcome == "superseded"
     assert summary.attention_code == "publish_fence_failed"
@@ -1306,7 +1306,7 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
         pipeline_runner_env,
         translator=_StaticTranslator(),
         vocabulary_executor=UnconfiguredVocabularyExecutor(),
-        # T1.1: 短文走 batch 路径，需要用 batch unconfigured executor
+        # 短文走 batch 路径，需要用 batch unconfigured executor
         # 触发 fail-closed
         batch_vocabulary_executor=_UnconfiguredVocabularyBatchExecutor(),
     )
@@ -1321,7 +1321,7 @@ async def test_run_fail_closed_on_unconfigured_vocabulary_executor(
     )
 
     assert summary.stopped_reason == "attention_required"
-    # T1.1: 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
+    # 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
     assert summary.stopped_worker_type == "vocabulary_batch"
     assert summary.stopped_outcome == "failed_terminal"
     assert summary.attention_code == "vocabulary_executor_unconfigured"
@@ -1589,7 +1589,7 @@ async def test_batch_publish_reorders_outputs_to_reading_order(
                 article.base_id,
             )
         ]
-        # P2: derive actual publish order from reader_events.sequence, NOT
+        # Derive actual publish order from reader_events.sequence, NOT
         # from enhancement_layers.published_at. All N per-unit layers in a
         # batch share the same published_at (computed once before the loop),
         # so ORDER BY published_at is non-deterministic for ties and makes
@@ -1686,7 +1686,7 @@ def test_reorder_outputs_by_target_unit_ids_helper() -> None:
     assert [val for _, val in reordered] == ["a", "b", "c"]
 
 
-# T3.2b: Non-short vocabulary grouped execution. Text >6000 chars triggers
+# Non-short vocabulary grouped execution. Text >6000 chars triggers
 # the grouped path: bootstrap creates multiple build_vocabulary_layer_article
 # window jobs; the pipeline runner processes each window via the batch
 # vocabulary worker; the publisher still publishes per-unit vocabulary layers.
@@ -1706,7 +1706,7 @@ assert len(_LONG_VOCABULARY_TEXT) > 6000
 async def test_pipeline_runner_processes_multiple_vocabulary_windows_and_publishes_per_unit_layers(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T3.2b: pipeline runner processes multiple vocabulary batch window jobs
+    """Pipeline runner processes multiple vocabulary batch window jobs
     and publishes one per-unit vocabulary layer per unit."""
     from app.services.reader_orchestration import job_bootstrap
 
@@ -1774,7 +1774,7 @@ async def test_pipeline_runner_processes_multiple_vocabulary_windows_and_publish
     )
 
 
-# T3.1: Non-short translation grouped execution. Text >6000 chars triggers
+# Non-short translation grouped execution. Text >6000 chars triggers
 # the grouped path: bootstrap creates multiple translate_article window
 # jobs; the pipeline runner processes each window via the batch translator;
 # the publisher still publishes per-unit translation layers.
@@ -1794,7 +1794,7 @@ assert len(_LONG_TRANSLATION_TEXT) > 6000
 async def test_pipeline_runner_processes_multiple_translation_windows_and_publishes_per_unit_layers(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T3.1: pipeline runner processes multiple translation batch window jobs
+    """Pipeline runner processes multiple translation batch window jobs
     and publishes one per-unit translation layer per unit."""
     from app.services.reader_orchestration import job_bootstrap
 
@@ -1912,7 +1912,7 @@ async def test_pipeline_runner_processes_multiple_translation_windows_and_publis
 
 
 # ---------------------------------------------------------------------------
-# T4.1c: compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
+# Compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
 # ---------------------------------------------------------------------------
 
 
@@ -2034,7 +2034,7 @@ async def _insert_superseded_grammar_batch_job(
 async def test_short_article_uses_compact_grammar_batch_path(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c: SHORT_BATCH article → 1 compact grammar batch job, no
+    """SHORT_BATCH article → 1 compact grammar batch job, no
     analysis windows, per-unit grammar_note/sentence_analysis layers
     published from a single batch LLM call."""
     user_id = await insert_user(pipeline_runner_env)
@@ -2094,7 +2094,7 @@ async def test_short_article_uses_compact_grammar_batch_path(
 async def test_compact_grammar_batch_no_per_unit_fan_out_regression(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c: compact grammar batch path must not create per-unit
+    """Compact grammar batch path must not create per-unit
     ``build_grammar_bundle`` / ``unit`` jobs. The batch job is the sole
     grammar job; the publisher splits output into per-unit layers."""
     user_id = await insert_user(pipeline_runner_env)
@@ -2144,7 +2144,7 @@ async def test_compact_grammar_batch_no_per_unit_fan_out_regression(
 async def test_count_grammar_batch_superseded_jobs_covers_short_and_structured_bases(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c regression guard: superseded compact-grammar counts must cover
+    """Regression guard: superseded compact-grammar counts must cover
     both the short and structured fingerprint bases."""
     user_id = await insert_user(pipeline_runner_env)
     article = await submit_article_ready(
@@ -2216,7 +2216,7 @@ async def test_count_grammar_batch_superseded_jobs_covers_short_and_structured_b
 async def test_compact_grammar_batch_worker_loop_completes_cleanly(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c: worker loop / pipeline runner must not stall or loop
+    """Worker loop / pipeline runner must not stall or loop
     indefinitely when the grammar batch path is active. The pipeline
     must reach ``all_workers_no_job`` and stop."""
     user_id = await insert_user(pipeline_runner_env)

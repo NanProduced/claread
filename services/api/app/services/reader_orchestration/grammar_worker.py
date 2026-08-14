@@ -108,7 +108,7 @@ DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
 
 logger = logging.getLogger(__name__)
 
-# R7-3: grammar batch lease heartbeat configuration. A batch
+# Grammar batch lease heartbeat configuration. A batch
 # generate_batch + publish cycle routinely exceeds the 120s claim
 # lease, so the worker renews the lease in the background every
 # heartbeat interval for the WHOLE generate → publish phase. The
@@ -118,7 +118,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_GRAMMAR_BATCH_LEASE_DURATION = timedelta(seconds=120)
 DEFAULT_GRAMMAR_BATCH_HEARTBEAT_INTERVAL = timedelta(seconds=30)
 
-# R7-3: usage status labels for grammar batch model invocations.
+# Usage status labels for grammar batch model invocations.
 # Every model call that actually completes (returns, with or without
 # usage_data) is persisted exactly once with one of these statuses so
 # token consumption is recorded even when the attempt never publishes:
@@ -136,7 +136,7 @@ DEFAULT_GRAMMAR_BATCH_HEARTBEAT_INTERVAL = timedelta(seconds=30)
 GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED = "layer_published"
 GRAMMAR_USAGE_STATUS_PUBLICATION_FAILED = "publication_failed"
 GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST = "ownership_lost"
-# R7-3b: the invocation usage row is written with this status the
+# The invocation usage row is written with this status the
 # moment the model call returns (real tokens, outcome not yet known),
 # then the SAME row is updated to one of the terminal statuses above.
 # ``publication_interrupted`` covers cancellation between the persist
@@ -144,7 +144,7 @@ GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST = "ownership_lost"
 GRAMMAR_USAGE_STATUS_MODEL_CALL_COMPLETED = "model_call_completed"
 GRAMMAR_USAGE_STATUS_PUBLICATION_INTERRUPTED = "publication_interrupted"
 
-# R7-3b: strong references for detached usage-outcome finalization
+# Strong references for detached usage-outcome finalization
 # tasks spawned from cancelled publish attempts (done-callback
 # discards). Prevents GC of fire-and-forget outcome updates.
 _DETACHED_USAGE_FINALIZATION_TASKS: set[asyncio.Task] = set()
@@ -168,7 +168,7 @@ MAX_GRAMMAR_DEDUP_HINT_LENGTH = 120
 MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH = 80
 
 
-# T8: variant-first strategy metadata keys read from reader_jobs.input_json.
+# Variant-first strategy metadata keys read from reader_jobs.input_json.
 # Must match the keys written by _build_strategy_metadata in job_bootstrap.
 _STRATEGY_INPUT_KEYS: tuple[str, ...] = (
     "reading_goal",
@@ -247,7 +247,7 @@ class GrammarNoteCandidateItem(BaseModel):
             "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
-    # P1-2 self-rating contract: three required fields consumed by all
+    # Self-rating contract: three required fields consumed by all
     # three paths (per-unit / batch / window). ``quality_score`` drives
     # the primary sort (desc), ``reading_blocker`` breaks ties by
     # promoting blocker=true, and ``dedup_hint`` is the canonical
@@ -299,7 +299,7 @@ class SentenceAnalysisCandidateItem(BaseModel):
         min_length=1,
         max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,
     )
-    # P1-2 self-rating contract: three required fields consumed by all
+    # Self-rating contract: three required fields consumed by all
     # three paths (per-unit / batch / window). See ``GrammarNoteCandidateItem``
     # for the full rationale. ``quality_score`` / ``reading_blocker`` /
     # ``dedup_hint`` must be consumed together — metadata-only validation
@@ -331,7 +331,7 @@ class GrammarBundleCandidateOutput(BaseModel):
     )
 
 
-# T4.1c: batch candidate output covers ALL units in one LLM call.
+# Batch candidate output covers ALL units in one LLM call.
 # No fixed max_length on the lists — per-unit budget is enforced after
 # splitting by unit_id (MAX_GRAMMAR_NOTE_ITEMS / MAX_SENTENCE_ANALYSIS_ITEMS
 # per unit).
@@ -562,7 +562,7 @@ class UnconfiguredGrammarBundleExecutor:
 
 
 # ---------------------------------------------------------------------------#
-# T4.1c: compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
+# Compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
 # ---------------------------------------------------------------------------#
 #
 # One ``build_grammar_bundle`` / ``unit_range`` batch job covers all unpublished
@@ -637,7 +637,7 @@ class GrammarBatchJobProcessResult:
     model_profile: str | None = None
     model_provider: str | None = None
     model_name: str | None = None
-    # R7-3: True when the lease heartbeat reported ownership loss
+    # True when the lease heartbeat reported ownership loss
     # (lease expired / token mismatch / job no longer claimed). In
     # that case the worker skips publish and job transitions — the
     # stale-lease recovery owns the job state — and the completed
@@ -656,7 +656,7 @@ class GrammarBatchExecutor(Protocol):
 
 
 class PydanticAIGrammarBatchExecutor:
-    """T4.1c: one LLM call covering all units in a compact grammar batch.
+    """One LLM call covering all units in a compact grammar batch.
 
     Builds a prompt that lists every unit's source text + anchor segments,
     asks the model to generate candidates across all units, then splits
@@ -846,14 +846,14 @@ class GrammarBundleWorkerService:
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or GrammarBundleLayerPublisher(pool=pool)
         self._executor = executor or PydanticAIGrammarBundleExecutor()
-        # T4.1c: compact grammar batch executor for SHORT_BATCH / STRUCTURED_BATCH.
+        # Compact grammar batch executor for SHORT_BATCH / STRUCTURED_BATCH.
         # Defaults to PydanticAIGrammarBatchExecutor (real LLM); tests inject
         # FakeGrammarBatchExecutor to avoid real LLM calls.
         self._batch_executor = batch_executor or PydanticAIGrammarBatchExecutor()
         self._journal_service = journal_service or ModelExecutionJournalService(
             pool=pool
         )
-        # R7-3: lease renewal for the batch generate → publish phase.
+        # Lease renewal for the batch generate → publish phase.
         # When the claim caller provides its own lease_duration it is
         # used for renewals (see process_claimed_grammar_batch_job);
         # these constructor values are the fallback for direct
@@ -1156,7 +1156,7 @@ class GrammarBundleWorkerService:
         execution: GrammarExecutionResult | None = None
         execution_captured = False
 
-        # Phase 4: lease renewal for the per-unit generate → publish
+        # Lease renewal for the per-unit generate → publish
         # phase. A generate call longer than the lease let
         # recover_stale_leases requeue the job and a parallel worker
         # re-process it; the shared LeaseHeartbeat renews the claim
@@ -1759,7 +1759,7 @@ class GrammarBundleWorkerService:
         )
 
     # ------------------------------------------------------------------#
-    # T4.1c: compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
+    # Compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
     # ------------------------------------------------------------------#
 
     async def claim_grammar_batch_job_for_record(
@@ -1807,7 +1807,7 @@ class GrammarBundleWorkerService:
     ) -> GrammarBatchJobProcessResult | None:
         """Claim and process the next grammar batch job for the record.
 
-        R7-3: ``lease_duration`` (the same value used for the claim)
+        ``Lease_duration`` (the same value used for the claim)
         is forwarded to the heartbeat so renewals extend the lease by
         exactly the claimed duration.
         """
@@ -1892,7 +1892,7 @@ class GrammarBundleWorkerService:
     ) -> GrammarBatchJobProcessResult:
         """Run the batch LLM call and publish N per-unit grammar layers.
 
-        R7-3 + R7-3b contracts:
+        Lease and ownership contracts:
 
         Heartbeat: a shared :class:`LeaseHeartbeat` renews the claim
         lease from BEFORE ``generate_batch`` until AFTER publish (or
@@ -2119,7 +2119,7 @@ class GrammarBundleWorkerService:
                     failure_code=exc.failure_code,
                 )
                 if heartbeat.lost:
-                    # R7-3b: ownership already invalid — NO writes to
+                    # Ownership already invalid — NO writes to
                     # reader_jobs / reader_runs from this attempt.
                     return GrammarBatchJobProcessResult(
                         claim=claim,
@@ -2170,7 +2170,7 @@ class GrammarBundleWorkerService:
                     status="failed_terminal",
                 )
 
-            # R7-3b: the model call really completed → persist its
+            # The model call really completed → persist its
             # usage NOW (status=model_call_completed), idempotently by
             # invocation key, BEFORE the ownership check and publish.
             try:
@@ -2225,7 +2225,7 @@ class GrammarBundleWorkerService:
                     model_provider=execution.model_provider,
                     model_name=execution.model_name,
                 )
-            # Ownership gate BEFORE publish (R7-3b): actively probe
+            # Ownership gate BEFORE publish: actively probe
             # the lease — catches both loop-detected loss AND leases
             # that expired since the last renewal (e.g. stalled or
             # neutered renewals). On invalid ownership: finalize the
@@ -3186,7 +3186,7 @@ class GrammarBundleWorkerService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """R7-3b: cancel-safe outcome update. Runs the outcome update
+        """Cancel-safe outcome update. Runs the outcome update
         as a DETACHED task so a cancellation during publish still
         records ``publication_interrupted`` on the existing usage row
         (awaiting inside the cancelled attempt would re-raise
@@ -3447,7 +3447,7 @@ def _build_grammar_output_from_candidates(
     sentence_analyses: list[SentenceAnalysisItem] = []
     skipped_items: list[dict[str, Any]] = []
 
-    # P1-2 self-rating contract: merge grammar_notes + sentence_analyses
+    # Self-rating contract: merge grammar_notes + sentence_analyses
     # into a single ordered stream using the unified sort key
     # (quality_score desc → reading_blocker=true first → grammar_note on
     # tie). reader-grammar-candidate-selection: scoped dedup uses
@@ -3519,7 +3519,7 @@ def _build_grammar_output_from_candidates(
             dedup_hint=item.dedup_hint,
         )
         if scoped_key in seen_scoped_keys:
-            # P1-2: scoped dedup loser. Emit a diagnostic so the
+            # Scoped dedup loser. Emit a diagnostic so the
             # rejection is observable; never silently drop.
             selected_text = (
                 item.spans[0].selected_text
@@ -3912,7 +3912,7 @@ def _build_quality_json(
 
 
 # ---------------------------------------------------------------------------#
-# T4.1c: compact grammar batch helpers
+# Compact grammar batch helpers
 # ---------------------------------------------------------------------------#
 
 
@@ -3952,7 +3952,7 @@ def _build_grammar_batch_prompt(context: GrammarBatchJobContext) -> str:
     (:func:`_split_batch_candidates_by_unit`) uses that mapping to route
     each candidate back to its owning unit.
 
-    T4.1b route identity (``article_route``) and a compact
+     route identity (``article_route``) and a compact
     ``document_features`` summary are included so the model can adapt
     candidate density / focus to the article tier (short vs structured).
     """
@@ -4086,7 +4086,7 @@ def _split_batch_candidates_by_unit(
     whose ``anchor_segment_id`` is unknown or whose owning unit has
     reached its per-unit budget are skipped and recorded in diagnostics.
 
-    P1-2 self-rating contract: within each unit, grammar_notes +
+     self-rating contract: within each unit, grammar_notes +
     sentence_analyses are merged into a single ordered stream using the
     unified sort key (quality_score desc → reading_blocker=true first →
     grammar_note on tie). reader-grammar-candidate-selection: scoped
@@ -4117,7 +4117,7 @@ def _split_batch_candidates_by_unit(
     }
     skipped_items: list[dict[str, Any]] = []
 
-    # P1-2: build a unified candidate stream tagged with original index
+    # Build a unified candidate stream tagged with original index
     # + item_type, then sort by (sort_key, original_index). Each candidate
     # is routed to its owning unit via anchor_segment_id. Per-unit dedup
     # + per-type budget is enforced in stream order.

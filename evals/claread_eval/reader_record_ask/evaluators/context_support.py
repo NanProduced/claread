@@ -1,12 +1,12 @@
 """Dimension 2/11 — context_support.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: context_support atomic fact contract（P0-6）.
+spec.md` — Requirement: context_support atomic fact contract.
 
-R4-A4-0 final closure — authoritative model-visible context binding
+Authoritative model-visible context binding
 ==================================================================
 
-The previous (R4-A4-0 Task 1) implementation computed support against
+The previous implementation computed support against
 ``document_access.snapshot.units`` (the full document scope) and bound
 every fact to ``cited_handles[0]``. This was contractually broken
 because:
@@ -27,7 +27,7 @@ because:
    observation pass regardless of which baseline it was computed
    against.
 
-The new contract (R4-A4-0 final closure P0-1..P0-4):
+The current contract:
 
 - The harness computes support against
   ``result.baseline_context.model_context_chunks`` (the ACTUAL
@@ -53,7 +53,7 @@ The new contract (R4-A4-0 final closure P0-1..P0-4):
   ``artifact.cited_evidence_handles`` for the fact to be grounded —
   this is the authoritative fact→chunk→handle→citation binding.
 
-R4-A4-0 final gate closure (P0-1): explicit instrumentation lifecycle
+Explicit instrumentation lifecycle
 =====================================================================
 
 The previous heuristic (``fingerprint=None + observations=[]`` →
@@ -95,7 +95,7 @@ Coverage / fail-closed matrix (for ``captured`` artifacts):
 | support=False                                 | fact_not_supported (fail, rework)|
 | support=True, handles valid, ≥1 cited        | supported (pass)                |
 
-Legacy artifacts (P0-4 legacy compat): the evaluator returns
+Legacy artifacts: the evaluator returns
 ``passed=True`` with ``coverage_incomplete=true
 (legacy_artifact_no_model_context_support)``. This is NOT a failure
 — old artifacts cannot be authoritatively re-evaluated under the new
@@ -136,12 +136,12 @@ from claread_eval.reader_record_ask.evaluators.context_support_contract import (
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.schema import (
     AtomicExpectedFact,
-    ReaderRecordAskR4A3Case,
+    ReaderRecordAskCase,
 )
 
 DIMENSION = "context_support"
 
-# R4-A4-0 final gate closure (P1 de-dup): classification reason tags
+# Classification reason tags
 # and the three routing frozensets are imported from
 # :mod:`evaluators.context_support_contract` — the SINGLE source of
 # truth shared by the evaluator, aggregator, and runner. The
@@ -245,7 +245,7 @@ def _classify_observation(
         # required fact with source_aliases — fail-closed.
         return False, "no_observation_for_required_fact"
 
-    # P0-3: fingerprint must match the artifact's fingerprint.
+    # Fingerprint must match the artifact's fingerprint.
     if artifact_fingerprint is None:
         # New artifact has observations but no fingerprint —
         # instrumentation incomplete, fail-closed.
@@ -253,7 +253,7 @@ def _classify_observation(
     if obs.model_context_fingerprint != artifact_fingerprint:
         return False, "fingerprint_mismatch"
 
-    # P0-2: supporting_handle_ids must all be in the actual model
+    # Supporting_handle_ids must all be in the actual model
     # context. An observation naming a handle that was not in the
     # model context is forged / stale — fail-closed.
     if obs.supporting_handle_ids:
@@ -269,14 +269,14 @@ def _classify_observation(
         # real model failure.
         return False, "fact_not_supported"
 
-    # support=True. P0-2: supporting_handle_ids MUST be non-empty
+    # support=True. Supporting_handle_ids MUST be non-empty
     # (the harness must record which chunk(s) contained the alias
     # hit). An empty list with support=True means the harness could
     # not determine which chunk supported the fact — fail-closed.
     if not obs.supporting_handle_ids:
         return False, "support_true_with_empty_supporting_handles"
 
-    # P0-2: at least one supporting_handle_id must be in the
+    # At least one supporting_handle_id must be in the
     # artifact's cited_evidence_handles. This is the authoritative
     # fact→chunk→handle→citation binding.
     if not any(h in cited_handle_set for h in obs.supporting_handle_ids):
@@ -286,12 +286,12 @@ def _classify_observation(
 
 
 def evaluate_context_support(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     """Evaluate whether required atomic facts are mentioned and grounded.
 
-    R4-A4-0 final closure: grounding uses typed
+    Authoritative grounding uses typed
     :class:`ModelContextSupportObservation` entries from the artifact,
     computed by the harness against the ACTUAL
     ``result.baseline_context.model_context_chunks`` (NOT
@@ -301,7 +301,7 @@ def evaluate_context_support(
     there is no caller-supplied ``expected_baseline_fingerprint``
     parameter (the previous bypass is closed).
 
-    R4-A4-0 final gate closure (P0-1): the explicit lifecycle fields
+    The explicit lifecycle fields
     ``model_context_instrumentation_version`` and
     ``model_context_capture_status`` drive a 4-state classification:
 
@@ -335,7 +335,7 @@ def evaluate_context_support(
             handle_ids in the actual model context;
             ``artifact.model_context_instrumentation_version`` /
             ``artifact.model_context_capture_status`` are the explicit
-            lifecycle fields (P0-1).
+            lifecycle fields.
 
     Returns:
         :class:`EvalDimensionResult` with ``dimension="context_support"``.
@@ -358,7 +358,7 @@ def evaluate_context_support(
     coverage_incomplete_no_facts = not atomic_facts
 
     # ----------------------------------------------------------------------
-    # R4-A4-0 final gate closure (P0-1): explicit 4-state lifecycle.
+    # Explicit four-state lifecycle.
     # ----------------------------------------------------------------------
     # The previous heuristic (``fingerprint=None + observations=[]`` →
     # legacy OR exception) could NOT distinguish a legacy artifact
@@ -389,7 +389,7 @@ def evaluate_context_support(
         and capture_status == "captured"
     )
 
-    # P0-1: explicit ``unavailable`` / ``failed`` → instrumentation
+    # Explicit ``unavailable`` / ``failed`` → instrumentation
     # blocker (NOT model failure). The artifact's invariant (enforced
     # at load time) guarantees fingerprint=None, handle_ids=[],
     # observations=[] for these states.
@@ -416,7 +416,7 @@ def evaluate_context_support(
 
     legacy_no_support = is_legacy_artifact and bool(atomic_facts)
 
-    # P0-4 instrumentation_incomplete for captured artifacts: artifact
+    # Instrumentation_incomplete for captured artifacts: artifact
     # has observations OR a fingerprint, but is missing the other half.
     # This is fail-closed — the run cannot be authoritatively
     # evaluated. Triggers when:
@@ -461,9 +461,9 @@ def evaluate_context_support(
     #   fact_not_cited > supported > legacy
     emitted_reasons: list[str] = []
 
-    # Build observation lookup, detecting duplicate fact_ids (P0-4
+    # Build observation lookup, detecting duplicate fact_ids (
     # fail-closed). Also detect observations whose fact_id is not in
-    # the case's atomic_facts (P0-4 fail-closed).
+    # the case's atomic_facts (fail-closed).
     support_by_fact_id: dict[str, ModelContextSupportObservation] = {}
     duplicate_fact_ids: set[str] = set()
     case_fact_ids: set[str] = {f.fact_id for f in atomic_facts}
@@ -595,7 +595,7 @@ def evaluate_context_support(
     severity = "none" if passed else _highest_severity(atomic_facts)
 
     # ----------------------------------------------------------------------
-    # R4-A4-0 final gate closure (P0-2): typed classification.
+    # Typed classification.
     # ----------------------------------------------------------------------
     # Precedence (strongest first):
     #   1. instrumentation_incomplete (blocker — NOT rework-eligible)

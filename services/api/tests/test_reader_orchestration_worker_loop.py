@@ -99,11 +99,11 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
-# T1.1 short-article batch path: migration 0017 adds ``translate_article``
+# Short-article batch path: migration 0017 adds ``translate_article``
 # and ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type``
 # CHECK constraint. Required because the default fixture text is well under
 # the 6000-char short-article threshold, so bootstrap creates batch jobs.
-# T5.3/T5.7: semantic_outline job_type + layer_type + worker_type CHECK.
+# Semantic_outline job_type + layer_type + worker_type CHECK.
 # Without 0020, pipeline worker_tick spans with worker_type=semantic_outline
 # fail CHECK and block real-chain readiness finalization.
 LEASE_DURATION = timedelta(seconds=30)
@@ -326,7 +326,7 @@ class _StaticTitleGenerator:
         )
 
 
-# T1.1 short-article batch path fakes. The default fixture text is well under
+# Short-article batch path fakes. The default fixture text is well under
 # the 6000-char short-article threshold, so bootstrap creates batch jobs
 # (``translate_article`` / ``build_vocabulary_layer_article``) and the pipeline
 # runner dispatches them via ``translation_batch`` / ``vocabulary_batch`` worker
@@ -419,7 +419,7 @@ class _StaticBatchVocabularyExecutor:
 
 
 class _RetryLaterBatchTranslator:
-    """T1.1 batch version of _RetryLaterTranslator: always raises a retryable
+    """Batch version of _RetryLaterTranslator: always raises a retryable
     translation error so the retry_later hot-loop guard is exercised on the
     batch path.
     """
@@ -437,7 +437,7 @@ class _RetryLaterBatchTranslator:
 
 
 class _UnconfiguredVocabularyBatchExecutor:
-    """T1.1 batch version of UnconfiguredVocabularyExecutor: always raises
+    """Batch version of UnconfiguredVocabularyExecutor: always raises
     vocabulary_executor_unconfigured so the fail-closed path is exercised on
     the batch path.
     """
@@ -492,7 +492,7 @@ def _make_runner(
     batch_translator: object | None = None,
     batch_vocabulary_executor: object | None = None,
 ) -> ReaderEnhancementPipelineRunner:
-    # T1.1 short-article batch path: the default fixture text is well under
+    # Short-article batch path: the default fixture text is well under
     # the 6000-char threshold, so bootstrap creates batch jobs and the runner
     # dispatches them via translation_batch / vocabulary_batch worker types.
     # We must inject fake batch executors alongside the per-unit fakes,
@@ -1069,7 +1069,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         initial_snapshot,
         capability="translation",
         status="queued",
-        # T1.1: 短文走 batch 路径，bootstrap 创建 translate_article 而非
+        # 短文走 batch 路径，bootstrap 创建 translate_article 而非
         # translate_unit job
         job_type="translate_article",
     )
@@ -1090,7 +1090,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
     )
     candidate = await _find_candidate(service, article.record_id)
 
-    # T5.7: pipeline worker order includes non-budget semantic_outline ticks
+    # Pipeline worker order includes non-budget semantic_outline ticks
     # (usually no_job under default eligibility=false). Allow enough ticks so
     # per-unit grammar jobs still finish after batch translation/vocabulary.
     result = await service.process_candidate(
@@ -1122,7 +1122,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
         record_id=article.record_id,
         user_id=user_id,
     )
-    # P1: ``max_ticks_reached`` / ``max_jobs_reached`` are now finalizable.
+    # ``Max_ticks_reached`` / ``max_jobs_reached`` are now finalizable.
     # The pipeline runner checks caps AFTER incrementing the processed count,
     # so the last succeeding job can land exactly on the budget. When all
     # enhancement jobs are terminal, the finalizer transitions
@@ -1167,7 +1167,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
 
 
 # ---------------------------------------------------------------------------
-# T3.5 worker-loop closed-loop: stuck analysis windows -> force-fail ->
+# Worker-loop closed-loop: stuck analysis windows -> force-fail ->
 # completed_with_failures.
 #
 # When all enhancement jobs are terminal but analysis windows remain
@@ -1497,7 +1497,7 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
         worker_loop_env,
         translator=_StaticTranslator(),
         vocabulary_executor=UnconfiguredVocabularyExecutor(),
-        # T1.1: 短文走 batch 路径，需要用 batch unconfigured executor
+        # 短文走 batch 路径，需要用 batch unconfigured executor
         # 触发 fail-closed
         batch_vocabulary_executor=_UnconfiguredVocabularyBatchExecutor(),
     )
@@ -1516,11 +1516,11 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
 
     assert result.pipeline_summary is not None
     assert result.pipeline_summary.stopped_reason == "attention_required"
-    # T1.1: 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
+    # 短文走 batch 路径，fail-closed 来自 vocabulary_batch worker
     assert result.pipeline_summary.stopped_worker_type == "vocabulary_batch"
     assert result.pipeline_summary.stopped_outcome == "failed_terminal"
     assert result.pipeline_summary.attention_code == "vocabulary_executor_unconfigured"
-    # T1.1: 短文走 batch 路径，batch publisher 按单元拆分发布 translation layers。
+    # 短文走 batch 路径，batch publisher 按单元拆分发布 translation layers。
     # 默认 fixture 文本有 2 段 → 2 个 translation layer。
     assert await _count_layers(worker_loop_env, article.record_id, "translation") >= 1
     assert await _count_layers(worker_loop_env, article.record_id, "vocabulary") == 0
@@ -1556,7 +1556,7 @@ async def test_worker_loop_preserves_fail_closed_when_real_executor_is_unconfigu
 
 
 # ---------------------------------------------------------------------------
-# T2: article_rag_index_build must NOT block enhancement pipeline bootstrap.
+# Article_rag_index_build must NOT block enhancement pipeline bootstrap.
 #
 # The candidate scan in worker_loop.py counts only enhancement job types
 # (ENHANCEMENT_PIPELINE_JOB_TYPES) when deciding tracked_job_count /

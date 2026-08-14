@@ -92,11 +92,11 @@ def _make_execution_config(
     this config so a real model + budget propagates into
     ``stream_agentic_thread_message``.
 
-    ASK-M1-R1: the config now also carries ``model_settings_payload``
+    ASK-M1-the config now also carries ``model_settings_payload``
     (with ``max_tokens``) and ``usage_limits`` so budget-capture tests
     can assert both the provider cap and the host guard.
 
-    ASK-WEB-G3-R3: ``web_search_backend`` is the executable backend
+    ASK-WEB-G3-``web_search_backend`` is the executable backend
     produced by the same registry resolution that produced
     ``web_search_capability``. Tests that need to verify backend
     forwarding into the production stream pass a sentinel object here.
@@ -225,7 +225,7 @@ class _FakeRepo:
         self.retry_assistant: dict[str, Any] | None = None
         self.retry_user: dict[str, Any] | None = None
         self.reset_calls: list[UUID] = []
-        # R4-5c: heartbeat calls captured for assertion.
+        # Heartbeat calls captured for assertion.
         self.heartbeat_calls: list[UUID] = []
 
     async def get_thread(self, **kwargs):
@@ -296,7 +296,7 @@ class _FakeRepo:
             "final_status": "ok",
             "user_visible_output_json": dto,
             "resolved_evidence_json": kwargs["resolved_evidence"],
-            # ASK-REASONING-R1: the reasoning projection commits in the
+            # ASK-REASONING-the reasoning projection commits in the
             # same write as the answer (None when absent).
             "reasoning_projection_json": kwargs.get("reasoning_projection"),
             "envelope_fingerprint": None,
@@ -319,7 +319,7 @@ class _FakeRepo:
         return self.turns[str(kwargs["turn_run_id"])]
 
     async def heartbeat_turn_run(self, *, turn_run_id: UUID) -> None:
-        """R4-5c: capture heartbeat calls for assertion. No-op on rows
+        """Capture heartbeat calls for assertion. No-op on rows
         that already transitioned to terminal (matches production guard)."""
         tid = str(turn_run_id)
         if tid in self.turns and self.turns[tid].get("status") == "streaming":
@@ -1303,7 +1303,7 @@ async def test_generic_exception_does_not_complete_or_leak_as_answer(
 
 
 # ---------------------------------------------------------------------------
-# R4-A2 baseline-unavailable typed terminal tests (scenarios 4, 16)
+# Baseline-unavailable typed terminal tests (scenarios 4, 16)
 # ---------------------------------------------------------------------------
 
 
@@ -2164,7 +2164,7 @@ def test_production_rag_factory_builds_retrieval_backed_port_when_ready() -> Non
 
 
 # ---------------------------------------------------------------------------
-# ASK-REASONING-R1: provider-private reasoning privacy contract
+# ASK-REASONING-provider-private reasoning privacy contract
 # ---------------------------------------------------------------------------
 
 
@@ -2491,7 +2491,7 @@ async def test_agentic_reasoning_persist_failure_no_completed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A6: message.delta token-level answer_text streaming
+# Message.delta token-level answer_text streaming
 # ---------------------------------------------------------------------------
 
 
@@ -2544,7 +2544,7 @@ async def test_message_delta_streams_answer_text_on_success() -> None:
 
     # Exactly two message.delta events carrying the raw increments.
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    # ASK-UX-HISTORY-COT-R2 P0-4: each delta now carries full turn
+    # ASK-UX-HISTORY-COT- each delta now carries full turn
     # identity (execution_version / message_id / thread_id / turn_run_id)
     # so the frontend activeRunIdentity guard can attribute it to the
     # owning turn. Without these fields the client rejects every delta
@@ -2680,7 +2680,7 @@ async def test_message_delta_partial_then_failure_no_completed() -> None:
     names = [name for name, _ in events]
 
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    # ASK-UX-HISTORY-COT-R2 P0-4: delta carries full turn identity so the
+    # ASK-UX-HISTORY-COT- delta carries full turn identity so the
     # frontend activeRunIdentity guard accepts it. The message_id /
     # turn_run_id are server-minted UUIDs; assert shape + thread binding
     # rather than exact values (this path raises before completed).
@@ -2893,7 +2893,7 @@ async def test_retry_agentic_missing_assistant_emits_error_no_turn() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-G1-R3: Retry must replay persisted web_search_mode from the
+# ASK-WEB-G1-Retry must replay persisted web_search_mode from the
 # original user message metadata (server-side source of truth). The
 # preflight ``_load_replayed_web_search_mode`` runs BEFORE the
 # StreamingResponse starts, so DB failures / illegal metadata /
@@ -3058,7 +3058,7 @@ async def test_retry_replay_loads_disabled_metadata() -> None:
 @pytest.mark.asyncio
 async def test_retry_replay_legacy_metadata_defaults_disabled() -> None:
     """When the persisted user message metadata has no ``web_search_mode``
-    key (legacy rows persisted before ASK-WEB-G1-R2), the replay
+    key (legacy rows persisted before ASK-WEB-G1-), the replay
     defaults to ``"disabled"`` — fail-closed compatible.
     """
     from app.services.reader_record_ask.service import (
@@ -3171,7 +3171,7 @@ async def test_retry_replay_illegal_metadata_raises_503_no_generator() -> None:
 async def test_retry_replay_missing_assistant_returns_404() -> None:
     """When the retried message_id does not resolve to an assistant
     message in this thread, the preflight must fail-closed with HTTP 404
-    — typed not-found, never silently degraded to disabled.
+    typed not-found, never silently degraded to disabled.
     """
     from fastapi import HTTPException
 
@@ -3270,7 +3270,7 @@ async def test_retry_replay_non_dict_metadata_raises_503() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-G3-R3: Service-level pre-stream 503 + Send/Retry backend
+# ASK-WEB-G3-Service-level pre-stream 503 + Send/Retry backend
 # propagation. These tests verify the production wiring at the service
 # boundary — the seam where ``prepare_reading_record_ask_message`` /
 # ``prepare_reading_record_ask_retry`` decide whether to start a
@@ -3283,7 +3283,7 @@ async def test_retry_replay_non_dict_metadata_raises_503() -> None:
 async def test_send_allowed_with_unavailable_capability_raises_503_pre_stream() -> None:
     """Send path: ``web_search_mode="allowed"`` + capability unavailable → 503.
 
-    G3-R3 contract: when the user requests Web Search (``allowed``) but
+    G3- contract: when the user requests Web Search (``allowed``) but
     the resolved capability is ``enabled_for_turn=False`` (adapter
     unverified / missing key / unsupported model), the service must
     fail-closed with a typed 503 BEFORE the StreamingResponse starts.
@@ -3429,7 +3429,7 @@ async def test_send_allowed_with_capability_but_no_backend_raises_503() -> None:
     """Send path: capability enabled but backend=None (adapter failed
     to construct after capability was granted) → 503.
 
-    G3-R3 invariant: capability and backend are produced by the SAME
+    G3- invariant: capability and backend are produced by the SAME
     registry resolution. If capability is enabled but backend is None
     (defensive — should not happen in production but must be guarded),
     the pre-stream check fails-closed.
@@ -3573,7 +3573,7 @@ async def test_send_propagates_web_search_backend_to_stream_agentic() -> None:
     """Send path: ``web_search_backend`` is forwarded to
     ``stream_agentic_thread_message``.
 
-    G3-R3: the executable backend produced by the registry resolution
+    G3-the executable backend produced by the registry resolution
     must reach the production stream so the agent runtime can mount
     ``search_web`` against the real provider adapter.
     """
@@ -3662,7 +3662,7 @@ async def test_retry_propagates_web_search_backend_to_retry_agentic() -> None:
     """Retry path: ``web_search_backend`` is forwarded to
     ``retry_agentic_thread_message``.
 
-    G3-R3 Send/Retry symmetry: the same persisted model option +
+    G3- Send/Retry symmetry: the same persisted model option +
     ``web_search_mode`` rebuilds the same backend identity on retry.
     The retry generator must receive the executable backend so the
     agent runtime can mount ``search_web`` against the real provider.
@@ -3783,7 +3783,7 @@ async def test_send_retry_symmetric_backend_identity_for_same_option() -> None:
     """Send and Retry paths produce the same backend identity for the
     same persisted model option + ``web_search_mode``.
 
-    G3-R3 contract: ``Send`` and ``Retry`` must rebuild from the same
+    G3- contract: ``Send`` and ``Retry`` must rebuild from the same
     persisted model option + ``web_search_mode`` so the backend
     identity is deterministic. The same capability + backend object
     must reach both ``stream_agentic_thread_message`` and
@@ -3947,7 +3947,7 @@ async def test_send_with_disabled_mode_does_not_forward_backend() -> None:
     backend to the production stream — even if a backend object
     accidentally exists on the execution config.
 
-    G3-R3: ``disabled`` mode short-circuits at the resolver layer
+    G3-``disabled`` mode short-circuits at the resolver layer
     (capability=None, backend=None). But if a buggy resolver ever
     returned a non-None backend with a disabled mode, the service
     must still NOT forward it — the runtime must not mount
@@ -4023,13 +4023,13 @@ async def test_send_with_disabled_mode_does_not_forward_backend() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-TURN-LIFECYCLE R4-5c: heartbeat task during streaming
+# ASK-TURN-LIFECYCLE heartbeat task during streaming
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_heartbeat_task_is_started_and_cancelled_on_normal_completion() -> None:
-    """R4-5c: the production stream must start a heartbeat task during
+    """The production stream must start a heartbeat task during
     streaming and cancel it when the stream completes normally."""
 
     async def _run(**kwargs):
@@ -4066,7 +4066,7 @@ async def test_heartbeat_task_is_started_and_cancelled_on_normal_completion() ->
 
 @pytest.mark.asyncio
 async def test_heartbeat_task_is_cancelled_on_stream_exception() -> None:
-    """R4-5c: the heartbeat task must be cancelled even when the stream
+    """The heartbeat task must be cancelled even when the stream
     raises an exception. No dangling task should remain."""
 
     async def _run(**kwargs):
@@ -4087,7 +4087,7 @@ async def test_heartbeat_task_is_cancelled_on_stream_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_heartbeat_failure_does_not_tear_down_stream() -> None:
-    """R4-5c: heartbeat failures are best-effort — a heartbeat error
+    """Heartbeat failures are best-effort — a heartbeat error
     must NOT tear down the stream. The stream's own terminal state wins."""
 
     async def _run(**kwargs):

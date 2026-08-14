@@ -15,7 +15,7 @@
  * 因此：
  * - 组件级：用真实 Plate editor 的公开组件入口（setValue / clear）覆盖
  *   value lifecycle 与序列化保真。
- * - 浏览器级：真实粘贴与 Ctrl/Cmd+Enter 由 Phase 5 Playwright 验收覆盖。
+ * - 浏览器级：真实粘贴与 Ctrl/Cmd+Enter 由 Playwright 验收覆盖。
  *
  * scheduling 合同（jsdom 可观测部分）：
  * - programmatic setValue/clear 立即 fire onChange，不依赖 debounce。
@@ -26,7 +26,7 @@
  * - onDegraded 挂载时仅通知一次（Strict Mode 安全）。
  *
  * debounce 窗口内"多次按键 → 一次回调"的完整验证依赖真实键盘事件，
- * 由 Phase 5 Playwright 验收覆盖；jsdom 只验证 programmatic 路径下的
+ * 由 Playwright 验收覆盖；jsdom 只验证 programmatic 路径下的
  * 可观测调度合同（立即 fire + dedup + flush + unmount safety）。
  */
 
@@ -190,7 +190,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
 // Scheduling & lifecycle 契约测试
 //
 // jsdom 无法驱动真实键盘事件（Slate 走 legacy beforeinput 路径），
-// 因此 debounce 窗口内"多次按键 → 一次回调"的完整验证由 Phase 5
+// 因此 debounce 窗口内"多次按键 → 一次回调"的完整验证由
 // Playwright 覆盖。这里验证 programmatic 路径下的可观测调度合同：
 //
 // 1. dedup：相同内容不重复触发 onChange/onLintResult。

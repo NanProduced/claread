@@ -1,4 +1,4 @@
-"""S2.5: Reading Record Identity Projection — DB-backed route-level tests.
+"""Reading Record Identity Projection — DB-backed route-level tests.
 
 These tests exercise the full ``GET /reader/records`` list endpoint with
 real database rows, verifying that:
@@ -278,7 +278,7 @@ async def _insert_extra_original_input(
 
     The existing _create_reader_input_record already inserts one row.
     This helper inserts an additional row with a later created_at so
-    we can verify the LATERAL join picks the earliest one (P1-1).
+    we can verify the LATERAL join picks the earliest one.
     """
     metadata: dict[str, object] = {}
     if filename:
@@ -683,14 +683,14 @@ async def test_sort_last_opened_at_desc_nulls_last_regression(
 
 
 # ---------------------------------------------------------------------------
-# P1-1 regression: bounded server read (LIMIT applied in SQL)
+# Regression: bounded server read (LIMIT applied in SQL)
 # ---------------------------------------------------------------------------
 
 
 async def test_query_less_limit_is_bounded_server_side(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P1-1: When query is empty, SQL LIMIT must be applied server-side.
+    """When query is empty, SQL LIMIT must be applied server-side.
 
     Creates 15 records and requests limit=10. The response must contain
     exactly 10 items (not 15), and total must be 15. This proves the
@@ -722,7 +722,7 @@ async def test_query_less_limit_is_bounded_server_side(
 async def test_query_with_limit_bounded_and_still_matches_display_title(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P1-1: When query is non-empty, results are filtered at SQL level
+    """When query is non-empty, results are filtered at SQL level
     against display_title and LIMIT is applied server-side.
 
     Creates 15 records where 5 have a generated display_title containing
@@ -765,14 +765,14 @@ async def test_query_with_limit_bounded_and_still_matches_display_title(
 
 
 # ---------------------------------------------------------------------------
-# P2 regression: candidate title only when exactly 1 ready candidate
+# Regression: candidate title only when exactly 1 ready candidate
 # ---------------------------------------------------------------------------
 
 
 async def test_display_title_skips_candidate_title_when_two_ready_candidates(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P2: When 2+ ready candidates exist, NONE of their titles are used.
+    """When 2+ ready candidates exist, NONE of their titles are used.
 
     Creates a record with no title and no generated_title_zh, then
     inserts 2 ready candidates. The display_title must NOT be either
@@ -822,9 +822,9 @@ async def test_display_title_skips_candidate_title_when_two_ready_candidates(
 async def test_display_title_uses_candidate_title_when_exactly_one(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P2: When exactly 1 ready candidate exists, its title IS used.
+    """When exactly 1 ready candidate exists, its title IS used.
 
-    This is the positive control for the P2 fix — the candidate title
+    This is the positive control for the fix — the candidate title
     layer must still work when the count is exactly 1.
     """
     pool = reader_api_env["pool"]
@@ -856,14 +856,14 @@ async def test_display_title_uses_candidate_title_when_exactly_one(
 
 
 # ---------------------------------------------------------------------------
-# P1-1 regression: single deterministic original_inputs projection
+# Regression: single deterministic original_inputs projection
 # ---------------------------------------------------------------------------
 
 
 async def test_two_original_inputs_picks_earliest_and_no_duplicate_rows(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P1-1: When a record has 2 original_inputs, the list returns exactly
+    """When a record has 2 original_inputs, the list returns exactly
     one row, total is not doubled, and display_title/source_label come
     from the EARLIEST original_input.
     """
@@ -922,27 +922,27 @@ async def test_two_original_inputs_picks_earliest_and_no_duplicate_rows(
             assert response.status_code == 200
             data = response.json()
 
-            # P1-1: exactly one row (not two from a fan-out JOIN)
+            # Exactly one row (not two from a fan-out JOIN)
             assert len(data["items"]) == 1
-            # P1-1: total is 1 (not doubled)
+            # Total is 1 (not doubled)
             assert data["total"] == 1
 
             item = data["items"][0]
-            # P1-1: display_title comes from the EARLIEST original_input
+            # Display_title comes from the EARLIEST original_input
             assert item["display_title"] == "earliest.pdf"
-            # P1-1: source_label comes from the EARLIEST original_input
+            # Source_label comes from the EARLIEST original_input
             assert item["source_label"] == "上传文件 · earliest.pdf"
 
 
 # ---------------------------------------------------------------------------
-# P1-2 regression: query=None items SQL must have LIMIT, no COUNT(*) OVER()
+# Regression: query=None items SQL must have LIMIT, no COUNT(*) OVER
 # ---------------------------------------------------------------------------
 
 
 async def test_query_none_items_sql_has_limit_and_no_count_window(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P1-2: When query is None, the items SQL must contain LIMIT and must
+    """When query is None, the items SQL must contain LIMIT and must
     NOT contain COUNT(*) OVER().
 
     Patches ``asyncpg.Connection.fetch`` to capture the actual SQL string
@@ -990,7 +990,7 @@ async def test_query_none_items_sql_has_limit_and_no_count_window(
 async def test_query_none_total_always_uses_separate_count(
     reader_api_env: dict[str, object],
 ) -> None:
-    """P1-2: When query is None, total must always come from a separate
+    """When query is None, total must always come from a separate
     simple COUNT(*) on reading_records, even when rows > 0.
 
     Creates 5 records and requests limit=3. total must be 5 (not 3),

@@ -129,7 +129,7 @@ class PublishedGrammarBundle:
 
 @dataclass(frozen=True, slots=True)
 class PublishedGrammarBatch:
-    """T4.1c compact grammar batch publish result.
+    """Compact grammar batch publish result.
 
     One batch job produces N per-unit ``enhancement_layers`` rows
     (``grammar_note`` and/or ``sentence_analysis`` per unit).
@@ -148,7 +148,7 @@ class PublishedGrammarBatch:
 
 @dataclass(frozen=True, slots=True)
 class PublishedTranslationBatch:
-    """T1.1 short-article batch publish result.
+    """Short-article batch publish result.
 
     One batch job produces N per-unit ``enhancement_layers`` rows (one per
     unit covered by the batch). ``layers`` preserves the unit order from
@@ -163,7 +163,7 @@ class PublishedTranslationBatch:
 
 @dataclass(frozen=True, slots=True)
 class PublishedVocabularyBatch:
-    """T1.1 short-article batch publish result for the vocabulary layer."""
+    """Short-article batch publish result for the vocabulary layer."""
 
     reading_record_id: UUID
     base_id: UUID
@@ -209,7 +209,7 @@ def _validate_section_translation_job_shape(
     operation_fingerprint: str,
     ordered_units: tuple[SectionUnit, ...] | None = None,
 ) -> None:
-    """T5.6b: fail-closed shape checks for section_v1 translation jobs.
+    """Fail-closed shape checks for section_v1 translation jobs.
 
     Ordinary (non-section) jobs are no-ops here. Section jobs must have
     matching origin, canonical target_key, identity source fence, and
@@ -659,7 +659,7 @@ class TranslationLayerPublisher:
         outputs: list[tuple[str, TranslationLayerOutput]],
         quality_json: dict[str, Any] | None = None,
     ) -> PublishedTranslationBatch:
-        """T1.1 short-article batch publish: wrap fence + N per-unit writes in
+        """Short-article batch publish: wrap fence + N per-unit writes in
         a ``publish_fence`` span.
 
         ``outputs`` is a list of ``(unit_id, TranslationLayerOutput)`` pairs
@@ -789,7 +789,7 @@ class TranslationLayerPublisher:
                 input_json = job_row["input_json"]
                 if not isinstance(input_json, dict):
                     input_json = {}
-                # T5.6b section lane: validate origin + canonical target key +
+                # Section lane: validate origin + canonical target key +
                 # full ordered closed-range target_unit_ids vs reading_units.
                 ordered_units = await _load_ordered_units_for_job(
                     conn,
@@ -822,7 +822,7 @@ class TranslationLayerPublisher:
                         )
                     seen_unit_ids.add(unit_id)
 
-                # T1 acceptance: reorder outputs to match target_unit_ids
+                # Acceptance: reorder outputs to match target_unit_ids
                 # (reading order) so published layers/events appear in the
                 # order the reader reads them, regardless of the order the
                 # batch executor returned.
@@ -870,7 +870,7 @@ class TranslationLayerPublisher:
                     )
                     effective_quality_json["batch"] = True
 
-                    # T1.1: append ``:unit_id`` to the per-unit layer
+                    # Append ``:unit_id`` to the per-unit layer
                     # fingerprint so the ``uq_enhancement_layers_source_job_fingerprint``
                     # unique constraint ``(source_job_id, operation_fingerprint)``
                     # is not violated when N per-unit layers are published from
@@ -1350,7 +1350,7 @@ class VocabularyLayerPublisher:
         outputs: list[tuple[str, VocabularyLayerOutput]],
         quality_json: dict[str, Any] | None = None,
     ) -> PublishedVocabularyBatch:
-        """T1.1 short-article batch publish for the vocabulary layer.
+        """Short-article batch publish for the vocabulary layer.
 
         Mirrors :meth:`TranslationLayerPublisher.publish_article_translation_batch`
         but without the parsed-decision upsert (vocabulary has no
@@ -1480,7 +1480,7 @@ class VocabularyLayerPublisher:
                         )
                     seen_unit_ids.add(unit_id)
 
-                # T1 acceptance: reorder outputs to match target_unit_ids
+                # Acceptance: reorder outputs to match target_unit_ids
                 # (reading order) so published layers/events appear in the
                 # order the reader reads them, regardless of the order the
                 # batch executor returned.
@@ -1544,7 +1544,7 @@ class VocabularyLayerPublisher:
                     effective_quality_json = dict(quality_json or {})
                     effective_quality_json["batch"] = True
 
-                    # T1.1: append ``:unit_id`` to the per-unit layer
+                    # Append ``:unit_id`` to the per-unit layer
                     # fingerprint so the ``uq_enhancement_layers_source_job_fingerprint``
                     # unique constraint ``(source_job_id, operation_fingerprint)``
                     # is not violated when N per-unit layers are published from
@@ -1992,7 +1992,7 @@ class GrammarBundleLayerPublisher:
         outputs: list[tuple[str, GrammarBundleOutput]],
         quality_json: dict[str, Any] | None = None,
     ) -> PublishedGrammarBatch:
-        """T4.1c compact grammar batch publish: wrap fence + N per-unit
+        """Compact grammar batch publish: wrap fence + N per-unit
         grammar_note/sentence_analysis writes in a ``publish_fence`` span.
 
         ``outputs`` is a list of ``(unit_id, GrammarBundleOutput)`` pairs
@@ -2095,7 +2095,7 @@ class GrammarBundleLayerPublisher:
                 operation_fingerprint = str(job_row["operation_fingerprint"] or "")
 
                 # The batch job's fingerprint may be either the SHORT_BATCH
-                # base or the STRUCTURED_BATCH base (T4.1c route-specific).
+                # base or the STRUCTURED_BATCH base (route-specific).
                 if not (
                     _fingerprint_matches_base(
                         operation_fingerprint,
@@ -2351,7 +2351,7 @@ def _reorder_outputs_by_target_unit_ids(
 ) -> list[tuple[str, _T]]:
     """Reorder batch outputs to match ``target_unit_ids`` (reading order).
 
-    T1 acceptance: the batch executor may return unit outputs in any order
+     acceptance: the batch executor may return unit outputs in any order
     (e.g. parallel LLM call completion order). The publisher must publish
     per-unit layers/events in reading order so the frontend snapshot reload
     sees layers appear in the same order the reader reads them. The unit set
@@ -2435,7 +2435,7 @@ async def _validate_translation_unit_output_core(
 ) -> _ValidatedTranslationOutput:
     """Validate a parsed translation output against unit anchor segments.
 
-    T1.1 short-article batch path: the batch publisher splits the LLM output
+     short-article batch path: the batch publisher splits the LLM output
     into per-unit :class:`TranslationLayerOutput` objects and calls this
     core for each unit. The per-unit fingerprint check is intentionally NOT
     performed here; the batch publish method validates the batch job
@@ -2661,7 +2661,7 @@ async def _insert_published_grammar_layer(
     if layer_row is None:
         raise RuntimeError("enhancement_layers insert did not return a row")
 
-    # T4.2a-PUX-R4-R2.2-P2b-R1: grammar_note 首发使用扩展 payload
+    # Grammar_note 首发使用扩展 payload
     # （schema_version / operation / insertions[]），由 builder 从 typed
     # GrammarNoteLayerOutput 自动派生，validator 在同事务内、event 写入前校验。
     # sentence_analysis 保持既有 7 字段 payload，不接入 builder/validator。

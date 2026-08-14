@@ -1,4 +1,4 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: shared ``build_grammar_item_id`` helper tests.
+"""Shared ``build_grammar_item_id`` helper tests.
 
 验证 snapshot projection 与共享 helper 产出完全相同的 ``item_id`` 值。
 snapshot projection 现在调用 :func:`build_grammar_item_id`，不再维护内联公式。

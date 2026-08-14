@@ -1,4 +1,4 @@
-"""T5.8b — local pre-call policy for semantic outline provider calls.
+"""local pre-call policy for semantic outline provider calls.
 
 Not ExecutionBudget / coverage. V1: max 1 provider call per job; bounded
 input envelope must not exceed OUTLINE_MAX_*; generation_enabled + profile
@@ -21,7 +21,7 @@ from .semantic_outline_worker import (
 
 # V1 product default for max provider calls (no repair).
 DEFAULT_MAX_PROVIDER_CALLS_PER_JOB = 1
-# Optional output-token ceiling; product may override in T5.8d.
+# Optional output-token ceiling; product may override in.
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 
@@ -41,7 +41,7 @@ class SemanticOutlineExecutionPolicy:
         s = settings or get_settings()
         return cls(
             generation_enabled=bool(s.semantic_outline_generation_enabled),
-            # V1 fixed until product fills T5.8d numbers.
+            # V1 fixed until product fills numbers.
             max_provider_calls_per_job=DEFAULT_MAX_PROVIDER_CALLS_PER_JOB,
             max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
         )

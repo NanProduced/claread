@@ -242,7 +242,7 @@ describe("summarizeLintWarnings", () => {
     expect(summarizeLintWarnings([])).toBe("");
   });
 
-  it("单个 warning 返回该 message + 后缀（C2 弱化提示语气）", () => {
+  it("单个 warning 返回该 message + 后缀（弱化提示语气）", () => {
     const warnings: MarkdownLintWarning[] = [
       { kind: "raw_html", message: "检测到 2 处原始 HTML 标签", count: 2 },
     ];
@@ -251,7 +251,7 @@ describe("summarizeLintWarnings", () => {
     );
   });
 
-  it("多个 warning 用顿号连接（C2 弱化提示语气）", () => {
+  it("多个 warning 用顿号连接（弱化提示语气）", () => {
     const warnings: MarkdownLintWarning[] = [
       { kind: "raw_html", message: "检测到 2 处原始 HTML 标签", count: 2 },
       { kind: "unsafe_link", message: "检测到 1 个不安全协议链接（javascript/data/vbscript 等）", count: 1 },
@@ -266,7 +266,7 @@ describe("summarizeLintWarnings", () => {
       { kind: "raw_html", message: "检测到 1 处原始 HTML 标签", count: 1 },
     ];
     const summary = summarizeLintWarnings(warnings);
-    // C2 固化：文案必须弱化为提示式，禁止回到阻塞式语气
+    // 文案必须弱化为提示式，禁止回到阻塞式语气
     expect(summary).not.toContain("提交后将进入审核流程");
     expect(summary).toContain("含可能进入审核的内容");
   });

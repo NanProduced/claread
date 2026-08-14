@@ -1,4 +1,4 @@
-"""T5.4a: optional semantic_outline snapshot projection (None / JSON null)."""
+"""Optional semantic_outline snapshot projection (None / JSON null)."""
 
 from __future__ import annotations
 
@@ -176,7 +176,7 @@ def _json(snapshot: ReaderPlateSnapshot) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# A1 / A2 / A12 — no trusted published outline → None / null
+# no trusted published outline → None / null
 # ---------------------------------------------------------------------------
 
 
@@ -190,7 +190,7 @@ def test_no_layer_python_none_and_json_null() -> None:
 
 
 def test_pending_job_no_published_is_none() -> None:
-    """T5.4a does not read jobs; pending with no published layer ≡ no projection."""
+    """Does not read jobs; pending with no published layer ≡ no projection."""
     build_result = _build_result()
     snapshot = _snapshot(build_result, layers=[])
     assert snapshot.semantic_outline is None
@@ -205,7 +205,7 @@ def test_failed_job_no_published_is_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A3 / A4 — trusted ready / partial
+# Trusted ready / partial
 # ---------------------------------------------------------------------------
 
 
@@ -245,7 +245,7 @@ def test_published_partial_keeps_valid_nodes_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A5 — old published survives failed new job (job not consulted)
+# Old published survives failed new job (job not consulted)
 # ---------------------------------------------------------------------------
 
 
@@ -262,7 +262,7 @@ def test_old_published_still_projected_when_only_published_present() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A6 / A7 — invalid / source mismatch → None
+# Invalid / source mismatch → None
 # ---------------------------------------------------------------------------
 
 
@@ -317,7 +317,7 @@ def test_source_identity_mismatch_is_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A8 / A9 — multi candidate pick latest; stable revision
+# Multi candidate pick latest; stable revision
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +356,7 @@ def test_idempotent_reuse_stable_revision() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A10 — value / navigation unaffected
+# Value / navigation unaffected
 # ---------------------------------------------------------------------------
 
 
@@ -371,7 +371,7 @@ def test_value_and_navigation_unchanged_by_outline() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A11 — enhancement_layers inventory retained
+# Enhancement_layers inventory retained
 # ---------------------------------------------------------------------------
 
 
@@ -457,7 +457,7 @@ def test_default_field_on_model_is_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T5.4a-P1 — envelope status fence + durable published_at
+# Envelope status fence + durable published_at
 # ---------------------------------------------------------------------------
 
 

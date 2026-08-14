@@ -1,4 +1,4 @@
-"""T5.6a-P1 — server-authoritative explicit section request planner (pure).
+"""server-authoritative explicit section request planner (pure).
 
 plan_explicit_section_request(intent, facts) -> Admit | NoOp | Reject
 
@@ -30,7 +30,7 @@ class PlanOutcomeKind(str, Enum):
 
 
 class SectionRequestTrigger(str, Enum):
-    """T5.6a only admits user_explicit. Other values are locked rejects."""
+    """Only admits user_explicit. Other values are locked rejects."""
 
     USER_EXPLICIT = "user_explicit"
     VIEWPORT = "viewport"
@@ -119,7 +119,7 @@ class SectionPlanResult:
 
     @property
     def side_effects(self) -> dict[str, int]:
-        """T5.6a invariant: planner never schedules work or spends budget."""
+        """Invariant: planner never schedules work or spends budget."""
         return {
             "jobs_created": 0,
             "events_emitted": 0,

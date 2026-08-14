@@ -1,4 +1,4 @@
-"""R1 red tests for source-callout display-icon ownership.
+"""Red tests for source-callout display-icon ownership.
 
 The leading emoji is wrapper display metadata. It is not a canonical body
 block, so it must never reach Stable ranges, Reading Units, anchors, or

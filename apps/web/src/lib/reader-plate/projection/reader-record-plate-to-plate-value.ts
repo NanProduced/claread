@@ -8,7 +8,7 @@
  * - callout    → reader_callout
  * - sentence_analysis → reader_sentence_analysis
  *
- * B2: Markdown stable-block-derived blocks 也映射为 reader_* element types：
+ * Markdown stable-block-derived blocks 也映射为 reader_* element types：
  * - heading             → reader_heading (carries level)
  * - list                → reader_list (carries ordered)
  * - list_item           → reader_list_item
@@ -63,7 +63,7 @@ export const READER_SENTENCE_ANALYSIS_CHUNKS_TYPE =
 export const READER_SENTENCE_ANALYSIS_CHUNK_TYPE =
   "reader_sentence_analysis_chunk" as const;
 
-// B2: Markdown stable-block-derived element types.
+// Markdown stable-block-derived element types.
 // Prefixed with `reader_` to avoid colliding with Plate's built-in Markdown
 // plugin node types (`heading`, `ul`, `ol`, `li`, `code_block`, `blockquote`,
 // `table`, `tr`, `td`/`th`, `hr`). Reader-owned elements let us attach
@@ -132,7 +132,7 @@ export interface ReaderSentenceAnalysisChunkElement {
   data: ReaderRecordPlateSentenceAnalysisBlock["data"]["chunks"][number];
 }
 
-// B2: Markdown stable-block-derived element types.
+// Markdown stable-block-derived element types.
 
 export interface ReaderHeadingElement {
   type: typeof READER_HEADING_TYPE;
@@ -215,7 +215,7 @@ export type ReaderPlateElement =
   | ReaderSentenceAnalysisElement
   | ReaderSentenceAnalysisChunksElement
   | ReaderSentenceAnalysisChunkElement
-  // B2: Markdown stable-block-derived elements.
+  // Markdown stable-block-derived elements.
   | ReaderHeadingElement
   | ReaderListElement
   | ReaderListItemElement
@@ -250,7 +250,7 @@ export interface PlateTextNode {
   /** 该 leaf 在 anchor segment 内的 UTF-16 结束偏移 */
   segment_end_utf16?: number;
   /**
-   * B3: Inline marks from Markdown parser. Plate leaf plugins with the
+   * Inline marks from Markdown parser. Plate leaf plugins with the
    * matching key (`bold` / `italic` / `strikethrough` / `code` / `link`)
    * render these as `<strong>` / `<em>` / `<s>` / `<code>` / `<a>`.
    */

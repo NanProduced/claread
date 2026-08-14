@@ -1,9 +1,9 @@
 /**
- * T4.2a-PUX-R4-R2 / R2.1E: Interaction-stable incremental projection merger.
+ * Interaction-stable incremental projection merger.
  *
  * Pure function that attempts a targeted Plate tree update for O4-legitimate
  * representation events (G1/G2/G3) and same-topology `layer_published`
- * revisions (R2.1E), avoiding `editor.tf.setValue()` full DOM rebuild. When
+ * revisions, avoiding `editor.tf.setValue()` full DOM rebuild. When
  * the merge is not safe, it returns `fallback_full_reload` so the caller can
  * fall back to the existing full-reload path.
  *
@@ -13,8 +13,8 @@
  *
  * Key principles:
  * - Supports `projection_ops` / `record_state_changed` representation payloads
- *   that pass the O4-R2-D classifier (G1/G2/G3).
- * - R2.1E: supports `layer_published` events ONLY for same-topology revisions
+ *   that pass the representation classifier (G1/G2/G3).
+ * - Supports `layer_published` events ONLY for same-topology revisions
  *   (changed-block-only replace). First-time publish, block insert/remove/
  *   reorder, identity missing, fence mismatch, mixed batch → all fallback.
  * - Unknown events, missing/invalid payload, generation/base fence mismatch,
@@ -189,7 +189,7 @@ interface RepresentationPayload {
 }
 
 /**
- * R2.1E: `layer_published` payload schema (v1).
+ * `layer_published` payload schema (v1).
  *
  * Backend writers (6发射点 in layer_publisher.py + grammar_window_publisher.py)
  * share these 7 base fields. grammar_window path adds source/plan_id/window_id
@@ -257,7 +257,7 @@ function parseRepresentationPayload(
 }
 
 /**
- * Validate a representation payload against the O4-R2-D contract.
+ * Validate a representation payload against the representation contract.
  * Returns an error reason string if invalid, or null if valid.
  */
 function validateRepresentationPayload(

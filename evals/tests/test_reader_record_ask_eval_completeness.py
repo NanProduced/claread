@@ -1,14 +1,14 @@
 """Tests for exhaustive_completeness evaluator.
 
-R4-A4-0 (Task 2) — explicit recall scope + alias contract
-=========================================================
+Explicit recall scope + alias contract
+======================================
 
 The previous implementation unconditionally required every entity in
-``expected_entity_set`` to appear in the answer. R4-A4-0 replaces this
+``expected_entity_set`` to appear in the answer. The current contract replaces this
 with an explicit opt-in contract:
 
 - Recall is enforced ONLY when
-  :attr:`ReaderRecordAskR4A3Expected.requires_exhaustive_entity_recall`
+  expected-data ``requires_exhaustive_entity_recall`` field
   is ``True``.
 - Entity entries support ``|``-separated alias lists so ``雷霆湾``
   matches ``Thunder Bay``.
@@ -34,8 +34,8 @@ from claread_eval.reader_record_ask.evaluators.exhaustive_completeness import (
     evaluate_exhaustive_completeness,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 
@@ -44,8 +44,8 @@ def _make_case(
     *,
     requires_exhaustive: bool = False,
     question_category: str = "city_enumeration",
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id="t-completeness",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -53,7 +53,7 @@ def _make_case(
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             expected_entity_set=entity_set,
             requires_exhaustive_entity_recall=requires_exhaustive,
         ),
@@ -70,7 +70,7 @@ def _make_artifact(final_text: str) -> RawArtifact:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 Task 2: alias helpers
+# Alias helpers
 # ---------------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ def test_entity_in_text_matches_any_alias() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 Task 2: requires_exhaustive_entity_recall contract
+# requires_exhaustive_entity_recall contract
 # ---------------------------------------------------------------------------
 
 
@@ -159,7 +159,7 @@ def test_main_idea_default_flag_does_not_fail_on_missing_cities() -> None:
     """When ``requires_exhaustive_entity_recall`` is not set (default False),
     the dimension must NOT fail even if every entity is missing.
     """
-    case = ReaderRecordAskR4A3Case(
+    case = ReaderRecordAskCase(
         id="t-completeness-default",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -167,7 +167,7 @@ def test_main_idea_default_flag_does_not_fail_on_missing_cities() -> None:
         baseline_mode="complete",
         question="这篇文章的主旨是什么？",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             expected_entity_set={"city": ["Thunder Bay", "Toronto"]}
             # requires_exhaustive_entity_recall NOT set → defaults to False
         ),

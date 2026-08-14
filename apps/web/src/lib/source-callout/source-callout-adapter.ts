@@ -111,7 +111,7 @@ const CLASS_KIND_PATTERNS: ReadonlyArray<readonly [RegExp, CalloutKind]> = [
  * - `<div>` / `<script>` 等其他标签
  * - 行内 `<aside>text</aside>` 混在段落中间（由 remark-parse 保证块级 HTML 独立成 html 节点）
  *
- * R-Aside-1R A1: 移除结尾 `\s*$` 锚定，允许 `</aside>` 后紧接正文。
+ * 移除结尾 `\s*$` 锚定，允许 `</aside>` 后紧接正文。
  * 尾随正文由 matchAsideBlock 返回 trailingContent 字段，由 remarkMergeAsideHtml
  * 拆分为独立段落节点。
  */
@@ -197,7 +197,7 @@ export function stripGfmAlertMarker(text: string): string {
  *
  * 不匹配返回 `null`（包括非 aside 标签、不完整 aside、转义 aside）。
  *
- * R-Aside-1R A1: 返回 trailingContent 以支持 `</aside>Peer discussion...` 这类
+ * 返回 trailingContent 以支持 `</aside>Peer discussion...` 这类
  * 真实输入。remarkMergeAsideHtml 会在 remark 阶段将尾随文本拆分为独立段落节点，
  * 确保 html deserialize 规则只看到纯净的 `<aside>...</aside>`。
  */

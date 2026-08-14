@@ -1,4 +1,4 @@
-# task-history: D6-I4D (renamed from test_d6_i4d_article_rag_provider_adapters.py)
+# task-history: (renamed from test_d6_i4d_article_rag_provider_adapters.py)
 """Tests for the Article RAG provider adapter foundation.
 
 Covers:
@@ -444,7 +444,7 @@ async def test_embedding_wrapper_error_rewrapped_without_key(monkeypatch: pytest
 async def test_embedding_wrapper_error_traceback_contains_no_sentinel(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """P0 safe-return TDD: traceback serialization must not leak sentinels.
+    """Safe-return TDD: traceback serialization must not leak sentinels.
 
     The lower-layer ``EmbeddingError`` message carries hostile sentinels
     (fake API key, fake chunk text, fake URI, fake raw upstream error).
@@ -520,7 +520,7 @@ async def test_embedding_wrapper_error_traceback_contains_no_sentinel(
 async def test_embedding_diagnostics_rejects_bool_ordinal_and_count(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """P0 Round 3 TDD: bool MUST NOT be accepted as ordinal/count.
+    """Round 3 TDD: bool MUST NOT be accepted as ordinal/count.
 
     ``bool`` is a subclass of ``int`` in Python, so the legacy check
     ``isinstance(value, int) and value > 0`` accepts ``True`` (== 1)
@@ -633,7 +633,7 @@ async def test_embedding_wrapper_error_exposes_only_safe_structured_diagnostics(
 async def test_article_rag_provider_sdk_call_raises_sanitized_through_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """P0 SDK-raise closure TDD: adapter rewraps SDK-raise as safe typed error.
+    """SDK-raise closure TDD: adapter rewraps SDK-raise as safe typed error.
 
     The DashScope SDK can fail BEFORE returning a response object —
     e.g. on transport/auth/serialisation errors that surface as a plain
@@ -988,7 +988,7 @@ class _FakeMilvusClient:
         self.existing_indexes = list(existing_indexes or [])
         self.collection_exists = collection_exists
 
-    def has_collection(self, *, collection_name: str) -> bool:  # noqa: D401
+    def has_collection(self, *, collection_name: str) -> bool: # noqa:
         self.has_collection_calls.append(collection_name)
         return self.collection_exists
 
@@ -1638,7 +1638,7 @@ async def test_zilliz_writer_empty_chunks_returns_zero(
 async def test_zilliz_writer_accepts_none_canonical_offsets(
     _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
 ):
-    """P2 reviewer fix: when I4A's ``rag_ask_only`` paths (table /
+    """Reviewer fix: when I4A's ``rag_ask_only`` paths (table /
     image_ocr / footnote / code RAG) become wired, the citation
     offsets can legitimately be ``None``.  The writer must accept the
     resulting row, propagating the ``None`` values into the upsert
@@ -1916,7 +1916,7 @@ async def test_zilliz_error_message_omits_chunk_text(
     reason="pymilvus not installed; skip nullable-schema assertion",
 )
 def test_real_pymilvus_canonical_offsets_are_nullable_when_installed():
-    """P2 reviewer fix: the two ``canonical_*_utf16`` INT64 columns
+    """Reviewer fix: the two ``canonical_*_utf16`` INT64 columns
     must be declared ``nullable=True`` so that ``rag_ask_only`` chunks
     (I4A-permitted sources: table / image_ocr / footnote / code RAG)
     whose citation offsets are ``None`` can be stored without raising
@@ -2163,7 +2163,7 @@ async def test_real_zilliz_smoke_is_opt_in_only(monkeypatch: pytest.MonkeyPatch)
 
 
 # ===================================================================
-# P1-G: ZillizArticleRagVectorWriter defence-in-depth contract
+# ZillizArticleRagVectorWriter defence-in-depth contract
 #
 # The writer must validate, BEFORE any pymilvus client/network/upsert
 # call, that the configured collection / metadata collection / call
@@ -2174,12 +2174,12 @@ async def test_real_zilliz_smoke_is_opt_in_only(monkeypatch: pytest.MonkeyPatch)
 # stable failure_code, and the pymilvus fake client MUST record
 # zero upsert calls.
 #
-# Each test asserts a public-seam contract.  Before the P1-G production
+# Each test asserts a public-seam contract. Before the production
 # fixes they FAIL (RED); after the fixes they PASS (GREEN).
 # ===================================================================
 
 
-# P1-G writer failure codes (must be unique per scenario; exact-match only).
+# Writer failure codes (must be unique per scenario; exact-match only).
 _WRITER_FAILURE_CODE_COLLECTION_MISMATCH = (
     "vector_writer_collection_mismatch"
 )
@@ -2188,16 +2188,16 @@ _WRITER_FAILURE_CODE_DIMENSION_MISMATCH = (
 )
 _WRITER_FAILURE_CODE_MODEL_MISMATCH = "vector_writer_model_mismatch"
 
-# P1-G-R1: writer contract metadata mismatch failure code.  Used when the
+# Writer contract metadata mismatch failure code. Used when the
 # 4 contract fields (collection, model, dim, text_type) do not match the
-# frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  Defined here (before the P1-G dim
+# frozen ARTICLE_RAG_EMBEDDING_CONTRACT. Defined here (before the dim
 # matrix test) so the parametrize decorator can reference it at module
 # import time.
 _FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH = (
     "vector_writer_contract_mismatch"
 )
 
-# P1-G V1 contract literals (must match ARTICLE_RAG_EMBEDDING_CONTRACT
+# V1 contract literals (must match ARTICLE_RAG_EMBEDDING_CONTRACT
 # exactly).  The single-path convergence froze these values; the writer
 # validates metadata against the frozen contract before any upsert.
 _FROZEN_DOC_EMBEDDING_MODEL = "text-embedding-v4"
@@ -2214,7 +2214,7 @@ def _make_embedding(
     vector_len: int | None = None,
 ) -> ArticleRagEmbedding:
     """Build a deterministic ArticleRagEmbedding with explicit dim and
-    vector_len control (P1-G tests need to be able to set them
+    vector_len control ( tests need to be able to set them
     independently to exercise the dim-vs-vector-len mismatch matrix).
     """
     text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -2265,9 +2265,9 @@ def _make_write_metadata(
     embedding_text_type: str = _FROZEN_DOC_EMBEDDING_TEXT_TYPE,
     chunk_count: int = 1,
 ) -> ArticleRagVectorWriteMetadata:
-    """Build ArticleRagVectorWriteMetadata with all P1-G required fields.
+    """Build ArticleRagVectorWriteMetadata with all required fields.
 
-    The P1-G production contract requires ``embedding_model``,
+    The production contract requires ``embedding_model``,
     ``embedding_dimension`` and ``embedding_text_type`` to be required
     fields on the dataclass.  This helper provides frozen-contract
     defaults so individual tests can override only the field under test.
@@ -2376,7 +2376,7 @@ async def test_zilliz_writer_metadata_collection_mismatch_zero_upsert(
     [
         # writer vs metadata mismatch — contract check catches metadata
         # dim != frozen contract dim (1024) before the legacy metadata
-        # dim check.  P1-G-R1 changed the failure code from
+        # dim check. changed the failure code from
         # vector_writer_dimension_mismatch to
         # vector_writer_contract_mismatch.
         (
@@ -2406,7 +2406,7 @@ async def test_zilliz_writer_metadata_collection_mismatch_zero_upsert(
         ),
         # bool dim is never a valid dimension — contract check catches
         # metadata bool dim (True != 1024) before the legacy metadata
-        # dim check.  P1-G-R1 changed the failure code.
+        # dim check. changed the failure code.
         (
             1024, True, 1024, 1024,
             _FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH,
@@ -2558,7 +2558,7 @@ async def test_zilliz_writer_multi_chunk_second_model_mismatch_zero_upsert(
 async def test_zilliz_writer_valid_v1_metadata_upserts(
     _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
 ):
-    """RED: when all P1-G contracts hold, the writer must accept the
+    """RED: when all contracts hold, the writer must accept the
     metadata, build rows, and forward to the SDK upsert.
     """
     fake_client = _install_pymilvus_stub(monkeypatch, upserted_count=2)
@@ -2586,8 +2586,8 @@ async def test_zilliz_writer_valid_v1_metadata_upserts(
     assert fake_client.upsert_calls[0]["collection_name"] == _FROZEN_VECTOR_NAMESPACE
     rows = fake_client.upsert_calls[0]["data"]
     assert len(rows) == 2
-    # Row carries the embedding_model (already a pre-P1-G row field).
-    # P1-G defence-in-depth validates chunk.embedding.model ==
+    # Row carries the embedding_model (already a pre- row field).
+    # Defence-in-depth validates chunk.embedding.model ==
     # metadata.embedding_model before this point, so the row value is
     # guaranteed to equal the contract model.
     assert rows[0]["embedding_model"] == _FROZEN_DOC_EMBEDDING_MODEL
@@ -2621,8 +2621,8 @@ async def test_zilliz_writer_sentinel_not_in_error_surface(
         dim=_FROZEN_DOC_EMBEDDING_DIM,
     )
 
-    sentinel_model = "sk-P1G-SENTINEL-MODEL-DO-NOT-LEAK-1234567890abcdef"
-    sentinel_text = "P1G-SENTINEL-CHUNK-TEXT-DO-NOT-LEAK-0987654321"
+    sentinel_model = "sk-SENTINEL-MODEL-DO-NOT-LEAK-1234567890abcdef"
+    sentinel_text = "SENTINEL-CHUNK-TEXT-DO-NOT-LEAK-0987654321"
     sentinel_vector_marker = 0.1357924680  # unique marker value
 
     chunk = _make_write_chunk(
@@ -2676,7 +2676,7 @@ async def test_zilliz_writer_sentinel_not_in_error_surface(
 
 
 # ===================================================================
-# P1-G-R1: Writer constructor dimension matrix (RED test A)
+# Writer constructor dimension matrix (RED test A)
 #
 # Verifies the writer constructor explicitly rejects bool dim (which
 # Python treats as an int subclass) and never echoes the caller-supplied
@@ -2684,10 +2684,10 @@ async def test_zilliz_writer_sentinel_not_in_error_surface(
 # ===================================================================
 
 
-_SENTINEL_INVALID_DIMENSION = "P1G-R1-SENTINEL-DIMENSION-DO-NOT-LEAK"
+_SENTINEL_INVALID_DIMENSION = "invalid-dimension"
 _FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED = "vector_writer_unconfigured"
 # _FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH is defined earlier
-# (near the P1-G failure code constants) so the P1-G dim matrix parametrize
+# (near the failure code constants) so the dim matrix parametrize
 # can reference it at module import time.
 
 
@@ -2778,7 +2778,7 @@ def test_writer_constructor_accepts_positive_int_dim(
 
 
 # ===================================================================
-# P1-G-R1: Empty batch metadata validation matrix (RED test B)
+# Empty batch metadata validation matrix (RED test B)
 #
 # Verifies that an empty chunks list does NOT skip metadata validation.
 # Invalid metadata must fail-closed even when chunks_with_embeddings=[].
@@ -2913,7 +2913,7 @@ async def test_empty_batch_valid_metadata_returns_zero(
 
 
 # ===================================================================
-# P1-G-R1: Writer contract metadata 4-field validation (RED test C)
+# Writer contract metadata 4-field validation (RED test C)
 #
 # Verifies the writer validates all 4 contract fields (collection,
 # model, dim, text_type) against the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.

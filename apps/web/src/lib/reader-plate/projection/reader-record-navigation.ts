@@ -34,7 +34,7 @@ export interface ReaderRecordNavigationProjection {
   sourceIdentityKey: string;
 }
 
-/** Product gate (T5.1b rev2): both conditions required; not OR. */
+/** Product gate: both conditions required; not OR. */
 export const L1_MIN_UNIT_COUNT = 6;
 export const L1_MIN_HEADING_COUNT = 2;
 

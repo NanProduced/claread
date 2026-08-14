@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 API_ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS_DIR = REPO_ROOT / "infra" / "migrations"
 
-# DATA-SCHEMA-BASELINE D2 / DATA-D2-CLOSEOUT-R1: the single fresh
+# DATA-SCHEMA-BASELINE DATA-the single fresh
 # baseline replaces every per-step migration; the isolated schema
 # loads exactly this file.
 REQUIRED_MIGRATION_NAMES: tuple[str, ...] = (

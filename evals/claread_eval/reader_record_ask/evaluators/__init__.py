@@ -1,4 +1,4 @@
-"""R4-A3 reader-record-ask 11-dimension deterministic evaluators.
+"""Reader-record-ask 11-dimension deterministic evaluators.
 
 Public API:
 - :class:`RawArtifact` (+ :class:`RawEvidenceObservation`, :class:`RawUsage`)

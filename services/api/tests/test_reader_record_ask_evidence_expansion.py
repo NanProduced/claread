@@ -1,4 +1,4 @@
-"""R4-A5-3: turn-bound opaque evidence expansion (offline deep module).
+"""Turn-bound opaque evidence expansion (offline deep module).
 
 Behavior tests for ``selection continuation → opaque pointer → expand tool
 model-view → new evidence handle``. Public seams only:
@@ -205,7 +205,7 @@ class _FailingRegisterRegistry(EvidenceRegistry):
 class _WriteThenWrongHandleRegistry(EvidenceRegistry):
     """Writes the observation but returns a different legal handle.
 
-    Armed after fixture setup so the A5-2 selection inject succeeds first.
+    Armed after fixture setup so the selection inject succeeds first.
     """
 
     wrong_handle = "evh_" + ("ee" * 16)
@@ -225,7 +225,7 @@ class _MismatchDiscardRegistry(EvidenceRegistry):
     """Returns the wrong handle (postcondition fail) and reports mismatch
     on conditional discard (simulates a foreign entry under our handle).
 
-    Armed after fixture setup so the A5-2 selection inject succeeds first.
+    Armed after fixture setup so the selection inject succeeds first.
     """
 
     wrong_handle = "evh_" + ("dd" * 16)
@@ -313,7 +313,7 @@ class _FullTransitionThenRaiseLedger(_RecordingLedger):
 
 
 class _BrokenRollbackLedger(_RecordingLedger):
-    """R4-A5-3R2 probe: transition writes via super() then raises, and
+    """Probe: transition writes via super then raises, and
     rollback_transition_by_marker raises before or after super()."""
 
     transition_fail_message = "PROBE_EXPAND_TRANSITION_WRITE_RAISE_SECRET_9d21"
@@ -345,7 +345,7 @@ class _BrokenRollbackLedger(_RecordingLedger):
 
 
 class _IssueRaiseBrokenRollbackLedger(_RecordingLedger):
-    """R4-A5-3R2 probe: initial issue writes via super() then raises;
+    """Probe: initial issue writes via super then raises;
     rollback optionally raises (construction-time protection)."""
 
     issue_fail_message = "PROBE_EXPAND_INITIAL_ISSUE_SECRET_6c1e"
@@ -716,7 +716,7 @@ def test_binding_model_expresses_scope_kind_and_rejects_unknown_scopes() -> None
         scope_kind="selection",
     )
     assert binding.scope_kind == "selection"
-    # Map scope is legal (R4-A5-4); unknown scopes fail closed.
+    # Map scope is legal; unknown scopes fail closed.
     map_binding = PointerBinding(
         turn_id=mint_turn_id(),
         envelope_fingerprint=_FINGERPRINT_A,
@@ -989,7 +989,7 @@ def test_full_transition_write_then_raise_rolls_back_only_this_attempt() -> None
 
 
 # ---------------------------------------------------------------------------
-# 6b. Rollback-failure fail-closed matrix (R4-A5-3R2)
+# 6b. Rollback-failure fail-closed matrix
 # ---------------------------------------------------------------------------
 
 
@@ -1296,7 +1296,7 @@ def test_model_supplied_identity_cannot_move_binding() -> None:
 
 
 def test_schema_model_validate_never_raises_and_routes_to_session() -> None:
-    """R2: every hostile raw-argument shape passes model_validate without
+    """Every hostile raw-argument shape passes model_validate without
     ValidationError and reaches expand() as a metered invalid_cursor.
     """
     session, budget, _registry = _session("w" * 4100)
@@ -1342,7 +1342,7 @@ def test_schema_model_validate_never_raises_and_routes_to_session() -> None:
 
 
 def test_schema_stale_pointer_stays_stale_with_model_identity() -> None:
-    """R2: schema path for a known cross-turn pointer stays stale_evidence
+    """Schema path for a known cross-turn pointer stays stale_evidence
     even when the model appends that turn's identity keys.
     """
     ledger = ExpansionPointerLedger()
@@ -1375,7 +1375,7 @@ def test_schema_stale_pointer_stays_stale_with_model_identity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8b. Full canonical source integrity (R4-A5-3R)
+# 8b. Full canonical source integrity
 # ---------------------------------------------------------------------------
 
 
@@ -1538,7 +1538,7 @@ def test_expansion_source_has_no_io_runtime_or_model_retry() -> None:
 
 
 def test_expansion_wired_only_via_turn_coordinator() -> None:
-    """R4-A5-7: expansion reaches production through TurnCoordinator only.
+    """Expansion reaches production through TurnCoordinator only.
 
     Agent/runtime must not import the expansion session directly; the
     coordinator owns ledger/session and tools call coordinator.expand_evidence.

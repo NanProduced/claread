@@ -14,7 +14,7 @@ type PromptSuggestionItem = {
   entryAction: ReaderAskEntryActionDto;
   icon: LucideIcon;
   /**
-   * R2.1 — when present, the host should enable web search for this single
+   * When present, the host should enable web search for this single
    * send (used by the "查询相关资料" suggestion). Absent on article-only
    * suggestions.
    */

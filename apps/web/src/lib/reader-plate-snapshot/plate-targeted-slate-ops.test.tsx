@@ -1,4 +1,4 @@
-// task-history: T4.2a-PUX-R4-R2-S1
+// Mounted Plate targeted Slate operations contract.
 /**
  * Read-only Plate targeted update characterization tests.
  *

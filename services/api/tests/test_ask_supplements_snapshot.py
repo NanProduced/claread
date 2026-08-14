@@ -1,4 +1,4 @@
-"""B2-1: ask_supplements projection into ReaderPlateSnapshot.
+"""Ask_supplements projection into ReaderPlateSnapshot.
 
 These tests verify that Reading Record ask supplements are loaded from
 `reader_ask_supplements` and projected into the snapshot via
@@ -230,7 +230,7 @@ async def _fetch_first_anchor_segment(
 async def test_snapshot_includes_reading_record_ask_supplements(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: snapshot.ask_supplements exposes Reading Record supplements."""
+    """Snapshot.ask_supplements exposes Reading Record supplements."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -309,7 +309,7 @@ async def test_snapshot_includes_reading_record_ask_supplements(
 async def test_snapshot_excludes_deleted_supplements(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: supplements with deleted_at IS NOT NULL are excluded."""
+    """Supplements with deleted_at IS NOT NULL are excluded."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -360,7 +360,7 @@ async def test_snapshot_excludes_deleted_supplements(
 async def test_snapshot_excludes_supplements_with_mismatched_base_or_generation(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: supplements with stale base_id or generation are excluded."""
+    """Supplements with stale base_id or generation are excluded."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -424,7 +424,7 @@ async def test_snapshot_excludes_supplements_with_mismatched_base_or_generation(
 async def test_snapshot_skips_supplements_with_invalid_anchor(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: supplements failing defensive anchor validation are silently skipped."""
+    """Supplements failing defensive anchor validation are silently skipped."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -475,7 +475,7 @@ async def test_snapshot_skips_supplements_with_invalid_anchor(
 async def test_snapshot_skips_supplements_with_unknown_unit_id(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: supplements pointing to a non-existent unit_id are skipped."""
+    """Supplements pointing to a non-existent unit_id are skipped."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -524,7 +524,7 @@ async def test_snapshot_skips_supplements_with_unknown_unit_id(
 async def test_snapshot_supplements_sorted_by_created_at(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """B2-1: supplements are sorted by (created_at, supplement_id)."""
+    """Supplements are sorted by (created_at, supplement_id)."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(

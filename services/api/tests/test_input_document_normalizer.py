@@ -1,4 +1,4 @@
-# task-history: D6-I3B (renamed from test_d6_i3b_input_document_normalizer.py)
+# task-history: (renamed from test_d6_i3b_input_document_normalizer.py)
 from __future__ import annotations
 
 import pytest
@@ -216,7 +216,7 @@ The article continues in plain English after the short example.
     assert code_block.payload_json["language"] == "python"
     assert code_block.payload_json["fenced"] is True
     assert code_block.payload_json["closed"] is True
-    # Markdown ecosystem refactor (D2 / A1): code_block defaults to
+    # Markdown ecosystem refactor: code_block defaults to
     # main_reading (it contributes to canonical text).
     assert code_block.interpretation_policy.default_route == "main_reading"
 
@@ -347,7 +347,7 @@ def add(a, b):
     assert "Overview" in plan.canonical_text
     assert "Readers map each supporting reason to the main claim before discussion starts." in plan.canonical_text
     assert "The quoted summary still belongs in the main reading flow for interpretation." in plan.canonical_text
-    # Markdown ecosystem refactor (D2 / A1): code_block defaults to
+    # Markdown ecosystem refactor: code_block defaults to
     # main_reading, so the fenced code body now contributes to canonical
     # text (without the fence markers themselves).
     assert "return a + b" in plan.canonical_text
@@ -492,7 +492,7 @@ def test_pasted_text_markdown_upgraded_preserves_source_type() -> None:
 
 
 def test_normalized_document_exposes_parser_identity_for_markdown_file() -> None:
-    """T1 — ``NormalizedInputDocument`` MUST expose a document-level
+    """``NormalizedInputDocument`` MUST expose a document-level
     ``parser_identity`` triple (parser_name / parser_version / profile)
     when the markdown parser path is used, so downstream freeze
     persistence can write it into ``source_profile_json`` (plan §4 G0
@@ -518,7 +518,7 @@ def test_normalized_document_exposes_parser_identity_for_markdown_file() -> None
 
 
 def test_normalized_document_parser_identity_none_for_plain_text() -> None:
-    """T1 — ``NormalizedInputDocument.parser_identity`` MUST be ``None``
+    """``NormalizedInputDocument.parser_identity`` MUST be ``None``
     when the plain text path is used (no markdown structure detected),
     so downstream freeze persistence does not falsely attribute the
     document to the structured-source parser.

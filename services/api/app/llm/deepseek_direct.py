@@ -1,4 +1,4 @@
-"""Narrow Direct DeepSeek OpenAI-compatible model (R4-A5-8A1R3).
+"""Narrow Direct DeepSeek OpenAI-compatible model.
 
 Wire contracts (official api.deepseek.com / V4 thinking + tools):
 
@@ -12,7 +12,7 @@ Wire contracts (official api.deepseek.com / V4 thinking + tools):
 - assistant history with tool_calls keeps ``content`` as a string
   (empty string, never JSON null) plus full ``reasoning_content``.
 
-Effective wire state (R4-A5-8A1R3)
+Effective wire state
 ----------------------------------
 The model stores the **configured** mode (absent/enabled/disabled) and
 derives the **effective wire** state from it. Absent is normalized to
@@ -21,7 +21,7 @@ payload is self-describing and cannot fall into a non-thinking path).
 ``_get_tool_choice`` omits ``tool_choice`` when the effective wire state
 is enabled — i.e. for both ``absent`` and ``enabled`` configured modes.
 
-Reentrancy (R4-A5-8A1R2)
+Reentrancy
 ------------------------
 The previous implementation temporarily rewrote
 ``client.chat.completions.create`` via ``object.__setattr__`` per request.
@@ -86,7 +86,7 @@ class DirectDeepSeekChatModel(OpenAIChatModel):
 
     @property
     def deepseek_effective_wire_mode(self) -> DirectDeepSeekThinkingMode:
-        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3).
+        """Effective Direct DeepSeek wire thinking state.
 
         Absent is normalized to ``enabled`` so the wire payload always
         carries an explicit thinking field. Only ``disabled`` yields a

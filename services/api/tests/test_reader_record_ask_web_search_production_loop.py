@@ -1,4 +1,4 @@
-"""ASK-WEB-G1-R1: real-link production-loop tests for Web Search.
+"""ASK-WEB-G1-real-link production-loop tests for Web Search.
 
 These tests verify the end-to-end production closed loop from
 ``stream_agentic_thread_message`` → ``_run_agentic_turn`` →
@@ -342,7 +342,7 @@ def _make_run_fn(
                 WebSearchResultEvent(
                     call_sequence=1,
                     outcome=web_search_outcome,  # type: ignore[arg-type]
-                    # ASK-WEB-R4: turn_outcome mirrors the per-attempt outcome
+                    # ASK-WEB-turn_outcome mirrors the per-attempt outcome
                     # for single-call test scenarios. In real production the
                     # coordinator aggregates across attempts; here the fake
                     # run emits one attempt so turn_outcome == outcome.
@@ -453,7 +453,7 @@ async def test_allowed_mode_agent_does_not_call_search() -> None:
     This guards the ``decision_mode="agent_auto"`` contract: the host
     grants the capability but the model decides whether to search.
 
-    ASK-WEB-G1-R3: a real ``WebSearchBackend`` must be injected for the
+    ASK-WEB-G1-a real ``WebSearchBackend`` must be injected for the
     ``allowed`` echo to surface. ``enabled_for_turn=True`` without a
     backend now fail-closed to ``disabled`` (no fake-available tool).
     """
@@ -474,7 +474,7 @@ async def test_allowed_mode_agent_does_not_call_search() -> None:
             auto_wire_dependencies=False,
             stable_document_id=_DOC,
             web_search_capability=_capability(),
-            # ASK-WEB-G1-R3: backend must be wired for ``allowed`` echo.
+            # ASK-WEB-G1-backend must be wired for ``allowed`` echo.
             web_search_backend=FakeWebSearchBackend(outcomes=[]),
         )
     ]
@@ -1058,9 +1058,9 @@ async def test_capability_enabled_for_turn_false_does_not_auto_wire_backend() ->
 
 
 # ---------------------------------------------------------------------------
-# Scenario 13 (ASK-WEB-G1-R2): Full closed loop WITHOUT run_fn override
+# Scenario 13 (ASK-WEB-G1-): Full closed loop WITHOUT run_fn override
 #
-# This is the canonical G1-R2 witness: the agent runtime is invoked via
+# This is the canonical G1- witness: the agent runtime is invoked via
 # ``stream_agentic_thread_message`` with ``run_fn=None`` so the default
 # ``run_reading_record_ask`` is used. A scripted ``FunctionModel`` drives
 # the agent through ``search_web`` → answer block ``basis=web``. The test
@@ -1147,7 +1147,7 @@ def _web_search_then_answer_model_fn(
 
 @pytest.mark.asyncio
 async def test_full_production_loop_without_run_fn_override() -> None:
-    """Canonical ASK-WEB-G1-R2 closed loop witness.
+    """Canonical ASK-WEB-G1- closed loop witness.
 
     Exercises the unmodified ``run_reading_record_ask`` runtime via a
     scripted ``FunctionModel`` that drives ``search_web`` → answer
@@ -1264,7 +1264,7 @@ async def test_full_production_loop_without_run_fn_override() -> None:
         "source_fingerprint leaked into public JSON"
     )
 
-    # 9. ASK-WEB-G1-R3 cold history parity: feed the persisted
+    # 9. ASK-WEB-G1- cold history parity: feed the persisted
     #    ``user_visible_output_json`` through the real
     #    :func:`project_agentic_history_message` and assert the hot
     #    completed DTO, the persisted DB DTO, and the projected cold
@@ -1446,7 +1446,7 @@ async def test_full_production_loop_search_not_called_when_disabled() -> None:
     assert completed["web_search"] is None
     assert completed.get("citations") == []
 
-    # ASK-WEB-G1-R3: Search not invoked → hot/cold web_search both null.
+    # ASK-WEB-G1-Search not invoked → hot/cold web_search both null.
     # Run the real history projection on the persisted
     # ``user_visible_output_json`` and assert the cold history agrees
     # with the hot completed DTO on every public field, including the
@@ -1646,7 +1646,7 @@ async def test_full_production_loop_no_results_emits_no_citation() -> None:
         f"web citation fabricated on no_results: {web_citations}"
     )
 
-    # ASK-WEB-G1-R3: no_results hot/cold summary parity. The persisted
+    # ASK-WEB-G1-no_results hot/cold summary parity. The persisted
     # DTO and the cold history projection must agree on the
     # ``no_results`` summary, and neither may forge a web citation.
     assert len(repo.completed_writes) == 1
@@ -1704,7 +1704,7 @@ async def test_full_production_loop_no_results_emits_no_citation() -> None:
 
 @pytest.mark.asyncio
 async def test_full_production_loop_unavailable_emits_no_citation() -> None:
-    """ASK-WEB-G1-R3 cold history witness for the ``unavailable`` outcome.
+    """ASK-WEB-G1- cold history witness for the ``unavailable`` outcome.
 
     When the provider returns ``unavailable`` (no network, adapter not
     ready), the runtime must NOT fabricate a web citation. The completed
@@ -1839,7 +1839,7 @@ async def test_full_production_loop_unavailable_emits_no_citation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R5 frozen lifecycle / deadline / source-quality regressions
+# Frozen lifecycle / deadline source-quality regressions
 # ---------------------------------------------------------------------------
 
 
@@ -2582,7 +2582,7 @@ async def test_public_dates_and_independent_domain_priority_do_not_project_page_
 
 @pytest.mark.asyncio
 async def test_full_production_loop_failed_emits_no_citation() -> None:
-    """ASK-WEB-G1-R3 cold history witness for the ``failed`` outcome.
+    """ASK-WEB-G1- cold history witness for the ``failed`` outcome.
 
     When the provider returns ``failed`` (adapter raised), the runtime
     must NOT fabricate a web citation. The completed DTO carries

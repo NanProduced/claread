@@ -1,4 +1,4 @@
-"""DATA-D2-CLOSEOUT-R1 real-PostgreSQL contracts for the dropped columns.
+"""DATA- real-PostgreSQL contracts for the dropped columns.
 
 Verified against the single fresh baseline (``infra/migrations/0001_initial.sql``)
 in an isolated schema:
@@ -32,7 +32,7 @@ from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABA
 
 pytestmark = pytest.mark.anyio
 
-# The 13 identity columns dropped by DATA-SCHEMA-BASELINE D2.
+# The 13 identity columns dropped by DATA-SCHEMA-BASELINE.
 DROPPED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("user_annotations", "analysis_record_id"),
     ("reader_notes", "analysis_record_id"),

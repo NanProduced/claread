@@ -798,7 +798,7 @@ async def test_publish_window_marks_job_succeeded(
 
 
 # ---------------------------------------------------------------------------
-# P1-4 / P2-7 tests: §8.3 layer contract + layer_published reader_event
+# tests: §8.3 layer contract + layer_published reader_event
 # ---------------------------------------------------------------------------
 
 
@@ -815,7 +815,7 @@ async def test_publisher_output_json_uses_grammar_note_layer_contract(
         UUID,
     ],
 ) -> None:
-    """P1-4: grammar_note output_json conforms to GrammarNoteLayerOutput (§8.3).
+    """Grammar_note output_json conforms to GrammarNoteLayerOutput (§8.3).
 
     output_json.schema_version == 1
     output_json.items[0] has grammar_point / pattern / note / spans
@@ -860,7 +860,7 @@ async def test_publisher_output_json_uses_grammar_note_layer_contract(
     assert item["grammar_point"]
     assert "note" in item and item["note"]
     assert "spans" in item and len(item["spans"]) >= 1
-    # Selector sidecar fields MUST NOT appear in output_json (P1-4 fix)
+    # Selector sidecar fields MUST NOT appear in output_json (fix)
     assert "semantic_dedup_key" not in item
     assert "pattern_key" not in item
     assert "quality_score" not in item
@@ -879,7 +879,7 @@ async def test_publisher_output_json_uses_sentence_analysis_layer_contract(
         UUID,
     ],
 ) -> None:
-    """P1-4: sentence_analysis output_json conforms to SentenceAnalysisLayerOutput.
+    """Sentence_analysis output_json conforms to SentenceAnalysisLayerOutput.
 
     items[0] has anchor / label / analysis / chunks (≥1 chunk with order/label/text).
     Selector sidecar fields absent.
@@ -945,7 +945,7 @@ async def test_publisher_quality_json_stores_provenance_not_in_output_json(
         UUID,
     ],
 ) -> None:
-    """P1-4: provenance lives in quality_json, NOT in output_json.
+    """Provenance lives in quality_json, NOT in output_json.
 
     quality_json has plan_id / window_id / semantic_dedup_key /
     pattern_key / quality_score. output_json MUST NOT have any of these
@@ -993,7 +993,7 @@ async def test_publisher_quality_json_stores_provenance_not_in_output_json(
     assert "quality_score" in quality
     # Per-item provenance array
     assert "items" in quality and len(quality["items"]) >= 1
-    # P1-2 self-rating contract: reading_blocker / dedup_hint are now part
+    # Self-rating contract: reading_blocker / dedup_hint are now part
     # of the audit trail in quality_json.
     assert "reading_blocker" in quality
     assert "dedup_hint" in quality
@@ -1036,7 +1036,7 @@ async def test_publisher_ledger_has_no_empty_dedup_keys(
         UUID,
     ],
 ) -> None:
-    """P1-2 self-rating contract: published_dedup_keys_by_type JSONB must
+    """Self-rating contract: published_dedup_keys_by_type JSONB must
     only contain non-empty [anchor, hint] 2-tuples after publish.
 
     The scoped dedup key is (anchor_segment_id, normalized_dedup_hint).
@@ -1108,7 +1108,7 @@ async def test_publisher_emits_layer_published_event(
         UUID,
     ],
 ) -> None:
-    """P2-7: with event_runtime injected, layer_published events are appended.
+    """With event_runtime injected, layer_published events are appended.
 
     After publish, reader_events table contains one ``layer_published`` row
     per accepted layer, with payload_json.layer_id matching, and
@@ -1197,12 +1197,12 @@ async def test_publisher_fail_closed_when_candidate_contents_none_but_candidates
         UUID,
     ],
 ) -> None:
-    """P2-1 fail closed: candidate_contents=None + candidates → ValueError.
+    """Fail closed: candidate_contents=None + candidates → ValueError.
 
     Previously the publisher fell back to a legacy selector-sidecar
     ``output_json`` shape when ``candidate_contents`` was None, which
     violated the §8.3 layer contract (no schema_version, sidecar fields
-    in output_json). P2-1 removed that escape hatch: when candidates
+    in output_json). removed that escape hatch: when candidates
     exist, the publisher must raise ValueError instead of publishing a
     non-contract shape. Production callers must derive
     ``candidate_contents`` from the executor output (see
@@ -1232,7 +1232,7 @@ async def test_publisher_fail_closed_when_candidate_contents_none_but_candidates
 
 
 # ---------------------------------------------------------------------------
-# T3.4a: window diagnostics (no_op_cause / counts / reasons)
+# Window diagnostics (no_op_cause / counts reasons)
 # ---------------------------------------------------------------------------
 
 
@@ -1276,7 +1276,7 @@ async def test_diagnostics_llm_empty_when_no_candidates(
         asyncpg.Pool, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4a: LLM returns 0 candidates → no_op_cause=llm_empty.
+    """LLM returns 0 candidates → no_op_cause=llm_empty.
 
     raw_candidate_count_by_type totals to 0; window status='no_op';
     diagnostics readable from both output_ref_json and analysis_windows.coverage.
@@ -1347,7 +1347,7 @@ async def test_diagnostics_selector_rejected_all_when_candidates_invalid(
         asyncpg.Pool, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4a: LLM returns candidates but selector rejects all.
+    """LLM returns candidates but selector rejects all.
 
     raw_candidate_count > 0 but accepted_count = 0 → no_op_cause=
     selector_rejected_all. rejected_breakdown records the gates + reasons.
@@ -1424,7 +1424,7 @@ async def test_diagnostics_accepted_count_by_type_when_candidates_accepted(
         UUID,
     ],
 ) -> None:
-    """T3.4a: accepted candidates → accepted_count_by_type correct.
+    """Accepted candidates → accepted_count_by_type correct.
 
     Window is marked completed (not no-op); no_op_cause is None;
     accepted_count_by_type matches the layers actually published.
@@ -1483,7 +1483,7 @@ async def test_diagnostics_no_op_window_queryable_from_coverage(
         asyncpg.Pool, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4a: no-op window diagnostics readable from analysis_windows.coverage.
+    """No-op window diagnostics readable from analysis_windows.coverage.
 
     Even without joining reader_jobs, a query against analysis_windows
     returns the no_op_cause / counts / strategy so operators can
@@ -1524,7 +1524,7 @@ async def test_diagnostics_no_op_window_queryable_from_coverage(
 
 
 # ---------------------------------------------------------------------------
-# T3.4b: RECORD_DENSITY density calculation fix tests
+# RECORD_DENSITY density calculation fix tests
 # ---------------------------------------------------------------------------
 
 
@@ -1565,7 +1565,7 @@ async def test_ledger_loads_base_text_length_from_reading_bases(
         asyncpg.Pool, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4b: _load_ledger_from_plan injects reading_bases.content_utf16_length
+    """_load_ledger_from_plan injects reading_bases.content_utf16_length
     into SelectorLedger.base_text_length_utf16.
 
     Before the fix, base_text_length_utf16 defaulted to 0, collapsing the
@@ -1603,7 +1603,7 @@ async def test_density_gate_uses_real_base_length_not_raw_count(
         asyncpg.Pool, UUID, UUID, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4b: With a long base (>1000 chars) and 3 pre-published grammar_note,
+    """With a long base (>1000 chars) and 3 pre-published grammar_note,
     a 4th grammar_note candidate is NOT rejected by RECORD_DENSITY.
 
     Before the fix: density = 3 / max(0/1000, 1.0) = 3.0 >= cap 3.0 → rejected.
@@ -1693,7 +1693,7 @@ async def test_ledger_falls_back_to_char_length_when_content_utf16_length_missin
         asyncpg.Pool, UUID, UUID, UUID, UUID
     ],
 ) -> None:
-    """T3.4b: When content_utf16_length is 0, fall back to char_length(text).
+    """When content_utf16_length is 0, fall back to char_length(text).
 
     The CHECK constraint guarantees content_utf16_length >= 1, but we test
     the defensive fallback by dropping the constraint and setting it to 0.
@@ -1754,7 +1754,7 @@ async def test_diagnostics_rejected_reason_base_len_not_zero(
         UUID,
     ],
 ) -> None:
-    """T3.4b: When RECORD_DENSITY triggers, the rejected reason's base_len
+    """When RECORD_DENSITY triggers, the rejected reason's base_len
     reflects the real base length, not 0.
 
     Uses the short ARTICLE_TEXT fixture (~450 chars, < 1000). With

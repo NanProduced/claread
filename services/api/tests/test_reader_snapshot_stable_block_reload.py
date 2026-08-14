@@ -4,7 +4,7 @@
 # paragraph line lengths are part of the freeze/reload contract. Wrapping
 # them would change fixture bytes and invalidate structural assertions.
 # Ordinary Python source in this file is kept under the 100-char budget.
-"""R1 Phase 3 — Reader 持久化重载 Stable Block 结构等价红灯测试。
+"""Reader 持久化重载 Stable Block 结构等价红灯测试。
 
 封住的失效点：``repository.load_snapshot_facts`` 只读 ``reading_units``
 的 legacy 字段，从不 JOIN active Stable Document，导致数据库中的 Stable
@@ -12,7 +12,7 @@ Document 结构正确、但 Reader Snapshot 重载后 stable_block_type /
 heading_level / inline_marks / table_role / parent 全部丢失，Reader 把
 标题与强调退化为普通段落（刚构建路径与重载路径结构不等价）。
 
-测试策略（任务书 Phase 3 要求）：
+测试策略（任务书 要求）：
 - 优先使用隔离 PostgreSQL schema 的真实 repository 测试（非 fake connection）。
 - 刚构建路径：``StableReadyInputApplicationService
   .freeze_stable_ready_input_and_load_snapshot``（生产统一输入全链路：
@@ -114,7 +114,7 @@ async def reload_env() -> AsyncIterator[asyncpg.Pool]:
         await admin_conn.execute(BASELINE_SQL)
     except (OSError, asyncpg.PostgresError) as exc:  # pragma: no cover
         await admin_conn.close()
-        pytest.skip(f"PostgreSQL unavailable for R1 reload tests: {exc}")
+        pytest.skip(f"PostgreSQL unavailable for reload tests: {exc}")
     pool = await _make_pool(schema_name)
     try:
         yield pool
@@ -358,7 +358,7 @@ async def test_reloaded_facts_units_carry_stable_block_metadata(
     assert len(heading_units) == 4
     assert all(u.heading_level is not None for u in heading_units)
     assert all(u.stable_block_id for u in heading_units)
-    # A5 规则：只有 heading 覆盖 unit_type。
+    # 规则：只有 heading 覆盖 unit_type。
     assert all(u.unit_type == "heading" for u in heading_units)
 
     marked_units = [u for u in units if u.inline_marks]
@@ -549,9 +549,9 @@ async def test_duplicate_exact_match_is_deterministic_first_wins(
 
 
 # ===========================================================================
-# R2 Phase 4 — End-to-end structural fixtures for reload preservation.
+# End-to-end structural fixtures for reload preservation.
 #
-# R1 only covered heading + paragraph + em inline mark reload. These tests
+# Only covered heading + paragraph + em inline mark reload. These tests
 # freeze documents containing table / code_block / thematic_break / nested
 # list structures and verify the stable block tree survives DB reload with
 # parent_block_id chain, table_role, and metadata_only routing intact.
@@ -602,7 +602,7 @@ async def _load_stable_document_blocks(
         )
 
 
-# R2 Phase 4 fixtures: each fixture must pass the input suitability gate
+# Fixtures: each fixture must pass the input suitability gate
 # (>= 50 English words, >= 0.70 english_word_ratio, no table/image/
 # footnote/raw_html/math/unclosed_fence). Tables are intentionally
 # absent — they trigger `table_structure_uncertain` and require candidate
@@ -668,7 +668,7 @@ surrounding paragraph units and that the parent chain is preserved.
 
 
 async def test_code_block_survives_reload(reload_env: asyncpg.Pool) -> None:
-    """R2 Phase 4: Fenced code block survives DB reload with language intact.
+    """Fenced code block survives DB reload with language intact.
 
     code_block is main_reading with text_content → non-NULL canonical
     range → becomes a unit. payload_json.language is preserved in the
@@ -736,7 +736,7 @@ async def test_code_block_survives_reload(reload_env: asyncpg.Pool) -> None:
 async def test_thematic_break_routes_to_metadata_only_no_unit(
     reload_env: asyncpg.Pool,
 ) -> None:
-    """R2 Phase 4: thematic_break routes to metadata_only, never becomes a unit.
+    """Thematic_break routes to metadata_only, never becomes a unit.
 
     thematic_break has text_content=None and default_route="metadata_only"
     → NULL canonical range → cannot match any unit. The block exists in
@@ -802,7 +802,7 @@ async def test_thematic_break_routes_to_metadata_only_no_unit(
 async def test_nested_list_parent_chain_survives_reload(
     reload_env: asyncpg.Pool,
 ) -> None:
-    """R2 Phase 4: 3-level nested list parent_block_id chain survives reload.
+    """3-level nested list parent_block_id chain survives reload.
 
     list (wrapper, NULL range) → list_item (text, range) → nested list
     (wrapper, NULL range) → nested list_item (text, range). The
@@ -1032,7 +1032,7 @@ def _assert_callout_container_structure(
     Returns the container block record. Asserts:
       - exactly 1 blockquote with the hint
       - text_content is only the storage placeholder (not canonical text)
-        — the generic freeze path gives ranges to text-bearing descendants
+        the generic freeze path gives ranges to text-bearing descendants
       - container has a non-null block_id (children reference it)
       - for gfm_alert: ``gfm_alert_kind`` is present and ``[!NOTE]`` does
         NOT leak into text_content

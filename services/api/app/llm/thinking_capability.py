@@ -1,4 +1,4 @@
-"""Provider-thinking capability contract (R4-A5-8A1).
+"""Provider-thinking capability contract.
 
 Narrow, dialect-aware configuration for low-cost Ask routes that may enable
 chain-of-thought / reasoning transport. Does **not** merge DeepSeek direct,
@@ -35,7 +35,7 @@ EnablePayloadKind = Literal[
     "none",
 ]
 
-# Direct DeepSeek V4 wire thinking state (R4-A5-8A1R3).
+# Direct DeepSeek V4 wire thinking state.
 #
 # DeepSeek V4's official default is thinking ON. The Direct path
 # distinguishes the **configured** state (what the caller wrote) from the
@@ -47,7 +47,7 @@ EnablePayloadKind = Literal[
 #   enabled      enabled          {"thinking": {"type": "enabled"}}
 #   disabled     disabled         {"thinking": {"type": "disabled"}}
 #
-# R3 change: absent is no longer "leave the field out and let the server
+# Absent does not mean "leave the field out and let the server
 # default apply". Product policy normalizes absent to an explicit
 # ``{"type": "enabled"}`` so the wire payload is self-describing and
 # cannot accidentally fall into a non-thinking code path. Only an explicit
@@ -100,7 +100,7 @@ class ThinkingProviderCapability:
 
     @property
     def effective_wire_mode(self) -> DirectDeepSeekThinkingMode | None:
-        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3R).
+        """Effective Direct DeepSeek wire thinking state.
 
         Absent configuration is normalized to ``enabled`` so the wire
         payload always carries an explicit thinking field. Only an explicit
@@ -123,7 +123,7 @@ class ThinkingProviderCapability:
     def direct_thinking_enabled_on_wire(self) -> bool | None:
         """True when the effective Direct DeepSeek wire thinking is enabled.
 
-        R3: absent is normalized to enabled, so this is True for both
+        Absent is normalized to enabled, so this is True for both
         ``absent`` and ``enabled`` configured modes. Only ``disabled``
         returns False.
 
@@ -340,7 +340,7 @@ def resolve_thinking_capability(
 
     if dialect == "deepseek_direct":
         mode = _resolve_direct_deepseek_thinking_mode(model_settings)
-        # R3: absent is normalized to effective enabled on wire. Only an
+        # Absent is normalized to effective enabled on wire. Only an
         # explicit ``disabled`` turns thinking off. This prevents absent
         # from falling into the non-thinking code path.
         effective_enabled = mode != "disabled"
@@ -465,7 +465,7 @@ def apply_thinking_to_model_settings(
         if capability.enable_payload_kind == "enable_thinking_bool":
             body.setdefault("enable_thinking", False)
         elif capability.enable_payload_kind == "thinking_type_enabled":
-            # Direct DeepSeek: only ``disabled`` reaches this branch (R3).
+            # Direct DeepSeek: only ``disabled`` reaches this branch.
             # Absent is normalized to effective enabled above and emits
             # ``{"type": "enabled"}`` via the thinking_enabled=True path.
             # V4 default is thinking ON, so explicit off must emit

@@ -1,4 +1,4 @@
-# task-history: D6-I2D (renamed from test_d6_i2d_candidate_document_confirm_application_service.py)
+# task-history: (renamed from test_d6_i2d_candidate_document_confirm_application_service.py)
 """Focused tests for the candidate document confirm application
 Service.
 
@@ -16,7 +16,7 @@ Test coverage:
     * Event error -> rollback, no snapshot.
     * Snapshot error -> application error, but transaction already
       committed.
-    * Version / language / now pass-through to D6-I2D-A confirm.
+    * Version / language now pass-through to confirm.
 """
 
 from __future__ import annotations
@@ -433,7 +433,7 @@ def _queue_happy_path(
     *,
     candidate_row: dict[str, Any] | None = None,
 ) -> None:
-    """Queue fetchrow results for a happy-path D6-I2D-A confirm.
+    """Queue fetchrow results for a happy-path confirm.
 
     Queues:
         fetchrow #1: candidate row (service SELECT ... FOR UPDATE)
@@ -573,7 +573,7 @@ class TestHappyPath:
         assert result.snapshot is _FAKE_SNAPSHOT
 
     def test_confirm_called_inside_active_transaction(self) -> None:
-        """The D6-I2D-A confirm must be called while the transaction
+        """The confirm must be called while the transaction
         is active. We verify this indirectly: the confirm function
         checks ``conn.is_in_transaction()`` and would raise if False.
         Since the happy path completes successfully, the transaction
@@ -998,7 +998,7 @@ class TestPassThrough:
 
 
 # --------------------------------------------------------------------
-# Confirmed-candidate recovery (D6-I2D-B-H)
+# Confirmed-candidate recovery
 # --------------------------------------------------------------------
 
 

@@ -1,7 +1,7 @@
-"""Safe error projection for R4-A3 harness artifacts and reports.
+"""Safe error projection for harness artifacts and reports.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: 安全错误投影（P1-2）.
+spec.md` — Requirement: 安全错误投影.
 
 The previous harness wrote ``f"{type(exc).__name__}: {str(exc)[:200]}"``
 into ``RawArtifact.error``. Truncation is NOT sanitization — provider
@@ -53,7 +53,7 @@ from pydantic import BaseModel
 #: it caught. This is the fail-closed default.
 _SAFE_CODE_RUNTIME_EXCEPTION: Final[str] = "runtime_exception"
 
-# R4-A4-2R5R Task 4: Single source of truth for safe error codes.
+# Single source of truth for safe error codes.
 # ``SafeErrorCode`` is a ``Literal`` of every legal safe-code value.
 # ``_SAFE_SUMMARIES`` is keyed by this Literal, and
 # ``_RECOGNIZED_SAFE_CODES`` is derived from it. Downstream consumers
@@ -73,7 +73,7 @@ SafeErrorCode = Literal[
     "preflight_failed",
     "case_load_failed",
     "artifact_write_failed",
-    # R4-A4-2R5/R4-A4-2R5R failure taxonomy: separate model-fault output
+    # Failure taxonomy: separate model-fault output
     # failures from provider/network/generic runtime exceptions. The
     # three codes below are emitted ONLY when the harness classifies the
     # exception type (e.g. ``UnexpectedModelBehavior`` from pydantic_ai)
@@ -81,7 +81,7 @@ SafeErrorCode = Literal[
     # message body is NOT read; only ``type(exc).__name__`` is used.
     "output_retry_exhausted",
     "agent_output_invalid",
-    # R4-A4-2R5R2 Task 2: conservative fallback when
+    # Conservative fallback when
     # ``UnexpectedModelBehavior`` is raised but the harness CANNOT prove
     # the output-validator retry budget was exhausted. Proof requires
     # BOTH ``output_validation_final_attempts`` AND

@@ -1,4 +1,4 @@
-"""R4-A1 BaselineContextAssembler tests.
+"""BaselineContextAssembler tests.
 
 Covers short/medium/long article policy, article_seed evidence handle
 minting and legality, prompt injection defence (XML-escaped untrusted
@@ -613,7 +613,7 @@ async def test_baseline_failure_does_not_produce_pseudo_success() -> None:
         model=_text_model("should not be used"),
     )
     assert result.final_text is None
-    # R4-A2: baseline failure now returns a typed FinalizedAskResult
+    # Baseline failure now returns a typed FinalizedAskResult
     # (status="unavailable", reason="document_unavailable") instead of
     # None, so production_stream can emit a typed terminal_reason
     # instead of the legacy "missing_finalizer_result".
@@ -753,7 +753,7 @@ def test_static_boundary_does_not_introduce_legacy_imports() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A1 rework: strict budget + 1:1 handle-chunk binding regressions
+# Strict budget + 1:1 handle-chunk binding regressions
 # ---------------------------------------------------------------------------
 
 
@@ -954,7 +954,7 @@ async def test_finalizer_resolves_model_cited_seed_handle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A1 rework: strict budget — empty chunk + short-threshold-with-separator
+# Strict budget empty chunk + short-threshold-with-separator
 # ---------------------------------------------------------------------------
 
 
@@ -1074,7 +1074,7 @@ async def test_units_sorted_by_order_index_deterministically() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A1 rework: P1-3 real persistence integration test
+# Real persistence integration test
 #
 # Tests the full runtime → build_completed_dto → history_projector chain
 # with a FunctionModel that reads the first prompt, extracts the
@@ -1233,8 +1233,8 @@ async def test_persistence_integration_runtime_to_completed_to_history() -> None
 
 
 # ---------------------------------------------------------------------------
-# R4-A1 final P0 closure: P0-1 snippet from truncated chunk +
-# P0-2 serialized budget + chunk count cap
+# Final closure: snippet from truncated chunk +
+# Serialized budget + chunk count cap
 # ---------------------------------------------------------------------------
 
 
@@ -1255,7 +1255,7 @@ def _baseline_serialized_cost(baseline) -> int:
 
 @pytest.mark.asyncio
 async def test_snippet_derived_from_truncated_chunk_7900_3000() -> None:
-    """P0-1: snippet must come from the truncated chunk text, not full unit.
+    """Snippet must come from the truncated chunk text, not full unit.
 
     unit1=7900 chars, unit2=3000 chars. Total=10900 > 6000 → medium/long.
     Raw budget=8000: unit1 fits (7900), unit2 truncated to 100.
@@ -1315,7 +1315,7 @@ async def test_snippet_derived_from_truncated_chunk_7900_3000() -> None:
 
 @pytest.mark.asyncio
 async def test_3001_single_char_units_capped_by_max_chunks() -> None:
-    """P0-2 Test A: 3001 single-char units must not produce 3001 chunks.
+    """Test A: 3001 single-char units must not produce 3001 chunks.
 
     Without MAX_BASELINE_CONTEXT_CHUNKS, 3001 units would produce 3001
     chunks, 3001 handles, and ~350k chars of serialized baseline prompt.
@@ -1363,7 +1363,7 @@ async def test_3001_single_char_units_capped_by_max_chunks() -> None:
 
 @pytest.mark.asyncio
 async def test_xml_escaping_inflation_capped_by_hard_budget() -> None:
-    """P0-2 Test B: text that inflates 5× under XML escaping is truncated.
+    """Test B: text that inflates 5× under XML escaping is truncated.
 
     6000 chars of '&' → 30000 chars escaped. Without the serialized hard
     budget, this would enter the model at 30000 chars. With the hard
@@ -1433,7 +1433,7 @@ async def test_xml_escaping_inflation_capped_by_hard_budget() -> None:
 
 @pytest.mark.asyncio
 async def test_every_seed_observation_snippet_within_chunk_text() -> None:
-    """P0-1 Test D: every evidence snippet must stay within its chunk text.
+    """Test D: every evidence snippet must stay within its chunk text.
 
     For a multi-unit medium article, iterate over every article_seed
     observation and verify:
@@ -1498,7 +1498,7 @@ async def test_every_seed_observation_snippet_within_chunk_text() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A2 coverage awareness tests (scenarios 8, 9, 10)
+# Coverage awareness tests (scenarios 8, 9, 10)
 # ---------------------------------------------------------------------------
 
 

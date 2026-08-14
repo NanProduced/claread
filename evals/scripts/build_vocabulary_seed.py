@@ -5,7 +5,7 @@ Run from `evals/` as:
     uv run python scripts/build_vocabulary_seed.py
 
 The script writes deterministic execution snapshots for each case by
-applying the same resolver logic that D5-V3 worker uses. The output is
+applying the same resolver logic as the vocabulary worker. The output is
 intended to be checked into the repository and reviewed manually.
 """
 
@@ -766,7 +766,7 @@ def case_13_too_many_candidates_fail_closed() -> dict[str, Any]:
 def case_14_fallback_window_skip() -> dict[str, Any]:
     """Vocabulary candidate on a fallback_window segment must be skipped with
     reason_code=boundary_low_fallback_window, mirroring grammar bundle's
-    policy (D5 boundary alignment)."""
+    policy (boundary alignment)."""
     seg_text = "longlongword " * 24
     seg_text = seg_text.strip()
     seg_end = _utf16_code_units(seg_text)

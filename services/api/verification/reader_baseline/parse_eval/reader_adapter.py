@@ -1,6 +1,6 @@
 """Official API-side adapter: ReaderPlateSnapshot → parse-eval artifact.
 
-R1 seam: this is the **official producer** that maps a
+ seam: this is the **official producer** that maps a
 ``ReaderPlateSnapshot`` + ``ReaderPipelineRunSummary`` into a
 portable :class:`~.schema.ParseEvalArtifactV1`. It is the seam
 between the Reader runtime and the eval contract.
@@ -90,16 +90,16 @@ if TYPE_CHECKING:
     )
 
 
-#: Official API-side producer module identity. Recorded in
-#: :class:`~.schema.ArtifactProvenance` so the gate can tell an
-#: API-side artifact apart from a fixture-grade artifact.
+# Official API-side producer module identity. Recorded in
+# :class:`~.schema.ArtifactProvenance` so the gate can tell an
+# API-side artifact apart from a fixture-grade artifact.
 ADAPTER_PRODUCER_MODULE: str = (
     "services/api/verification/reader_baseline/parse_eval/reader_adapter.py"
 )
 
 
 # ---------------------------------------------------------------------------
-# Fail-closed exception for snapshot/text base mismatch (P1-2)
+# Fail-closed exception for snapshot/text base mismatch
 # ---------------------------------------------------------------------------
 #
 # The adapter MUST refuse to produce an artifact when the source-of-truth
@@ -118,7 +118,7 @@ ADAPTER_PRODUCER_MODULE: str = (
 class SnapshotBaseMismatch(ValueError):
     """Raised when ``snapshot.base`` does not match the passed canonical text.
 
-    R2 (P1-2) correction: the adapter must fail-closed when the
+     correction: the adapter must fail-closed when the
     source-of-truth snapshot base disagrees with the canonical text
     supplied to the producer. The check covers both
     ``content_sha256`` and ``text_length_utf16`` so a swapped or
@@ -388,7 +388,7 @@ def _normalize_vocabulary_output(
 def _sidecar_canonical_json_for_output(raw_output: Any) -> str:
     """Canonical JSON string of a raw sidecar output.
 
-    R2 (P1-4): extracted from ``_sidecar_hash_for_output`` so the
+    Extracted from ``_sidecar_hash_for_output`` so the
     adapter can return the actual payload string alongside the hash.
     The gate resolves ``sidecar_ref`` → this canonical JSON string via
     :func:`collect_sidecar_payloads`, then recomputes the SHA-256 to
@@ -561,14 +561,14 @@ def _estimate_item_count(raw_output: Any) -> int:
 
 
 # ---------------------------------------------------------------------------
-# R2 (P1-4): Sidecar payload resolver seam
+# Sidecar payload resolver seam
 # ---------------------------------------------------------------------------
 
 
 def collect_sidecar_payloads(snapshot: Any) -> dict[str, str]:
     """Build the ``sidecar_ref → canonical JSON`` mapping for a snapshot.
 
-    R2 (P1-4): the gate needs the actual sidecar content to verify
+    The gate needs the actual sidecar content to verify
     ``sidecar_sha256``. Without this mapping, ``sidecar_ref`` was just
     an opaque ``reader_snapshot_layer:<layer_id>`` string with no
     resolvable content.
@@ -827,7 +827,7 @@ def build_artifact_from_snapshot(
     / word count from the passed text and **fail-closed validates**
     that ``snapshot.base.content_sha256`` and
     ``snapshot.base.text_length_utf16`` match the recomputed values
-    (R2 / P1-2). This prevents producing an artifact whose
+   . This prevents producing an artifact whose
     underlying snapshot points at a different base than the passed
     text. The gate still separately re-checks the canonical text
     via :class:`~.gate.CanonicalTextEvidence`.
@@ -865,7 +865,7 @@ def build_artifact_from_snapshot(
     if not canonical_text:
         raise ValueError("canonical_text must be a non-empty string")
 
-    # R3 (P3): executor_mode="real" requires a non-None pipeline_summary.
+    # Executor_mode="real" requires a non-None pipeline_summary.
     # A real-execution artifact must carry actual pipeline run evidence —
     # producing a "real" artifact with stopped_reason="no_pipeline_summary"
     # would be a provenance lie. The adapter fail-closes rather than
@@ -882,7 +882,7 @@ def build_artifact_from_snapshot(
     word_count = len(canonical_text.split())
     canonical_text_preview = canonical_text[:200]
 
-    # R2 (P1-2): fail-closed if the snapshot's stored base hash / length
+    # Fail-closed if the snapshot's stored base hash / length
     # do not match the recomputed values from the passed canonical text.
     # This prevents producing an artifact whose snapshot points at a
     # different base than the actual input text.

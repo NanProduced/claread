@@ -280,12 +280,12 @@ def test_reference_list_with_urls_low_disturbance_policy() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R-Aside-1R A3: Trailing text after </aside> must NOT be swallowed into callout
+# R-Aside-1R Trailing text after </aside> must NOT be swallowed into callout
 # ---------------------------------------------------------------------------
 
 
 def test_trailing_text_after_closing_aside_same_line_becomes_separate_paragraph() -> None:
-    """R-Aside-1R A3: `</aside>Peer discussion...` on the same line must split.
+    """R-Aside-1R `</aside>Peer discussion...` on the same line must split.
 
     The aside callout block must contain only the inner content; the trailing
     prose must become a separate paragraph block. The old implementation
@@ -334,7 +334,7 @@ def test_trailing_text_after_closing_aside_same_line_becomes_separate_paragraph(
 
 
 def test_trailing_text_after_multiline_aside_becomes_separate_paragraph() -> None:
-    """R-Aside-1R A3: multiline aside with trailing text on closing line.
+    """R-Aside-1R multiline aside with trailing text on closing line.
 
     Input:
         <aside>
@@ -420,7 +420,7 @@ def test_trailing_text_after_multiline_aside_becomes_separate_paragraph() -> Non
 
 
 def test_complete_aside_no_trailing_text_unchanged() -> None:
-    """R-Aside-1R A3 regression: `<aside>...</aside>` with no trailing text
+    """R-Aside-1R regression: `<aside>...</aside>` with no trailing text
     must still produce exactly one callout block (no empty trailing paragraph).
     """
     md = "<aside>Just a callout</aside>"

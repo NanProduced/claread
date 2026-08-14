@@ -97,7 +97,7 @@ _WEB_SEARCH_DISABLED_GUIDANCE = (
 # ``{web_search_guidance}`` placeholder when ``search_web`` IS mounted.
 # Tells the model the ``web`` block shape and the call discipline so it
 # can cite live web sources via host-minted ``evh_`` handles only.
-# ASK-WEB-R4: no ``article_scope`` reference — the host derives it.
+# ASK-WEB-no ``article_scope`` reference — the host derives it.
 _WEB_SEARCH_ENABLED_GUIDANCE = (
     "Web Search is enabled: you may call ``search_web`` for live web "
     "sources. A ``web`` block cites web evidence: it needs at least one "
@@ -127,7 +127,7 @@ def _build_system_instructions(
 ) -> str:
     """Render the system instructions with constant placeholders filled.
 
-    ASK-WEB-R4: the ``{max_handles}`` placeholder was removed — the hard
+    ASK-WEB-the ``{max_handles}`` placeholder was removed — the hard
     cap is no longer a model-facing instruction (tool output + model-view
     budget control evidence count). ``web_search_enabled`` toggles the
     guidance clause so the model only sees ``basis=web`` instructions
@@ -164,7 +164,7 @@ DEFAULT_TOOL_RETRIES = 1
 DEFAULT_OUTPUT_RETRIES = 2
 
 
-# ASK-WEB-R4-R1: per-attempt detail_code is now projected directly from
+# ASK-WEB-per-attempt detail_code is now projected directly from
 # :attr:`MeteredToolReturn.detail_code` (the Coordinator classifies every
 # web search return path). The previous status→detail_code forging map
 # has been removed — do not reintroduce it. ``unknown`` is the only
@@ -190,7 +190,7 @@ def create_reading_record_ask_agent(
     state directly. The tool still fails soft (returns ``unavailable``)
     at runtime if the coordinator's capability / backend is missing.
 
-    ASK-WEB-R4: ``expand_evidence_enabled`` and
+    ASK-WEB-``expand_evidence_enabled`` and
     ``search_current_article_enabled`` gate tool mounting by real
     executable capability. When ``False``, the tool is NOT mounted and
     no ``unavailable`` activity is produced — the model simply does
@@ -223,7 +223,7 @@ def create_reading_record_ask_agent(
     # detects ``_takes_ctx=True`` and passes the run context.
     agent.output_validator(grounding_validator)
 
-    # ASK-WEB-R4: only mount expand_evidence when there's a real
+    # ASK-WEB-only mount expand_evidence when there's a real
     # expansion pointer (selection expandable or article map present).
     # When not mounted, no ``unavailable`` activity is produced.
     if expand_evidence_enabled:
@@ -286,7 +286,7 @@ def create_reading_record_ask_agent(
             # Exact renderer-minted tool-view string — never model_dump / re-JSON.
             return metered.text
 
-    # ASK-WEB-R4: only mount search_current_article when the Article RAG
+    # ASK-WEB-only mount search_current_article when the Article RAG
     # port is executable (non-None + stable_document_id present).
     if search_current_article_enabled:
 
@@ -444,7 +444,7 @@ def create_reading_record_ask_agent(
                 coordinator.web_search_last_attempt_outcome
                 or outcome_map.get(metered.status, "unavailable")
             )
-            # ASK-WEB-R4-R1: project the Coordinator's authoritative
+            # ASK-WEB-project the Coordinator's authoritative
             # ``detail_code`` directly — do NOT forge a reason from
             # ``metered.status``. The Coordinator already classifies
             # every web search return path (``call_limit`` /
@@ -457,7 +457,7 @@ def create_reading_record_ask_agent(
             # field) — in that case ``unknown`` is logged so telemetry
             # surfaces the gap.
             detail_code = metered.detail_code or "unknown"
-            # ASK-WEB-R4: turn-level aggregated outcome. The coordinator's
+            # ASK-WEB-turn-level aggregated outcome. The coordinator's
             # ``web_search_outcome`` property reflects the strongest
             # outcome across all attempts so far. Using it for the UI
             # activity means a ``call_limit`` attempt after a successful

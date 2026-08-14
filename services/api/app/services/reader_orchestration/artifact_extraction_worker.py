@@ -1,4 +1,4 @@
-"""Artifact extraction worker execution shell (D6-I3L).
+"""Artifact extraction worker execution shell.
 
 Claims ``input_artifact_extraction`` reader_jobs, validates the artifact input
 contract, calls an injectable :class:`ArtifactExtractionProvider`, and persists
@@ -49,9 +49,9 @@ from .job_runtime import (
 )
 
 DEFAULT_EXTRACTION_RETRY_DELAY = timedelta(minutes=5)
-EXTRACTION_WORKFLOW_VERSION = "d6-i3l-extraction-worker"
+EXTRACTION_WORKFLOW_VERSION = "artifact-extraction-worker"
 
-# D6-I3O: Materialization job contract — enqueued after extraction succeeds.
+# Materialization job contract — enqueued after extraction succeeds.
 MATERIALIZATION_JOB_TYPE = "extracted_artifact_materialization"
 MATERIALIZATION_TARGET_TYPE = "record"
 MATERIALIZATION_OPERATION_FINGERPRINT = "extracted_artifact_materialization_v1"
@@ -626,7 +626,7 @@ class ArtifactExtractionWorkerService:
                     },
                 )
 
-                # D6-I3O: Enqueue materialization job in the same transaction
+                # Enqueue materialization job in the same transaction
                 # so extraction success + materialization enqueue are atomic.
                 # If the enqueue fails, the whole extraction persist rolls back
                 # and the extraction job stays claimed (retryable later).
@@ -774,7 +774,7 @@ async def _enqueue_materialization_job(
     source_artifact_id: UUID,
     expected_generation: int,
 ) -> UUID:
-    """Enqueue an extracted_artifact_materialization job (D6-I3O).
+    """Enqueue an extracted_artifact_materialization job.
 
     Called from the extraction worker's persist transaction after the
     confirmed-source row is written and the extraction job is transitioned to

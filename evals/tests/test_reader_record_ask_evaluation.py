@@ -1,7 +1,7 @@
 """Tests for evaluate_artifact — single 11-dimension evaluator entrypoint.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: evaluator-based Phase 2/3 失败选择（P0-3）.
+Requirement: evaluator-based rerun-stage failure selection.
 
 Covers:
 - ``evaluate_artifact`` returns exactly 11 dimensions in canonical order.
@@ -9,9 +9,9 @@ Covers:
 - ``is_content_failure`` returns True for content-quality failures and
   False for usage_observability-only failures.
 - ``has_usage_gap_only`` correctly distinguishes the two cases.
-- The key P0-3 regression: a ``finalized_status='ok'`` artifact that
+- The key regression: a ``finalized_status='ok'`` artifact that
   contains an unsupported ``2025`` year token is flagged as a content
-  failure (via ``unsupported_temporal_claims``) and would enter Phase 2.
+  failure (via ``unsupported_temporal_claims``) and would enter content rerun.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from claread_eval.reader_record_ask.evaluators.artifact import (
     RawUsage,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -46,11 +46,11 @@ def _make_case(
     question_category: str = "main_idea",
     question: str = "这篇文章主要说什么？",
     expected_overrides: dict | None = None,
-) -> ReaderRecordAskR4A3Case:
-    expected = ReaderRecordAskR4A3Expected()
+) -> ReaderRecordAskCase:
+    expected = ReaderRecordAskExpected()
     if expected_overrides:
         expected = expected.model_copy(update=expected_overrides)
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="bbc_record",
         record_id="bbc-test-001",
@@ -131,18 +131,18 @@ def test_evaluate_artifact_results_are_eval_dimension_result_instances() -> None
 
 
 # ---------------------------------------------------------------------------
-# P0-3 regression: finalized_status=ok but 2025 unsupported claim
+# Regression: finalized_status=ok but 2025 unsupported claim
 # ---------------------------------------------------------------------------
 
 
 def test_status_ok_with_2025_year_is_content_failure() -> None:
-    """The key P0-3 regression.
+    """The key content-failure regression.
 
     Before the rework, the harness would break on the first
     ``finalized_status='ok'`` artifact and never reach the
     ``unsupported_temporal_claims`` evaluator. A ``ok``-status artifact
     containing an unsupported ``2025`` year token must be flagged as a
-    content failure and selected for Phase 2.
+    content failure and selected for content rerun.
     """
     case = _make_case(
         expected_overrides={"allowed_temporal_claims": []},
@@ -198,7 +198,7 @@ def test_usage_gap_only_does_not_trigger_content_failure() -> None:
     """Spec: "默认不要仅因 usage 缺失升级模型".
 
     An artifact whose only failing dimension is ``usage_observability``
-    must NOT be selected for Phase 2 — it is recorded as an
+    must NOT be selected for content rerun — it is recorded as an
     observability gap instead.
     """
     case = _make_case()

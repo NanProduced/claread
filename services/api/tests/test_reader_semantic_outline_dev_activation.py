@@ -1,4 +1,4 @@
-"""T5.8d-dev-activation — Development auto-activation of Semantic Outline main path.
+"""Development auto-activation of Semantic Outline main path.
 
 Dev-only freeze: when ``activation_ready = semantic_outline_generation_enabled
 AND reader_semantic_outline_model_profile != ""``, every record that has
@@ -345,7 +345,7 @@ class _StubState:
     """Stub state object for eligibility predicate testing.
 
     The settings-aware predicate inspects ``activation_ready`` (captured at
-    factory time) and, since A6, ``unit_types`` for the content-sufficiency
+    factory time) and, since, ``unit_types`` for the content-sufficiency
     short-circuit. When ``unit_types`` is ``None`` (the default here), the
     predicate fail-closed to the activation-only result, so this stub still
     yields ``True`` under activation-ready settings.

@@ -1,4 +1,4 @@
-# task-history: ASK-RETRY-CONTRACT-R6 (renamed from test_ask_retry_contract_r6.py)
+# task-history: ASK-RETRY-CONTRACT- (renamed from test_ask_retry_contract_r6.py)
 """Ask retry contract submission-gateway unit gates (no real DB / no migration execution)."""
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ async def test_submission_terminal_hook_completed_failed_cancelled() -> None:
         "app.services.reader_record_ask.submission_gateway.mark_submission_terminal",
         new=fake_mark,
     ):
-        # R8 default: streaming/None must not invent cancelled.
+        # Default: streaming/None must not invent cancelled.
         assert await hook3.mark_from_message_status("streaming") is False
         assert await hook3.mark_from_message_status(
             "streaming", unknown_as_cancelled=True

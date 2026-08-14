@@ -391,7 +391,7 @@ async def end_worker_span_success(
 ) -> None:
     """End the current worker_tick span as succeeded with token/model fields.
 
-    T4.2a-O2: attaches ExecutionCorrelation metadata and emits
+    Attaches ExecutionCorrelation metadata and emits
     ``usage_span_event_mismatch`` when the last usage-event totals disagree
     with span totals. Never mutates event or span totals to force agreement.
     """
@@ -429,7 +429,7 @@ async def end_worker_span_success(
             usage_event_id=ai_usage_event_id or outcome.event_id,
             capability_code=capability_code,
         )
-    # T4.2a-O3: attach duration provenance; never treat span duration_ms
+    # Attach duration provenance; never treat span duration_ms
     # (worker_tick wall) as provider latency.
     extra_metadata = merge_correlation_metadata(
         {
@@ -531,7 +531,7 @@ async def _end_worker_span_failure(
 ) -> None:
     """End worker span as failed/superseded with full execution correlation.
 
-    T4.2a-O2-R1: failure / fence / generic-exception paths must persist the
+    Failure fence generic-exception paths must persist the
     same correlation fragment as success (job/run, attempt_ordinal,
     execution_id, agent_run_id, span_id, capability/fingerprint, schema).
     Does not change failure status/code semantics.

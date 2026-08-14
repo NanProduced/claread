@@ -1,7 +1,7 @@
-"""TDD tests for A2 (inline marks in payload_json) and A3 (link safety
+"""TDD tests for (inline marks in payload_json) and (link safety
 single-point convergence).
 
-Contract (D4 / A2):
+Contract:
     payload_json.inline_marks = [
         {"type": "strong|em|strikethrough|inline_code|link",
          "start": <utf16_offset>, "end": <utf16_offset>,
@@ -13,7 +13,7 @@ Offsets are UTF-16 code unit offsets within the block ``text_content``
 (consistent with the base/anchor system using
 ``app.contracts.annotation.utf16_code_unit_length``).
 
-A3 rules:
+ rules:
   * html_inline + link overlap → stripped (L1: adaptation_notice, stable)
     with ``inline_html`` warning (no "rescue" merge via
     ``_reconstruct_raw_with_html``).
@@ -47,7 +47,7 @@ def _utf16_len(s: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# A2: inline_marks basics
+# Inline_marks basics
 # ---------------------------------------------------------------------------
 
 
@@ -257,7 +257,7 @@ def test_inline_marks_offsets_consistent_with_text_content() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A3: link safety single-point convergence
+# Link safety single-point convergence
 # ---------------------------------------------------------------------------
 
 
@@ -435,7 +435,7 @@ def test_relative_link_treated_as_safe() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A2 + A3 combined: unsafe link in inline context does not produce marks
+# Combined: unsafe link in inline context does not produce marks
 # ---------------------------------------------------------------------------
 
 

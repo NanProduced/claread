@@ -1,5 +1,5 @@
 /**
- * 埋点服务（Phase 3: console.log 输出，后续替换为真实埋点 SDK）
+ * 埋点服务（console.log 输出，后续替换为真实埋点 SDK）
  */
 
 const track = (event: string, params?: Record<string, unknown>) => {

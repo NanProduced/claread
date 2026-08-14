@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 LOW_IMPACT_CANONICALIZER_VERSION = "reader_base_low_impact_v1"
 DETERMINISTIC_READING_BASE_BUILDER_VERSION = "reading_base_builder_d3_p2_v1"
-# R7-1: AUTO POLICY selector, deliberately distinct from every concrete
+# AUTO POLICY selector, deliberately distinct from every concrete
 # segmenter identity. Production callers request this policy; the
 # builder then resolves the actual English sentence provider at build
 # time:
@@ -61,7 +61,7 @@ _SPACY_SENTENCE_PIPELINE_DISABLE = ("ner", "tagger", "attribute_ruler", "lemmati
 FALLBACK_WINDOW_WORD_COUNT = 24
 # Canonicalizer version label used when the caller supplies an EXACT
 # canonical text (already canonicalized by the stable document freeze
-# plan) and the base builder must NOT recanonicalize it. D6 block
+# plan) and the base builder must NOT recanonicalize it. Block
 # offsets are bound to the exact canonical text.
 EXACT_CANONICAL_TEXT_VERSION = "exact_canonical_text_v1"
 
@@ -121,7 +121,7 @@ _ABBREVIATION_SUFFIXES = {
 }
 _CLOSING_PUNCTUATION = "\"'”’)]}"
 _SENTENCE_STARTERS = "\"'“‘([{"
-# R7-1: initialism tokens (U.K., U.S., e.g., i.e., Ph.D., a.m., ...):
+# Initialism tokens (U.K., U.S., e.g., i.e., Ph.D., a.m., ...):
 # adjacent letter groups each terminated by a period, with no whitespace
 # between them. Sentence boundaries must NEVER be created inside these
 # tokens. Applied as defense-in-depth to BOTH the spaCy main path (span
@@ -140,7 +140,7 @@ _INITIALISM_PATTERN = re.compile(r"\b(?:[A-Za-z]{1,3}\.){2,}")
 # "Dr. Smith" has an uppercase next char that any next-word heuristic
 # would mis-split.
 _INLINE_INITIALISM_CONNECTORS = frozenset({"e.g.", "i.e."})
-# R7-1 rework: closed function-word surface forms that — when they
+# Closed function-word surface forms that — when they
 # follow a sentence-final initialism — reliably open a NEW sentence.
 # Personal/demonstrative pronouns are never parts of proper-noun titles
 # or title-case noun phrases ("the U.K. Prime Minister", "the U.S.
@@ -157,9 +157,9 @@ _INITIALISM_SENTENCE_STARTERS = frozenset({
     "I", "He", "She", "It", "We", "They", "You",
     "This", "That", "These", "Those", "There", "Here",
 })
-# R7-1: bare URLs. A period inside a URL is never a sentence terminator.
+# Bare URLs. A period inside a URL is never a sentence terminator.
 _URL_PATTERN = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
-# R7-1 rework: trailing syntactic punctuation that \S+ greedily glues
+# Trailing syntactic punctuation that \S+ greedily glues
 # onto a URL match but that belongs to the surrounding sentence, e.g.
 # the final period in "Visit https://example.com. Next sentence.".
 # These characters are stripped from the URL protection range so a
@@ -207,12 +207,12 @@ class BuiltReadingUnit:
     text_hash: str
     text: str
     label: str | None = None
-    # R7-1: names the sentence provider that produced this unit's
+    # Names the sentence provider that produced this unit's
     # SENTENCE-stage anchor segments (SENTENCE_PROVIDER_*), or None
     # when the unit's segments came from the clause / fallback-window
     # stage. Persisted into reading_units.metadata_json.
     sentence_provider: str | None = None
-    # A5: stable block metadata. Populated when a ``StableBlockAnnotation``
+    # Stable block metadata. Populated when a ``StableBlockAnnotation``
     # matched this unit's UTF-16 range; ``None`` / empty for legacy units
     # (no annotations supplied or no annotation matched). The snapshot
     # builder only emits the corresponding payload fields when
@@ -272,7 +272,7 @@ class NavigationUnitFact:
     label: str | None
     base_start_utf16: int
     base_end_utf16: int
-    # A5: stable block metadata projected from the matched
+    # Stable block metadata projected from the matched
     # ``StableBlockAnnotation``. ``None`` for legacy units so the
     # snapshot navigation projection omits the fields entirely.
     stable_block_type: str | None = None
@@ -346,7 +346,7 @@ def build_reading_base_from_canonical_text(
     Unlike :func:`build_low_impact_reading_base`, this does NOT
     recanonicalize the text. The ``canonical_text`` is used as-is for
     unit/anchor segmentation and for ``content_sha256`` /
-    ``content_utf16_length`` computation. This is required for D6-I2C
+    ``content_utf16_length`` computation. This is required
     where the stable document's block offsets are already bound to the
     exact canonical text produced by the freeze plan; recanonicalizing
     would invalidate those offsets.
@@ -354,7 +354,7 @@ def build_reading_base_from_canonical_text(
     The private split/segment/hash helpers are reused so segmentation
     behavior is identical to the low-impact builder.
 
-    A5: When ``stable_block_annotations`` is supplied, a built unit
+    When ``stable_block_annotations`` is supplied, a built unit
     whose ``(base_start_utf16, base_end_utf16)`` exactly matches an
     annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
     from the annotation's ``block_type`` (instead of the legacy text
@@ -425,7 +425,7 @@ def _build_reading_base_core(
     NOT recanonicalize; it only segments the supplied text into units
     and anchor segments and validates the result.
 
-    R7-1: ``segmenter_version == AUTO_SEGMENTER_POLICY`` selects the
+    ``segmenter_version == AUTO_SEGMENTER_POLICY`` selects the
     AUTO POLICY. The English sentence provider is resolved here
     (parser-backed spaCy ``en_core_web_sm`` when the text is English
     and the model is available, otherwise the explicitly named regex v2
@@ -434,7 +434,7 @@ def _build_reading_base_core(
     ``BuiltReadingUnit.sentence_provider``. Explicit provider identities run
     that provider; unsupported labels fail closed.
 
-    A5: When ``stable_block_annotations`` is supplied, a built unit whose
+    When ``stable_block_annotations`` is supplied, a built unit whose
     ``(base_start_utf16, base_end_utf16)`` exactly matches an
     annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
     from the annotation's ``block_type`` (instead of the legacy text
@@ -540,7 +540,7 @@ def _build_reading_base_core(
         ):
             unit_type = "fallback"
 
-        # A5: when a stable block annotation exactly matches this
+        # When a stable block annotation exactly matches this
         # unit's UTF-16 range, project the stable block_type and
         # payload onto the unit. There is no ``stable_block_type`` DB
         # column — the field lives on the in-memory ``BuiltReadingUnit``
@@ -552,8 +552,8 @@ def _build_reading_base_core(
         # ``paragraph`` / ``list_item`` / ``blockquote`` / ``table*`` /
         # ``code_block`` MUST NOT be written to ``unit_type``. ``heading``
         # is the one exception because (a) it is in the legacy allowed
-        # set and (b) downstream consumers (A6 semantic-outline skip
-        # decision in ``job_bootstrap.py``, feature extractor, B4
+        # set and (b) downstream consumers (semantic-outline skip
+        # decision in ``job_bootstrap.py``, feature extractor,
         # outline projector) key off ``unit_type == "heading"`` to
         # detect Markdown headings. For all other stable block types
         # the heuristic ``unit_type`` is kept — the authoritative
@@ -741,7 +741,7 @@ def _build_segment_spans(
     sentence_policy: str,
     spacy_pipeline: object | None,
 ) -> tuple[list[_SegmentSpan], str | None]:
-    """Segment one structure block into anchor spans (R7-1).
+    """Segment one structure block into anchor spans.
 
     ``sentence_policy`` is one of ``"spacy"`` / ``"regex_v2"`` /
     ``"regex_v1"``:
@@ -941,7 +941,7 @@ def _is_english_language(language: str | None) -> bool:
 
 def _load_spacy_sentence_pipeline() -> object | None:
     """Load the parser-backed reader sentence pipeline via the shared
-    NLP model registry (R7-1). Test seam: monkeypatch this function to
+    NLP model registry. Test seam: monkeypatch this function to
     simulate model unavailability."""
     return nlp_model_registry.get_english_pipeline(
         disable=_SPACY_SENTENCE_PIPELINE_DISABLE
@@ -952,7 +952,7 @@ def _segment_sentence_spans_spacy(
     pipeline: object,
     block_text: str,
 ) -> tuple[list[tuple[int, int]], int] | None:
-    """Parser-backed sentence spans over the canonical block text (R7-1).
+    """Parser-backed sentence spans over the canonical block text.
 
     ``block_text`` (the exact canonical Unit text slice) is passed to
     spaCy AS-IS: no normalization, strip-and-rebuild, whitespace
@@ -984,7 +984,7 @@ def _segment_sentence_spans_spacy(
         end = _trim_trailing_whitespace(block_text, raw_end)
         if start < end:
             spans.append((start, end))
-    # Defense-in-depth (R7-1): even though the parser handles
+    # Defense-in-depth: even though the parser handles
     # initialisms correctly today, never let a split inside an
     # initialism token (U.|K., U.|S., Ph.|D.) survive.
     spans = _repair_initialism_splits(block_text, spans)
@@ -1000,7 +1000,7 @@ def _count_terminated_spans(
     block_text: str,
     spans: list[tuple[int, int]],
 ) -> int:
-    """Count spans that end in sentence-terminator punctuation (R7-1).
+    """Count spans that end in sentence-terminator punctuation.
 
     Mirrors the regex segmenter's boundary semantics: a block whose
     only span ends in ``.`` / ``!`` / ``?`` (optionally followed by
@@ -1064,7 +1064,7 @@ def _refine_initialism_final_boundaries(
 
 
 def _next_word_after(block_text: str, index: int) -> str:
-    """The alphabetic word starting at/after ``index`` (R7-1 rework).
+    """The alphabetic word starting at/after ``index``.
 
     Skips whitespace and opening quotes/brackets, then reads the
     maximal alphabetic run and returns it with its ORIGINAL casing
@@ -1120,7 +1120,7 @@ def _repair_initialism_splits(
 
 def _protected_boundary_ranges(block_text: str) -> list[tuple[int, int]]:
     """Character ranges whose periods must not become sentence boundaries
-    (R7-1 regex v2 guard).
+    (regex v2 boundary guard).
 
     - Initialism tokens: every period except the token's FINAL period
       is protected (the final period may legitimately end a sentence:
@@ -1135,7 +1135,7 @@ def _protected_boundary_ranges(block_text: str) -> list[tuple[int, int]]:
         # ("Visit https://example.com." -> match includes the final
         # period). Strip trailing syntactic punctuation so the URL's
         # INTERNAL periods stay protected while a sentence terminator
-        # AFTER the URL can still act as a boundary (R7-1 rework).
+        # AFTER the URL can still act as a boundary.
         url_end = match.end()
         while (
             url_end > match.start()
@@ -1164,7 +1164,7 @@ def _segment_sentence_spans_v2(
     block_text: str,
 ) -> tuple[list[tuple[int, int]], int]:
     """Regex v2 sentence segmentation: v1 algorithm plus initialism and
-    URL boundary guards (R7-1 named fallback).
+    URL boundary guards.
 
     Used when spaCy / ``en_core_web_sm`` is unavailable, when the text
     is not English, or when a spaCy run fails. Its identity is recorded
@@ -1439,7 +1439,7 @@ def _build_unit_label(block_text: str, unit_type: str) -> str | None:
 
 
 def _extract_heading_level(payload: dict[str, Any]) -> int | None:
-    """A5: extract a 1-based heading level from a stable block payload.
+    """Extract a 1-based heading level from a stable block payload.
 
     The Markdown ecosystem refactor stores the heading level under
     ``payload_json.level`` (1-based, matching ATX ``#`` count). Returns
@@ -1460,7 +1460,7 @@ def _extract_heading_level(payload: dict[str, Any]) -> int | None:
 
 
 def _derive_table_role(block_type: str) -> str | None:
-    """A5: map a stable block_type to a snapshot table_role.
+    """Map a stable block_type to a snapshot table_role.
 
     The snapshot ``reader_source_block`` payload carries a
     ``tableRole`` field so the Web reading surface can render table

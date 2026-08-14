@@ -1,4 +1,4 @@
-# task-history: D6-I4C (renamed from test_d6_i4c_article_rag_index_worker.py)
+# task-history: (renamed from test_d6_i4c_article_rag_index_worker.py)
 """Tests for the Article RAG index worker foundation.
 
 Covers the 12+ test requirements from the task spec:
@@ -379,7 +379,7 @@ class _PartialVectorWriter:
 class _FenceMutatingEmbeddingProvider:
     """Fake embedding provider that mutates the record during embed_texts.
 
-    Used to test the publish-time fence failure in Phase 5.  The provider
+    Used to test the publish-time fence failure in. The provider
     succeeds (returns real embeddings) but mutates the record so the
     publish fence in _mark_indexed_and_succeed fails.
     """
@@ -443,7 +443,7 @@ class _FenceMutatingEmbeddingProvider:
     ) -> list[ArticleRagEmbedding]:
         self.call_count += 1
         # Mutate the record BEFORE returning embeddings so the publish
-        # fence in Phase 5 detects the mutation.
+        # fence in detects the mutation.
         await self._mutate()
         return await self._inner.embed_texts(texts, model=model)
 
@@ -768,11 +768,11 @@ async def test_index_run_missing_fail_closed(worker_env: asyncpg.Pool) -> None:
     """Requirement 6: when the index_run row is missing (deleted), the
     worker fails closed with failure_code=index_run_link_invalid.
 
-    P1-D-R1: ``_load_job_context`` now reads the full candidate set
+    ``_load_job_context`` now reads the full candidate set
     linked by ``job_id`` and verifies cardinality BEFORE the downstream
     ``_mark_indexing_or_detect_noop`` check runs.  Deleting the index_run
     row yields 0 linked rows → ``index_run_link_invalid`` (replaces the
-    pre-P1-D ``index_run_missing`` code, which can no longer be reached
+    pre- ``index_run_missing`` code, which can no longer be reached
     through ``_load_job_context``).
     """
     await _seed_paragraph_environment(worker_env)
@@ -860,10 +860,10 @@ async def test_index_run_wrong_job_id_fail_closed(worker_env: asyncpg.Pool) -> N
     than the current claim, the worker fails closed with
     failure_code=index_run_link_invalid.
 
-    P1-D-R1: ``_load_job_context`` now reads the full candidate set
+    ``_load_job_context`` now reads the full candidate set
     linked by ``claim.job_id``.  Repointing the index_run at a bogus
     job_id leaves 0 rows linked to ``claim.job_id`` →
-    ``index_run_link_invalid`` (replaces the pre-P1-D
+    ``index_run_link_invalid`` (replaces the pre-
     ``index_run_wrong_job_id`` code, which can no longer be reached
     through ``_load_job_context``).
     """
@@ -919,7 +919,7 @@ async def test_publish_fence_stale_generation_superseded(
     )
 
     # Custom embedding provider that bumps the record generation during
-    # embed_texts, causing the publish fence to fail in Phase 5.
+    # embed_texts, causing the publish fence to fail in.
     embedding_provider = _FenceMutatingEmbeddingProvider(
         pool=worker_env,
         mutation="bump_generation",
@@ -1240,7 +1240,7 @@ async def test_retryable_embedding_error_at_max_attempts_is_terminal_once(
 ) -> None:
     """A claimed final attempt must not be returned to retry_later forever.
 
-    P0-B round 2 strengthening: also asserts exactly 0 ``job_retry_later``
+     round 2 strengthening: also asserts exactly 0 ``job_retry_later``
     events, vector writer never called, and a second ``process_next`` does
     not produce a second ``job_failed_terminal`` event.
     """
@@ -1643,7 +1643,7 @@ async def test_no_real_network_calls_fake_providers_only(
                 record_generation=1,
                 plan_content_sha256="a" * 64,
                 chunk_count=0,
-                # P1-G: required fields; this construction only feeds an
+                # Required fields; this construction only feeds an
                 # unconfigured writer which raises before reading them.
                 embedding_model="text-embedding-v4",
                 embedding_dimension=1024,
@@ -1664,7 +1664,7 @@ async def test_plan_truth_drift_inactive_stable_document_superseded(
 ) -> None:
     """Requirement 13: when the stable document is deactivated between
     bootstrap and worker execution, the plan service raises
-    ArticleRagIndexPlanError in Phase 2 and the worker supersedes the
+    ArticleRagIndexPlanError in and the worker supersedes the
     job + index_run."""
     await _seed_paragraph_environment(worker_env)
     bootstrap = _build_bootstrap_service(worker_env)
@@ -1674,7 +1674,7 @@ async def test_plan_truth_drift_inactive_stable_document_superseded(
     )
 
     # Deactivate the stable document (claim-time fence does NOT check
-    # stable documents, so the claim succeeds; Phase 2 plan service
+    # stable documents, so the claim succeeds; plan service
     # detects the inactive document and raises ArticleRagIndexPlanError).
     async with worker_env.acquire() as conn:
         await conn.execute(
@@ -1701,7 +1701,7 @@ async def test_plan_truth_drift_inactive_stable_document_superseded(
     assert result.status == "superseded"
     assert result.failure_code == "plan_truth_drift"
 
-    # Neither provider was called (plan reload failed in Phase 2).
+    # Neither provider was called (plan reload failed in).
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
 
@@ -1837,7 +1837,7 @@ async def test_input_json_source_mismatch_failed_terminal(
 async def test_rag_failure_does_not_block_article_ready_or_mutate_truth_layer(
     worker_env: asyncpg.Pool,
 ) -> None:
-    """P0-B non-blocking boundary: RAG failure must not touch the truth layer.
+    """Non-blocking boundary: RAG failure must not touch the truth layer.
 
     After a terminal embedding failure:
     - reading_records.readiness_state stays 'article_ready'
@@ -1948,7 +1948,7 @@ async def test_rag_failure_does_not_block_article_ready_or_mutate_truth_layer(
 
 
 # ---------------------------------------------------------------------------
-# P0-B round 2: atomic terminal path + rollback injection + diagnostics
+# Round 2: atomic terminal path + rollback injection + diagnostics
 # ---------------------------------------------------------------------------
 
 
@@ -2191,7 +2191,7 @@ async def test_terminal_failure_rollback_when_index_run_update_fails(
 
 
 # ============================================================================
-# P0 Combined Integration Gate: real DashScope provider + real worker + real DB
+# Combined Integration Gate: real DashScope provider + real worker + real DB
 # ============================================================================
 
 
@@ -2208,7 +2208,7 @@ async def test_dashscope_400_terminalizes_article_rag_job_once_with_safe_diagnos
     worker_env: asyncpg.Pool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P0 combined integration gate: real DashScope provider + real worker + real DB.
+    """Combined integration gate: real DashScope provider + real worker + real DB.
 
     Mocks ONLY ``dashscope.TextEmbedding.call`` at the public external
     boundary — no worker private methods are mocked, no fake provider is
@@ -2513,7 +2513,7 @@ async def test_dashscope_400_terminalizes_article_rag_job_once_with_safe_diagnos
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers used by P1-G-R1 indexed identity drift tests.
+# Shared helpers used by indexed identity drift tests.
 # ---------------------------------------------------------------------------
 
 
@@ -2583,19 +2583,19 @@ def _assert_no_sentinel_in_surfaces(
 
 
 # ===================================================================
-# P1-G: Article RAG Frozen Document Embedding and Vector Write Contract
+# Article RAG Frozen Document Embedding and Vector Write Contract
 #
 # These tests close the last IndexProfile drift gaps on the write side:
 # requested index version → immutable profile → document embedding
 # model/dimension contract → vector namespace → writer validation →
 # durable index-run identity.
 #
-# Each test asserts a public-seam contract.  Before the P1-G production
+# Each test asserts a public-seam contract. Before the production
 # fixes they FAIL (RED); after the fixes they PASS (GREEN).
 # ===================================================================
 
 
-# V1 profile runtime-verified field values (sourced from the P1-B
+# V1 profile runtime-verified field values (sourced from the
 # resolver, not hardcoded by the test — these literals must match the
 # resolver output exactly).
 _FROZEN_DOC_EMBEDDING_MODEL = "text-embedding-v4"
@@ -2603,7 +2603,7 @@ _FROZEN_DOC_EMBEDDING_DIM = 1024
 _FROZEN_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
 _FROZEN_VECTOR_NAMESPACE = "article_rag_chunks"
 
-# P1-G failure codes (must be unique per scenario; exact-match only).
+# Failure codes (must be unique per scenario; exact-match only).
 _FAILURE_CODE_TEXT_TYPE_UNSUPPORTED = "embedding_text_type_unsupported"
 _FAILURE_CODE_VECTOR_COLLECTION_MISMATCH = "vector_collection_mismatch"
 _FAILURE_CODE_EMBEDDING_MODEL_MISMATCH = "embedding_model_mismatch"
@@ -2614,7 +2614,7 @@ _FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
 
 
 class _CapturingEmbeddingProvider:
-    """P1-G test fake: records the ``model`` parameter passed to embed_texts.
+    """Test fake: records the ``model`` parameter passed to embed_texts.
 
     Default behavior returns V1-profile-matching embeddings
     (model='text-embedding-v4', dim=1024, vector_len=1024).  Construction
@@ -2676,7 +2676,7 @@ class _CapturingEmbeddingProvider:
 
 
 class _PerItemEmbeddingProvider:
-    """P1-G test fake: returns per-item configurable embeddings.
+    """Test fake: returns per-item configurable embeddings.
 
     Used for multi-chunk tests where the 2nd or last item must be invalid.
     ``per_item_configs`` is a list of dicts with keys ``model``, ``dim``,
@@ -2721,7 +2721,7 @@ class _PerItemEmbeddingProvider:
 
 
 class _WrongCollectionVectorWriter:
-    """P1-G test fake: vector writer that returns a wrong collection."""
+    """Test fake: vector writer that returns a wrong collection."""
 
     def __init__(self, *, result_collection: str = "wrong-collection") -> None:
         self.call_count = 0
@@ -2743,7 +2743,7 @@ class _WrongCollectionVectorWriter:
 
 
 class _MetadataCapturingVectorWriter:
-    """P1-G test fake: captures metadata for field-by-field assertion."""
+    """Test fake: captures metadata for field-by-field assertion."""
 
     def __init__(self) -> None:
         self.call_count = 0
@@ -3335,7 +3335,7 @@ async def test_metadata_no_empty_defaults_mask_omission() -> None:
 async def test_terminal_failure_does_not_mutate_truth_layer(
     worker_env: asyncpg.Pool,
 ) -> None:
-    """RED: a P1-G terminal failure must not mutate the reader truth layer.
+    """RED: a terminal failure must not mutate the reader truth layer.
 
     Verifies that article_ready, reader_events, reading_bases,
     stable_reading_documents, reading_units, anchor_segments, and
@@ -3429,7 +3429,7 @@ async def test_terminal_failure_does_not_mutate_truth_layer(
 
 
 # ===================================================================
-# P1-G-R1: Indexed idempotent identity drift (RED test D)
+# Indexed idempotent identity drift (RED test D)
 #
 # Verifies the already-indexed no-op path validates persisted
 # embedding_model / vector_collection against the resolved profile.
@@ -3440,8 +3440,8 @@ async def test_terminal_failure_does_not_mutate_truth_layer(
 _FAILURE_CODE_INDEXED_IDENTITY_MISMATCH = (
     "index_run_indexed_identity_mismatch"
 )
-_SENTINEL_DRIFTED_EMBEDDING_MODEL = "P1G-R1-SENTINEL-DRIFTED-MODEL-DO-NOT-LEAK"
-_SENTINEL_DRIFTED_VECTOR_COLLECTION = "P1G-R1-SENTINEL-DRIFTED-COLLECTION"
+_SENTINEL_DRIFTED_EMBEDDING_MODEL = "drifted-embedding-model"
+_SENTINEL_DRIFTED_VECTOR_COLLECTION = "drifted-vector-collection"
 
 
 async def _set_index_run_embedding_model(

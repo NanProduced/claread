@@ -1,4 +1,4 @@
-"""T5.3a: semantic outline bootstrap, bounded worker, record-level publisher."""
+"""Semantic outline bootstrap, bounded worker, record-level publisher."""
 
 from __future__ import annotations
 
@@ -302,7 +302,7 @@ def test_validator_receives_final_opaque_ids() -> None:
 
 
 def test_snapshot_semantic_outline_field_is_optional_default_none() -> None:
-    """T5.4a: optional field exists; default None (not required, not always object)."""
+    """Optional field exists; default None (not required, not always object)."""
     assert "semantic_outline" in ReaderPlateSnapshot.model_fields
     assert ReaderPlateSnapshot.model_fields["semantic_outline"].default is None
 
@@ -680,7 +680,7 @@ async def test_ready_publish_with_nested_parent_edge(outline_env: asyncpg.Pool) 
     snapshot = await ArticleReadyPersistenceService(pool=outline_env).load_snapshot(
         record_id=article.record_id, user_id=user_id
     )
-    # T5.4a: trusted published ready|partial projects onto optional field.
+    # Trusted published ready|partial projects onto optional field.
     assert snapshot.semantic_outline is not None
     assert snapshot.semantic_outline.status in {"ready", "partial"}
     assert snapshot.semantic_outline.publication.layer_id == str(layer["id"])
@@ -1527,7 +1527,7 @@ async def test_mismatched_source_provenance_cannot_publish_layer_or_event(
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: run state machine closure (TDD)
+# Run state machine closure (TDD)
 #   (a) generic Exception + max_attempts -> reader_runs.failed_terminal
 #   (b) FenceViolation -> reader_runs.superseded
 #   (c) success -> reader_runs.completed (safety net)

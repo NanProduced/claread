@@ -1,6 +1,6 @@
 """Real end-to-end integration test for grammar-window Analysis Window.
 
-Per review agent1: "建议先让实现 agent 修 P1，再重新跑一轮真实端到端：新建一个
+Per review agent1: "建议先让实现 agent 修 ，再重新跑一轮真实端到端：新建一个
 普通 reader record，不手动预置 plan，确认自动生成 windows、真实 LLM 输出
 candidates、selector 发布合法 layer、前端能渐进刷新。下一轮验收重点应放在
 真实路径，而不是 mock/static executor 的单元测试。至少补一个 integration
@@ -20,7 +20,7 @@ Test flow:
   6. Verify ``reader_events`` has ``layer_published`` events (progressive
      refresh)
 
-Executor→publisher bridge (P2-1 fix):
+Executor→publisher bridge (fix):
   The production ``pipeline_runner._run_grammar_window_attempt`` calls
   ``_derive_candidate_contents(candidates)`` to bridge
   ``CandidateItem.content_*`` fields into ``WindowCandidateContent``,
@@ -29,7 +29,7 @@ Executor→publisher bridge (P2-1 fix):
 
   Both test paths (``_ContractPublisher`` wrapper and the production
   path) now produce §8.3 contract-compliant ``output_json``. The
-  sidecar fallback was removed (P2-1 fail closed): if candidates exist
+  sidecar fallback was removed (fail closed): if candidates exist
   but ``candidate_contents`` is None, the publisher raises ValueError.
 """
 
@@ -263,7 +263,7 @@ class _RealisticMockExecutor:
                     quality_score=4,
                     reading_blocker=False,
                     dedup_hint=dedup_key,
-                    # P2-1: populate content_* fields for contract output
+                    # Populate content_* fields for contract output
                     grammar_point=f"grammar_point:{anchor_id}",
                     pattern=f"pattern:{anchor_id}",
                     note=f"Realistic grammar note for anchor {anchor_id}.",
@@ -300,7 +300,7 @@ class _RealisticMockExecutor:
                     quality_score=5,
                     reading_blocker=False,
                     dedup_hint=dedup_key,
-                    # P2-1: populate content_* fields for contract output
+                    # Populate content_* fields for contract output
                     label=f"main_clause:{anchor_id}",
                     analysis=f"Sentence analysis for anchor {anchor_id}.",
                     chunks=[{
@@ -791,7 +791,7 @@ async def test_grammar_window_end_to_end_production_path_publishes_contract(
 ) -> None:
     """Production path: pipeline_runner derives candidate_contents internally.
 
-    P2-1 removed the sidecar fallback. The production pipeline_runner now
+     removed the sidecar fallback. The production pipeline_runner now
     calls ``_derive_candidate_contents(candidates)`` to bridge
     ``CandidateItem.content_*`` fields into ``WindowCandidateContent``,
     which the publisher uses to build a proper

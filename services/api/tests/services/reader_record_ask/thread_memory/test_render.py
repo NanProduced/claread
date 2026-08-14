@@ -1,6 +1,6 @@
-"""Tests for memory block rendering (R0.1 §6 注入形态约束 + §8.3 §7).
+"""Tests for memory block rendering (§6 注入形态约束 + §8.3 §7).
 
-A1 stub: 待 A1 完成后移除（schema/mapping 走 conftest 注入的 _stub）
+ stub: 待 完成后移除（schema/mapping 走 conftest 注入的 _stub）
 """
 
 from __future__ import annotations
@@ -295,7 +295,7 @@ def test_render_memory_block_budget_shrinking_keeps_high_over_medium():
         ),
     ]
     snap = _snapshot([_episode(facts)])
-    # R1.6 P1-3: budget tuned so only the high-confidence fact fits.
+    # Budget tuned so only the high-confidence fact fits.
     # At 300 both facts fit; at 200 the inner budget (128) covers the
     # header (31) + high fact (81) = 112, leaving 16 — medium (78) evicted.
     view = render_memory_block(snap, budget_chars=200)

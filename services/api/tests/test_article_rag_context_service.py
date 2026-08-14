@@ -1,4 +1,4 @@
-# task-history: D6-I4F (renamed from test_d6_i4f_article_rag_context_service.py)
+# task-history: (renamed from test_d6_i4f_article_rag_context_service.py)
 """Tests for the Article RAG context pack service.
 
 Covers:
@@ -365,7 +365,7 @@ async def test_budget_truncates_after_first_oversized_fits() -> None:
 async def test_middle_oversized_but_later_small_hit_must_not_be_included() -> (
     None
 ):
-    """P1 reviewer fix: ``c1=80, c2=50, c3=10`` with ``budget=100``
+    """Reviewer fix: ``c1=80, c2=50, c3=10`` with ``budget=100``
     must yield ``items=[c1]`` (omitted=2), NOT ``items=[c1, c3]``.
 
     A naive ``continue`` would silently skip c2 and include c3,
@@ -852,7 +852,7 @@ async def test_pack_deterministic_for_same_input() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 11. Reviewer P2 fix: provider_metadata must be scrubbed before forwarding
+# 11. Reviewer fix: provider_metadata must be scrubbed before forwarding
 # ---------------------------------------------------------------------------
 
 
@@ -1073,7 +1073,7 @@ async def test_provider_metadata_handles_none_and_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. Reviewer P2 fix (round 2): whitelist, not denylist
+# 12. Reviewer fix (round 2): whitelist, not denylist
 # ---------------------------------------------------------------------------
 
 

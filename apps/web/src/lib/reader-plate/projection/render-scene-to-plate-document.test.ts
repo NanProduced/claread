@@ -510,7 +510,7 @@ describe("renderSceneToPlateDocument", () => {
     ]);
   });
 
-  // ── Phase 3A: Range / MultiRange anchor tests ──────────────────
+  // ── Range / MultiRange anchor tests ───────────────────────────
 
   describe("range anchor", () => {
     beforeEach(() => {

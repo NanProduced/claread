@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# D5-V3 vocabulary worker constants mirrored here so the eval harness can run
+# Vocabulary worker constants mirrored here so the eval harness can run
 # without importing from services/api. Keep values in sync with
 # services/api/app/services/reader_orchestration/vocabulary_worker.py.
 MAX_VOCABULARY_ITEMS = 5

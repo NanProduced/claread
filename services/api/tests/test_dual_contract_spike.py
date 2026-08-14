@@ -1,7 +1,7 @@
-# task-history: D6-A5 (renamed from test_d6_a5_dual_contract_spike.py)
+# task-history: (renamed from test_d6_a5_dual_contract_spike.py)
 """Dual-contract single-range persistence spike tests.
 
-These tests lock the D6-U4 persistence contract. After
+These tests lock the persistence contract. After
 DATA-LEGACY-IDENTITY-EXIT the Reading Record anchor is the ONLY highlight /
 note contract:
 

@@ -1,6 +1,6 @@
 """Hermetic **fixture-only** artifact producer.
 
-R1 split: this module is NOT the official producer. It is a
+ split: this module is NOT the official producer. It is a
 hermetic, fixture-grade helper used by offline gate tests to build
 an artifact from a :class:`GoldenSample` without touching the DB,
 the LLM, spaCy, or the ``app`` runtime. The official API-side
@@ -24,7 +24,7 @@ fixture-grade nature:
   projection; it does NOT mirror the real sentence segmenter. The
   real anchor map (from a ``ReaderPlateSnapshot`` or from a
   ``ReaderSmokeHarnessResult``) is wired via
-  :mod:`.reader_adapter` / Task 5B.
+  :mod:`.reader_adapter` /.
 
 Determinism contract: two consecutive calls on the same
 ``sample`` (with the same ``deterministic_clock_token``) MUST
@@ -67,22 +67,22 @@ from .schema import (
 # Hermetic version markers (fixture-only)
 # ---------------------------------------------------------------------------
 
-#: Canonicalizer version used by the hermetic fixture producer. The
-#: hermetic producer does NOT call the real
-#: :func:`canonicalize_low_impact_text`; it only strips leading /
-#: trailing whitespace and normalises CRLF to LF. This minimal
-#: canonicalization is sufficient for the V1 gate (which tests
-#: contract / determinism, not semantic canonicalization parity)
-#: and avoids any dependency on spaCy / base_builder runtime.
+# Canonicalizer version used by the hermetic fixture producer. The
+# hermetic producer does NOT call the real
+# :func:`canonicalize_low_impact_text`; it only strips leading /
+# trailing whitespace and normalises CRLF to LF. This minimal
+# canonicalization is sufficient for the V1 gate (which tests
+# contract / determinism, not semantic canonicalization parity)
+# and avoids any dependency on spaCy / base_builder runtime.
 HERMETIC_CANONICALIZER_VERSION: CanonicalizerVersionLiteral = (
     "exact_canonical_text_v1"
 )
 HERMETIC_BUILDER_VERSION: str = "hermetic_fixture_builder_v1"
 HERMETIC_SEGMENTER_VERSION: str = "hermetic_paragraph_splitter_v1"
 
-#: Fixture-only producer module identity. The official producer is
-#: ``reader_adapter``; this marker is here so the gate can tell a
-#: fixture-grade artifact apart from an API-side artifact.
+# Fixture-only producer module identity. The official producer is
+# ``reader_adapter``; this marker is here so the gate can tell a
+# fixture-grade artifact apart from an API-side artifact.
 FIXTURE_PRODUCER_MODULE: str = (
     "services/api/verification/reader_baseline/parse_eval/fixture_builder.py"
 )
@@ -138,10 +138,10 @@ def canonicalize_hermetic(plain_text: str) -> str:
     return text.strip()
 
 
-#: Regex that splits canonical text into paragraphs on blank-line
-#: boundaries. Matches the ``\n(?:[ \t]*\n){1,}`` rule used by the
-#: real ``_BLANK_LINE_RUN_PATTERN`` in base_builder for paragraph
-#: detection, simplified for hermetic use.
+# Regex that splits canonical text into paragraphs on blank-line
+# boundaries. Matches the ``\n(?:[ \t]*\n){1,}`` rule used by the
+# real ``_BLANK_LINE_RUN_PATTERN`` in base_builder for paragraph
+# detection, simplified for hermetic use.
 _PARAGRAPH_SPLIT_RE: re.Pattern[str] = re.compile(r"\n[ \t]*\n+")
 
 
@@ -164,7 +164,7 @@ def build_hermetic_anchor_map(canonical_text: str) -> AnchorMap:
     The real anchor map (from
     :func:`build_reading_base_from_canonical_text` or from a
     ``ReaderPlateSnapshot``) is wired via :mod:`.reader_adapter` /
-    Task 5B.
+   .
     """
     if not canonical_text:
         return AnchorMap(navigation_units=[], anchor_segments=[])
@@ -237,7 +237,7 @@ def build_hermetic_anchor_map(canonical_text: str) -> AnchorMap:
 
 
 # ---------------------------------------------------------------------------
-# Artifact id derivation (R1: includes canonical_text_sha256)
+# Artifact id derivation (includes canonical_text_sha256)
 # ---------------------------------------------------------------------------
 
 
@@ -251,7 +251,7 @@ def derive_artifact_id(
 ) -> str:
     """Derive ``artifact_id`` from canonical semantic inputs.
 
-    R1 change: ``artifact_id`` now depends on
+     change: ``artifact_id`` now depends on
     ``canonical_text_sha256 | schema_version |
     producer_semantic_version | source_id |
     deterministic_clock_token``. A different canonical text or a
@@ -319,7 +319,7 @@ def build_fixture_artifact_from_sample(
 
     anchor_map = build_hermetic_anchor_map(canonical_text)
 
-    # R1: artifact_id now depends on canonical_text_sha256 + schema
+    # Artifact_id now depends on canonical_text_sha256 + schema
     # version + producer semantic version + source_id + clock token.
     artifact_id = derive_artifact_id(
         canonical_text_sha256=canonical_text_sha256,

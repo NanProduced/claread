@@ -17,7 +17,7 @@ Offline unit tests for the provider-neutral web search vertical slice:
 
 No real LLM, no real search provider, no network I/O.
 
-ASK-WEB-G1-R3: ``PublicWebCitation`` has been removed from
+ASK-WEB-G1-``PublicWebCitation`` has been removed from
 ``web_search_contracts``. The single canonical public citation contract is
 ``PublicCitation`` in ``finalizer``. Tests here exercise it directly via
 ``source_kind="web"`` to keep web-citation validation coverage intact.
@@ -304,7 +304,7 @@ class TestWebEvidence:
 # ---------------------------------------------------------------------------
 # PublicCitation (web source_kind)
 # ---------------------------------------------------------------------------
-# ASK-WEB-G1-R3: ``PublicWebCitation`` has been removed from
+# ASK-WEB-G1-``PublicWebCitation`` has been removed from
 # ``web_search_contracts``. The single canonical public citation contract is
 # ``PublicCitation`` in ``finalizer``. These tests exercise its web branch
 # (``source_kind="web"``) to keep the validation coverage previously
@@ -341,7 +341,7 @@ class TestPublicCitationWeb:
             )
 
     def test_rejects_empty_title_for_web(self) -> None:
-        # ASK-WEB-G1-R3: title must be non-empty (strip-validated at the
+        # ASK-WEB-G1-title must be non-empty (strip-validated at the
         # contract layer). The production finalizer is responsible for
         # applying the ``display_domain`` fallback before constructing the
         # citation — the contract itself does not derive fallbacks.
@@ -445,7 +445,7 @@ class TestResolvedWebSearchCapability:
         )
         assert cap.execution_mode == "host_function"
         assert cap.decision_mode == "agent_auto"
-        # R5 freezes a two-attempt lifecycle: only an initial no_results may
+        # Freezes a two-attempt lifecycle: only an initial no_results may
         # consume the second provider attempt.
         assert cap.max_calls == 2
         assert cap.max_results_per_call == 5
@@ -815,7 +815,7 @@ class TestAgentConditionalWebSearch:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-G1-R3: Capability resolver must reflect real adapter readiness
+# ASK-WEB-G1-Capability resolver must reflect real adapter readiness
 # ---------------------------------------------------------------------------
 #
 # The capability resolver must NOT declare ``enabled_for_turn=True`` based
@@ -828,7 +828,7 @@ class TestAgentConditionalWebSearch:
 
 
 class TestCapabilityResolverReadiness:
-    """ASK-WEB-G3-R3: ``resolve_web_search_capability`` derives
+    """ASK-WEB-G3-``resolve_web_search_capability`` derives
     capability from the current ``ResolvedModelConfig`` via the
     production ``WebSearchAdapterRegistry`` — not from a global
     provider string or option label.
@@ -1018,7 +1018,7 @@ class TestCapabilityResolverReadiness:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-G1-R3: ``_selected_model_payload`` must project unavailable
+# ASK-WEB-G1-``_selected_model_payload`` must project unavailable
 # ---------------------------------------------------------------------------
 #
 # The model-option DTO must project ``web_search_capability="unavailable"``
@@ -1027,11 +1027,11 @@ class TestCapabilityResolverReadiness:
 
 
 class TestSelectedModelPayloadProjection:
-    """ASK-WEB-G3-R3: ``_selected_model_payload`` must project
+    """ASK-WEB-G3-``_selected_model_payload`` must project
     ``web_search_capability`` based on the production adapter registry
     for the current model option's resolved model config.
 
-    The R3 contract requires that ``available`` only appears when a real
+    The contract requires that ``available`` only appears when a real
     adapter is registered AND constructible for the current model
     option's provider. The function is in ``reader_record_ask.service``.
 
@@ -1079,7 +1079,7 @@ class TestSelectedModelPayloadProjection:
             WebSearchAdapterRegistry,
         )
 
-        # Empty registry — no adapters registered. G3-R1: the canonical
+        # Empty registry — no adapters registered. G3-the canonical
         # resolver lives in ``web_search_common``; monkeypatch there.
         monkeypatch.setattr(
             web_search_common,
@@ -1125,7 +1125,7 @@ class TestSelectedModelPayloadProjection:
         ``unavailable`` — even when ``selection=None`` falls back to the
         route default model config.
 
-        ASK-WEB-G3-R3: ``selection=None`` resolves to the route default
+        ASK-WEB-G3-``selection=None`` resolves to the route default
         (e.g. ``qwen3.7-max``), which the production registry WOULD
         resolve to ``available``. To verify the "unknown provider"
         projection path, this test monkeypatches the registry to an
@@ -1224,7 +1224,7 @@ class TestSelectedModelPayloadProjection:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-G1-R3: RunStarted must NOT echo "allowed" without a real backend
+# ASK-WEB-G1-RunStarted must NOT echo "allowed" without a real backend
 # ---------------------------------------------------------------------------
 #
 # When ``enabled_for_turn=True`` is forwarded to the production stream but
@@ -1234,12 +1234,12 @@ class TestSelectedModelPayloadProjection:
 
 
 class TestRunStartedNoAllowedWithoutBackend:
-    """ASK-WEB-G1-R3: ``agentic.run_started.web_search_mode`` must NOT
+    """ASK-WEB-G1-``agentic.run_started.web_search_mode`` must NOT
     echo ``"allowed"`` when no ``WebSearchBackend`` is injected.
 
     The previous implementation would echo ``"allowed"`` whenever a
     capability with ``enabled_for_turn=True`` was forwarded, even if no
-    backend was wired. The R3 contract is fail-closed: an enabled
+    backend was wired. The contract is fail-closed: an enabled
     capability without a backend must not produce an ``allowed`` echo.
     """
 

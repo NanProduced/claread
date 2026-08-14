@@ -1,4 +1,4 @@
-# task-history: D6-I3P (renamed from test_d6_i3p_artifact_pipeline_worker_service.py)
+# task-history: (renamed from test_d6_i3p_artifact_pipeline_worker_service.py)
 """Tests for the artifact pipeline worker service.
 
 Covers the full artifact-backed text/markdown pipeline driven through
@@ -646,8 +646,8 @@ async def test_retryable_provider_error_schedules_retry(
     extraction worker, which transitions the job to ``retry_later`` — NOT
     ``failed_terminal``. No materialization job is enqueued.
 
-    This matches the D6-I3L extraction worker design: retryable provider errors
-    schedule a retry with a delay. The materialization worker (D6-I3O) has a
+    This matches the extraction worker design: retryable provider errors
+    schedule a retry with a delay. The materialization worker has a
     different pattern for retryable DB exceptions (propagate, stay ``claimed``
     for stale-lease recovery) — that is covered in the I3O test suite.
     """
@@ -752,7 +752,7 @@ async def test_no_job_returns_none(artifact_pipeline_db_env: asyncpg.Pool) -> No
 
 
 # ===================================================================
-# Script-level drain cycle: stale-lease recovery (D6 backend hardening: Task 1)
+# Script-level drain cycle: stale-lease recovery (backend hardening:)
 # ===================================================================
 #
 # These tests exercise ``_run_drain_cycle`` from the artifact pipeline worker

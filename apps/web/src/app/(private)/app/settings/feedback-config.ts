@@ -1,9 +1,7 @@
 /**
  * Feedback display config for the settings "我的反馈" surface.
  *
- * DATA-SCHEMA-BASELINE D2: relocated from the deleted zero-consumer
- * `components/reader/FeedbackSheet.tsx`. Only the dictionary/app scopes
- * exist — the sentence scope has no producer and was removed.
+ * Only dictionary/app scopes exist; the sentence scope has no producer.
  */
 
 import type {

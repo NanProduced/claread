@@ -1,4 +1,4 @@
-"""ASK-TURN-LIFECYCLE R0 — Turn stream lifecycle typed contract.
+"""ASK-TURN-LIFECYCLE — Turn stream lifecycle typed contract.
 
 Freezes the unified turn lifecycle state machine that the SSE producer
 (``production_stream``), the SSE consumer (Web ``consumeReaderAskSse``),
@@ -80,12 +80,12 @@ TurnLifecycleState = Literal[
     "cancelled",
 ]
 
-#: Terminal states — once entered, no further transition is allowed.
+# Terminal states — once entered, no further transition is allowed.
 TERMINAL_STATES: frozenset[TurnLifecycleState] = frozenset(
     {"committed", "failed", "cancelled"}
 )
 
-#: Trusted typed terminal event names.
+# Trusted typed terminal event names.
 TRUSTED_TERMINAL_EVENT_NAMES: frozenset[str] = frozenset(
     {
         "message.completed",
@@ -93,8 +93,8 @@ TRUSTED_TERMINAL_EVENT_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Final status values carried by ``agentic.terminal``. ``ok`` only appears
-#: on ``message.completed``.
+# Final status values carried by ``agentic.terminal``. ``ok`` only appears
+# on ``message.completed``.
 TerminalFinalStatus = Literal[
     "ok",
     "failed",
@@ -102,9 +102,9 @@ TerminalFinalStatus = Literal[
     "context_stale",
 ]
 
-#: Mapping from a trusted terminal final_status to the resulting
-#: lifecycle state. ``ok`` maps to ``committed`` because it only arrives
-#: via ``message.completed``.
+# Mapping from a trusted terminal final_status to the resulting
+# lifecycle state. ``ok`` maps to ``committed`` because it only arrives
+# via ``message.completed``.
 _FINAL_STATUS_TO_STATE: dict[str, TurnLifecycleState] = {
     "ok": "committed",
     "failed": "failed",
@@ -112,8 +112,8 @@ _FINAL_STATUS_TO_STATE: dict[str, TurnLifecycleState] = {
     "context_stale": "failed",
 }
 
-#: Terminal reason kind for stale-stream reconciliation. Used when the
-#: host detects a streaming run/message whose owner has gone away.
+# Terminal reason kind for stale-stream reconciliation. Used when the
+# host detects a streaming run/message whose owner has gone away.
 STALE_STREAM_TERMINAL_REASON = "stale_stream_reconciled"
 
 
@@ -244,7 +244,7 @@ def is_trusted_terminal_event(event_name: str) -> bool:
 class StreamLifecycleHook(Protocol):
     """Minimal bridge between the route's ``finally`` and the generator.
 
-    ASK-TURN-LIFECYCLE R1: the generator (``stream_agentic_thread_message``)
+    ASK-TURN-LIFECYCLE the generator (``stream_agentic_thread_message``)
     calls ``register_active_turn`` as soon as the assistant message +
     turn_run rows are persisted, and ``mark_terminal_emitted`` immediately
     after yielding a typed terminal event (``message.completed`` /

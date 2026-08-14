@@ -1,7 +1,7 @@
 """Reader job runtime skeleton.
 
 Provides the minimal claim/heartbeat/transition/recovery helpers for
-``reader_jobs`` on top of the D3 schema. PostgreSQL is the durable authority;
+``reader_jobs`` on top of the schema. PostgreSQL is the durable authority;
 this module never calls LLMs, PydanticAI or LangGraph.
 
 Key invariants enforced here:
@@ -75,7 +75,7 @@ JOB_RUNTIME_SCOPE_PRODUCTION: JobRuntimeScope = "production"
 JOB_RUNTIME_SCOPE_FAKE: JobRuntimeScope = "fake"
 FAKE_JOB_NAMESPACE = "reader_markdown_g5_fake"
 
-# T3.5 completion finalizer: jobs are "terminal" when they will not be
+# Completion finalizer: jobs are "terminal" when they will not be
 # retried or picked up by another worker tick. The finalizer uses this set
 # (alongside ``analysis_windows`` terminal statuses) to decide whether a
 # record can transition ``readiness_state -> coverage_complete``.
@@ -552,7 +552,7 @@ class ReaderJobRuntime:
         required_request_origin: str | None = None,
         required_fingerprint_base: str | None = None,
     ) -> ClaimResult | None:
-        """Atomically claim a **specific** job by id (T5.6b section drain).
+        """Atomically claim a **specific** job by id (section drain).
 
         Returns ``None`` when the job is missing, not claimable (already
         claimed / terminal), fails fence, or fails shape/origin/fingerprint
@@ -1254,7 +1254,7 @@ class ReaderJobRuntime:
                     batch_size,
                 )
                 for row in rows:
-                    # T4.2a-R2: Before re-queuing or failing a stale-lease
+                    # Before re-queuing or failing a stale-lease
                     # job, check if its route is still active. If the route
                     # has flipped, supersede the job instead of recovering
                     # it — this prevents stale-fingerprint jobs from being
@@ -1435,9 +1435,9 @@ class ReaderJobRuntime:
         if record_row["active_base_id"] != base_id:
             return "active_base_mismatch"
 
-        # T4.2a-R2: Route fingerprint consistency check. For enhancement
+        # Route fingerprint consistency check. For enhancement
         # jobs that carry ``article_route`` in their ``input_json`` (batch
-        # jobs created by the T4.1b/T4.1c bootstrap), verify that the
+        # jobs created by the bootstrap), verify that the persistence layer persistence layer
         # route still matches the current run envelope's ``article_route``.
         # If the route has flipped (e.g., SHORT_BATCH → STRUCTURED_BATCH on
         # a rebuilt base), the job is stale and must be fenced.
@@ -1454,7 +1454,7 @@ class ReaderJobRuntime:
         conn: asyncpg.Connection,
         job_row: asyncpg.Record,
     ) -> str | None:
-        """T4.2a-R2: Verify the job's ``article_route`` matches the run.
+        """Verify the job's ``article_route`` matches the run.
 
         Reads the latest ``reader_runs.envelope_json.article_route`` and
         compares it to ``reader_jobs.input_json.article_route``. Returns
@@ -1569,7 +1569,7 @@ class ReaderJobRuntime:
             params.append(pause_owner)
             param_idx += 1
 
-        # T3.4a (P1): persist output_ref_json whenever it is provided,
+        # Persist output_ref_json whenever it is provided,
         # not only on STATUS_SUCCEEDED. Failure / superseded / skipped
         # transitions also carry diagnostics / output refs that downstream
         # observability queries need (e.g. reader_jobs.output_ref_json

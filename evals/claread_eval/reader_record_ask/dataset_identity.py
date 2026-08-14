@@ -1,21 +1,21 @@
-"""Deterministic content identity for the R4-A3 working dataset.
+"""Deterministic content identity for the working dataset.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement (P0-2 dataset identity): the R4-A3 working dataset lives
+Requirement (dataset identity): the working dataset lives
 under ``evals/tmp/`` and is gitignored, so the same ``dataset_id`` can
 silently drift between phases. This module computes a deterministic
 SHA-256 fingerprint over the dataset's actual file content (``dataset.yaml``
 + all loader-resolved case files) so artifacts can carry an auditable
-content identity, and Phase 2/3/aggregate can fail-closed on drift.
+content identity, and later evaluation/aggregate steps can fail-closed on drift.
 
-P1-b atomic snapshot (this rework): the canonical entrypoint is now
+Atomic snapshot: the canonical entrypoint is now
 :func:`compute_dataset_identity_from_bytes`, which operates on bytes
 captured by the loader in a single read pass. The legacy
 :func:`compute_dataset_identity` is kept as a backwards-compatible
 adapter that re-reads files from disk — it produces the same hash for
 the same bytes but does NOT bind the identity to the bytes the parser
 actually consumed. New callers should use
-:func:`load_r4_a3_dataset_with_snapshot` from ``loader.py`` to get a
+the snapshot-loading entrypoint from ``loader.py`` to get a
 snapshot where the parsed dataset and identity are derived from the
 same byte capture.
 
@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Dataset,
+    ReaderRecordAskDataset,
 )
 
 # Subdirectories that are NOT part of the dataset content identity.
@@ -59,7 +59,7 @@ _EXCLUDED_SUBDIRS: frozenset[str] = frozenset({"runs", ".cache"})
 
 @dataclass(frozen=True)
 class DatasetIdentity:
-    """Content identity for an R4-A3 dataset at a point in time.
+    """Content identity for a dataset at a point in time.
 
     - ``dataset_id``: the dataset's declared id (e.g. ``reader-record-ask-r4-a3``).
     - ``schema_version``: the dataset's declared schema version.
@@ -105,7 +105,7 @@ def compute_dataset_identity_from_bytes(
 ) -> DatasetIdentity:
     """Compute :class:`DatasetIdentity` from already-captured bytes.
 
-    This is the canonical entrypoint for the P1-b atomic snapshot
+    This is the canonical entrypoint for the atomic snapshot
     contract. The loader captures ``dataset.yaml`` and every
     loader-resolved case file as raw bytes in a single read pass, then
     calls this function with the captured bytes. The returned
@@ -151,7 +151,7 @@ def compute_dataset_identity_from_bytes(
 
 def compute_dataset_identity(
     dataset_dir: Path,
-    dataset: ReaderRecordAskR4A3Dataset,
+    dataset: ReaderRecordAskDataset,
 ) -> DatasetIdentity:
     """Compute :class:`DatasetIdentity` for a loaded dataset.
 
@@ -166,7 +166,7 @@ def compute_dataset_identity(
     parsed dataset and the computed identity can diverge silently.
 
     New callers should use
-    :func:`load_r4_a3_dataset_with_snapshot` from ``loader.py`` to
+    the snapshot-loading entrypoint from ``loader.py`` to
     obtain a :class:`LoadedReaderRecordAskDatasetSnapshot` whose
     ``dataset`` and ``identity`` fields are derived from the SAME byte
     capture.
@@ -228,7 +228,7 @@ def _framed_update(
 
 
 # ---------------------------------------------------------------------------
-# Verification helpers (used by Phase 2/3 preflight and aggregate)
+# Verification helpers (used by staged preflight and aggregate)
 # ---------------------------------------------------------------------------
 
 

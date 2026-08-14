@@ -1,4 +1,4 @@
-# task-history: D6-I3D (renamed from test_d6_i3d_stable_ready_input_route.py)
+# task-history: (renamed from test_d6_i3d_stable_ready_input_route.py)
 from __future__ import annotations
 
 from datetime import UTC, datetime

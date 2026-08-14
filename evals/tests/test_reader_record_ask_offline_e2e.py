@@ -1,23 +1,23 @@
-"""Offline end-to-end test for the R4-A3 rework closure.
+"""Offline end-to-end test for the evaluation closure.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: 离线端到端验收（Task 14）.
+Requirement: 离线端到端验收.
 
 This test exercises the full closure flow WITHOUT any real LLM call:
 
-    FunctionModel Phase 1 (3 reps)
+    FunctionModel initial pass (3 reps)
     → one artifact status=ok but contains unsupported ``2025`` year token
     → evaluate_artifact
     → failure cluster
-    → PhasePlanner Phase 2 case selection
+    → PhasePlanner failure-case selection
     → thinking config verification
-    → Phase 2 artifact
+    → rerun artifact
     → aggregate
     → report
 
-Asserts the 9 spec requirements (Task 14.2):
+Asserts the 9 spec requirements:
 
-    (a) 2025 case enters Phase 2
+    (a) 2025 case enters rerun
     (b) run-id path consistent (writer = reader)
     (c) aggregate reads artifacts
     (d) deterministic failure not masked by terminal ok
@@ -79,9 +79,9 @@ from claread_eval.reader_record_ask.report import (  # noqa: E402
     generate_eval_report,
 )
 from claread_eval.reader_record_ask.schema import (  # noqa: E402
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 from claread_eval.reader_record_ask.session import (  # noqa: E402
     RunSessionLayout,
@@ -92,7 +92,7 @@ from claread_eval.reader_record_ask.session import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 # Synthetic placeholder UUID — real local Reading Record UUIDs must
-# never appear in tracked fixtures (spec: P0 dataset Git governance §7).
+# never appear in tracked fixtures (dataset Git governance).
 _BBC_RECORD_ID = "00000000-0000-4000-8000-000000000000"
 
 
@@ -105,11 +105,11 @@ def _make_case(
     input_mode: str = "no_selection",
     phase_tags: list[str] | None = None,
     expected_overrides: dict | None = None,
-) -> ReaderRecordAskR4A3Case:
-    expected = ReaderRecordAskR4A3Expected()
+) -> ReaderRecordAskCase:
+    expected = ReaderRecordAskExpected()
     if expected_overrides:
         expected = expected.model_copy(update=expected_overrides)
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="bbc_record",
         record_id=_BBC_RECORD_ID,
@@ -127,27 +127,27 @@ def _make_case(
     )
 
 
-def _make_offline_e2e_dataset() -> ReaderRecordAskR4A3Dataset:
-    """Build the minimal dataset that exercises every Task 14.2 assertion.
+def _make_offline_e2e_dataset() -> ReaderRecordAskDataset:
+    """Build the minimal dataset that exercises every closure assertion.
 
     Cases:
-    - ``bbc-2025-leak``: Phase 1 real, status=ok but contains ``2025`` →
+    - ``bbc-2025-leak``: initial real pass, status=ok but contains ``2025`` →
       must be flagged by ``unsupported_temporal_claims`` and selected
-      for Phase 2 (assertions a, d).
-    - ``bbc-suggestion-main-idea``: Phase 1 real,
+      for rerun (assertions a, d).
+    - ``bbc-suggestion-main-idea``: initial real pass,
       ``input_mode=suggestion_equivalent`` → must be selected into the
-      Phase 1 manifest (assertion e).
-    - ``bbc-manual-exercise``: Phase 1 real, ``input_mode=manual`` →
+      initial-pass manifest (assertion e).
+    - ``bbc-manual-exercise``: initial real pass, ``input_mode=manual`` →
       control case (assertion e corollary: suggestion and manual both
       project to the same user_message).
     - ``bbc-known-offline``: ``source_metadata=known_bbc`` +
       ``phase_tags=[offline_only]`` → must NOT be selected for real
       runtime (assertion f).
     """
-    return ReaderRecordAskR4A3Dataset(
+    return ReaderRecordAskDataset(
         id="reader-record-ask-r4-a3-offline-e2e",
         schema_version="r4-a3-dataset-v1",
-        description="Offline e2e test dataset for R4-A3 rework closure",
+        description="Offline e2e test dataset for rework closure",
         case_globs=["cases/*.json"],
         tags=["r4-a3", "offline-e2e"],
         cases=[
@@ -271,7 +271,7 @@ def _make_request_params() -> ModelRequestParameters:
 
 def _build_phase1_artifact(
     *,
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     run_id: str,
     run_index: int,
     final_text: str,
@@ -281,7 +281,7 @@ def _build_phase1_artifact(
     executed_requests: int = 1,
     executed_tokens: int = 80,
 ) -> RawArtifact:
-    """Build a Phase 1 artifact with the fields the evaluators need.
+    """Build an initial-pass artifact with the fields the evaluators need.
 
     Mirrors what the harness would write via ``_run_one_case``. The
     artifact carries only safe fields — no article body, no
@@ -370,10 +370,10 @@ def _load_artifacts_from_disk(
 
 
 def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
-    """Spec Task 14.1 + 14.2 — full offline closure flow.
+    """Spec: full offline closure flow.
 
     Walks the entire pipeline:
-    - Phase 1 case selection via PhasePlanner (real_phase1 tag, excl.
+    - initial-pass case selection via PhasePlanner (real_phase1 tag, excl.
       offline_only).
     - 3 fixed repetitions per case (no early break).
     - One artifact with finalized_status='ok' but containing unsupported
@@ -382,7 +382,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
       ok).
     - Artifacts written via RunSessionLayout to a deterministic path
       under ``<runs_root>/<run_id>/artifacts/``.
-    - evaluate_artifact on each artifact → Phase 2 case selection via
+    - evaluate_artifact on each artifact → rerun case selection via
       PhasePlanner(phase=2, prior_eval_results=...).
     - aggregate_results + generate_eval_report.
 
@@ -413,7 +413,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     suggestion_case = cases_by_id["bbc-suggestion-main-idea"]
     assert suggestion_case.input_mode == "suggestion_equivalent"
     assert suggestion_case in phase1_cases, (
-        "suggestion_equivalent case must enter the Phase 1 manifest "
+        "suggestion_equivalent case must enter the manifest "
         "(assertion e)"
     )
 
@@ -427,14 +427,14 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     assert session.artifact_dir == expected_artifact_dir
 
     # ---------------------------------------------------------------
-    # Phase 1: 3 fixed reps per case, write artifacts via session
+    # Initial pass: 3 fixed reps per case, write artifacts via session
     # ---------------------------------------------------------------
     phase1_artifacts: list[RawArtifact] = []
     for case in phase1_cases:
         for run_index in range(phase1_planner.repetitions):
             # Pick a final_text per case + run_index. For the 2025-leak
             # case, every rep returns an answer containing the unsupported
-            # ``2025`` year token — this is the P0-3 regression signal.
+            # ``2025`` year token — this is the regression signal.
             if case.id == "bbc-2025-leak":
                 final_text = (
                     "文章提到的城市有 Thunder Bay、纽约、多伦多。"
@@ -464,8 +464,8 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
 
     # 3 cases × 3 reps = 9 artifacts (offline_only excluded).
     assert len(phase1_artifacts) == 9, (
-        "Phase 1 must run 3 fixed reps per case (no early break) — "
-        "3 cases × 3 reps = 9 artifacts (assertion b/P0-2)"
+        "stage 1 must run 3 fixed reps per case (no early break) — "
+        "3 cases × 3 reps = 9 artifacts (assertion b)"
     )
 
     # ---------------------------------------------------------------
@@ -474,7 +474,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     loaded_artifacts = _load_artifacts_from_disk(session.artifact_dir, run_id)
     assert len(loaded_artifacts) == 9, (
         "aggregate must read all 9 artifacts written by the harness "
-        "(assertion b/c)"
+        "(assertion b and c)"
     )
     # The artifact_dir resolves to the same path for writer and reader.
     assert session.artifact_dir == expected_artifact_dir
@@ -487,9 +487,9 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     # ---------------------------------------------------------------
     # (d) deterministic failure NOT masked by terminal ok
     # ---------------------------------------------------------------
-    # Run evaluate_artifact on each Phase 1 artifact.
-    # P0-2: keep per-repetition results — any failing rep triggers
-    # Phase 2 selection (no more last-rep-wins masking). The outer
+    # Run evaluate_artifact on each initial-pass artifact.
+    # Keep per-repetition results — any failing rep triggers
+    # rerun selection (no more last-rep-wins masking). The outer
     # dict is ``case_id -> list[list[EvalDimensionResult]]`` where the
     # inner list is one entry per repetition (sorted by run_index for
     # order-invariant aggregation).
@@ -501,7 +501,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
 
     # The 2025-leak case must be flagged as a content failure even
     # though finalized_status='ok'. ``any_repetition_content_failure``
-    # returns True if ANY rep had a content-quality failure (P0-2).
+    # returns True if ANY rep had a content-quality failure.
     from claread_eval.reader_record_ask.evaluation import (  # noqa: PLC0415
         any_repetition_content_failure,
     )
@@ -534,7 +534,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     ) is False
 
     # ---------------------------------------------------------------
-    # (a) 2025 case enters Phase 2
+    # (a) 2025 case enters rerun
     # ---------------------------------------------------------------
     phase2_planner = PhasePlanner(
         dataset=dataset,
@@ -546,19 +546,19 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     phase2_case_ids = [c.id for c in phase2_cases]
 
     assert "bbc-2025-leak" in phase2_case_ids, (
-        "2025-leak case must enter Phase 2 (assertion a)"
+        "2025-leak case must enter stage 2 (assertion a)"
     )
-    # Phase 2 default repetitions = 1 (not 3).
+    # Rerun default repetitions = 1 (not 3).
     assert phase2_planner.repetitions == 1
 
-    # Cases that did NOT fail must NOT enter Phase 2.
+    # Cases that did NOT fail must NOT enter rerun.
     assert "bbc-suggestion-main-idea" not in phase2_case_ids
     assert "bbc-manual-exercise" not in phase2_case_ids
 
     # ---------------------------------------------------------------
     # (c) aggregate reads artifacts
     # ---------------------------------------------------------------
-    # Build CaseEvalResult for each Phase 1 artifact (mirrors runner's
+    # Build CaseEvalResult for each initial-pass artifact (mirrors runner's
     # ``_build_case_result``).
     case_results: list[CaseEvalResult] = []
     for artifact in loaded_artifacts:
@@ -590,7 +590,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
         "aggregate must read all 9 artifacts (assertion c)"
     )
     assert aggregated.total_cases == 3, (
-        "3 distinct cases ran in Phase 1"
+        "3 distinct cases ran in stage 1"
     )
     # Failure clusters: at least the 2025-year-hallucination cluster.
     cluster_patterns = {
@@ -604,7 +604,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     )
 
     # ---------------------------------------------------------------
-    # Phase 2 artifact (single rep, thinking enabled) + aggregate
+    # Rerun artifact (single rep, thinking enabled) + aggregate
     # ---------------------------------------------------------------
     phase2_run_id = "phase2-offline-e2e"
     phase2_session = RunSessionLayout(
@@ -620,7 +620,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
 
     phase2_artifacts: list[RawArtifact] = []
     for case in phase2_cases:
-        # Phase 2 simulates the upgraded model fixing the 2025 leak.
+        # The rerun simulates the upgraded model fixing the 2025 leak.
         final_text = (
             "文章提到的城市有 Thunder Bay、纽约、多伦多。"
             "文章未提供发表年份。"
@@ -631,7 +631,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
             run_index=0,
             final_text=final_text,
             finalized_status="ok",
-            thinking_enabled=True,  # Phase 2 = thinking enabled
+            thinking_enabled=True,  # rerun = thinking enabled
             model_short_name="deepseek-chat",
             executed_requests=1,
             executed_tokens=80,
@@ -639,17 +639,17 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
         phase2_artifacts.append(artifact)
         _write_artifact(artifact, phase2_session)
 
-    # Verify Phase 2 artifact's thinking flag is True.
+    # Verify the rerun artifact's thinking flag is True.
     for artifact in phase2_artifacts:
         assert artifact.thinking_enabled is True, (
-            "Phase 2 artifacts must have thinking_enabled=True "
-            "(P1-1 thinking verification)"
+            "artifacts must have thinking_enabled=True "
+            "(thinking verification)"
         )
 
     # ---------------------------------------------------------------
     # (h) report no secret leak
     # ---------------------------------------------------------------
-    # Generate the report using the aggregated Phase 1 results.
+    # Generate the report using the aggregated initial-pass results.
     report = generate_eval_report(
         aggregated=aggregated,
         dataset=dataset,
@@ -668,8 +668,8 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
         deterministic_tests_passed=True,
         deterministic_tests_summary="offline e2e: all deep modules exercised.",
         verdict="rework",  # 2025 failure → rework (not accepted)
-        allow_r4_a4=True,
-        allow_r4_b1=False,
+        allow_correctness_followup=True,
+        allow_streaming_provider_followup=False,
         run_metadata={
             "run_id": run_id,
             "phase1_artifact_dir": str(session.artifact_dir),
@@ -737,7 +737,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
 
 
 async def test_offline_e2e_request_hard_cap_effective() -> None:
-    """Spec Task 14.2 (g) — request hard cap is actually enforced.
+    """Spec: request hard cap is actually enforced.
 
     Uses :class:`FunctionModel` wrapped in :class:`BudgetedUsageModel`
     with ``max_requests=2``. The first two ``request()`` calls succeed;
@@ -778,7 +778,7 @@ async def test_offline_e2e_request_hard_cap_effective() -> None:
 
 
 def test_offline_e2e_run_id_path_consistency(tmp_path: Path) -> None:
-    """Spec Task 14.2 (b) — writer and reader use the same path resolver.
+    """Spec: writer and reader use the same path resolver.
 
     RunSessionLayout's ``artifact_dir`` and ``artifact_path`` are the
     single source of truth. The harness writes via ``artifact_path``;
@@ -821,10 +821,10 @@ def test_offline_e2e_run_id_path_consistency(tmp_path: Path) -> None:
 
 
 def test_offline_e2e_known_source_offline_only_not_in_runtime_coverage() -> None:
-    """Spec Task 14.2 (f) — known-source ``offline_only`` cases are NOT
+    """Spec: known-source ``offline_only`` cases are NOT
     reported as runtime coverage.
 
-    The Phase 1 manifest excludes ``offline_only`` cases. The report's
+    The initial-pass manifest excludes ``offline_only`` cases. The report's
     dataset case table still lists them (for auditability) but they
     never enter ``cases_to_run``.
     """
@@ -840,7 +840,7 @@ def test_offline_e2e_known_source_offline_only_not_in_runtime_coverage() -> None
         "(assertion f)"
     )
     # Its source_metadata is known_bbc — explicitly NOT runtime-covered
-    # until R4-A4 lands the trusted-source-metadata seam.
+    # until the trusted-source-metadata seam lands.
     known_case = next(c for c in dataset.cases if c.id == "bbc-known-offline")
     assert known_case.source_metadata == "known_bbc"
     assert PHASE_TAG_OFFLINE_ONLY in known_case.phase_tags

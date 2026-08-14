@@ -136,7 +136,7 @@ class CandidateDocumentCreationService:
         created_at = now or datetime.now(UTC)
         language_value = (language or "en").strip() or "en"
         source_metadata_value = dict(source_metadata or {})
-        # L2/A4 — 每请求只解析一次：当调用方未提供 preparsed 时，在
+        # L2/ — 每请求只解析一次：当调用方未提供 preparsed 时，在
         # 这里解析一次并同时喂给 gate 与 candidate 块构造。格式检测
         # （detected_format）也由这同一份 MarkdownParseResult 决定，
         # 禁止再按 source_type 决定是否保留结构。
@@ -154,7 +154,7 @@ class CandidateDocumentCreationService:
         try:
             async with pool.acquire() as conn:
                 async with conn.transaction():
-                    # A4 — 解析结果共享: thread the caller-provided parse
+                    # 解析结果共享: thread the caller-provided parse
                     # result through the gate and the candidate block
                     # builder so the markdown parser runs at most once
                     # per request. ``preparsed=None`` preserves the
@@ -686,7 +686,7 @@ def _build_markdown_drafts_from_parser(
     *,
     parse_result: MarkdownParseResult | None = None,
 ) -> tuple[list[_BlockDraft], str | None]:
-    # A4 — 解析结果共享: reuse the caller-provided parse result when
+    # 解析结果共享: reuse the caller-provided parse result when
     # available; otherwise parse once here. The caller (candidate
     # creation service) may already have parsed for the gate, so the
     # same MarkdownParseResult is threaded through to avoid a second

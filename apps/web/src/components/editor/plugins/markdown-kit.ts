@@ -10,14 +10,14 @@
  * 不加 remarkMath（阅读场景不需要 LaTeX）。
  * 不加 remarkMdx（callout 内不需要自定义元素）。
  *
- * C1.1 配置校正（按 platejs.org/docs/markdown 与项目安全子集）：
+ * 配置校正（按 platejs.org/docs/markdown 与项目安全子集）：
  * - `allowedNodes` 锁定 Plate↔mdast 转换的安全节点类型，避免未知节点
  *   静默穿透进编辑器（如 raw HTML / mdx / footnote definition 等）。
  *   覆盖范围：heading/list/table/code/blockquote/thematic_break 段级 +
  *   emphasis/strong/strikethrough/inline_code/link 行内 + paragraph/text 基础。
  *   未知节点会被 remark-stringify / plate-mdast deserializer 丢弃并降级。
  *
- *   R1：`allowedNodes` 在 **serialize 方向按 Plate 节点的原始 type 过滤**
+ *   `allowedNodes` 在 **serialize 方向按 Plate 节点的原始 type 过滤**
  *   （`@platejs/markdown` 的 shouldIncludeNode 检查 `node.type`），因此
  *   除了泛型键（`heading` / `list`，服务 deserialize 方向的 mdast 类型名），
  *   还必须列出编辑器实际使用的具体节点 type（`h1`–`h6` / `ul` / `ol`），
@@ -76,7 +76,7 @@ import {
  *
  * 注意：`a` 是 Plate element 类型（mdast `link` → Plate `{type:"a", url, children}`），
  * 由 `reader-blocks-kit.tsx` 的 `ReaderMarkdownLinkElement` 渲染；
- * 而 B3 inline-marks 投影路径使用 `link` leaf（`ReaderMarkdownLinkLeaf`）。
+ * 而 inline-marks 投影路径使用 `link` leaf（`ReaderMarkdownLinkLeaf`）。
  * 两者并存且不冲突：不同的 node kind（element vs leaf）+ 不同的 plugin key。
  *
  * 任何不在此列表的节点（callout / toggle / mention / equation / image /
@@ -88,7 +88,7 @@ const ALLOWED_MARKDOWN_NODES = [
   "p",
   "text",
   "heading",
-  // R1：serialize 方向按原始 node.type 过滤，必须列出具体标题 type。
+  // serialize 方向按原始 node.type 过滤，必须列出具体标题 type。
   "h1",
   "h2",
   "h3",
@@ -98,7 +98,7 @@ const ALLOWED_MARKDOWN_NODES = [
   // 段级容器
   "blockquote",
   "list",
-  // R1：同上，列表容器原始 type（classic ul/ol → mdast list）。
+  // 同上，列表容器原始 type（classic ul/ol → mdast list）。
   "ul",
   "ol",
   "li",
@@ -180,7 +180,7 @@ const SOURCE_CALLOUT_RULES = {
         }
         let children: Descendant[];
         if (mdastNode._asideChildren && mdastNode._asideChildren.length > 0) {
-          // R-Aside-1R A2: 使用 remarkMergeAsideHtml 携带的原始 mdast 子节点，
+          // 使用 remarkMergeAsideHtml 携带的原始 mdast 子节点，
           // 保留所有 inline marks / 嵌套结构 / 代码块，不进行损失性 round-trip。
           // opening html 节点 value 中的内部文本仍需通过 markdownToAstProcessor
           // 重新解析（因为 commonmark 将 html_block 内文本视为 raw text，不解析

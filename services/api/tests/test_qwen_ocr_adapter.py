@@ -1,4 +1,4 @@
-# task-history: D6-I3U (renamed from test_d6_i3u_qwen_ocr_adapter.py)
+# task-history: (renamed from test_d6_i3u_qwen_ocr_adapter.py)
 """Tests for the real Qwen / DashScope OCR adapter (env-gated).
 
 Covers the real :class:`QwenOcrTextExtractor` adapter that delegates to an
@@ -7,7 +7,7 @@ network calls are made. An opt-in smoke skeleton is env-gated at the end
 of the file (``CLAREAD_OCR_SMOKE_ENABLED=1`` + ``DASHSCOPE_API_KEY`` +
 ``READER_OCR_QWEN_MODEL``).
 
-Coverage map (per D6-I3U spec):
+Coverage map (per spec):
 
 1. Fake client happy path → extracted_text / confidence / warnings correct.
 2. No confidence → result allows ``None`` (not rejected).
@@ -610,7 +610,7 @@ def test_build_ocr_extractor_disabled_returns_unconfigured() -> None:
 
 
 def test_unconfigured_extractor_still_fails_closed() -> None:
-    """The UnconfiguredOcrTextExtractor contract is unchanged by D6-I3U."""
+    """The UnconfiguredOcrTextExtractor contract is unchanged by."""
     extractor = UnconfiguredOcrTextExtractor()
     with pytest.raises(ArtifactExtractionError) as exc_info:
         extractor.extract_text(b"img", content_type="image/png")
@@ -1180,7 +1180,7 @@ def test_build_default_router_accepts_real_qwen_extractor() -> None:
 
 
 async def test_ocr_provider_extract_text_does_not_block_event_loop() -> None:
-    """Regression (P2): ``extract_text`` runs in ``asyncio.to_thread`` so a
+    """Regression: ``extract_text`` runs in ``asyncio.to_thread`` so a
     real DashScope call (which may block for up to
     ``reader_ocr_request_timeout_seconds``) does NOT block the artifact
     pipeline worker's event loop.

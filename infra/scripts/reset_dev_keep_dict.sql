@@ -1,7 +1,7 @@
 -- ============================================================
 -- reset_dev_keep_dict.sql
 -- 开发库软重置:TRUNCATE 全部业务表(保留结构与受保护数据)
--- DATA-SCHEMA-BASELINE D2: 表清单与单一基线
+-- DATA-SCHEMA-BASELINE: 表清单与单一基线
 -- infra/migrations/0001_initial.sql 精确对齐,但排除两类受保护数据:
 --   - 词典三表 dict_entries/dict_lookup_targets/dict_redirects(约 205 万行)
 --   - eval_example_lab_entries(受保护 Directus Collection,Example Lab 数据)

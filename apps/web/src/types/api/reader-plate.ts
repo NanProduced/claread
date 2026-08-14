@@ -198,7 +198,7 @@ export interface ReaderSnapshotNavigationUnitDto {
   text_hash: string;
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
   /**
-   * A5: stable block metadata projected from `BuiltReadingUnit` when a
+   * Stable block metadata projected from `BuiltReadingUnit` when a
    * `StableBlockAnnotation` matched the unit's UTF-16 range. Both fields
    * are optional and absent for legacy snapshots (no annotations) so the
    * existing byte-for-byte shape stays stable.
@@ -486,7 +486,7 @@ export interface ReaderEnhancementProgressDto {
 }
 
 /**
- * T5.4a/b: optional top-level outline projection.
+ * Optional top-level outline projection.
  * - absent (undefined): legacy backend without the field
  * - null: new backend, no trusted published ready|partial
  * - object: only ready|partial is consumable (see hasTrustedSemanticOutline)
@@ -552,7 +552,7 @@ export type ReaderUnitChildNodeDto =
   | ReaderSentenceAnalysisNodeDto;
 
 /**
- * A5/B2: inline mark emitted by the backend Markdown parser into
+ * Inline mark emitted by the backend Markdown parser into
  * `reader_source_block` payload. Mirrors the backend
  * `inline_marks` shape (`{type, start, end, [href]}`) where `start` /
  * `end` are UTF-16 code unit offsets within the block's canonical text.
@@ -587,7 +587,7 @@ export interface ReaderSourceBlockNodeDto {
   base_end_utf16: number;
   children: ReaderSourceBlockChildNodeDto[];
   /**
-   * A5/B2: stable block metadata projected by the backend
+   * Stable block metadata projected by the backend
    * `_project_stable_block_fields`. All fields are optional and absent
    * for legacy snapshots (no `StableBlockAnnotation`) so the existing
    * byte-for-byte shape stays stable.
@@ -629,7 +629,7 @@ export interface ReaderSourceBlockNodeDto {
   /** L1: per-cell alignment for `table_cell`, else `null`. */
   tableAlignment?: "left" | "center" | "right" | "default" | null;
   /**
-   * P3 automatic-policy projection (backend-only truth).
+   * Automatic-policy projection (backend-only truth).
    * Expresses whether the system will *automatically* generate a layer —
    * never whether a job is loading / published / failed. Absent on legacy
    * snapshots (no semantic contract). UI must not re-derive role via regex.
@@ -1333,7 +1333,7 @@ export interface ReaderCandidateDocumentConfirmResponseDto {
 }
 
 // ---------------------------------------------------------------------------
-// S4: Candidate Recovery read DTO (mirror of upstream ReaderCandidateDocument*)
+// Candidate Recovery read DTO (mirror of upstream ReaderCandidateDocument*)
 // ---------------------------------------------------------------------------
 
 export type ReaderCandidateDocumentPreviewMode =
@@ -1716,7 +1716,7 @@ export interface ReaderArticleRagIndexEnsureResponseDto {
 }
 
 // ---------------------------------------------------------------------------
-// T5.6c — POST /reader/records/{record_id}/section-translation
+// POST /reader/records/{record_id}/section-translation
 //
 // Mirrors `ReaderSectionTranslation*` in
 // `services/api/app/schemas/reader_orchestration.py`. The body carries the

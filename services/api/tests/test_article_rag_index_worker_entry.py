@@ -1,4 +1,4 @@
-# task-history: D6-I4U (renamed from test_d6_i4u_article_rag_index_worker_entry.py)
+# task-history: (renamed from test_d6_i4u_article_rag_index_worker_entry.py)
 """Tests for the Article RAG index operational worker entry.
 
 Covers the standalone ``scripts/run_reader_article_rag_index_worker.py``:
@@ -52,7 +52,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam
 # class boundary so tests that drive ``_run_drain_cycle`` / ``_run_worker``
 # directly do NOT touch a real DB / network.
 #
-# This is a global safety net added in D6 backend hardening Task 1.  Tests
+# This is a global safety net added in backend hardening. Tests
 # that need to assert ordering / batch-size propagation (e.g.
 # ``TestStaleLeaseRecovery``) override this stub with their own
 # ``monkeypatch.setattr(...)`` — monkeypatch teardown is function-scoped, so
@@ -68,7 +68,7 @@ def _stub_recover_stale_leases_for_tests(
     boundary so tests that drive ``_run_drain_cycle`` / ``_run_worker``
     directly do NOT touch a real DB / network.
 
-    This is a global safety net added in D6 backend hardening Task 1. Tests
+    This is a global safety net added in backend hardening. Tests
     that need to assert ordering / batch-size propagation (e.g.
     ``TestStaleLeaseRecovery``) override this stub with their own
     ``monkeypatch.setattr(...)`` — monkeypatch teardown is function-scoped, so
@@ -672,7 +672,7 @@ class TestNoRealBackendCalls:
 
 
 # ===========================================================================
-# Stale-lease recovery (D6 backend hardening: Task 1)
+# Stale-lease recovery (backend hardening:)
 # ===========================================================================
 
 

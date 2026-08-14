@@ -1,4 +1,4 @@
-"""Tests for MapSourceMaterialProvider (M3 stage C, C1 + B3 heading enrichment).
+"""Tests for MapSourceMaterialProvider (M3 stage C, with heading enrichment).
 
 Contract: docs/initiatives/reader-agentic-orchestration/modules/
 ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
@@ -14,10 +14,10 @@ Covers:
       ) -> MapSourceMaterial
     The signature MUST NOT accept ``EnvelopeIdentity`` or a standalone
     ``user_id`` parameter (v5 §3.5.1.1).
-  * §5.1 3 — default OFF semantics (B3 heading-enabled baseline):
+  * §5.1 3 — default OFF semantics (heading-enabled baseline):
     ``include_rag_ask_only=False`` does NOT parse descriptors
     (``descriptor_sources=()``) but DOES call ``plan_service.
-    build_index_plan`` to extract B3 heading enrichments
+    build_index_plan`` to extract heading enrichments
     (§3.5.2 / §4.2 / §5.2 — heading belongs to ``main_reading``).
   * §5.1 26 — provider authorization subject uniqueness: both
     ``record_id`` and ``user_id`` for ``build_index_plan`` come from
@@ -55,9 +55,9 @@ Covers:
     ``MaterialFailureReason``.
   * §5.1 9 — no RAG provenance: ``MapSourceMaterial`` does not carry
     ``index_run_id`` / ``plan_content_sha256`` fields.
-  * B3 heading enrichment (§4.2 / §5.2):
+  * heading enrichment (§4.2 §5.2):
       - ``include_rag_ask_only=False`` still populates
-        ``heading_enrichments`` (B3 baseline).
+        ``heading_enrichments`` (baseline).
       - ``include_rag_ask_only=True`` populates both
         ``heading_enrichments`` and ``descriptor_sources``.
       - material fence failure → ``heading_enrichments=()``.
@@ -568,7 +568,7 @@ class TestMapSourceMaterialShape:
         assert isinstance(m2.descriptor_sources[0], ArticleMapEntrySource)
 
     def test_heading_enrichments_default_empty(self) -> None:
-        """B3 — ``heading_enrichments`` defaults to empty tuple."""
+        """``heading_enrichments`` defaults to empty tuple."""
         m = MapSourceMaterial(material_fence_ok=True)
         assert m.heading_enrichments == ()
 
@@ -584,7 +584,7 @@ class TestMapSourceMaterialShape:
         assert m.heading_enrichments[0].heading == "Chapter 1"
 
     def test_heading_enrichment_is_frozen_dataclass(self) -> None:
-        """B3 — ``HeadingEnrichment`` is frozen+slots (contract interface)."""
+        """``HeadingEnrichment`` is frozen+slots (contract interface)."""
         assert dataclasses.is_dataclass(HeadingEnrichment)
         he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -626,7 +626,7 @@ class TestDefaultOff:
 
     ``include_rag_ask_only=False`` (the default) does NOT parse
     descriptors (``descriptor_sources=()``) but DOES call
-    ``plan_service.build_index_plan`` to extract B3 heading
+    ``plan_service.build_index_plan`` to extract heading
     enrichments (§4.2 / §5.2 — heading belongs to ``main_reading``,
     populated regardless of opt-in).
     """
@@ -648,7 +648,7 @@ class TestDefaultOff:
         assert material.material_fence_ok is True
         assert material.descriptor_sources == ()
         assert material.material_failure_reason == "ok"
-        # B3 — heading is populated even when opt-in is off.
+        # Heading is populated even when opt-in is off.
         assert len(material.heading_enrichments) == 1
         assert material.heading_enrichments[0].unit_id == "unit-1"
         assert material.heading_enrichments[0].heading == "Chapter 1"
@@ -822,7 +822,7 @@ class TestMaterialFenceFailureFallback:
     Each failure path returns:
       - ``material_fence_ok=False``
       - ``descriptor_sources=()`` (整份 fail-closed; 不部分采纳)
-      - ``heading_enrichments=()`` (B3 integral fail-closed — heading
+      - ``heading_enrichments=`` ( integral fail-closed — heading
         and descriptor travel on the same material)
       - a fixed safe ``material_failure_reason`` enum value
     Ask owner MUST fall back to existing unit-window map.
@@ -1122,7 +1122,7 @@ class TestExceptionHandling:
 
 class TestHappyPath:
     """When material fence passes, ``descriptor_sources`` is populated
-    by ``build_descriptor_candidates`` (C3). The provider does NOT call
+    by ``build_descriptor_candidates``. The provider does NOT call
     ``ledger.issue`` or ``assemble_article_map``."""
 
     @pytest.mark.anyio
@@ -1403,12 +1403,12 @@ def test_material_failure_reason_literal_covers_all_safe_values() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 11. B3 heading enrichment (§4.2 / §5.2)
+# 11. Heading enrichment (§4.2 §5.2)
 # ---------------------------------------------------------------------------
 
 
 class TestHeadingEnrichment:
-    """B3 — heading enrichment coverage (§4.2 / §5.2).
+    """heading enrichment coverage (§4.2 §5.2).
 
     Tests the heading extraction and unit-association logic in
     isolation, covering:
@@ -1425,7 +1425,7 @@ class TestHeadingEnrichment:
     @pytest.mark.anyio
     async def test_default_off_populates_heading_enrichments(self) -> None:
         """§3.5.2 / §4.2 — ``include_rag_ask_only=False`` still
-        populates ``heading_enrichments`` (B3 baseline)."""
+        populates ``heading_enrichments`` (baseline)."""
         plan = _make_plan_with_headings()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
@@ -1774,7 +1774,7 @@ class TestHeadingEnrichment:
         assert material.heading_enrichments == ()
 
     def test_heading_enrichment_is_frozen(self) -> None:
-        """B3 — ``HeadingEnrichment`` is a frozen dataclass (cannot
+        """``HeadingEnrichment`` is a frozen dataclass (cannot
         mutate fields after construction)."""
         he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -1783,7 +1783,7 @@ class TestHeadingEnrichment:
             he.heading = "Chapter 2"  # type: ignore[misc]
 
     def test_heading_enrichment_is_slots(self) -> None:
-        """B3 — ``HeadingEnrichment`` is a slots dataclass (no
+        """``HeadingEnrichment`` is a slots dataclass (no
         ``__dict__`` on instances)."""
         he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
         assert not hasattr(he, "__dict__")

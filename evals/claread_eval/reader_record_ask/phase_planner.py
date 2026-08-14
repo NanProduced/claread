@@ -2,15 +2,15 @@
 failure selection + budget stop result.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirements: PhasePlanner 深模块 + 固定重复（P0-2, P0-5）, evaluator-based
-Phase 2/3 失败选择（P0-3）.
+Requirements: PhasePlanner 深模块 + 固定重复, evaluator-based
+retry-stage failure selection.
 
 Prior to this module, the harness:
-- Selected Phase 1 cases by sorting on ``question_category`` and picking
+- Selected initial-run cases by sorting on ``question_category`` and picking
   the first one — implicit, unauditable, missed BBC core question coverage.
 - Broke on the first ``finalized_status='ok'`` so repetition was
   effectively 1 (no way to measure hallucination rate).
-- Selected Phase 2/3 cases by looking only at terminal failures
+- Selected retry cases by looking only at terminal failures
   (exception / finalized_status != ok / final_text empty), missing
   content-quality failures (unsupported ``2025`` year token, missing
   cities, region-as-city type confusion, count mismatch, whole-sentence
@@ -20,19 +20,19 @@ This module exposes a small interface (``cases_to_run`` /
 ``repetitions`` / ``budget_stop_result``) over a robust implementation
 that:
 
-- Pulls Phase 1 cases from the dataset's explicit ``phase_tags`` field
+- Pulls initial-run cases from the dataset's explicit ``phase_tags`` field
   (``real_phase1`` tag), not from an implicit sort.
 - Runs each selected case ``repetitions`` times (default 3), with
   ``run_index`` 0..N-1, never breaking early on first success.
-- Selects Phase 2 cases from the prior run's *evaluator results*
+- Selects retry cases from the prior run's *evaluator results*
   (``is_content_failure``), not from terminal status alone. A
   ``finalized_status='ok'`` artifact with an unsupported ``2025`` year
-  token is correctly selected for Phase 2.
+  token is correctly selected for retry.
 - Records :class:`BudgetStopResult` when the global request/token budget
   is exhausted, with the remaining cases/run_indices explicitly listed
   so the report does not silently treat missing runs as passes.
 - Excludes ``offline_only`` cases (e.g. ``known_bbc`` cases pending
-  R4-A4 trusted-source-metadata seam) from real-model runs.
+  trusted-source-metadata seam) from real-model runs.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ from claread_eval.reader_record_ask.evaluation import (
 if TYPE_CHECKING:
     from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
     from claread_eval.reader_record_ask.schema import (
-        ReaderRecordAskR4A3Case,
-        ReaderRecordAskR4A3Dataset,
+        ReaderRecordAskCase,
+        ReaderRecordAskDataset,
     )
 
 
@@ -57,21 +57,21 @@ if TYPE_CHECKING:
 # Recognized phase tags
 # ---------------------------------------------------------------------------
 
-# Case is a candidate for Phase 1 real-model runs.
+# Case is a candidate for initial real-model runs.
 PHASE_TAG_REAL_PHASE1 = "real_phase1"
 # Case is evaluator-only — never selected for real-model runs. Used for
-# ``known_bbc`` cases until R4-A4 lands the trusted-source-metadata seam.
+# ``known_bbc`` cases pending the trusted-source-metadata seam.
 PHASE_TAG_OFFLINE_ONLY = "offline_only"
-# Case is expected to fail in Phase 1 and enter Phase 2 (informational;
-# the actual Phase 2 selection is driven by evaluator results, not by
+# Case is expected to fail initially and enter retry (informational;
+# the actual retry selection is driven by evaluator results, not by
 # this tag — but the tag makes the dataset's intent auditable).
 PHASE_TAG_PHASE2_CANDIDATE = "targeted_phase2_candidate"
 
-# Default number of independent repetitions per case in Phase 1.
+# Default number of independent repetitions per case in the initial run.
 # Spec: "默认 3 次".
 DEFAULT_PHASE1_REPETITIONS = 3
 
-# Hard cap on total independent runs in Phase 1.
+# Hard cap on total independent runs in the initial run.
 # Spec: "共最多 10 cases × 3 repetitions = 30 independent runs".
 MAX_PHASE1_INDEPENDENT_RUNS = 30
 
@@ -114,20 +114,20 @@ class PhasePlanner:
 
     Construction:
 
-    - Phase 1: ``PhasePlanner(dataset=..., phase=1, repetitions=3)``.
+    - Initial run: ``PhasePlanner(dataset=..., phase=1, repetitions=3)``.
       ``cases_to_run`` returns all cases with ``phase_tags`` containing
       ``real_phase1`` (excluding ``offline_only``), up to the
       :data:`MAX_PHASE1_INDEPENDENT_RUNS` cap on ``cases * repetitions``.
 
-    - Phase 2: ``PhasePlanner(dataset=..., phase=2, repetitions=1,
+    - First retry: ``PhasePlanner(dataset=..., phase=2, repetitions=1,
       prior_artifacts=p1_arts, prior_eval_results=p1_evals)``.
-      ``cases_to_run`` returns the subset of Phase 1 cases whose prior
+      ``cases_to_run`` returns the subset of initial-run cases whose prior
       evaluator results flagged a content-quality failure
       (``is_content_failure`` returns ``True``).
 
-    - Phase 3: ``PhasePlanner(dataset=..., phase=3, repetitions=1,
+    - Second retry: ``PhasePlanner(dataset=..., phase=3, repetitions=1,
       prior_artifacts=p2_arts, prior_eval_results=p2_evals)``. Same
-      selection rule as Phase 2 but over Phase 2 results.
+      selection rule as the first retry but over first-retry results.
 
     ``budget_stop_result`` is ``None`` until the harness calls
     :meth:`record_budget_stop`; the planner itself does not track live
@@ -136,7 +136,7 @@ class PhasePlanner:
 
     def __init__(
         self,
-        dataset: ReaderRecordAskR4A3Dataset,
+        dataset: ReaderRecordAskDataset,
         phase: int,
         *,
         repetitions: int | None = None,
@@ -148,8 +148,8 @@ class PhasePlanner:
             raise ValueError(
                 f"phase must be 1, 2, or 3, got {phase!r}"
             )
-        # Phase-dependent default: Phase 1 = 3 (measure hallucination
-        # rate over independent reps); Phase 2/3 = 1 (a single re-run
+        # Stage-dependent default: initial run = 3 (measure hallucination
+        # rate over independent reps); retry stages = 1 (a single re-run
         # with the upgraded model is enough to confirm the fix).
         if repetitions is None:
             repetitions = (
@@ -185,20 +185,20 @@ class PhasePlanner:
 
     @property
     def repetitions(self) -> int:
-        """Fixed repetitions per case (P0-2).
+        """Fixed repetitions per case.
 
-        Phase 1: defaults to 3, never breaks early on first success.
-        Phase 2/3: defaults to 1 (a single re-run with the upgraded
+        Initial run: defaults to 3, never breaks early on first success.
+        Retry stages: default to 1 (a single re-run with the upgraded
         model is usually enough to confirm the fix).
         """
         return self._repetitions
 
     @property
-    def cases_to_run(self) -> list[ReaderRecordAskR4A3Case]:
+    def cases_to_run(self) -> list[ReaderRecordAskCase]:
         """Cases this phase should run, in dataset order.
 
-        Phase 1: cases with ``real_phase1`` tag, excluding ``offline_only``.
-        Phase 2/3: cases whose prior evaluator results flagged a
+        Initial run: cases with ``real_phase1`` tag, excluding ``offline_only``.
+        Retry stages: cases whose prior evaluator results flagged a
         content-quality failure.
         """
         if self._phase == 1:
@@ -219,20 +219,20 @@ class PhasePlanner:
         return {k: list(v) for k, v in self._prior_eval_results.items()}
 
     # ------------------------------------------------------------------
-    # R4-A4-2R2 P1: self-contained budget audit projection
+    # Self-contained budget audit projection
     # ------------------------------------------------------------------
 
     @property
     def planned_logical_runs(self) -> int:
         """Total number of logical runs planned for this phase.
 
-        R4-A4-2R2 P1: the manifest persists this value so the aggregate
+        The manifest persists this value so the aggregate
         can audit ``retries_consumed = executed_requests - planned_logical_runs``
         WITHOUT reconstructing the historical cap from the current
         shell env.
 
-        For Phase 1: ``len(cases_to_run) * repetitions`` (e.g. 10 cases
-        × 3 reps = 30). For Phase 2/3: same formula, with the phase's
+        For the initial run: ``len(cases_to_run) * repetitions`` (e.g. 10 cases
+        × 3 reps = 30). For retry stages: same formula, with the stage's
         own ``repetitions`` value (typically 1).
 
         Note: this is the LOGICAL run count, not the executed-request
@@ -274,11 +274,11 @@ class PhasePlanner:
         return self._budget_stop_result
 
     # ------------------------------------------------------------------
-    # Internal: Phase 1 selection
+    # Internal: initial-run selection
     # ------------------------------------------------------------------
 
-    def _select_phase1_cases(self) -> list[ReaderRecordAskR4A3Case]:
-        """Phase 1: cases tagged ``real_phase1``, excluding ``offline_only``.
+    def _select_phase1_cases(self) -> list[ReaderRecordAskCase]:
+        """Initial run: cases tagged ``real_phase1``, excluding ``offline_only``.
 
         Applies the global ``max_independent_runs`` cap on
         ``len(cases) * repetitions``. The cap is computed as
@@ -286,7 +286,7 @@ class PhasePlanner:
         (integer division). When the eligible case count is exactly
         ``allowed_case_count`` (i.e. ``cases * reps == max``), the cap
         is NOT exceeded and no :class:`BudgetStopResult` is recorded
-        (P0-1 exact-cap fix). When the eligible count exceeds
+        (exact-cap behavior). When the eligible count exceeds
         ``allowed_case_count``, the surplus cases are recorded as
         ``remaining`` in a :class:`BudgetStopResult`.
 
@@ -296,7 +296,7 @@ class PhasePlanner:
         # Step 1: build eligible cases (real_phase1 AND NOT offline_only),
         # preserving dataset order. The eligible list is the universe
         # from which the cap selects.
-        eligible: list[ReaderRecordAskR4A3Case] = [
+        eligible: list[ReaderRecordAskCase] = [
             case
             for case in self._dataset.cases
             if PHASE_TAG_REAL_PHASE1 in case.phase_tags
@@ -318,7 +318,7 @@ class PhasePlanner:
 
         # Step 4: only record a BudgetStopResult when remaining is
         # non-empty. The cap is NOT triggered when eligible count
-        # exactly equals allowed_case_count (P0-1 exact-cap fix).
+        # exactly equals allowed_case_count (exact-cap behavior).
         if remaining:
             remaining_run_indices: dict[str, list[int]] = {
                 case.id: list(range(self._repetitions)) for case in remaining
@@ -334,16 +334,16 @@ class PhasePlanner:
         return selected
 
     # ------------------------------------------------------------------
-    # Internal: Phase 2/3 selection
+    # Internal: retry-stage selection
     # ------------------------------------------------------------------
 
-    def _select_failure_cases_from_prior(self) -> list[ReaderRecordAskR4A3Case]:
-        """Phase 2/3: cases whose prior eval results flagged content failure.
+    def _select_failure_cases_from_prior(self) -> list[ReaderRecordAskCase]:
+        """Retry stages: cases whose prior eval results flagged content failure.
 
-        P0-2 multi-repetition fix: a case is selected if ANY repetition
+        Multi-repetition behavior: a case is selected if ANY repetition
         produced a content-quality failure. Prior results are stored
         per-repetition (``case_id -> list[list[EvalDimensionResult]]``),
-        so a fail-then-pass-then-pass sequence still triggers Phase 2
+        so a fail-then-pass-then-pass sequence still triggers retry
         selection. The prior shape was ``case_id -> list[EvalDimensionResult]``
         which silently kept only the last repetition's result — that
         masked intermittent hallucination failures.
@@ -351,7 +351,7 @@ class PhasePlanner:
         Uses :func:`any_repetition_content_failure` so a
         ``finalized_status='ok'`` artifact with an unsupported ``2025``
         year token is correctly selected (the temporal evaluator fails
-        → content failure → selected for Phase 2). A prior run whose
+        → content failure → selected for retry). A prior run whose
         only failure is ``usage_observability`` is NOT selected (spec:
         "默认不要仅因 usage 缺失升级模型").
         """

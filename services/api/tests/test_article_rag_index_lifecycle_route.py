@@ -1,4 +1,4 @@
-# task-history: D6-I4T (renamed from test_d6_i4t_article_rag_index_lifecycle_route.py)
+# task-history: (renamed from test_d6_i4t_article_rag_index_lifecycle_route.py)
 """Route tests for the Article RAG index lifecycle API.
 
 Covers:

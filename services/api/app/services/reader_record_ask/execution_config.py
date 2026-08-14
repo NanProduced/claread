@@ -1,6 +1,6 @@
 """ASK-M1: unified execution config + resolver for reader_record_ask.
 
-Fixes two P0 gaps surfaced by the model-control-plane research:
+Fixes two gaps surfaced by the model-control-plane research:
 
 1. ``retry`` previously did not re-resolve the persisted thread model
    option and fell back to the global ``reader_ask`` route default. A
@@ -29,7 +29,7 @@ R1A extension
 -------------
 When ``settings.reader_record_ask_memory_enabled`` is true, the resolver
 also compiles a :class:`CompactorBudgetConfig` placeholder for the
-thread-memory compactor (R2 will wire the actual model call). R1A only
+thread-memory compactor (the runtime wires the actual model call). R1A only
 compiles the config; the compactor is **not** invoked in R1A.
 
 H9 handling convention
@@ -42,7 +42,7 @@ H9 handling convention
   the compactor will use.
 - ``thinking_enabled`` is explicitly ``False`` for the compactor. The
   compactor does **not** reuse the main answer's thinking-enabled model
-  profile; it uses its own non-thinking model settings (R2 will wire
+  profile; it uses its own non-thinking model settings ( the integration layer wires
   the actual ``ModelSettings``).
 
 Fail-closed contract
@@ -118,7 +118,7 @@ class CompactorBudgetConfig:
     """R1A: thread-memory compactor budget placeholder (H9 handling).
 
     R1A compiles this config but does **not** invoke the compactor.
-    R2 will consume it to build the compactor ``Model`` + ``ModelSettings``
+     will consume it to build the compactor ``Model`` + ``ModelSettings``
     + ``UsageLimits`` and call the PydanticAI compactor agent.
 
     H9 convention
@@ -131,7 +131,7 @@ class CompactorBudgetConfig:
       the compactor will produce.
     - ``thinking_enabled`` is explicitly ``False``. The compactor does
       not reuse the main answer's thinking-enabled model profile — it
-      uses its own non-thinking model settings (R2 will wire the
+      uses its own non-thinking model settings ( the integration layer wires the
       actual ``ModelSettings``).
     - ``model_profile`` is the fixed Reader Ask *profile name*
       ``ask-main-deepseek-v4-flash``.  ``deepseek-v4-flash`` is the product
@@ -268,7 +268,7 @@ class ReaderRecordAskExecutionConfig:
     # port into :class:`ReaderRecordAskDeps`. The model never reads this
     # object — it only observes the mounted tool.
     web_search_capability: ResolvedWebSearchCapability | None = None
-    # G3-R3: executable backend produced by the same registry resolution
+    # G3-executable backend produced by the same registry resolution
     # that produced ``web_search_capability``. ``None`` when capability
     # is ``None`` (disabled) or when capability is non-None but disabled
     # (adapter unverified / missing key / unsupported model). Carries
@@ -279,7 +279,7 @@ class ReaderRecordAskExecutionConfig:
     web_search_backend: WebSearchBackend | None = field(default=None, repr=False)
     # R1A: thread-memory compactor budget placeholder. ``None`` when
     # ``settings.reader_record_ask_memory_enabled`` is False (default —
-    # the assembly path behaves exactly as today). When non-None, R2
+    # the assembly path behaves exactly as today). When non-None,
     # will consume this to build and invoke the compactor agent. R1A
     # only compiles the config; the compactor is NOT invoked.
     compactor_budget: CompactorBudgetConfig | None = None
@@ -357,7 +357,7 @@ def resolve_web_search_capability(
     model_config: ResolvedModelConfig,
     settings: Settings | None = None,
 ) -> ResolvedWebSearchCapability | None:
-    """Resolve the per-turn web search capability (G0-b6 / G1-R2 / G3-R3).
+    """Resolve the per-turn web search capability (G0-b6 / G1- G3-).
 
     Single source of truth for translating the user-visible request
     toggle (``web_search_mode``) into the server-owned execution truth
@@ -368,7 +368,7 @@ def resolve_web_search_capability(
     - ``web_search_mode="disabled"`` → returns ``None`` (capability not
       granted; the runtime must NOT mount the ``search_web`` tool).
     - ``web_search_mode="allowed"`` → delegates to the canonical
-      :func:`resolve_web_search_binding` helper (G3-R1) which calls the
+      :func:`resolve_web_search_binding` helper (G3-) which calls the
       production registry exactly once and returns the binding whose
       ``capability`` field is projected here. Callers that need BOTH
       capability AND backend MUST use
@@ -383,7 +383,7 @@ def resolve_web_search_capability(
       (``web_search_backend=FakeWebSearchBackend(...)``).
 
     The capability is intentionally NOT part of the envelope fingerprint
-    — it may change across retry without rewriting the fence identity.
+    it may change across retry without rewriting the fence identity.
     Only ``web_search_mode`` (the request toggle) enters the fingerprint.
 
     Fail-closed: any unknown / unsupported configuration returns a
@@ -396,7 +396,7 @@ def resolve_web_search_capability(
     if web_search_mode == "disabled":
         return None
 
-    # G3-R1: delegate to the canonical binding resolver. The helper
+    # G3-delegate to the canonical binding resolver. The helper
     # calls the production registry exactly once and returns the binding
     # produced by the same resolution call. ``settings`` is retained
     # for API compatibility but no longer drives the decision — the
@@ -482,7 +482,7 @@ def resolve_reader_record_ask_execution(
         max_turn_output_tokens=budget.max_turn_output_tokens,
     )
 
-    # G3-R1: capability + backend produced by the SAME registry resolution
+    # G3-capability + backend produced by the SAME registry resolution
     # call via the canonical :func:`resolve_web_search_binding` helper.
     # The helper is the single source of truth — callers MUST NOT
     # re-derive capability from ``model_config`` separately, and MUST NOT
@@ -538,7 +538,7 @@ def resolve_reader_record_ask_execution(
         web_search_capability=web_search_capability,
         web_search_backend=web_search_backend,
         # R1A: compile compactor budget placeholder when memory lane is
-        # enabled. R1A does NOT invoke the compactor — R2 will consume
+        # enabled. R1A does NOT invoke the compactor — will consume
         # this config to build and call the compactor agent.
         compactor_budget=(
             CompactorBudgetConfig()

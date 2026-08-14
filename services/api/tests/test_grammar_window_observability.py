@@ -88,7 +88,7 @@ from tests.test_reader_orchestration_pipeline_runner import (
 
 pytestmark = pytest.mark.anyio
 
-# T1.1: add translate_article / build_vocabulary_layer_article job types
+# Add translate_article / build_vocabulary_layer_article job types
 
 _OBS_BASE_PARAGRAPH = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -103,9 +103,9 @@ _OBS_BASE_PARAGRAPH = (
     "week."
 )
 
-# T4.2a-R1: the article must route to GROUPED_WINDOWED (>2000 words) so the
-# grammar-window window path is exercised. Before T4.1c, all grammar-window enabled articles went
-# through the window path; after T4.1c, only GROUPED_WINDOWED articles do.
+# The article must route to GROUPED_WINDOWED (>2000 words) so the
+# grammar-window window path is exercised. Before, all grammar-window enabled articles went
+# through the window path; after, only GROUPED_WINDOWED articles do.
 # Repeating the base paragraph 26 times yields ~2230 words, safely above the
 # 2000-word STRUCTURED_ARTICLE_MAX_WORD_COUNT threshold.
 GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE = "\n\n".join([_OBS_BASE_PARAGRAPH] * 26)
@@ -394,7 +394,7 @@ def _make_grammar_window_runner(
     grammar_worker = GrammarBundleWorkerService(
         pool=pool,
         executor=_StaticGrammarExecutor(),
-        # T4.2a-R1: inject a fake batch executor so the compact grammar
+        # Inject a fake batch executor so the compact grammar
         # batch path (SHORT_BATCH / STRUCTURED_BATCH) never falls back to
         # the real PydanticAIGrammarBatchExecutor when enable_grammar_window=True.
         batch_executor=_StaticGrammarBatchExecutor(),
@@ -874,7 +874,7 @@ async def test_grammar_window_success_writes_ai_usage_event_and_worker_tick_span
         user_id=user_id,
         lease_owner="grammar-window-obs-success",
         lease_duration=LEASE_DURATION,
-        # T4.2a-R1: GROUPED_WINDOWED article (~2230 words) creates more
+        # GROUPED_WINDOWED article (~2230 words) creates more
         # jobs/windows than the original short fixture. Raise limits so the
         # runner can reach coverage_complete.
         max_ticks=100,
@@ -1057,7 +1057,7 @@ async def test_grammar_window_publish_fence_span_success(
         user_id=user_id,
         lease_owner="grammar-window-fence-success",
         lease_duration=LEASE_DURATION,
-        # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+        # GROUPED_WINDOWED article requires higher limits.
         max_ticks=100,
         max_jobs=80,
     )
@@ -1138,7 +1138,7 @@ async def test_grammar_window_publish_fence_span_failure(
         user_id=user_id,
         lease_owner="grammar-window-fence-failure",
         lease_duration=LEASE_DURATION,
-        # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+        # GROUPED_WINDOWED article requires higher limits.
         max_ticks=100,
         max_jobs=80,
     )

@@ -109,7 +109,7 @@ function useReaderGrammarInteraction() {
 }
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2.1C: Grammar expansion state keyed by stable itemId.
+// Grammar expansion state keyed by stable itemId.
 //
 // Standalone grammar callouts (not inside a ReaderCalloutGroupComponent)
 // previously stored expanded/collapsed state in a local useState inside

@@ -1,4 +1,4 @@
-"""T5.6b — explicit section translation bootstrap (server-side).
+"""explicit section translation bootstrap (server-side).
 
 FOR UPDATE → reload facts → plan_explicit_section_request → insert
 translate_article/unit_range with request_origin=section_v1.

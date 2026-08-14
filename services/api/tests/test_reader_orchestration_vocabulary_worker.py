@@ -1646,7 +1646,7 @@ def test_vocabulary_anchor_segment_context_defaults_boundary_quality_to_normal()
 
 
 # ---------------------------------------------------------------------------#
-# T7: variant-first strategy integration into vocabulary worker
+# Variant-first strategy integration into vocabulary worker
 # ---------------------------------------------------------------------------#
 
 
@@ -1778,7 +1778,7 @@ def test_build_vocabulary_prompt_strategy_section_order() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# T7: _validate_vocabulary_strategy_metadata fail-closed unit tests
+# _validate_vocabulary_strategy_metadata fail-closed unit tests
 # ---------------------------------------------------------------------------#
 
 
@@ -2215,7 +2215,7 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 
 
 # ---------------------------------------------------------------------------
-# T3.2 Vocabulary duplicate highlight policy tests
+# Vocabulary duplicate highlight policy tests
 # ---------------------------------------------------------------------------
 #
 # These tests cover the v1 duplicate policy:
@@ -2323,7 +2323,7 @@ def _build_batch_context(
 
 
 def test_vocab_highlight_same_headword_only_published_once() -> None:
-    """T3.2: same headword appearing in multiple segments only published
+    """Same headword appearing in multiple segments only published
     once (first occurrence wins). Subsequent duplicates are skipped with
     diagnostics."""
     # Two segments, both containing "bank" as a vocab_highlight.
@@ -2391,7 +2391,7 @@ def test_vocab_highlight_same_headword_only_published_once() -> None:
 
 
 def test_vocab_highlight_case_insensitive_dedup() -> None:
-    """T3.2: headword dedup is case-insensitive. 'Bank' and 'bank' are
+    """Headword dedup is case-insensitive. 'Bank' and 'bank' are
     the same headword."""
     seg1_text = "The Bank approved the loan."
     seg2_text = "The river bank was flooded."
@@ -2446,7 +2446,7 @@ def test_vocab_highlight_case_insensitive_dedup() -> None:
 
 
 def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
-    """T3.2: same phrase + same phrase_type + same gloss only published
+    """Same phrase + same phrase_type + same gloss only published
     once. Different gloss (different sense) is kept.
 
     Note: span dedup runs first. Two candidates on the same span with the
@@ -2533,7 +2533,7 @@ def test_phrase_gloss_same_phrase_same_gloss_only_published_once() -> None:
 
 
 def test_context_gloss_same_display_same_gloss_only_published_once() -> None:
-    """T3.2: same display + same gloss only published once. Different
+    """Same display + same gloss only published once. Different
     gloss (different context sense) is kept.
 
     Note: span dedup runs first. Two candidates on the same span with the
@@ -2619,7 +2619,7 @@ def test_context_gloss_same_display_same_gloss_only_published_once() -> None:
 
 
 def test_cross_item_type_never_deduplicated() -> None:
-    """T3.2: vocab_highlight with headword='bank' and context_gloss with
+    """Vocab_highlight with headword='bank' and context_gloss with
     display='bank' are different product semantics; both are kept.
 
     Note: span dedup runs first and keeps the higher-priority item_type
@@ -2683,7 +2683,7 @@ def test_cross_item_type_never_deduplicated() -> None:
 
 
 def test_different_phrases_not_deduplicated() -> None:
-    """T3.2: different phrases are never deduplicated even if they share
+    """Different phrases are never deduplicated even if they share
     a word."""
     seg1_text = "She took off the coat. She took over the company."
     unit_text = seg1_text
@@ -2729,7 +2729,7 @@ def test_different_phrases_not_deduplicated() -> None:
 
 
 def test_batch_cross_unit_dedup_removes_duplicate_vocab_highlight() -> None:
-    """T3.2: batch path cross-unit dedup. Same headword in unit1 and
+    """Batch path cross-unit dedup. Same headword in unit1 and
     unit2 only published in unit1 (first reading-order unit wins)."""
     seg1_text = "The bank approved the loan."
     seg2_text = "The bank denied the request."
@@ -2809,7 +2809,7 @@ def test_batch_cross_unit_dedup_removes_duplicate_vocab_highlight() -> None:
     assert len(u1_layer.items) == 1
     assert u1_layer.items[0].item_type == "vocab_highlight"
     assert len(u2_layer.items) == 0
-    # T3.2 P1-2: cross-unit duplicate skip must be surfaced in diagnostics.
+    # Cross-unit duplicate skip must be surfaced in diagnostics.
     assert len(batch_diagnostics) == 1
     diag = batch_diagnostics[0]
     assert diag["reason_code"] == "duplicate_vocab_highlight_headword"
@@ -2820,7 +2820,7 @@ def test_batch_cross_unit_dedup_removes_duplicate_vocab_highlight() -> None:
 
 
 def test_batch_cross_unit_dedup_keeps_different_senses() -> None:
-    """T3.2: batch cross-unit dedup keeps different senses (different
+    """Batch cross-unit dedup keeps different senses (different
     gloss) even if the phrase/display is the same."""
     seg1_text = "The team took off on time."
     seg2_text = "Her career took off after the film."
@@ -2900,7 +2900,7 @@ def test_batch_cross_unit_dedup_keeps_different_senses() -> None:
 
 
 def test_batch_outputs_follow_llm_unit_order() -> None:
-    """T3.2: batch outputs follow the LLM's unit output order. The
+    """Batch outputs follow the LLM's unit output order. The
     publisher (``_reorder_outputs_by_target_unit_ids``) is responsible
     for reordering to reading order before publish; the batch builder
     itself preserves the LLM's order. This test documents that contract
@@ -2952,21 +2952,21 @@ def test_batch_outputs_follow_llm_unit_order() -> None:
 
 
 def test_apply_vocabulary_duplicate_policy_empty_list() -> None:
-    """T3.2: empty input returns empty output and empty diagnostics."""
+    """Empty input returns empty output and empty diagnostics."""
     kept, skipped = _apply_vocabulary_duplicate_policy([])
     assert kept == []
     assert skipped == []
 
 
 def test_apply_cross_unit_dedup_empty_list() -> None:
-    """T3.2: empty batch returns empty list and empty diagnostics."""
+    """Empty batch returns empty list and empty diagnostics."""
     outputs, skipped = _apply_cross_unit_vocabulary_duplicate_policy([])
     assert outputs == []
     assert skipped == []
 
 
 def test_duplicate_policy_runs_before_max_items_cap() -> None:
-    """T3.2 P1-1: duplicate policy must run BEFORE the MAX_VOCABULARY_ITEMS
+    """Duplicate policy must run BEFORE the MAX_VOCABULARY_ITEMS
     cap. Regression: 5 candidates share the same headword "bank" (on 5
     different spans) followed by a 6th unique candidate "river". After
     dedup the 4 duplicate "bank" items are removed, leaving 1 "bank" + 1
@@ -3086,7 +3086,7 @@ def test_duplicate_policy_runs_before_max_items_cap() -> None:
 
 
 def test_max_items_cap_runs_after_dedup_with_candidate_limit() -> None:
-    """T3.2 P1-1: when resolved (post-dedup) items exceed MAX_VOCABULARY_ITEMS,
+    """When resolved (post-dedup) items exceed MAX_VOCABULARY_ITEMS,
     the cap fires with reason_code=candidate_limit_exceeded and trims to
     MAX_VOCABULARY_ITEMS. This verifies the cap is still enforced, just
     moved after dedup.
@@ -3153,7 +3153,7 @@ def test_max_items_cap_runs_after_dedup_with_candidate_limit() -> None:
 
 
 def test_batch_quality_json_contains_duplicate_diagnostics() -> None:
-    """T3.2 P1-2: batch path duplicate diagnostics must reach quality_json.
+    """Batch path duplicate diagnostics must reach quality_json.
 
     When a cross-unit duplicate headword is removed, the published
     layer's quality_json must include a diagnostics entry with
@@ -3272,7 +3272,7 @@ def test_batch_quality_json_contains_duplicate_diagnostics() -> None:
 
 
 def test_build_vocabulary_batch_prompt_exposes_item_caps() -> None:
-    """T3.2a P2: the batch prompt must explicitly surface both the per-unit
+    """The batch prompt must explicitly surface both the per-unit
     published cap (MAX_VOCABULARY_ITEMS) and the per-unit candidate cap
     (MAX_VOCABULARY_CANDIDATE_ITEMS), mirroring the per-unit prompt.
 
@@ -3338,18 +3338,18 @@ def test_build_vocabulary_batch_prompt_exposes_item_caps() -> None:
 
 
 # ---------------------------------------------------------------------------#
-# T3.2b: Cross-window duplicate headword v1 behavior lock
+# Cross-window duplicate headword v1 behavior lock
 # ---------------------------------------------------------------------------#
 # When a non-short article is split into multiple vocabulary windows, the
 # cross-unit dedup policy only applies WITHIN a single window (single batch
 # job). The same headword may independently appear in different windows.
-# This is the documented v1 behavior (implementation-plan.md T3.2b risk A):
+# This is the documented v1 behavior (implementation-plan.md risk A):
 # each window may highlight the same headword once. Full-text dedup is NOT
 # claimed.
 
 
 def test_cross_window_duplicate_headword_v1_both_windows_keep_highlight() -> None:
-    """T3.2b v1 lock: the same headword in two separate windows is kept
+    """V1 lock: the same headword in two separate windows is kept
     by BOTH windows. Cross-unit dedup only applies within a single batch
     job (window), not across windows.
 
@@ -3563,7 +3563,7 @@ def test_build_vocabulary_prompt_contains_phrase_gloss_rules() -> None:
 
 
 def test_build_vocabulary_batch_prompt_contains_segment_text() -> None:
-    """T3.3: the batch prompt must include the anchor segment text inside
+    """The batch prompt must include the anchor segment text inside
     <target_segments>, mirroring the per-unit prompt's anchor_segments_json
     `text` field. Without this the batch LLM only saw segment metadata and
     could not ground selected_text against the actual surface form, leading
@@ -3713,7 +3713,7 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
 
 
 def test_phrase_gloss_guard_rejects_full_question_sentence_in_output_builder() -> None:
-    """T3.3: 'Are we to have nothing tonight?' is a complete question
+    """'Are we to have nothing tonight?' is a complete question
     sentence, not a lexical expression. The guard inside
     _build_vocabulary_output_from_candidates must reject it before grounding
     and record a diagnostic with reason_code
@@ -3922,7 +3922,7 @@ def test_phrase_gloss_guard_does_not_misfire_on_reasonable_idioms_and_compounds(
 
 
 def test_batch_output_grounds_selected_text_from_segment_text() -> None:
-    """T3.3: now that the batch prompt exposes segment text, a phrase_gloss
+    """Now that the batch prompt exposes segment text, a phrase_gloss
     candidate whose selected_text appears verbatim in the segment text is
     correctly grounded and published via the batch path. No
     selected_text_not_found diagnostic is produced."""
@@ -3985,7 +3985,7 @@ def test_batch_output_grounds_selected_text_from_segment_text() -> None:
 
 
 def test_batch_phrase_gloss_guard_records_diagnostics_with_unit_id() -> None:
-    """T3.3: in the batch path, a rejected phrase_gloss candidate must
+    """In the batch path, a rejected phrase_gloss candidate must
     surface in batch diagnostics enriched with unit_id, anchor_segment_id,
     selected_text and reason_code=phrase_gloss_sentence_like."""
     seg_text = "Are we to have nothing tonight? Then we shall sleep."
@@ -4044,7 +4044,7 @@ def test_batch_phrase_gloss_guard_records_diagnostics_with_unit_id() -> None:
 
 
 def test_phrase_gloss_guard_runs_before_duplicate_policy_and_cap() -> None:
-    """T3.3: the phrase_gloss guard runs during candidate resolution
+    """The phrase_gloss guard runs during candidate resolution
     (before duplicate policy and before the MAX_VOCABULARY_ITEMS cap).
     A rejected phrase_gloss candidate must NOT consume a published slot or
     be counted as a duplicate. A valid phrase_gloss alongside it still
@@ -4110,7 +4110,7 @@ def test_phrase_gloss_guard_runs_before_duplicate_policy_and_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R1 vocabulary contract: phrase_type taxonomy, learning_note, context_gloss
+# Vocabulary contract: phrase_type taxonomy, learning_note, context_gloss
 # ---------------------------------------------------------------------------
 
 

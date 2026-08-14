@@ -1,4 +1,4 @@
-# task-history: P2B (renamed from test_p2b_section_translation_semantic_fence.py)
+# task-history: (renamed from test_p2b_section_translation_semantic_fence.py)
 """Production section translation semantic fence closure.
 
 Proves ``SectionTranslationBootstrapService.request_section_translation()``

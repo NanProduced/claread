@@ -1,4 +1,4 @@
-# task-history: D6-I3V (renamed from test_d6_i3v_artifact_input_status_query.py)
+# task-history: (renamed from test_d6_i3v_artifact_input_status_query.py)
 """Tests for the ArtifactPipelineStatusQueryService.
 
 Covers every outcome path:
@@ -1184,7 +1184,7 @@ async def test_processing_product_state_with_succeeded_materialization_raises_in
 
 
 # ===================================================================
-# P1/P2 regression tests: paused jobs, half-bound, stale candidate
+# regression tests: paused jobs, half-bound, stale candidate
 # ===================================================================
 
 

@@ -1,4 +1,4 @@
-"""R4-A4-2R dataset year-policy tests.
+"""Dataset year-policy tests.
 
 Covers audit-finding repair scenarios (4) and (5):
 
@@ -12,7 +12,7 @@ Covers audit-finding repair scenarios (4) and (5):
   ``allowed_temporal_claims`` so the evaluator does not flag it as an
   unsupported temporal claim.
 
-Constraint (P0 dataset Git governance, see
+Constraint (dataset Git governance, see
 ``test_reader_record_ask_dataset.py``): tests MUST NOT depend on the local
 ignored working dataset under ``evals/tmp/``. Each test builds a minimal
 synthetic case via factory helpers and exercises the evaluator directly.
@@ -31,8 +31,8 @@ from claread_eval.reader_record_ask.evaluators.unsupported_temporal_claims impor
     evaluate_unsupported_temporal_claims,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,9 +58,9 @@ _SYN_ABSENT_YEAR_ARTICLE = (
 # ---------------------------------------------------------------------------
 
 
-def _make_synthetic_absent_year_case() -> ReaderRecordAskR4A3Case:
+def _make_synthetic_absent_year_case() -> ReaderRecordAskCase:
     """Build a synthetic absent-year case mirroring the canonical fixture."""
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id="syn-absent-year",
         source_kind="synthetic_short",
         record_id=None,
@@ -74,7 +74,7 @@ def _make_synthetic_absent_year_case() -> ReaderRecordAskR4A3Case:
         external_knowledge_policy="forbidden",
         question="文章没有提到的年份是什么？不得猜测。",
         question_category="absent_year",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             expected_entity_set={},
             allowed_temporal_claims=[],
             allowed_numerics=[],
@@ -96,14 +96,14 @@ def _make_synthetic_absent_year_case() -> ReaderRecordAskR4A3Case:
 
 def _make_bbc_case_with_2015_allowed(
     *, question_category: str = "main_idea"
-) -> ReaderRecordAskR4A3Case:
+) -> ReaderRecordAskCase:
     """Build a BBC-unknown case that allows 2015 in answers.
 
     Models the post-repair design: BBC fixtures whose article body contains
     ``2015`` MUST list ``2015`` in ``allowed_temporal_claims`` so the
     evaluator does not flag it as unsupported.
     """
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id="bbc-fixture-2015",
         source_kind="bbc_record",
         record_id=None,  # no real UUID in tracked fixtures
@@ -117,7 +117,7 @@ def _make_bbc_case_with_2015_allowed(
         external_knowledge_policy="forbidden",
         question="这篇文章主要说了什么？",
         question_category=question_category,
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             expected_entity_set={},
             allowed_temporal_claims=["2015"],
             allowed_numerics=[],
@@ -306,7 +306,7 @@ class TestBBCFixtureEmptyAllowedIsBrokenPattern:
     """
 
     def test_empty_allowed_with_2015_in_answer_fails(self) -> None:
-        case = ReaderRecordAskR4A3Case(
+        case = ReaderRecordAskCase(
             id="bbc-broken-pattern",
             source_kind="bbc_record",
             record_id=None,
@@ -320,7 +320,7 @@ class TestBBCFixtureEmptyAllowedIsBrokenPattern:
             external_knowledge_policy="forbidden",
             question="这篇文章主要说了什么？",
             question_category="main_idea",
-            expected=ReaderRecordAskR4A3Expected(
+            expected=ReaderRecordAskExpected(
                 allowed_temporal_claims=[],
                 must_declare_no_year=False,
             ),

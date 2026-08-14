@@ -1,4 +1,4 @@
-"""G3-R1: Canonical Web Search resolver helpers (no circular imports).
+"""G3-Canonical Web Search resolver helpers (no circular imports).
 
 Single source of truth for translating a :class:`ResolvedModelConfig`
 or a :class:`ResolvedReaderAskModelOption` into either:

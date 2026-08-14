@@ -350,7 +350,7 @@ class _WindowGrammarNoteCandidate(BaseModel):
             "反序列化为 Plate children 渲染。"
         ),
     )
-    # P1-2 self-rating: three required fields consumed by window selector.
+    # Self-rating: three required fields consumed by window selector.
     # See grammar_worker.GrammarNoteCandidateItem for the contract.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
@@ -395,7 +395,7 @@ class _WindowSentenceAnalysisCandidate(BaseModel):
         ),
     )
     chunks: list[_WindowSentenceChunk] = Field(min_length=1, max_length=8)
-    # P1-2 self-rating: three required fields consumed by window selector.
+    # Self-rating: three required fields consumed by window selector.
     # See grammar_worker.SentenceAnalysisCandidateItem for the contract.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
@@ -696,12 +696,12 @@ class PydanticAIGrammarWindowExecutor:
         ``[CONTEXT_ONLY]``（仅用于理解上下文，不可标注）。Window budget
         约束写入 ``[WINDOW_BUDGET]`` 段。
 
-        T1.2: ``<reader_strategy>`` section 注入 variant-first policy lines
+        ``<reader_strategy>`` section 注入 variant-first policy lines
         (reading_goal / reading_variant / strategy_hash / layer_policy_hash
         / prompt_lines)，使 LLM 能按 variant 调整 grammar_note /
         sentence_analysis 的产出风格和密度。
 
-        T1.3: budget key 从 ``max_grammar_notes`` / ``max_sentence_analyses``
+        Budget key 从 ``max_grammar_notes`` / ``max_sentence_analyses``
         修正为 ``grammar_note.count`` / ``sentence_analysis.count``，与
         grammar_window_bootstrap 写入格式和 grammar_window_publisher 读取格式对齐。
         """
@@ -717,7 +717,7 @@ class PydanticAIGrammarWindowExecutor:
         window_budget: dict[str, Any] = dict(
             context.get("window_budget", {})
         )
-        # T1.3: grammar_window_bootstrap writes {"grammar_note": {"count": N},
+        # Grammar_window_bootstrap writes {"grammar_note": {"count": N},
         # "sentence_analysis": {"count": M}}. The old keys
         # "max_grammar_notes" / "max_sentence_analyses" never matched, so
         # the worker always fell back to 4/3 while the selector/publisher
@@ -735,7 +735,7 @@ class PydanticAIGrammarWindowExecutor:
         lines.append(f"- max_sentence_analyses: {max_sentence_analyses}")
         lines.append("")
 
-        # T1.2: inject variant strategy section so the LLM can vary output
+        # Inject variant strategy section so the LLM can vary output
         # by reading_goal / reading_variant. Mirrors the
         # <reader_strategy> section in grammar_worker._format_grammar_strategy_section.
         prompt_lines: list[str] = list(
@@ -1556,9 +1556,9 @@ class GrammarWindowWorkerService:
     ) -> None:
         """Renew the lease every ``heartbeat_interval`` (compat wrapper).
 
-        R7-3: delegates to the shared :class:`LeaseHeartbeat` renewal
+        Delegates to the shared :class:`LeaseHeartbeat` renewal
         loop so the window and batch workers share ONE implementation.
-        Runs until cancelled, mirroring the pre-R7-3 behavior.
+        Runs until cancelled, mirroring the pre- behavior.
         """
         await LeaseHeartbeat(
             job_runtime=self._job_runtime,
@@ -1580,7 +1580,7 @@ class GrammarWindowWorkerService:
         offsets (mirrors ``grammar_worker._load_job_context``). Context
         anchors (prev/next) are loaded with the same metadata structure.
 
-        T1.2: Also resolves the variant-first strategy (reading_goal /
+        Also resolves the variant-first strategy (reading_goal
         reading_variant / strategy_hash / layer_policy_hash) from
         ``input_json`` and cross-validates against the live resolver. The
         resolved ``grammar_prompt_lines`` are placed in the context dict so
@@ -1686,7 +1686,7 @@ class GrammarWindowWorkerService:
                 base_text=base_text,
             )
 
-        # T1.2: resolve + validate variant strategy from input_json metadata.
+        # Resolve + validate variant strategy from input_json metadata.
         strategy_info = _resolve_window_strategy(input_data)
 
         return {
@@ -1702,7 +1702,7 @@ class GrammarWindowWorkerService:
             "window_budget": input_data.get("window_budget", {}),
             "target_unit_ids": list(input_data.get("target_unit_ids", [])),
             "target_anchor_ids": target_anchor_ids,
-            # T1.2 strategy fields consumed by _build_window_prompt.
+            # Strategy fields consumed by _build_window_prompt.
             "reading_goal": strategy_info["reading_goal"],
             "reading_variant": strategy_info["reading_variant"],
             "strategy_version": strategy_info["strategy_version"],

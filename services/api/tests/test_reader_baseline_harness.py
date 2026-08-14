@@ -374,7 +374,7 @@ def test_schema_setup_dependencies_have_a_baseline_sql() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-1: schema safety
+# Schema safety
 # ---------------------------------------------------------------------------
 
 
@@ -499,7 +499,7 @@ def test_auto_generated_schema_name_passes_validation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-2: incomplete run detection
+# Incomplete run detection
 # ---------------------------------------------------------------------------
 
 
@@ -601,7 +601,7 @@ def test_summarise_pipeline_summary_marks_max_ticks_as_incomplete() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-3: usage metrics aggregation
+# Usage metrics aggregation
 # ---------------------------------------------------------------------------
 
 
@@ -695,7 +695,7 @@ def test_summarise_pool_none_keeps_usage_skipped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-4: reading metadata
+# Reading metadata
 # ---------------------------------------------------------------------------
 
 
@@ -805,7 +805,7 @@ def test_cli_rejects_public_schema_name_at_argparse() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-5: report contains completion + usage + reading metadata
+# Report contains completion + usage + reading metadata
 # ---------------------------------------------------------------------------
 
 
@@ -851,7 +851,7 @@ def test_report_to_jsonable_contains_completion_and_usage_and_metadata() -> None
 
 
 # ---------------------------------------------------------------------------
-# P1: reading metadata closed loop
+# Reading metadata closed loop
 # ---------------------------------------------------------------------------
 
 

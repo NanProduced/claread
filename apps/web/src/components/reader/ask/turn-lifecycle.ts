@@ -1,5 +1,5 @@
 /**
- * ASK-TURN-LIFECYCLE R0 — Turn stream lifecycle typed contract (Web).
+ * Turn stream lifecycle typed contract (Web).
  *
  * Mirrors the backend contract in
  * `services/api/app/services/reader_record_ask/turn_lifecycle.py`.
@@ -53,7 +53,7 @@ export const TRUSTED_TERMINAL_EVENT_NAMES: ReadonlySet<string> = new Set([
   "message.completed",
   "agentic.terminal",
   "message.interrupted",
-  // R6: duplicate-submission short-circuit is a logical terminal —
+  // Duplicate-submission short-circuit is a logical terminal —
   // the host must hydrate via GET and must not leave a streaming bubble.
   "submission.reconcile",
 ]);
@@ -71,7 +71,7 @@ export type LogicalTerminalKind =
   | "abort"
   | "parse_error"
   | "eof"
-  /** R6: server returned submission.reconcile (duplicate / in-flight). */
+  /** Server returned submission.reconcile (duplicate / in-flight). */
   | "submission_reconcile";
 
 /** Public fields from SSE `submission.reconcile` (no secrets). */
@@ -241,7 +241,7 @@ export function parseSubmissionReconcilePayload(
 }
 
 /**
- * ASK-TURN-LIFECYCLE R3 — Per-turn lifecycle timing metrics (Web).
+ * Per-turn lifecycle timing metrics (Web).
  *
  * Mirrors the backend ``_TurnLifecycleMetrics`` in
  * ``services/api/app/services/reader_record_ask/production_stream.py``.

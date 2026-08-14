@@ -148,7 +148,7 @@ export function SettingsDialogHost({
 
         if (cancelled || ac.signal.aborted) return;
 
-        // Accept ONLY the success envelope from Task 1: { ok: true, data }.
+        // Accept only the success envelope: { ok: true, data }.
         // Anything else — including ok:false error envelopes, malformed
         // JSON, or missing data — falls back to the safe error message.
         if (

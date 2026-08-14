@@ -1,14 +1,14 @@
-"""Thread memory mapping layer（R0.1 H6 + H7 处理约定）。
+"""Thread memory mapping layer（ H6 + H7 处理约定）。
 
-H6 处理约定（R0.1 §4.2(d) 步骤 7 注释 / §13.2 H6）：
+H6 处理约定（ §4.2(d) 步骤 7 注释 §13.2 H6）：
     InternalCitationBinding → SourceBinding 映射有损（InternalCitationBinding
     无 ``validity_check`` / ``fence_type`` / ``source_id`` 字段，``fence_values``
     散落于 ``rag_citation`` 与 ``evidence_scope`` 两处）。``derive_source_bindings``
     在 Host 侧实现映射，``validity_check`` 由 Host 调用 citation_navigation 计算
-    （A2 agent 负责的 fence.py），compactor 仅消费已派生的 SourceBinding，不接触
+    （ agent 负责的 fence.py），compactor 仅消费已派生的 SourceBinding，不接触
     InternalCitationBinding 原始字段。
 
-H7 处理约定（R0.1 §4.2(d) 步骤 7 注释 / §13.2 H7）：
+H7 处理约定（ §4.2(d) 步骤 7 注释 §13.2 H7）：
     web citation 降级无代码路径——``web_evidence_registry.get`` 只有 match/raise
     两态（fail-closed 是核心安全不变量，不可改为三态）。
     ``degrade_web_citation_to_hint`` 捕获 ``ValueError``（fingerprint 失配）后产出
@@ -40,7 +40,7 @@ def derive_source_bindings(
         - web → 'reading_record'
 
     ``validity_check`` 初始为 ``{'status': 'unchecked', 'last_validated_turn': 0}``；
-    fence 复核在 fence.py 中由 A2 agent 实现，本层不接触。
+    fence 复核在 fence.py 中由 agent 实现，本层不接触。
 
     本函数不接触 InternalCitationBinding 的 ``snippet`` / ``canonical_url`` 等
     内容字段（仅取 ID 类字段）。web binding 无 ``rag_citation``，其 ``source_id``
@@ -109,7 +109,7 @@ def degrade_web_citation_to_hint(binding: dict[str, Any]) -> dict[str, Any]:
     不变量），本函数提供第三态——产出 free-text hint，不进 ``A_bind`` allowlist
     （不作为本轮 citation truth，仅作 prior context / 搜索线索，冻结决策 #6）。
 
-    R1.5 P0-4: 输出 WebSearchHint dict 含 ``display_domain`` / ``retrieved_at``
+     输出 WebSearchHint dict 含 ``display_domain`` / ``retrieved_at``
     / ``web_title``，**永不含 ``canonical_url`` / ``source_fingerprint``**。
     canonical URL 和 fingerprint 是内容字段，降级后的 hint 不可保留它们
     （否则破坏 fail-closed 安全不变量——hint 是 free-text，不应携带可被

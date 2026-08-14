@@ -1,6 +1,6 @@
 """Dimension 9/11 — evidence_minimality.
 
-Spec (mirrors R4-A2 grounding validator, scored independently):
+Spec (mirrors the grounding validator, scored independently):
 - ``len(cited_evidence_handles) <= 6``
 - handles non-duplicate (``set`` size == ``list`` size)
 - every handle resolves to an entry in ``all_evidence_observations``
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "evidence_minimality"
 
@@ -25,7 +25,7 @@ MAX_CITED_HANDLES = 6
 
 
 def evaluate_evidence_minimality(
-    case: ReaderRecordAskR4A3Case,  # noqa: ARG001 — signature contract
+    case: ReaderRecordAskCase,  # noqa: ARG001 — signature contract
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     handles = artifact.cited_evidence_handles

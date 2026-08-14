@@ -1,5 +1,5 @@
 /**
- * Markdown 输入端预警 lint（Phase 1 / P0；阶段 3 起为非阻断提示）。
+ * Markdown 输入端预警 lint（非阻断提示）。
  *
  * 目标：在用户粘贴/输入 Markdown 时，前端实时检测**可能**触发
  * `candidate_document_required` 的内容，显示**非阻断**警告 badge。
@@ -180,7 +180,7 @@ export function lintMarkdownInput(text: string): MarkdownLintResult {
 /**
  * 把 warnings 数组渲染成单条中文摘要文案（用于警告 badge）。
  *
- * C2 降级为纯提示：文案从"提交后将进入审核流程"（阻塞式语气）
+ * 纯提示文案从"提交后将进入审核流程"（阻塞式语气）
  * 改为"含可能进入审核的内容"（提示式语气），强调前端只是预警、
  * 后端才是 fail-closed 单一真相源。
  *

@@ -1,4 +1,4 @@
-# task-history: D6-I2D (renamed from test_d6_i2d_candidate_document_confirm_route.py)
+# task-history: (renamed from test_d6_i2d_candidate_document_confirm_route.py)
 from __future__ import annotations
 
 from datetime import UTC, datetime

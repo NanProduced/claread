@@ -6,7 +6,7 @@
  *
  * 使用单例 editor 实例避免每次 deserialize 都创建新 editor。
  *
- * 失败处理（C1.3）：
+ * 失败处理：
  * - `deserializeMarkdownToBlocksWithStatus` 返回 `{ blocks, status, error? }`，
  *   调用方可据此向用户显示"Markdown 解析失败，已按纯文本处理"提示态，
  *   禁止原始标记静默上屏。

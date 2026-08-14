@@ -1,4 +1,4 @@
-"""Pure, fail-closed semantic-outline validator (T5.2a)."""
+"""Pure, fail-closed semantic-outline validator."""
 
 from __future__ import annotations
 

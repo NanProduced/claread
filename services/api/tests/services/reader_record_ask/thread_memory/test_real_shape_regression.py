@@ -1,8 +1,8 @@
-"""R1.5 real-shape regression tests — 真实链路收口.
+"""Real-shape regression tests — 真实链路收口.
 
 Drives the **real** thread_memory modules + **real** TurnCoordinator
 against fake-asyncpg records to verify the production wiring end-to-end
-(R1 deterministic path; zero model calls). Unlike ``test_injection.py``
+(deterministic path; zero model calls). Unlike ``test_injection.py``
 (which fakes the thread_memory package via ``sys.modules``) and
 ``test_repository.py`` (which tests the repository in isolation), this
 file exercises the real cross-module data flow:
@@ -14,7 +14,7 @@ file exercises the real cross-module data flow:
             → validate_snapshot (allowlist + >20% reject)
             → emergency_full_snapshot (deterministic rebuild fallback)
 
-Scenarios required by ASK-CONTEXT-COMPACTION-R1.5:
+Scenarios required by ASK-CONTEXT-COMPACTION-
     1. real ThreadMemoryRepository fake-asyncpg record → coordinator
        (keyword-only, UUID, snapshot_json parse, fail-soft)
     2. flag=false → zero repository I/O; flag=true → deterministic, no model
@@ -112,7 +112,7 @@ def _user_msg(msg_id: str, text: str) -> dict[str, Any]:
     - Direct emergency path: emergency reads ``content_md``, ``id``, ``role``
       directly; the extra DB-row keys are harmless.
 
-    R1.6.1 P0-1: includes ``canonical_turn_run_id`` (None for user messages;
+     Includes ``canonical_turn_run_id`` (None for user messages;
     the LATERAL JOIN in list_canonical_messages returns None when no ok
     turn_run exists for the message).
     """
@@ -123,7 +123,7 @@ def _user_msg(msg_id: str, text: str) -> dict[str, Any]:
         "content_md": text,
         "created_at": "2026-01-01T00:00:00Z",
         "current_turn_run_id": None,
-        # R1.6.1 P0-1: LATERAL JOIN returns None for user messages.
+        # LATERAL JOIN returns None for user messages.
         "canonical_turn_run_id": None,
         "answer_blocks_json": None,
         "web_search_json": None,
@@ -146,7 +146,7 @@ def _assistant_msg(
     ``answer_blocks_json`` / ``web_search_json`` (LATERAL join aliases);
     emergency reads ``answer_blocks`` / ``web_search_summary`` directly.
 
-    R1.6.1 P0-1: includes ``canonical_turn_run_id`` defaulting to None.
+     Includes ``canonical_turn_run_id`` defaulting to None.
     Tests that need to simulate a specific canonical ok run should
     override it via ``**`` spread (e.g. ``{**_assistant_msg(...),
     "canonical_turn_run_id": "r1"}``).
@@ -160,7 +160,7 @@ def _assistant_msg(
         "content_md": "",
         "created_at": "2026-01-01T00:00:00Z",
         "current_turn_run_id": None,
-        # R1.6.1 P0-1: canonical_turn_run_id from LATERAL JOIN. Defaults
+        # Canonical_turn_run_id from LATERAL JOIN. Defaults
         # to None; tests override via ** spread when a specific ok run
         # is needed.
         "canonical_turn_run_id": None,
@@ -267,7 +267,7 @@ def _snapshot_json(snapshot: ThreadMemorySnapshot) -> dict[str, Any]:
 def _multi_pair_messages(count: int = 7) -> list[dict[str, Any]]:
     """Generate ``count`` user+assistant pairs (14 messages total by default).
 
-    R1.5: ``emergency_full_snapshot`` uses ``recent_pairs=6`` (default).
+    ``Emergency_full_snapshot`` uses ``recent_pairs=6`` (default).
     With ≤6 user messages ALL messages fall into the recent window →
     no aged segment → no episodes → snapshot is empty → coordinator
     returns None. Tests that exercise the emergency rebuild path MUST
@@ -530,7 +530,7 @@ class TestFlagGating:
 
     async def test_flag_true_fresh_thread_deterministic_rebuild_no_model(self) -> None:
         """flag=true + no persisted snapshot → emergency rebuild (compaction_model='none')."""
-        # R1.5: need >6 user messages so emergency_full_snapshot creates
+        # Need >6 user messages so emergency_full_snapshot creates
         # an aged segment (recent_pairs=6 default).
         messages = _multi_pair_messages(count=7)
         # No persisted snapshot → fresh thread → emergency rebuild.
@@ -552,7 +552,7 @@ class TestFlagGating:
 
     async def test_flag_true_cas_mismatch_triggers_emergency_rebuild(self) -> None:
         """Stale persisted snapshot (watermark mismatch) → emergency rebuild."""
-        # R1.5: need >6 user messages so emergency produces an aged episode.
+        # Need >6 user messages so emergency produces an aged episode.
         messages = _multi_pair_messages(count=7)
         # Persisted snapshot only covers the first pair (stale watermark).
         stale_snap = _snapshot(
@@ -591,7 +591,7 @@ class TestCanonicalCompactionInput:
     """Emergency reads only safe-visible canonical fields."""
 
     def test_assistant_answer_blocks_become_medium_confidence_without_citations(self) -> None:
-        # R1.6 P1-2: non-article-cited answers are medium (never high).
+        # Non-article-cited answers are medium (never high).
         # 4 messages (2 pairs), recent_pairs=1 → first pair is aged → compacted.
         messages = [
             _user_msg("u1", "What is paragraph 2?"),
@@ -711,7 +711,7 @@ class TestAllowlistAndRejectRatio:
 
     async def test_coordinator_falls_back_to_emergency_on_reject(self) -> None:
         """When validate rejects, coordinator rebuilds via emergency (deterministic)."""
-        # R1.5: need >6 user messages so emergency_full_snapshot creates
+        # Need >6 user messages so emergency_full_snapshot creates
         # an aged segment (recent_pairs=6 default). With only 1 pair,
         # emergency produces no episodes → coordinator returns None.
         messages = _multi_pair_messages(count=7)
@@ -1053,7 +1053,7 @@ class TestCasAppliedConflict:
 
 
 class TestRenderBudgetRecency:
-    """同置信度下优先保留更近事实 (R1.5 P0 regression)."""
+    """同置信度下优先保留更近事实 (regression)."""
 
     def _medium_fact(self, text: str, turn: int) -> StructuredFact:
         return StructuredFact(
@@ -1165,14 +1165,14 @@ class TestRenderBudgetRecency:
 
 
 # ===========================================================================
-# R1.6 counterexamples — canonicality / provenance safety收口
+# Counterexamples — canonicality / provenance safety收口
 # ===========================================================================
 
 
 class TestCounterexamples:
-    """R1.6 必须新增的反例测试 (9 类).
+    """必须新增的反例测试 (9 类).
 
-    Each test corresponds to one counterexample in the R1.6 task brief.
+    Each test corresponds to one counterexample in the task brief.
     They use the REAL thread_memory modules (no sys.modules faking) so
     they verify the production code path end-to-end.
     """
@@ -1180,7 +1180,7 @@ class TestCounterexamples:
     # --- 1. 同 assistant message 成功 regenerate 后，watermark 变化并触发 rebuild ---
 
     def test_regenerate_changes_watermark_and_triggers_rebuild(self) -> None:
-        """R1.6 P0-1: successful regenerate → watermark changes.
+        """Successful regenerate → watermark changes.
 
         Scenario: assistant message ``a1`` keeps the same ``id`` but its
         ``current_turn_run_id`` changes from ``r1`` (old ok run) to
@@ -1220,7 +1220,7 @@ class TestCounterexamples:
     # --- 2. failed retry 保留旧 canonical ok 时，watermark 与 binding 不变 ---
 
     def test_failed_retry_preserves_watermark_and_bindings(self) -> None:
-        """R1.6 P0-1/P0-3 + R1.6.1 P0-1: failed/cancelled retry keeps old
+        """/ + failed/cancelled retry keeps old
         ok as canonical.
 
         Scenario: ``a1`` has ok run ``r1``; a retry ``r2`` fails
@@ -1230,7 +1230,7 @@ class TestCounterexamples:
         repository's LATERAL JOIN outputs ``canonical_turn_run_id='r1'``;
         watermark consumes ONLY that field, so it stays stable.
 
-        R1.6.1 P0-1 fix: this test NO LONGER manually changes
+          fix: this test NO LONGER manually changes
         ``current_turn_run_id`` back to the old ok run ID. Instead it
         uses the repository's actual output shape with
         ``canonical_turn_run_id`` set to the canonical ok run (r1),
@@ -1267,7 +1267,7 @@ class TestCounterexamples:
     # --- 3. snapshot 伪造 binding id 为真实 message id：reject ---
 
     def test_fake_binding_id_rejected(self) -> None:
-        """R1.6 P0-2: snapshot forging binding_id='u1' (a real message id)
+        """Snapshot forging binding_id='u1' (a real message id)
         that is NOT in the Host binding map → whole-snapshot reject.
         """
         fact = StructuredFact(
@@ -1303,7 +1303,7 @@ class TestCounterexamples:
     # --- 4. 复用真实 binding id 但改 fence/source 字段：reject ---
 
     def test_tampered_binding_fields_rejected(self) -> None:
-        """R1.6 P0-2: snapshot binding reuses a real Host binding_id but
+        """Snapshot binding reuses a real Host binding_id but
         tampers with source_type / fence_values → whole-snapshot reject.
         """
         host_binding = SourceBinding(
@@ -1320,7 +1320,7 @@ class TestCounterexamples:
             validity_check={"status": "unchecked", "last_validated_turn": 0},
         )
         # Tampered: same id, but source_type flipped to 'web' and fence
-        # values altered (a model cannot do this in R2 because Host owns
+        # values altered (a model cannot do this in because Host owns
         # bindings, but we test the validate_snapshot guard regardless).
         tampered = host_binding.model_copy(update={
             "source_type": "web",
@@ -1345,7 +1345,7 @@ class TestCounterexamples:
     # --- 5. web binding 不能支撑 article fact ---
 
     def test_web_binding_cannot_support_article_fact(self) -> None:
-        """R1.6 P0-2: an article fact referencing a Host *web* binding
+        """An article fact referencing a Host *web* binding
         must be stripped (web bindings cannot satisfy article provenance).
         """
         web_binding = SourceBinding(
@@ -1386,7 +1386,7 @@ class TestCounterexamples:
     # --- 7. emergency article fact 在 fence 失效后不保留原文本 ---
 
     async def test_emergency_article_fact_fence_failure_drops_text(self) -> None:
-        """R1.6 P1-2: emergency builds an article fact from a cited answer
+        """Emergency builds an article fact from a cited answer
         block; when the binding later fails fence (generation changed),
         the rendered memory block must NOT contain the original article
         text — it degrades to ``prior_mention``.
@@ -1455,7 +1455,7 @@ class TestCounterexamples:
     # --- 8. 缺 0028 表：memory fail-soft，Ask assembly 仍可继续 ---
 
     async def test_missing_0028_table_fail_softs_to_none(self) -> None:
-        """R1.6 P1-3: when 0028 migration is not applied and the memory
+        """When 0028 migration is not applied and the memory
         flag is mistakenly enabled, the snapshot table is missing.
         ``get_thread_memory_snapshot`` must fail-soft to ``None`` (→
         coordinator falls back to deterministic rebuild from canonical
@@ -1485,7 +1485,7 @@ class TestCounterexamples:
     # --- 9. 任意紧预算下输出仍以完整 XML close tag 结束 ---
 
     def test_tight_budget_preserves_xml_close_tag(self) -> None:
-        """R1.6 P1-3: any budget path must preserve the complete closing
+        """Any budget path must preserve the complete closing
         ``</transcript_data>`` tag. Only inner content may be truncated.
         """
         # StructuredFact.text is capped at 280 chars; use multiple facts
@@ -1517,12 +1517,12 @@ class TestCounterexamples:
 
 
 # ===========================================================================
-# R1.6.1 counterexamples — canonicality / provenance / atomicity 返修
+# Counterexamples — canonicality / provenance atomicity 返修
 #
-# These tests verify the R1.6.1 fixes:
-#   P0-1: canonical watermark uses canonical_turn_run_id (repository output)
-#   P0-2: Host materializes bindings from facts' source_ids before fence
-#   P1:   budget boxing is line-atomic (no half-line truncation)
+# These tests verify the fixes:
+# Canonical watermark uses canonical_turn_run_id (repository output)
+# Host materializes bindings from facts' source_ids before fence
+# Budget boxing is line-atomic (no half-line truncation)
 #
 # Key rules enforced by these tests:
 #   - Tests consume the repository's ACTUAL output shape (with
@@ -1537,10 +1537,10 @@ class TestCounterexamples:
 
 
 class TestCanonicalWatermark:
-    """R1.6.1 P0-1: canonical watermark uses canonical_turn_run_id."""
+    """Canonical watermark uses canonical_turn_run_id."""
 
     def test_same_answer_different_canonical_run_changes_watermark(self) -> None:
-        """R1.6.1 P0-1 反例 1: same message ID + same answer text, but
+        """反例 1: same message ID + same answer text, but
         successful regenerate produces a new canonical ok run → watermark
         MUST change.
 
@@ -1574,13 +1574,13 @@ class TestCanonicalWatermark:
         wm2 = compute_watermark(messages_v2)
         assert wm1 != wm2, (
             "watermark must change when canonical_turn_run_id changes, "
-            "even with identical answer text (R1.6.1 P0-1)"
+            "even with identical answer text ()"
         )
 
     def test_failed_retry_current_points_to_failed_but_watermark_uses_canonical(
         self,
     ) -> None:
-        """R1.6.1 P0-1 反例 2: failed/cancelled retry.
+        """反例 2: failed/cancelled retry.
 
         - message.current_turn_run_id points to FAILED run (r2)
         - canonical_turn_run_id points to OLD ok run (r1) via LATERAL JOIN
@@ -1618,11 +1618,11 @@ class TestCanonicalWatermark:
         # Watermark is UNCHANGED because canonical_turn_run_id didn't change.
         assert wm_normal == wm_after_failure, (
             "watermark must not change when current_turn_run_id flips to a "
-            "failed run but canonical_turn_run_id stays the same (R1.6.1 P0-1)"
+            "failed run but canonical_turn_run_id stays the same ()"
         )
 
     def test_web_outcome_change_changes_watermark(self) -> None:
-        """R1.6.1 P0-1 反例 3: web_search outcome changes → watermark changes.
+        """反例 3: web_search outcome changes → watermark changes.
 
         The safe-visible web outcome is part of the structured digest.
         """
@@ -1653,7 +1653,7 @@ class TestCanonicalWatermark:
         )
 
     def test_safe_answer_text_change_changes_watermark(self) -> None:
-        """R1.6.1 P0-1 反例 4: safe-visible answer text changes → watermark
+        """反例 4: safe-visible answer text changes → watermark
         changes (even with same canonical_turn_run_id)."""
         messages_v1 = [
             _user_msg("u1", "q1"),
@@ -1674,11 +1674,11 @@ class TestCanonicalWatermark:
         wm1 = compute_watermark(messages_v1)
         wm2 = compute_watermark(messages_v2)
         assert wm1 != wm2, (
-            "watermark must change when safe answer text changes (R1.6.1 P0-1)"
+            "watermark must change when safe answer text changes ()"
         )
 
     def test_watermark_uses_canonical_not_current_turn_run_id(self) -> None:
-        """R1.6.1 P0-1 反例 5: watermark must consume canonical_turn_run_id,
+        """反例 5: watermark must consume canonical_turn_run_id,
         NOT current_turn_run_id. Two messages with the SAME canonical but
         DIFFERENT current_turn_run_id must produce the SAME watermark."""
         messages_a = [
@@ -1707,7 +1707,7 @@ class TestCanonicalWatermark:
 
 
 class TestHostMaterialization:
-    """R1.6.1 P0-2: Host materializes bindings from facts' source_ids
+    """Host materializes bindings from facts' source_ids
     before fence. The model/snapshot's source_bindings is NEVER the
     authority."""
 
@@ -1803,11 +1803,11 @@ class TestHostMaterialization:
         assert "cit_art1" not in view.text
 
     def test_omitted_bindings_materialized_from_fact_source_ids(self) -> None:
-        """R1.6.1 P0-2 反例 1: article fact references a real Host article
+        """反例 1: article fact references a real Host article
         binding but episode.source_bindings=[] → Host MUST auto-materialize
         that binding and execute fence.
 
-        Before R1.6.1, the validate_snapshot only checked existing
+        Before, the validate_snapshot only checked existing
         source_bindings; if the model omitted them, fence never ran on
         the referenced binding. Now _materialize_host_bindings_for_episode
         derives the binding list from kept_facts' source_ids ∩ host_bindings.
@@ -1822,7 +1822,7 @@ class TestHostMaterialization:
             turn_origin=1,
         )
         # Episode omits source_bindings entirely (model/snapshot didn't
-        # provide them). This is the vulnerability R1.6.1 fixes.
+        # provide them). This is the vulnerability fixes.
         snap = _snapshot(episodes=[_episode(
             facts=[fact], bindings=[],  # ← omitted!
         )])
@@ -1853,7 +1853,7 @@ class TestHostMaterialization:
         assert ep.structured_facts[0].fact_id == "f1"
 
     def test_invalid_binding_after_materialization_drops_article_text(self):
-        """R1.6.1 P0-2 反例 2: article fact references a real Host binding,
+        """反例 2: article fact references a real Host binding,
         bindings omitted, Host materializes and fence marks it invalid →
         original article text must NOT appear in rendered memory.
 
@@ -1900,7 +1900,7 @@ class TestHostMaterialization:
         assert "cit_art1" not in view.text
 
     def test_tampered_binding_fields_rejected_after_materialization(self):
-        """R1.6.1 P0-2 反例 3: real binding ID + tampered fields → reject.
+        """反例 3: real binding ID + tampered fields → reject.
 
         The snapshot provides a binding with the same ID as a Host binding
         but with tampered source_type/fence_values. validate_snapshot
@@ -1932,7 +1932,7 @@ class TestHostMaterialization:
         assert metrics["reject_reason"].startswith("binding_tampered:cit_real")
 
     def test_multiple_bindings_materialized_deduplicated_stably_sorted(self):
-        """R1.6.1 P0-2 反例 5: facts reference multiple bindings → Host
+        """反例 5: facts reference multiple bindings → Host
         materializes ALL, deduplicated, stably sorted by binding_id.
         """
         host_a = self._host_article_binding("cit_bbb")
@@ -1981,7 +1981,7 @@ class TestHostMaterialization:
         )
 
     def test_unreferenced_binding_excluded_from_episode(self):
-        """R1.6.1 P0-2 反例 6: a Host binding NOT referenced by any fact
+        """反例 6: a Host binding NOT referenced by any fact
         must NOT appear in the episode's source_bindings.
         """
         host_referenced = self._host_article_binding("cit_used")
@@ -2015,7 +2015,7 @@ class TestHostMaterialization:
         )
 
     def test_web_binding_cannot_support_article_fact_after_materialization(self):
-        """R1.6.1 P0-2 反例 4: web binding supporting article fact → strip.
+        """反例 4: web binding supporting article fact → strip.
 
         An article fact that references a Host web binding (not article)
         is stripped. The web binding is materialized but the article fact
@@ -2051,10 +2051,10 @@ class TestHostMaterialization:
 
 
 class TestAtomicLineBoxing:
-    """R1.6.1 P1: budget boxing is line-atomic. No half-line truncation."""
+    """Budget boxing is line-atomic. No half-line truncation."""
 
     def test_no_half_line_truncation_under_tight_budget(self):
-        """R1.6.1 P1 反例 1: tight budget must drop WHOLE lines, never
+        """反例 1: tight budget must drop WHOLE lines, never
         truncate mid-line. The old ``joined[:inner_budget]`` and
         ``inner[:max_inner]`` could split a fact's text, a user
         correction marker, or an XML entity.
@@ -2089,14 +2089,14 @@ class TestAtomicLineBoxing:
         assert "FIRST" * 20 in view.text
         # f2 is entirely absent (not partially present).
         assert "SECOND" * 20 not in view.text
-        # R1.6.1 P1: no partial "SECOND" fragment either. If any "SECOND"
+        # No partial "SECOND" fragment either. If any "SECOND"
         # substring appears, it would indicate mid-line truncation.
         assert "SECOND" not in view.text, (
             "f2 must be dropped entirely, not truncated mid-line"
         )
 
     def test_output_never_exceeds_budget(self):
-        """R1.6.1 P1 反例 2: for any non-None output, len(text) <= budget."""
+        """反例 2: for any non-None output, len(text) <= budget."""
         facts = [
             StructuredFact(
                 fact_id=f"f{i}",
@@ -2118,7 +2118,7 @@ class TestAtomicLineBoxing:
             )
 
     def test_complete_and_unique_xml_fence(self):
-        """R1.6.1 P1 反例 3: output has exactly one opening and one closing
+        """反例 3: output has exactly one opening and one closing
         fence tag, no half XML entity/tag."""
         facts = [
             StructuredFact(
@@ -2146,7 +2146,7 @@ class TestAtomicLineBoxing:
             assert view.text.endswith("</transcript_data>")
 
     def test_each_output_fact_is_complete_line(self):
-        """R1.6.1 P1 反例 4: every output fact line starts with '- [' and
+        """反例 4: every output fact line starts with '- [' and
         ends with a turn marker '(turn N)'. No half fact line."""
         facts = [
             StructuredFact(
@@ -2179,7 +2179,7 @@ class TestAtomicLineBoxing:
             )
 
     def test_protected_fact_not_truncated_under_tight_budget(self):
-        """R1.6.1 P1 反例 5: protected fact still obeys retention priority
+        """反例 5: protected fact still obeys retention priority
         but cannot be retained in truncated form. If it doesn't fit whole,
         it's dropped entirely (not partially kept)."""
         protected_text = "PROTECTED" * 30  # 270 chars

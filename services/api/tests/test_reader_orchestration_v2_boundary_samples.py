@@ -1,4 +1,4 @@
-"""T4.2a-V2-R1: three-mode boundary & very-long fixed-sample validation.
+"""Three-mode boundary & very-long fixed-sample validation.
 
 Deterministic fixture / fake-executor coverage for four fixed samples:
 
@@ -86,7 +86,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_ROOT = _REPO_ROOT / "verification" / "golden_samples" / "articles"
 LEASE_DURATION = timedelta(seconds=30)
 
-# Fingerprint / policy bases pinned by T4.1b / T4.1c contracts.
+# Fingerprint / policy bases pinned by contracts.
 _FP_TRANS_SHORT = "translation_article_v1"
 _FP_VOCAB_SHORT = "vocabulary_article_v1"
 _FP_GRAM_SHORT = "grammar_bundle_article_v1"

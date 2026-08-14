@@ -61,7 +61,7 @@ async def list_reading_record_ask_model_options() -> ReaderAskModelOptionListRes
 
 
 # Default replayed web search mode when the persisted user message metadata
-# does not carry ``web_search_mode`` (legacy rows persisted before ASK-WEB-G1-R2).
+# does not carry ``web_search_mode`` (legacy rows persisted before ASK-WEB-G1-).
 # Fail-closed: never silently grant a capability the original turn did not
 # explicitly record as ``allowed``.
 _DEFAULT_REPLAY_WEB_SEARCH_MODE: WebSearchMode = "disabled"
@@ -85,7 +85,7 @@ class RetryPreparedResult:
     reading_record_id: UUID
     facts: object
     execution: ReaderRecordAskExecutionConfig
-    # ASK-UX-COT-COMPOSER-R3 P2 — the replayed focus anchor set, parsed
+    # ASK-UX-COT-COMPOSER- — the replayed focus anchor set, parsed
     # from the persisted retry snapshot and re-validated against the live
     # document during preflight (fail-closed). ``None`` = legacy
     # single-anchor / no-anchor turns.
@@ -178,7 +178,7 @@ async def _load_validated_anchor_raw(
 def resolve_request_focus_anchors(
     request: ReaderRecordAskMessageRequest,
 ) -> list[ReaderAskReadingRecordAnchor]:
-    """ASK-UX-COT-COMPOSER-R3 P2 — the effective anchor set for a request.
+    """ASK-UX-COT-COMPOSER- — the effective anchor set for a request.
 
     The plural ``focus_anchors`` field wins when present (it is the
     canonical multi-selection contract; new Web clients send every
@@ -204,7 +204,7 @@ async def _validate_reading_record_anchors(
 ) -> list[ReaderAskReadingRecordAnchor]:
     """Gate EVERY effective anchor; fail the whole request closed.
 
-    R3 P2: each anchor is independently validated against the same
+     Each anchor is independently validated against the same
     record / base / generation / document (ownership + staleness +
     unit/segment/text match). ANY invalid, unauthorized, foreign, or
     stale anchor aborts the request before the stream — there is no
@@ -320,7 +320,7 @@ async def _resolve_agentic_execution(
     and the host usage limit. Fail-closed: raises a typed 503 — never
     silently substitutes the global default model.
 
-    ASK-WEB-G1-R1: ``web_search_mode`` is the user-visible request
+    ASK-WEB-G1-``web_search_mode`` is the user-visible request
     toggle propagated from :attr:`ReaderRecordAskMessageRequest.web_search_mode`.
     The resolver translates it into a :class:`ResolvedWebSearchCapability`
     attached to the returned config so the runtime can mount the
@@ -350,9 +350,9 @@ async def _resolve_agentic_execution(
 
 @dataclass(slots=True, frozen=True)
 class SendPreparedResult:
-    """R6: everything required before StreamingResponse is constructed.
+    """Everything required before StreamingResponse is constructed.
 
-    ``submission`` is the durable ensure result (or None for pre-R2
+    ``submission`` is the durable ensure result (or None for pre-
     clients without client_submission_id). Raising here produces a real
     HTTP 4xx/503 — never HTTP 200 + SSE error for missing tables.
     """
@@ -373,7 +373,7 @@ async def prepare_reading_record_ask_message(
 ) -> SendPreparedResult:
     """Validate + resolve execution + durable submission BEFORE stream.
 
-    R6: ``ensure_submission_for_send`` runs here so missing 0026 table
+    ``Ensure_submission_for_send`` runs here so missing 0026 table
     surfaces as HTTP 503, not SSE error after StreamingResponse starts.
     """
     from app.services.reader_record_ask.submission_gateway import (
@@ -432,14 +432,14 @@ async def prepare_reading_record_ask_message(
         model_option_key=model_option_key,
         web_search_mode=web_mode,
         route_identity="reader_record_ask",
-        # R3 P2 — persist the full validated focus set for regenerate replay.
+        # Persist the full validated focus set for regenerate replay.
         focus_anchors=[
             anchor.model_dump(mode="json") for anchor in validated_focus_anchors
         ]
         or None,
     )
 
-    # Durable claim+pair+bind BEFORE StreamingResponse (R6 P0).
+    # Durable claim+pair+bind BEFORE StreamingResponse.
     submission: SubmissionEnsureResult | None = await ensure_submission_for_send(
         repo=ReaderRecordAskRepository(),
         thread_id=resolved_thread_id,
@@ -472,10 +472,10 @@ async def _stream_agentic_v2(
     lifecycle: StreamLifecycleHook | None = None,
     prepared: SendPreparedResult | None = None,
 ) -> AsyncIterator[str]:
-    """Dispatch the v2 stream using the pre-stream submission (R6).
+    """Dispatch the v2 stream using the pre-stream submission.
 
     Generator must NOT re-claim or re-create pairs. Model only runs when
-    prepared.submission is None (pre-R2) or may_create_model=True.
+    prepared.submission is None (pre-) or may_create_model=True.
     """
     from app.services.reader_record_ask.sse import encode_sse
 
@@ -541,7 +541,7 @@ async def _stream_agentic_v2(
     )
     main_model_config = execution.resolved_model_config
 
-    # R3 P2 — the effective anchor set (plural focus_anchors, or the
+    # The effective anchor set (plural focus_anchors, or the
     # legacy singular anchor as fallback). The primary selection is the
     # first anchor; the full set rides along for gate + model view +
     # retry replay.
@@ -646,7 +646,7 @@ async def prepare_reading_record_ask_retry(
     5. v1, legacy, missing, or unknown identities → typed 409 before any
        provider execution.
 
-    ASK-WEB-G1-R2: when ``message_id`` is provided, the preflight loads
+    ASK-WEB-G1-when ``message_id`` is provided, the preflight loads
     the persisted user message metadata and replays the original turn's
     ``web_search_mode`` (the **resolved** value persisted at send time,
     not the raw request toggle). Fail-closed to ``disabled`` when absent.
@@ -732,7 +732,7 @@ async def prepare_reading_record_ask_retry(
         option,
         web_search_mode=replayed_web_search_mode,
     )
-    # R3 P2 — replay the persisted focus set; re-gated against the live
+    # Replay the persisted focus set; re-gated against the live
     # document (fail-closed on staleness) before any model call.
     replayed_focus_anchors = await _revalidate_snapshot_focus_anchors(
         user_id=user_id,
@@ -792,7 +792,7 @@ def _extract_snapshot_focus_anchors(
     assistant_msg: dict[str, Any],
     user_msg: dict[str, Any],
 ) -> list[dict[str, Any]] | None:
-    """ASK-UX-COT-COMPOSER-R3 P2 — focus anchors from the retry snapshot.
+    """ASK-UX-COT-COMPOSER- — focus anchors from the retry snapshot.
 
     Assistant metadata wins (it carries the authoritative snapshot);
     returns ``None`` when the original turn had no focus set.
@@ -925,9 +925,9 @@ async def _load_replayed_web_search_mode(
     closest preceding user message, then extracts the ``web_search_mode``
     field from the user message's persisted metadata.
 
-    ASK-WEB-G1-R3 fail-closed contract
+    ASK-WEB-G1- fail-closed contract
     ----------------------------------
-    Per the R3 spec, retry must only trust server-side persisted facts.
+    Per the spec, retry must only trust server-side persisted facts.
     The previous implementation silently degraded every error case to
     ``"disabled"``, which let ownership mismatches and DB failures start
     a generator with the wrong capability truth. The new contract is:
@@ -938,7 +938,7 @@ async def _load_replayed_web_search_mode(
       not-found — cannot replay a turn without the originating user
       message).
     - User message metadata is missing the ``web_search_mode`` key
-      (legacy rows persisted before ASK-WEB-G1-R2) → ``"disabled"``
+      (legacy rows persisted before ASK-WEB-G1-) → ``"disabled"``
       (compatible — legacy rows never recorded a capability).
     - User message metadata is not a mapping → ``HTTPException(503)``
       (malformed persisted state, not a legacy row).
@@ -1012,7 +1012,7 @@ async def _load_replayed_web_search_mode(
     if raw_mode == "disabled":
         return "disabled"
     if raw_mode is None:
-        # Legacy row persisted before ASK-WEB-G1-R2 — no
+        # Legacy row persisted before ASK-WEB-G1- — no
         # ``web_search_mode`` key. Compatible: default to ``"disabled"``.
         return _DEFAULT_REPLAY_WEB_SEARCH_MODE
     # Persisted value is present but illegal — fail-closed with a typed
@@ -1067,7 +1067,7 @@ async def retry_reading_record_ask_message(
     )
 
     execution = prepared.execution
-    # G3-R3: defensive invariant — when ``web_search_capability`` is
+    # G3-defensive invariant — when ``web_search_capability`` is
     # ``None`` (disabled mode), the backend MUST also be ``None`` so
     # the runtime never mounts ``search_web`` on a disabled retry.
     retry_capability = execution.web_search_capability
@@ -1086,14 +1086,14 @@ async def retry_reading_record_ask_message(
         model_settings=execution.model_settings(),
         usage_limits=execution.usage_limits,
         main_model_config=execution.resolved_model_config,
-        # R3 P2 — replay the same validated focus set as the original turn.
+        # Replay the same validated focus set as the original turn.
         focus_anchors=prepared.focus_anchors,
-        # ASK-WEB-G1-R1: forward the resolved web search capability so
+        # ASK-WEB-G1-forward the resolved web search capability so
         # retry uses the same execution truth as the original send. When
         # ``None`` (capability not granted on the original turn) the
         # runtime must NOT mount the ``search_web`` tool on retry.
         web_search_capability=retry_capability,
-        # G3-R3: forward the real provider backend so retry uses the
+        # G3-forward the real provider backend so retry uses the
         # same adapter as the original send. When ``None`` the runtime
         # must NOT mount ``search_web`` on retry.
         web_search_backend=retry_backend,

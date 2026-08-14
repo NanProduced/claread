@@ -253,7 +253,7 @@ class TestCASMismatchRebuild:
         assert compute_watermark(msgs) == compute_watermark(msgs)
 
     def test_watermark_changes_on_content_only_edit(self) -> None:
-        """R1.6 P0-1: watermark follows canonical revision (content digest).
+        """Watermark follows canonical revision (content digest).
 
         Same (id, role) but different content → different watermark.
         This replaces the old ``ignores_content_only`` test that locked
@@ -491,7 +491,7 @@ class TestEmergencyDeterminism:
 
 
 class TestIntegrationSignatureCompatibility:
-    """验证跨模块调用签名兼容性（catch A3 integration bugs）。"""
+    """验证跨模块调用签名兼容性（catch integration bugs）。"""
 
     def test_emergency_full_snapshot_signature(self) -> None:
         """emergency_full_snapshot accepts (messages, ok_runs, *, recent_pairs, thread_id)."""

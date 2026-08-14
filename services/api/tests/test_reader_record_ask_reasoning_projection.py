@@ -1,4 +1,4 @@
-"""ASK-REASONING-R1 sentinel suite for the reasoning projection chokepoint.
+"""ASK-REASONING- sentinel suite for the reasoning projection chokepoint.
 
 Covers the deterministic projection contract:
 
@@ -182,7 +182,7 @@ def test_incremental_redactor_holds_partial_handle_until_complete() -> None:
 
 
 def test_incremental_redactor_releases_safe_text_immediately() -> None:
-    # R2: ordinary safe text is released on the same feed it arrives in —
+    # Ordinary safe text is released on the same feed it arrives in —
     # no fixed global holdback delays short reasoning until flush.
     redactor = IncrementalRedactor()
     assert redactor.feed("短句。") == "短句。"
@@ -196,7 +196,7 @@ def test_incremental_redactor_releases_safe_text_immediately() -> None:
 
 
 def test_unterminated_pem_body_never_leaks_and_terminator_resumes() -> None:
-    # R2 fail-closed: an unterminated PEM block discards its whole body
+    # Fail-closed: an unterminated PEM block discards its whole body
     # (not just the BEGIN/END markers — the base64 key material itself)
     # until the terminator arrives; text after the terminator resumes.
     body_sentinel = "MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wgg"
@@ -240,7 +240,7 @@ def test_unterminated_pem_discards_body_on_flush() -> None:
 
 
 def test_pem_body_overflow_seals_redactor_permanently() -> None:
-    # R2: an unterminated PEM region scanned beyond the ceiling seals the
+    # An unterminated PEM region scanned beyond the ceiling seals the
     # redactor permanently — it must NEVER resume ordinary output, even
     # for perfectly safe text fed afterwards (fail-closed over liveness).
     body_sentinel = "MIIBOVERFLOWBODY" * 4096  # ~1MB of key material
@@ -263,12 +263,12 @@ def test_pem_body_overflow_seals_redactor_permanently() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R3 P1: strict PEM BEGIN/END label pairing
+# Strict PEM BEGIN/END label pairing
 # ---------------------------------------------------------------------------
 
 
 def test_pem_mismatched_end_never_reopens_normal_output() -> None:
-    # R3 P1 (task example): BEGIN RSA … / SECRET_ONE / END CERTIFICATE
+    # (task example): BEGIN RSA … SECRET_ONE / END CERTIFICATE
     # (mismatch) / SECRET_TWO. BEGIN RSA has no matching END, so the whole
     # region — including SECRET_TWO after the mismatched END — is dropped.
     raw = (
@@ -437,7 +437,7 @@ def test_committed_prefix_redacts_complete_sentinel() -> None:
 
 def test_long_url_never_leaks_whether_held_or_committed() -> None:
     # A URL terminated by whitespace within the same feed is redacted on
-    # commit; the surrounding safe prose is released immediately (R2
+    # commit; the surrounding safe prose is released immediately (
     # realtime semantics — no fixed holdback).
     long_url = "https://internal.example.com/" + "p" * 400
     raw = "正" * 240 + long_url + " 结尾"
@@ -479,7 +479,7 @@ _STREAM_EQUIVALENCE_SAMPLES: tuple[str, ...] = (
 @pytest.mark.parametrize("raw", _STREAM_EQUIVALENCE_SAMPLES)
 @pytest.mark.parametrize("split", [1, 2, 3, 5, 7, 13])
 def test_streaming_projection_equivalent_to_whole_text(raw: str, split: int) -> None:
-    # R2 lock: for every sentinel shape at every split granularity, the
+    # Lock: for every sentinel shape at every split granularity, the
     # concatenation of streamed releases equals the whole-text projection
     # byte-for-byte (order preserved, nothing double-emitted, nothing
     # lost — the hot≡cold construction invariant).
@@ -609,7 +609,7 @@ def test_observer_no_events_when_provider_returns_no_reasoning() -> None:
 def test_observer_delta_seq_strictly_monotonic() -> None:
     events: list[RuntimeEvent] = []
     observer = _observer(events)
-    # R2 streaming redactor releases safe CJK text on the same feed, so
+    # Streaming redactor releases safe CJK text on the same feed, so
     # each chunk produces its own delta with strictly increasing seq.
     chunks = ("甲" * 150 + "。", "乙" * 150 + "。", "丙" * 150 + "。")
     for chunk in chunks:
@@ -794,7 +794,7 @@ def test_events_reject_extra_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R2: PEM body leak scan across every observer surface
+# PEM body leak scan across every observer surface
 # ---------------------------------------------------------------------------
 
 
@@ -850,7 +850,7 @@ def test_observer_seal_stops_events_but_keeps_safe_prefix() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R2: quota precision
+# Quota precision
 # ---------------------------------------------------------------------------
 
 
@@ -874,15 +874,15 @@ def test_quota_marker_exactly_once_and_count_exact() -> None:
 
 
 def test_quota_exact_fit_has_no_marker() -> None:
-    # Exact-cap protocol (R3): text without a marker may fill up to
+    # Exact-cap protocol: text without a marker may fill up to
     # char_cap − len(marker) (the content reservation) and stays
     # truncated=False with no marker.
-    # NOTE: advance_round() is a no-op (R4-4) — this test exercises the
+    # NOTE: advance_round is a no-op — this test exercises the
     # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
-    buffer.advance_round()  # no-op (R4-4)
+    buffer.advance_round() # no-op
     buffer.feed("字" * content_cap)  # exactly fills the content reservation
     buffer.flush()
     assert not buffer.truncated
@@ -891,17 +891,17 @@ def test_quota_exact_fit_has_no_marker() -> None:
 
 
 def test_quota_fill_reservation_then_overflow_appends_marker_once() -> None:
-    # Exact-cap protocol (R3): filling exactly to the content reservation
+    # Exact-cap protocol: filling exactly to the content reservation
     # leaves no marker; one more code point crosses into the reservation and
     # appends the marker exactly once, landing the total at exactly char_cap
-    # (marker at end). This is the case R2 got wrong (truncated=True with no
+    # (marker at end). This is the case got wrong (truncated=True with no
     # marker).
-    # NOTE: advance_round() is a no-op (R4-4) — this test exercises the
+    # NOTE: advance_round() is a no-op — this test exercises the
     # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
-    buffer.advance_round()  # no-op (R4-4)
+    buffer.advance_round() # no-op
     buffer.feed("字" * content_cap)
     assert not buffer.truncated
     assert TRUNCATION_MARKER not in buffer.text
@@ -962,7 +962,7 @@ def test_quota_rejects_further_raw_after_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R2: canonical snapshot validator (shared by write + cold-read paths)
+# Canonical snapshot validator (shared by write + cold-read paths)
 # ---------------------------------------------------------------------------
 
 
@@ -1023,7 +1023,7 @@ def test_validate_reasoning_snapshot_accepts_canonical_shape() -> None:
                                     char_count=len(f"u {_URL_SENTINEL}")),
         lambda: _canonical_snapshot(text="You are Claread hidden",
                                     char_count=len("You are Claread hidden")),
-        # --- R3 truncation-marker invariants ---
+        # --- truncation-marker invariants ---
         # truncated=True but no marker.
         lambda: _canonical_snapshot(text="x" * 100, char_count=100, truncated=True),
         # truncated=False but a marker is present.
@@ -1069,10 +1069,10 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-TURN-LIFECYCLE R4-4: total cap is the ONLY quota
+# ASK-TURN-LIFECYCLE total cap is the ONLY quota
 # ---------------------------------------------------------------------------
 #
-# R4-4 removed the hard round-0 sub-cap (former ROUND0_CAP_FRACTION = 0.65)
+# Removed the hard round-0 sub-cap (former ROUND0_CAP_FRACTION = 0.65)
 # because it silently dropped up to 35% of round-0 reasoning without setting
 # ``truncated=True``, producing an undeclared gap in the visible projection.
 # The turn-level total cap is the ONLY quota. ``advance_round()`` is a no-op
@@ -1080,14 +1080,14 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
 
 
 def test_no_initial_round_subcap_allows_full_total_budget_in_initial_round() -> None:
-    # R4-4: there is NO round-0 sub-cap. A round-0 feed under the total
+    # There is NO round-0 sub-cap. A round-0 feed under the total
     # content cap is accepted in full — no silent drop, no marker.
     cap = 100
     marker_len = len(TRUNCATION_MARKER)
     content_cap = cap - marker_len
     buffer = ReasoningProjectionBuffer(char_cap=cap)
     # Feed an amount that would have been OVER the old round-0 sub-cap
-    # (65% of content_cap) but UNDER the total content cap. R4-4: all
+    # (65% of content_cap) but UNDER the total content cap. All
     # of it is accepted.
     feed_chars = content_cap  # fill the entire content reservation
     out_round0 = buffer.feed("字" * feed_chars) + buffer.flush()
@@ -1099,7 +1099,7 @@ def test_no_initial_round_subcap_allows_full_total_budget_in_initial_round() -> 
 
 
 def test_advance_round_is_noop_does_not_affect_quota() -> None:
-    # R4-4: advance_round() is a no-op. Calling it does not change the
+    # Advance_round() is a no-op. Calling it does not change the
     # buffer state or the available budget — the total cap is the only
     # quota and it is shared across all rounds.
     cap = 100
@@ -1123,7 +1123,7 @@ def test_advance_round_is_noop_does_not_affect_quota() -> None:
 
 
 def test_total_cap_truncates_with_marker_without_advance_round() -> None:
-    # R4-4: total cap truncation works the same with or without
+    # Total cap truncation works the same with or without
     # advance_round. The marker is appended exactly once at the end.
     cap = 100
     buffer = ReasoningProjectionBuffer(char_cap=cap)
@@ -1155,7 +1155,7 @@ def test_advance_round_idempotent_after_total_truncation() -> None:
 
 
 def test_multiple_advance_round_calls_are_all_noops() -> None:
-    # R4-4: multiple advance_round calls (multiple tool boundaries) are
+    # Multiple advance_round calls (multiple tool boundaries) are
     # all no-ops. The total cap is the only quota — no per-round reserve.
     cap = 200
     marker_len = len(TRUNCATION_MARKER)
@@ -1187,7 +1187,7 @@ def test_multiple_advance_round_calls_are_all_noops() -> None:
 
 
 def test_observer_advance_round_is_noop() -> None:
-    # R4-4: observer.advance_round() is a no-op — it does not affect
+    # Observer.advance_round() is a no-op — it does not affect
     # which reasoning is accepted or dropped. All reasoning under the
     # total cap is accepted regardless of round boundaries.
     events: list[RuntimeEvent] = []
@@ -1200,7 +1200,7 @@ def test_observer_advance_round_is_noop() -> None:
         char_cap=cap,
     )
     # Feed reasoning that would have been dropped by the old round-0
-    # sub-cap. R4-4: all of it is accepted.
+    # sub-cap. All of it is accepted.
     observer.on_reasoning_delta("字" * 50)
     observer.on_analysis_finished()
     # Tool boundary — no-op.
@@ -1231,7 +1231,7 @@ def test_observer_advance_round_is_noop_when_sealed() -> None:
 
 
 def test_default_band_keeps_long_turns_untruncated() -> None:
-    # R4-4 regression: with the round-0 sub-cap removed, a representative
+    # Regression: with the round-0 sub-cap removed, a representative
     # 6K round-0 reasoning + 4K round-1 reasoning (10K total) must NOT be
     # truncated under the 14K default cap.
     buffer = ReasoningProjectionBuffer()  # uses DEFAULT_PROJECTION_CHAR_CAP

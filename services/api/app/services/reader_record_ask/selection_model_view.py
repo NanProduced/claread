@@ -1,4 +1,4 @@
-"""Selection cost-fit + unique untrusted model-view block (R4-A5-2 / A5-2R).
+"""Selection cost-fit + unique untrusted model-view block.
 
 Atomicity (assembler · registry · budget · prompt)
 --------------------------------------------------
@@ -42,10 +42,10 @@ Cost ownership of selection section chrome
 - Untrusted ``<untrusted_article_text role="selection">`` block →
   **selection** account (charged once via renderer).
 - Fixed section header/footer chrome around that block → **request_frame**
-  fixed surface (constant strings; A5-7 request_frame metering must include
+  fixed surface (constant strings; request_frame metering must include
   them). Never unowned model-visible characters.
 
-Does **not** implement expand/map/RAG/validator/production wiring (A5-3…7).
+Does **not** implement expand/map/RAG/validator/production wiring (…7).
 Does **not** replace live :func:`register_initial_anchor_evidence` behaviour.
 """
 
@@ -85,7 +85,7 @@ SELECTION_ROLE: str = "selection"
 
 # Request-frame-owned fixed chrome around the selection untrusted block.
 # Included in SelectionPromptCapability.section_text so the prompt builder
-# never invents unowned model-visible characters. A5-7 request_frame charge
+# never invents unowned model-visible characters. request_frame charge
 # must account for these constants.
 SELECTION_SECTION_HEADER: str = "\n## Untrusted article context (selection)\n"
 SELECTION_SECTION_FOOTER: str = "\n"
@@ -95,7 +95,7 @@ SelectionModelViewStatus = Literal["absent", "injected", "budget_denied"]
 # Module-private brand for selection prompt capabilities (not a sandbox).
 _SELECTION_PROMPT_ORIGIN: object = object()
 
-# Module-private brand for assembler-minted expansion seeds (R4-A5-3R).
+# Module-private brand for assembler-minted expansion seeds.
 _SELECTION_EXPANSION_SEED_ORIGIN: object = object()
 
 _SELECTION_PROMPT_TYPE_ERROR = (
@@ -189,7 +189,7 @@ def validate_selection_prompt_capability(
 
 
 # ---------------------------------------------------------------------------
-# Expansion seed (R4-A5-3R; server-only full-source integrity)
+# Expansion seed (server-only full-source integrity)
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ def canonical_selection_digest(canonical_selected_text: str) -> str:
 class SelectionExpansionSeed:
     """Assembler-minted server-only provenance for selection expansion.
 
-    Proves **full canonical source identity** to the A5-3 expansion
+    Proves **full canonical source identity** to the expansion
     session: full length, full-content digest, and handle/envelope
     binding. Minted only by :func:`assemble_selection_model_view` when
     the canonical selection is known — never reconstructed from the
@@ -291,12 +291,12 @@ class SelectionModelViewResult:
     - binary equality:
       ``model_chunk.text == registry[handle].snippet == visible_prefix``
 
-    ``continuation_start`` is server-side only (A5-3); never model-visible.
+    ``continuation_start`` is server-side only; never model-visible.
 
-    ``expansion_seed`` (R4-A5-3R) is an assembler-minted server-only
+    ``expansion_seed`` is an assembler-minted server-only
     :class:`SelectionExpansionSeed` present for ``status="injected"``
     results: full canonical length + full-content digest + handle/envelope
-    binding. It lets the A5-3 expansion session verify the **entire**
+    binding. It lets the expansion session verify the **entire**
     canonical source (not just the visible prefix) and never enters any
     model-visible surface.
     """
@@ -455,7 +455,7 @@ def _compensate_after_charge(
 
     Must be called only after a successful ``charge`` for this inject attempt.
     Delegates to the shared host-only transaction compensation
-    (:func:`evidence_transaction.rollback_charged_observation`, R4-A5-3) with
+    (:func:`evidence_transaction.rollback_charged_observation`) with
     ``failure_domain="selection_inject"`` — same fail-closed semantics and
     stable ``selection_inject_rollback_failed code=...`` codes as before,
     shared with evidence expand so the two paths cannot drift. Error text
@@ -610,7 +610,7 @@ def assemble_selection_model_view(
     expandable = full_len > len(visible_prefix)
     continuation_start = len(visible_prefix)
 
-    # Server-only full-source integrity seed for A5-3 expansion. Minted
+    # Server-only full-source integrity seed for expansion. Minted
     # here — where the full canonical selection is known — never derived
     # from locator text_hash. Never model-visible.
     expansion_seed = _mint_selection_expansion_seed(
@@ -650,7 +650,7 @@ def assert_selection_binary_equality(
 
     When ``canonical_selected_text`` is supplied, the assembler-minted
     expansion seed must additionally match the full canonical source
-    (length + digest) — the R4-A5-3R source-integrity chain.
+    (length + digest) — the source-integrity chain.
     """
     if result.status != "injected":
         raise AssertionError(
@@ -683,7 +683,7 @@ def assert_selection_binary_equality(
         raise AssertionError("registry snippet != model_chunk.text")
     validate_selection_prompt_capability(result.prompt_capability)
 
-    # R4-A5-3R: assembler-minted expansion seed integrity.
+    # Assembler-minted expansion seed integrity.
     if result.expansion_seed is None:
         raise AssertionError("injected result missing expansion_seed")
     seed = validate_selection_expansion_seed(result.expansion_seed)

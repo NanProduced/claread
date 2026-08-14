@@ -1,6 +1,6 @@
 """Frozen fixture-grade artifacts for the three fixed corpus samples.
 
-R1 task 5: ship reviewable artifact fixtures for the three fixed
+ task 5: ship reviewable artifact fixtures for the three fixed
 golden samples (``short_news``, ``reuters_bbc_970``,
 ``long_article_headings``) plus a manifest recording the input hash,
 artifact hash, schema version, and generation path for each.
@@ -61,7 +61,7 @@ from .schema import ParseEvalArtifactV1
 # Fixed frozen sample ids (subset of the golden corpus)
 # ---------------------------------------------------------------------------
 #
-# These three samples are the frozen artifact set for Task 5A-R1. They
+# These three samples are the frozen artifact set for -. They
 # cover the short / medium / long shape bands and are the stable
 # targets for the determinism + gate acceptance tests.
 # ---------------------------------------------------------------------------
@@ -72,21 +72,21 @@ FROZEN_SAMPLE_IDS: tuple[str, ...] = (
     "long_article_headings",
 )
 
-#: Logical module path recorded in the manifest. We record a logical
-#: path (not an absolute filesystem path) so the manifest is
-#: portable across machines.
+# Logical module path recorded in the manifest. We record a logical
+# path (not an absolute filesystem path) so the manifest is
+# portable across machines.
 FROZEN_ARTIFACTS_GENERATOR_MODULE: str = (
     "services/api/verification/reader_baseline/parse_eval/frozen_artifacts.py"
 )
 
-#: Subdirectory inside the package that holds the frozen artifact
-#: JSON files + manifest. Tests locate it via
-#: ``Path(__file__).parent / FROZEN_ARTIFACTS_SUBDIR``.
+# Subdirectory inside the package that holds the frozen artifact
+# JSON files + manifest. Tests locate it via
+# ``Path(__file__).parent / FROZEN_ARTIFACTS_SUBDIR``.
 FROZEN_ARTIFACTS_SUBDIR: str = "frozen_artifacts"
 
-#: Fixed deterministic clock token for the frozen artifact set. All
-#: three artifacts are produced with this same token so their
-#: ``artifact_id`` derivation is stable.
+# Fixed deterministic clock token for the frozen artifact set. All
+# three artifacts are produced with this same token so their
+# ``artifact_id`` derivation is stable.
 FROZEN_CLOCK_TOKEN: str = "frozen-fixture-artifacts-v1"
 
 

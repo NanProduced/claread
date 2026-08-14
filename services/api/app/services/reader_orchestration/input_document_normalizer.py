@@ -44,7 +44,7 @@ _SUPPORTED_SOURCE_TYPES = frozenset(
     {"pasted_text", "txt_file", "markdown_file"}
 )
 
-# A4 — emitted in ``NormalizedInputDocument.warnings`` when a plain-text
+# Emitted in ``NormalizedInputDocument.warnings`` when a plain-text
 # source is silently upgraded to the Markdown path because the parser
 # detected non-paragraph block structure (heading / list / ...). The
 # frontend can surface this so the reader understands why block-typed
@@ -105,7 +105,7 @@ class InputDocumentNormalizer:
             )
 
         source_text = _normalize_source_text(request.text)
-        # A4 — 解析结果共享: reuse the caller-provided parse result when
+        # 解析结果共享: reuse the caller-provided parse result when
         # available; otherwise parse once here. Both the format probe
         # and the block construction below consume this single result.
         parse_result = (
@@ -134,11 +134,11 @@ class InputDocumentNormalizer:
                     source_text, parse_result=parse_result
                 )
                 used_markdown_parser = True
-                # A4 — record the silent upgrade so the frontend can hint.
+                # Record the silent upgrade so the frontend can hint.
                 if _WARNING_PLAINTEXT_UPGRADED_TO_MARKDOWN not in warnings:
                     warnings.append(_WARNING_PLAINTEXT_UPGRADED_TO_MARKDOWN)
             else:
-                # A4 — plain-text path now reuses the parser inline
+                # Plain-text path now reuses the parser inline
                 # flatten (links / inline_marks) instead of the legacy
                 # regex ``_strip_inline_markdown``. Only the blank-line
                 # segmentation thin logic is preserved: the parser
@@ -202,7 +202,7 @@ def _normalize_plain_text_blocks_from_parser(
 ) -> tuple[list[_BlockDraft], str | None]:
     """Build plain-text drafts from parser paragraph blocks.
 
-    A4 — replaces the legacy ``_normalize_plain_text_blocks`` +
+    Replaces the legacy ``_normalize_plain_text_blocks`` +
     ``_strip_inline_markdown`` regex path. The parser already:
       * splits paragraphs on blank lines,
       * flattens inline marks (bold / italic / code) into text,

@@ -1,9 +1,9 @@
-# task-history: ASK-TURN-LIFECYCLE R0 (renamed from test_reader_record_ask_turn_lifecycle_r0.py)
+# task-history: ASK-TURN-LIFECYCLE (renamed from test_reader_record_ask_turn_lifecycle_r0.py)
 """Ask turn lifecycle backend red-light tests.
 
-These tests freeze the unified turn lifecycle contract before R1/R2/R3
+These tests freeze the unified turn lifecycle contract before //
 implementation. They assert behaviors the current code does NOT yet
-guarantee; several will fail until R1/R2/R3 land.
+guarantee; several will fail until // land.
 
 Coverage:
 
@@ -49,7 +49,7 @@ from app.services.reader_record_ask.turn_lifecycle import (
 
 
 class TestTurnLifecycleContract:
-    """R0 contract: typed state machine + identity matching."""
+    """Contract: typed state machine + identity matching."""
 
     def test_terminal_states_are_exactly_committed_failed_cancelled(self) -> None:
         assert TERMINAL_STATES == frozenset({"committed", "failed", "cancelled"})
@@ -86,7 +86,7 @@ class TestTurnLifecycleContract:
 
 
 class TestTurnIdentity:
-    """R0 contract: foreign / stale terminals must not unlock the turn."""
+    """Contract: foreign / stale terminals must not unlock the turn."""
 
     def test_matches_when_all_three_ids_match(self) -> None:
         identity = TurnIdentity(
@@ -160,7 +160,7 @@ class TestTurnIdentity:
 
 
 class TestLogicalTerminalResult:
-    """R0 contract: trusted vs untrusted terminal kinds."""
+    """Contract: trusted vs untrusted terminal kinds."""
 
     def test_completed_is_trusted_and_results_in_committed(self) -> None:
         result = LogicalTerminalResult(kind="completed", final_status="ok")
@@ -217,21 +217,21 @@ class TestLogicalTerminalResult:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: provisional delta must not survive a typed failure
+# Red-light: provisional delta must not survive a typed failure
 # ---------------------------------------------------------------------------
 #
 # The current contract test ``test_message_delta_partial_then_failure_no_completed``
 # in test_reader_record_ask_production_stream.py ASSERTS that deltas
-# already streamed are kept on failure. R0 inverts that contract:
+# already streamed are kept on failure. inverts that contract:
 # provisional deltas must NOT be retained as canonical answer content
 # when the run terminates with a non-ok terminal.
 #
 # This test is parameterized so it can also serve as a regression gate
-# once R2 lands the provisional / canonical split.
+# once lands the provisional / canonical split.
 
 
 class TestProvisionalAnswerNotRetainedOnFailure:
-    """R0 red-light: half answers must not survive a typed failure."""
+    """Red-light: half answers must not survive a typed failure."""
 
     def _make_terminal_payload(
         self,
@@ -280,8 +280,8 @@ class TestProvisionalAnswerNotRetainedOnFailure:
         must be empty — not the provisional preview that was streamed
         before the failure.
 
-        This encodes the contract that R2 will enforce. The placeholder
-        state below mirrors the canonical answer slots; once R2 lands
+        This encodes the contract that will enforce. The placeholder
+        state below mirrors the canonical answer slots; once lands
         the runtime will be exercised end-to-end through this gate.
         """
         # Simulate the canonical state surface after a failed turn.
@@ -301,12 +301,12 @@ class TestProvisionalAnswerNotRetainedOnFailure:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: retry / tool boundary must reset the provisional preview
+# Red-light: retry / tool boundary must reset the provisional preview
 # ---------------------------------------------------------------------------
 #
 # The current ``_AnswerTextStreamer.reset()`` only clears the server-side
 # ``_emitted_len`` — it cannot retract deltas already pushed to the
-# browser. R2 will introduce a server-owned preview generation id /
+# browser. Will introduce a server-owned preview generation id /
 # reset event so the final preview only belongs to the latest generation.
 #
 # This test encodes the contract: a reset boundary must produce a typed
@@ -314,7 +314,7 @@ class TestProvisionalAnswerNotRetainedOnFailure:
 
 
 class TestRetryGenerationResetContract:
-    """R0 red-light: retry boundary must reset the provisional preview."""
+    """Red-light: retry boundary must reset the provisional preview."""
 
     def test_retry_boundary_signal_must_be_typed_and_distinct(self) -> None:
         """A retry / tool boundary must emit a typed, named signal —
@@ -323,7 +323,7 @@ class TestRetryGenerationResetContract:
         2. carry the new generation id;
         3. not embed the prior provisional text.
         """
-        # The expected signal shape — R2 will define the production event.
+        # The expected signal shape — will define the production event.
         expected_signal = {
             "event": "message.preview_reset",
             "data": {
@@ -353,12 +353,12 @@ class TestRetryGenerationResetContract:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: stale-stream reconciliation
+# Red-light: stale-stream reconciliation
 # ---------------------------------------------------------------------------
 
 
 class TestStaleStreamReconciliationContract:
-    """R0 contract: stale streaming rows must be reconciled to terminal."""
+    """Contract: stale streaming rows must be reconciled to terminal."""
 
     def test_stale_stream_terminal_reason_is_typed_constant(self) -> None:
         assert STALE_STREAM_TERMINAL_REASON == "stale_stream_reconciled"
@@ -377,23 +377,23 @@ class TestStaleStreamReconciliationContract:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: reasoning truncation typed contract
+# Red-light: reasoning truncation typed contract
 # ---------------------------------------------------------------------------
 
 
 class TestReasoningTruncationTypedContract:
-    """R0 contract: reasoning truncation is a typed DTO field, not a
+    """Contract: reasoning truncation is a typed DTO field, not a
     text marker embedded in the reasoning body.
 
     Current behavior embeds ``…（思考内容已截断）`` in the reasoning text
-    itself. R3 will move truncation to a typed field on the
+    itself. A later slice will move truncation to a typed field on the
     ``learner_reasoning`` payload and on the cold-history
     DTO, with no marker in the visible reasoning body.
     """
 
     def test_truncation_marker_must_not_appear_in_reasoning_body(self) -> None:
         """The current ``TRUNCATION_MARKER`` text must NOT appear in
-        the visible reasoning body once R3 lands. This test will go
+        the visible reasoning body once lands. This test will go
         green once the marker is removed from the projection text.
         """
         forbidden_marker_substrings = (
@@ -401,7 +401,7 @@ class TestReasoningTruncationTypedContract:
             "reasoning truncated",
             "...truncated",
         )
-        # Simulated R3-compliant reasoning body — no marker in body.
+        # Simulated reasoning body — no marker in body.
         compliant_body = "Planning the search. Verifying citation."
         for marker in forbidden_marker_substrings:
             assert marker not in compliant_body
@@ -423,16 +423,16 @@ class TestReasoningTruncationTypedContract:
         assert "truncated" in expected_payload
 
     def test_reasoning_char_cap_default_is_in_12k_to_16k_range(self) -> None:
-        """R3 contract: the default reasoning projection cap must be
+        """Contract: the default reasoning projection cap must be
         in the 12K–16K code point range (the audit-recommended band).
 
         The current 4,000 cap is too small for long agentic turns with
         thinking + article RAG + web search + retry. This test will
-        fail against the current 4,000 constant and go green once R3
+        fail against the current 4,000 constant and go green once
         raises the default.
         """
         # Import the production constant. The current value is 4,000;
-        # R3 must raise it to the 12K-16K band.
+        # Must raise it to the 12K-16K band.
         from app.services.reader_record_ask.reasoning_projection import (
             DEFAULT_PROJECTION_CHAR_CAP,
         )
@@ -444,20 +444,20 @@ class TestReasoningTruncationTypedContract:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: 30K CJK / Markdown cadence + performance gate
+# Red-light: 30K CJK / Markdown cadence + performance gate
 # ---------------------------------------------------------------------------
 
 
 class TestAnswerStreamingCadenceContract:
-    """R0 contract: 30K CJK / Markdown streaming must not be bursty
+    """Contract: 30K CJK / Markdown streaming must not be bursty
     or freeze the rendering pipeline.
 
     The current ``_AnswerTextStreamer`` re-parses the entire growing
     JSON buffer on every chunk and re-joins all blocks each feed call.
-    R3 will replace this with an incremental scanner OR independent
+     will replace this with an incremental scanner OR independent
     preview channel OR PydanticAI partial-output interface.
 
-    This test encodes the cadence / performance contract that the R3
+    This test encodes the cadence performance contract that the
     replacement must satisfy. It uses a synthetic chunk distribution
     modeled on real provider output (small token-sized chunks).
     """
@@ -493,7 +493,7 @@ class TestAnswerStreamingCadenceContract:
         assert len(chunks) >= 3_000
 
     def test_incremental_scanner_must_not_grow_quadratically(self) -> None:
-        """R3 contract: the incremental scanner's per-chunk work must
+        """Contract: the incremental scanner's per-chunk work must
         be O(chunk_size), not O(buffer_size). Quadratic growth is the
         current behavior the audit identified as the root cause of
         long-text freezing.
@@ -502,7 +502,7 @@ class TestAnswerStreamingCadenceContract:
         clock stays under a generous budget (5s). The current
         implementation re-parses the entire buffer on every chunk, so
         this test is expected to FAIL on the current code path and
-        PASS once R3 lands the incremental scanner.
+        PASS once lands the incremental scanner.
         """
         from app.services.reader_record_ask.thinking_transport import _AnswerTextStreamer
 
@@ -532,13 +532,13 @@ class TestAnswerStreamingCadenceContract:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: FastAPI generator close / client disconnect must
+# Red-light: FastAPI generator close / client disconnect must
 # terminalize run/message rows
 # ---------------------------------------------------------------------------
 
 
 class TestGeneratorCloseTerminalizesRows:
-    """R0 contract: when the FastAPI generator is closed (client
+    """Contract: when the FastAPI generator is closed (client
     disconnect, BFF disconnect, or generator.close()), the
     assistant_message + turn_run rows must be moved to a terminal
     state.
@@ -546,7 +546,7 @@ class TestGeneratorCloseTerminalizesRows:
     Current behavior: ``_streaming_response``'s try/except only covers
     HTTPException and generic Exception. There is no ``finally`` that
     reconciles streaming rows when the generator is closed without an
-    exception (e.g., ASGI cancellation). R1 will add a try/finally
+    exception (e.g., ASGI cancellation). A later slice will add a try/finally
     that covers the full assistant_message + turn_run lifecycle.
     """
 
@@ -558,7 +558,7 @@ class TestGeneratorCloseTerminalizesRows:
 
         This test introspects the source code to verify the finally
         clause exists. It will FAIL on the current code (no finally)
-        and PASS once R1 adds it.
+        and PASS once adds it.
         """
         import inspect
 
@@ -573,15 +573,15 @@ class TestGeneratorCloseTerminalizesRows:
 
 
 # ---------------------------------------------------------------------------
-# R0 red-light: timing metrics contract
+# Red-light: timing metrics contract
 # ---------------------------------------------------------------------------
 
 
 class TestTimingMetricsContract:
-    """R0 contract: the lifecycle must emit / record timing metrics
+    """Contract: the lifecycle must emit / record timing metrics
     without persisting answer text or secrets.
 
-    R3 will add the following metric kinds:
+     will add the following metric kinds:
       first_reasoning, first_answer_delta, last_answer_delta,
       validation_done, persistence_done, terminal_sent,
       terminal_received, composer_enabled.
@@ -598,7 +598,7 @@ class TestTimingMetricsContract:
             "terminal_received",
             "composer_enabled",
         }
-        # The host must record all of these. R3 will introduce a typed
+        # The host must record all of these. Will introduce a typed
         # container; for now, this test fixes the names so any later
         # implementation cannot silently drop a metric.
         assert required == {

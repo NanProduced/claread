@@ -1,16 +1,16 @@
-"""D6-I2A Candidate Document -> Stable Document Freeze Plan (pure Python core).
+"""Candidate Document -> Stable Document Freeze Plan (pure Python core).
 
 This module implements the pure-Python freeze plan that turns a confirmed
-Candidate / Stable block list into the durable payload that the D6-I2B
+Candidate / Stable block list into the durable payload that the persistence layer
 persistence transaction will commit. It does NOT:
 
     * touch the DB / asyncpg / repository,
     * bind to an API route,
     * mutate caller-owned StableDocumentBlock instances,
     * use ``compose_stable_document_plain_text()`` as the Canonical Text
-      Layer (that helper is preview-only; see D6-I1 ``document_blocks.py``).
+      Layer (that helper is preview-only; see ``document_blocks.py``).
 
-Canonical Text Layer derivation rules (mirrors the D6 projection rules in
+Canonical Text Layer derivation rules (mirrors the projection rules in
 ``docs/initiatives/reader-agentic-orchestration/modules/plate-reader-projection.md``
 and the per-block-type defaults materialized by
 ``app.schemas.reader_documents.default_interpretation_policy_for``):
@@ -20,7 +20,7 @@ and the per-block-type defaults materialized by
     * paragraph / list_item / blockquote / caption / heading default to
       ``main_reading`` and therefore enter canonical text by default.
     * table / table_row / table_cell / code_block also default to
-      ``main_reading`` (Markdown ecosystem refactor D2: code/table are
+      ``main_reading`` (Markdown ecosystem refactor code/table are
       first-class reading content), so table_cell / code_block text
       enters canonical text by default.
     * image / unknown default to ``metadata_only`` and therefore do NOT
@@ -106,7 +106,7 @@ _STRUCTURAL_WRAPPER_BLOCK_TYPES = frozenset({"list", "table", "table_row"})
 class StableDocumentFreezePlanError(ValueError):
     """Raised when a freeze plan cannot be built from the given inputs.
 
-    Concrete reasons include: D6-I1 validator failure, no main-reading
+    Concrete reasons include: validator failure, no main-reading
     blocks contributing canonical text, or canonical text derivation
     producing an empty payload.
     """
@@ -199,17 +199,17 @@ def build_stable_document_freeze_plan(
     with the inputs.
 
     Raises:
-        StableDocumentFreezePlanError: when D6-I1 validation fails, no
+        StableDocumentFreezePlanError: when validation fails, no
             main-reading text is produced, or canonical offset parity
             check fails (the last indicates a builder bug).
     """
-    # (1) Run D6-I1 validator first. This guarantees block_id / order /
+    # (1) Run validator first. This guarantees block_id / order
     # parent / offset invariants before we touch canonical text.
     try:
         validated = validate_stable_document_blocks(blocks)
     except StableDocumentValidationError as exc:
         raise StableDocumentFreezePlanError(
-            f"D6-I1 block validation failed: {exc}"
+            f"Stable document block validation failed: {exc}"
         ) from exc
 
     ordered = sorted(validated, key=lambda b: b.order_index)

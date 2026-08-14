@@ -277,7 +277,7 @@ async def test_pipeline_runner_worker_order_grammar_window_before_legacy(
     mock_legacy_grammar_service = AsyncMock()
 
     async def _batch_side_effect(**kwargs: Any) -> None:
-        # T4.1c: no claimable grammar batch job (window-only fixture).
+        # No claimable grammar batch job (window-only fixture).
         return None
 
     mock_legacy_grammar_service.process_next_grammar_batch_job_for_record = (
@@ -363,7 +363,7 @@ async def test_pipeline_runner_without_window_worker_excludes_window_dispatch(
 
 # ---------------------------------------------------------------------------
 # Test 5 + 6: window job failure transitions job to retry_later / failed_terminal
-# (P1-3 third-round review: failures must not leave job stuck in `claimed`)
+# (third-round review: failures must not leave job stuck in `claimed`)
 # ---------------------------------------------------------------------------
 
 
@@ -423,7 +423,7 @@ async def _resolve_window_id_from_job(
 
 
 async def _query_job_diagnostics(pool: asyncpg.Pool, job_id: UUID) -> dict[str, Any] | None:
-    """Look up reader_jobs.output_ref_json.diagnostics (T3.4a observability)."""
+    """Look up reader_jobs.output_ref_json.diagnostics (observability)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT output_ref_json FROM reader_jobs WHERE id = $1",
@@ -442,7 +442,7 @@ async def _query_job_diagnostics(pool: asyncpg.Pool, job_id: UUID) -> dict[str, 
 async def _query_window_coverage_diagnostics(
     pool: asyncpg.Pool, window_id: UUID
 ) -> dict[str, Any] | None:
-    """Look up analysis_windows.coverage.diagnostics (T3.4a observability)."""
+    """Look up analysis_windows.coverage.diagnostics (observability)."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT coverage FROM analysis_windows WHERE id = $1",
@@ -463,7 +463,7 @@ async def test_pipeline_runner_window_llm_failure_transitions_job_to_retry_later
 ) -> None:
     """GrammarWindowExecutionError (LLM transient) -> reader_jobs.retry_later.
 
-    Verifies P1-3 third-round fix: when ``process_window_job`` raises
+    Verifies third-round fix: when ``process_window_job`` raises
     ``GrammarWindowExecutionError``, the runner transitions the job out of
     ``claimed`` to ``retry_later`` and marks the run as ``failed_retryable``,
     rather than leaving the job stuck waiting for lease expiry.
@@ -523,10 +523,10 @@ async def test_pipeline_runner_window_llm_failure_transitions_job_to_retry_later
 async def test_pipeline_runner_window_value_error_transitions_job_to_failed_terminal(
     test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """ValueError (P2-1 fail-closed contract violation) -> failed_terminal.
+    """ValueError (fail-closed contract violation) -> failed_terminal.
 
-    Verifies P1-3 third-round fix: when ``process_window_job`` raises
-    ``ValueError`` (e.g. P2-1 fail-closed from publisher / candidate
+    Verifies third-round fix: when ``process_window_job`` raises
+    ``ValueError`` (e.g. Fail-closed from publisher / candidate
     contents derivation), the runner transitions the job to
     ``failed_terminal`` (not retryable — code bug) and marks the run as
     ``failed_terminal`` + the analysis_window as ``failed``.
@@ -542,7 +542,7 @@ async def test_pipeline_runner_window_value_error_transitions_job_to_failed_term
         captured_run_id.append(claim.run_id)
         raise ValueError(
             "candidate_contents is required when candidates exist "
-            "(P2-1 fail closed: sidecar fallback removed)"
+            "(fail closed: sidecar fallback removed)"
         )
 
     mock_worker = AsyncMock()
@@ -741,7 +741,7 @@ async def test_pipeline_runner_window_fence_violation_transitions_superseded(
     )
     assert summary.outcome_counts.superseded >= 1
 
-    # T3.4a (P1+P2): fence-violation diagnostics must be persisted to both
+    # (+): fence-violation diagnostics must be persisted to both
     # reader_jobs.output_ref_json.diagnostics (superseded job side) and
     # analysis_windows.coverage.diagnostics (failed window side). Without
     # this the superseded/failed window had an empty coverage.diagnostics,

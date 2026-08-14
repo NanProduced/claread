@@ -463,13 +463,13 @@ export interface ReaderAskMessageDto {
   /**
    * Reasoning UI state shared by both lanes (no parallel state):
    * - legacy reader_ask `reasoning.*` uses idle/streaming/completed;
-   * - agentic `agentic.reasoning.*` (ASK-REASONING-R1) additionally freezes
+   * - agentic `agentic.reasoning.*` additionally freezes
    *   session-visible partial reasoning as `interrupted` on cancel/failure
    *   terminals — cold history never carries interrupted reasoning.
    */
   reasoning_status?: "idle" | "streaming" | "completed" | "interrupted" | null;
   /**
-   * ASK-LEARNER-REASONING-PROJECTOR-R1 — public learner summary fields.
+   * Public learner summary fields.
    * Prefer these over ambiguous reasoning_md on agentic v2.
    */
   learner_reasoning_text?: string | null;
@@ -619,7 +619,7 @@ export interface ReaderAskMessageUiStateDto {
   context_compaction?: ReaderAskContextCompactionUiStateDto | null;
   regenerate_preview?: boolean | null;
   /**
-   * ASK-TURN-LIFECYCLE R2 — provisional answer preview accumulated from
+   * Provisional answer preview accumulated from
    * `message.delta` frames during streaming. Strictly separated from the
    * canonical {@link ReaderAskMessageDto.content_md}:
    *
@@ -689,7 +689,7 @@ export interface ReaderAskMessageUiStateDto {
    */
   web_search_mode?: WebSearchModeDto | null;
   /**
-   * ASK-TURN-LIFECYCLE R3 — typed reasoning truncation flag. Mirrors the
+   * Typed reasoning truncation flag. Mirrors the
    * backend `ReaderAskAgenticReasoningCompletedPayloadDto.truncated`
    * field. When `true`, the visible `reasoning_md` was truncated by the
    * server-side projection char cap; the UI must surface an explicit
@@ -748,7 +748,7 @@ export interface ReaderAskSelectedModelDto {
   replan_model_name?: string | null;
   price_multiplier: number;
   /**
-   * ASK-WEB-G1-R2: server-declared Web Search capability for this model
+   * Server-declared Web Search capability for this model
    * option. ``"available"`` only when a real provider is wired via
    * the selected model's ResolvedModelConfig binding. The frontend
    * gates Search toggle visibility on this signal (in addition to the
@@ -840,7 +840,7 @@ export interface ReaderAskMessageStreamRequestDto {
    */
   web_search_mode?: WebSearchModeDto;
   /**
-   * ASK-RETRY-CONTRACT-R2 — client-generated UUID for idempotent claim.
+   * Client-generated UUID for idempotent claim.
    * Same value re-submitted after a network blip must not create a second
    * user/assistant pair or re-call the model. Optional on legacy clients;
    * new web clients always send it.
@@ -849,10 +849,10 @@ export interface ReaderAskMessageStreamRequestDto {
 }
 
 /**
- * ASK-RETRY-CONTRACT-R2 — typed reconciliation snapshot for a client
+ * Typed reconciliation snapshot for a client
  * submission (after claim or on re-submit of the same id).
  */
-/** Safe public message projection returned by reconcile hydrate (R5). */
+/** Safe public message projection returned by reconcile hydrate. */
 export interface ReaderAskSubmissionPublicMessageDto {
   id: string;
   thread_id: string;
@@ -888,7 +888,7 @@ export interface ReaderAskSubmissionReconcileDto {
 
 export interface ReaderAskMessageRetryRequestDto {
   model?: string | null;
-  // ASK-WEB-G1-R3: ``web_search_mode`` is intentionally absent. The
+  // ``web_search_mode`` is intentionally absent. The
   // FastAPI ``ReaderAskMessageRetryRequest`` schema is ``extra="forbid"``
   // and only accepts ``model``; sending ``web_search_mode`` would 422.
   // The backend replays the persisted mode from the original user
@@ -924,22 +924,22 @@ export type ReaderAskStreamEventName =
   | "agentic.run_started"
   | "agentic.progress"
   | "agentic.terminal"
-  // ASK-REASONING-R1: safe reasoning projection (redacted + quota-bounded
+  // Safe reasoning projection (redacted + quota-bounded
   // server-side). Distinct from legacy `reasoning.*` (raw CoT passthrough
   // on the legacy reader_ask path). Clients append deltas verbatim — all
   // security filtering happens server-side.
   | "agentic.reasoning.started"
   | "agentic.reasoning.delta"
   | "agentic.reasoning.completed"
-  // ASK-LEARNER-REASONING-PROJECTOR-R1 — learner stage summary (replace).
+  // Learner stage summary (replace).
   | "agentic.learner_reasoning.snapshot"
-  // ASK-RETRY-CONTRACT-R6: duplicate client_submission_id short-circuits
+  // Duplicate client_submission_id short-circuits
   // the model; payload is a public reconcile snapshot (no secrets).
   | "submission.reconcile"
   | "error";
 
 /**
- * ASK-RETRY-CONTRACT-R6 — public SSE payload for `submission.reconcile`.
+ * Public SSE payload for `submission.reconcile`.
  * No internal metadata, query, provider payload, or handle.
  */
 export interface ReaderAskSubmissionReconcileSseDto {
@@ -1187,7 +1187,7 @@ export interface ReaderAskAgenticRunStartedPayloadDto {
   turn_run_id: string;
   has_initial_selection: boolean;
   /**
-   * ASK-WEB-G1-R2: echoes the **resolved** web search capability mode
+   * Echoes the **resolved** web search capability mode
    * (not the raw request toggle). ``allowed`` only when a real provider
    * was wired and ``enabled_for_turn=True`` at send time. The frontend
    * gates Search toggle visibility/enablement on this signal, not on
@@ -1220,7 +1220,7 @@ export interface ReaderAskAgenticProgressPayloadDto {
 }
 
 /**
- * ASK-REASONING-R1 reasoning projection payloads.
+ * Reasoning projection payloads.
  *
  * `delta` is already projected by the server-side chokepoint (deterministic
  * redaction of internal handles / identity / auth material / system
@@ -1269,7 +1269,7 @@ export interface ReaderAskInterruptedPayloadDto {
 }
 
 /**
- * ASK-LEARNER-REASONING-PROJECTOR-R1 — replace-semantics snapshot.
+ * Replace-semantics snapshot.
  * Host-owned identity + policy; only validated Chinese text is public.
  */
 export interface ReaderAskLearnerReasoningSnapshotPayloadDto {
@@ -1812,7 +1812,7 @@ export function isReaderAskAgenticRunStartedPayload(
     return false;
   }
   const payload = data as Record<string, unknown>;
-  // ASK-WEB-G1-R2: ``web_search_mode`` is optional on the wire for
+  // ``web_search_mode`` is optional on the wire for
   // backward compat with legacy streams. When present, it must be one
   // of the typed values; absence is treated as ``"disabled"`` (fail-
   // closed) by the consumer. The field is the **resolved** capability
@@ -1893,7 +1893,7 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
-/** ASK-REASONING-R1: identity binding + seq only; no content fields. */
+/** Identity binding + seq only; no content fields. */
 export function isReaderAskAgenticReasoningStartedPayload(
   data: unknown,
 ): data is ReaderAskAgenticReasoningStartedPayloadDto {
@@ -1913,7 +1913,7 @@ export function isReaderAskAgenticReasoningStartedPayload(
   );
 }
 
-/** ASK-REASONING-R1: projected increment — already sanitized server-side. */
+/** Projected increment — already sanitized server-side. */
 export function isReaderAskAgenticReasoningDeltaPayload(
   data: unknown,
 ): data is ReaderAskAgenticReasoningDeltaPayloadDto {
@@ -1934,7 +1934,7 @@ export function isReaderAskAgenticReasoningDeltaPayload(
   );
 }
 
-/** ASK-REASONING-R1: completion promise — flags only, no content. */
+/** Completion promise — flags only, no content. */
 export function isReaderAskAgenticReasoningCompletedPayload(
   data: unknown,
 ): data is ReaderAskAgenticReasoningCompletedPayloadDto {

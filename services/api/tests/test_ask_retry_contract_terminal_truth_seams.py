@@ -1,4 +1,4 @@
-# task-history: ASK-RETRY-CONTRACT-R8 (renamed from test_ask_retry_contract_r8.py)
+# task-history: ASK-RETRY-CONTRACT- (renamed from test_ask_retry_contract_r8.py)
 """Ask retry contract executable terminal-truth seams (no source-text)."""
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ pytestmark = [
 ]
 
 # ---------------------------------------------------------------------------
-# R8.1 monotonic merge
+# Monotonic merge
 # ---------------------------------------------------------------------------
 
 

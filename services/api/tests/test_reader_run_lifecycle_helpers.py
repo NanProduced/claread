@@ -1,4 +1,4 @@
-# task-history: ARCH-OPT-C2-WORKER-LOCALITY
+# task-history: ARCH-OPT--WORKER-LOCALITY
 """Unit tests for shared reader_runs lifecycle helpers (no DB)."""
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
-"""D6-I1 Stable Document Block domain contract (schema landing).
+"""Stable Document Block domain contract.
 
-This module defines the typed contracts for D6-I1 "Stable Document Block
+This module defines the typed contracts for the "Stable Document Block
 后端合同落地":
 
     - CandidateReadingDocument  (reviewable document in
@@ -14,7 +14,7 @@ This module defines the typed contracts for D6-I1 "Stable Document Block
 Scope: schema/domain contract landing only. This module does NOT:
     - bind to a web framework,
     - bind to an API route,
-    - implement the Candidate Document confirm flow (D6-I2 follow-up),
+    - implement the Candidate Document confirm flow,
     - implement input adapters / OCR / PDF / Markdown parsers,
     - implement block-scoped RAG indexing.
 
@@ -100,13 +100,13 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 )
 
 
-# Per-block-type interpretation policy defaults. Mirrors the D6
+# Per-block-type interpretation policy defaults. Mirrors the
 # projection rules in
 # docs/initiatives/reader-agentic-orchestration/modules/plate-reader-projection.md
 # and the RAG scope taxonomy in rag-substrate.md. The textual narrative
 # blocks (paragraph / heading / list_item / blockquote / caption) flow
 # into main grammar / sentence analysis on first freeze. Since the
-# Markdown ecosystem refactor (D2), code_block and the table hierarchy
+# Markdown ecosystem policy treats code_block and the table hierarchy
 # are also first-class main-reading content so the reading surface can
 # render them. image / image_ocr / footnote / unknown still MUST NOT
 # silently enter the main reading chain by default.
@@ -153,7 +153,7 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
         rag_eligible=True,
     ),
     # Table structural blocks -> main reading by default (Markdown
-    # ecosystem refactor D2): tables are first-class reading content
+    # ecosystem policy): tables are first-class reading content
     # and must flow into canonical text so the reading surface can
     # render them. The table / table_row wrapper blocks carry no
     # text_content (the narrative text lives in the table_cell
@@ -194,7 +194,7 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
     ),
     "code_block": dict(
         # Code blocks are first-class reading content (Markdown
-        # ecosystem refactor D2): they route into main reading so the
+        # ecosystem policy): they route into main reading so the
         # reading surface can render them; rag_eligible stays True so
         # they remain retrievable via the main RAG path. A
         # caller-supplied policy may still demote a code block back to
@@ -232,13 +232,13 @@ def default_interpretation_policy_for(
     Callers should NOT mutate the returned instance; if a caller needs
     a modified policy they should construct a new
     StableDocumentInterpretationPolicy explicitly. The defaults mirror
-    the D6 projection rules:
+    the projection rules:
 
         * paragraph / list_item / blockquote / caption / heading ->
           main_reading (caption uses main_reading_text, heading uses
           the dedicated heading scope)
         * table / table_row / table_cell / code_block -> main_reading
-          (Markdown ecosystem refactor D2: code/table are first-class
+          (Markdown ecosystem policy: code/table are first-class
           reading content; the table / table_row wrappers carry no
           text_content and are skipped during canonical text
           derivation, and stay rag_eligible=False — RAG targets the
@@ -269,11 +269,11 @@ class StableDocumentInterpretationPolicy(BaseModel):
     `'{}'::jsonb` in the migration as a storage-only placeholder. The
     Python model `StableDocumentBlock` ALWAYS materializes a
     per-block-type default policy via
-    `default_interpretation_policy_for`, and the D6-I2 service that
+    `default_interpretation_policy_for`, and the service that
     persists frozen Stable Reading Documents MUST write that
     Python-model policy into the column. The DB default is never
     relied on at runtime; an empty `{}` would silently route the block
-    as main_reading/main_reading_text and contradict the D6
+    as main_reading/main_reading_text and contradict the
     projection rules.
     """
 

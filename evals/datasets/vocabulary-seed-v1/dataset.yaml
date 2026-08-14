@@ -1,7 +1,7 @@
 schema_version: 1
 id: vocabulary-seed-v1
 description: >-
-  D5-V3 vocabulary worker deterministic eval seed. Each case carries a unit
+  vocabulary worker deterministic eval seed. Each case carries a unit
   with anchor segments, gold items, and the deterministic execution snapshot
   produced by re-running the resolver deterministically. Coverage of no-value,
   single highlight, phrase-vs-highlight priority, context-vs-phrase priority,

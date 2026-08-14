@@ -1,4 +1,4 @@
-# task-history: T5.6c (renamed from test_reader_section_translation_t56c.py)
+# task-history: (renamed from test_reader_section_translation_t56c.py)
 """FastAPI command route tests for explicit section translation.
 
 Verifies the synchronous orchestration of

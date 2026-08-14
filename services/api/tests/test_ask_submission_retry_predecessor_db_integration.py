@@ -1,14 +1,14 @@
-# task-history: ASK-SUBMISSION-RETRY-R1
+# task-history: ASK-SUBMISSION-RETRY-
 # (renamed from test_ask_submission_retry_r1_db_integration.py)
 """Ask submission retry predecessor real PostgreSQL integration — OPT-IN only.
 
-Fixes the retry predecessor lookup for client_submission_id turns: the R5
+Fixes the retry predecessor lookup for client_submission_id turns: the
 submission gateway creates the user + assistant pair and binds them in ONE
 transaction sharing one ``created_at``, so the original strict
 ``created_at < assistant.created_at`` predecessor query can never see the
 turn's own user message (retry 404 for every composer turn).
 
-R1 contract:
+ contract:
 
 1. Submission-bound turns resolve the predecessor through the explicit
    ``reader_ask_client_submissions`` binding
@@ -19,7 +19,7 @@ R1 contract:
 3. Thread / role / identity fences stay enforced; anomalous bindings fail
    closed instead of guessing a predecessor.
 
-Prerequisites (same as R6 DB gate): infra/migrations/0001_initial.sql applied
+Prerequisites (same as DB gate): infra/migrations/0001_initial.sql applied
 to the local DB, then set ``CLAREAD_RUN_SUBMISSION_DB_TESTS=1``.
 """
 
@@ -90,7 +90,7 @@ async def _make_pool():
 
 @pytest.mark.asyncio
 async def test_submission_bound_pair_resolves_predecessor_via_binding() -> None:
-    """The R5 path is the defect repro: pair + bind share one created_at.
+    """The path is the defect repro: pair + bind share one created_at.
 
     ``ensure_submission_for_send`` creates both messages in one
     transaction (identical timestamps); retry must still resolve the

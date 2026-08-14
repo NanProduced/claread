@@ -91,7 +91,7 @@ export type ReaderPlateBffError = {
     | "confirmed_source_not_found"
     | "stale_source_revision"
     | "stale_candidate_revision"
-    // T5.6c: section-translation fence conflict (409 from upstream).
+    // Section-translation fence conflict (409 from upstream).
     | "section_translation_conflict";
   message: string;
   recordId?: string;

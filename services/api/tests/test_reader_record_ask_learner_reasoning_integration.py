@@ -1,4 +1,4 @@
-"""Component integration for learner-reasoning sidecar (R1.2).
+"""Component integration for learner-reasoning sidecar.
 
 Manual Sidecar driving — NOT a production-stream entry test.
 For real ``stream_agentic_thread_message`` coverage see

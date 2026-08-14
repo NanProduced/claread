@@ -89,7 +89,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
 from app.services.reader_orchestration.window_selector import CandidateItem
 
 SmokeExecutorMode = Literal["fake", "real"]
-# T4.2a-R1: smoke/acceptance harness grammar topology.
+# Smoke acceptance harness grammar topology.
 # ``legacy`` keeps the legacy 4-worker path (enable_grammar_window=False,
 # per-unit grammar for all routes). ``production`` faithfully reproduces
 # the production route-aware split: SHORT_BATCH/STRUCTURED_BATCH → compact
@@ -264,7 +264,7 @@ class DevFakeGrammarBundleExecutor:
 
 
 class DevFakeGrammarBatchExecutor:
-    """T4.2a-R1 fake compact grammar batch executor for the smoke harness.
+    """Fake compact grammar batch executor for the smoke harness.
 
     Mirrors :class:`DevFakeGrammarBundleExecutor` but covers all units in a
     single batch LLM call (one ``GrammarBatchExecutionResult`` with N
@@ -355,7 +355,7 @@ class DevFakeGrammarBatchExecutor:
 
 
 class DevFakeGrammarWindowExecutor:
-    """T4.2a-R1 fake grammar-window grammar window executor for the smoke harness.
+    """Fake grammar-window grammar window executor for the smoke harness.
 
     Produces one ``grammar_note`` candidate per target anchor (capped to the
     window budget) so the GROUPED_WINDOWED route can complete without calling
@@ -434,7 +434,7 @@ class DevFakeDisplayTitleGenerator:
 
 
 class DevFakeTranslationBatchExecutor:
-    """T1.1 fake batch translation executor for the smoke harness.
+    """Fake batch translation executor for the smoke harness.
 
     Deterministic-grouping contract: echoes the backend-predefined
     group_ids from :func:`build_deterministic_translation_groups` (which
@@ -472,7 +472,7 @@ class DevFakeTranslationBatchExecutor:
 
 
 class DevFakeVocabularyBatchExecutor:
-    """T1.1 fake batch vocabulary executor for the smoke harness.
+    """Fake batch vocabulary executor for the smoke harness.
 
     Produces one ``VocabularyBatchUnitCandidateOutput`` per unit with a
     single ``vocab_highlight`` candidate item (mirroring the per-unit
@@ -561,7 +561,7 @@ class ReaderEnhancementSmokeHarness:
         if executor_mode == "fake":
             self._assert_fake_mode_allowed(allow_fake_executors=allow_fake_executors)
 
-        # T4.2a-R1: In real mode the production runner always uses the
+        # In real mode the production runner always uses the
         # route-aware split (``enable_grammar_window=True``), so the
         # effective topology is ``production`` regardless of the caller's
         # ``grammar_topology`` argument. Recording ``legacy`` here would
@@ -664,7 +664,7 @@ class ReaderEnhancementSmokeHarness:
             pool=pool,
             worker_service=translation_worker,
         )
-        # T1.1: dedicated batch translation worker with a fake batch executor.
+        # Dedicated batch translation worker with a fake batch executor.
         # Bypasses the orchestrator so the batch path can be exercised in
         # smoke / fake mode independently of the per-unit orchestrator path.
         translation_batch_worker = TranslationWorkerService(
@@ -678,7 +678,7 @@ class ReaderEnhancementSmokeHarness:
             executor=DevFakeVocabularyExecutor(),
             batch_executor=DevFakeVocabularyBatchExecutor(),
         )
-        # T4.2a-R1: always inject the fake batch executor so the compact
+        # Always inject the fake batch executor so the compact
         # grammar batch path (SHORT_BATCH / STRUCTURED_BATCH) never falls
         # back to the real ``PydanticAIGrammarBatchExecutor``. The per-unit
         # executor stays as the legacy ``DevFakeGrammarBundleExecutor`` for
@@ -690,7 +690,7 @@ class ReaderEnhancementSmokeHarness:
             batch_executor=DevFakeGrammarBatchExecutor(),
         )
         if grammar_topology == "production":
-            # T4.2a-R1: faithfully reproduce the production route-aware split.
+            # Faithfully reproduce the production route-aware split.
             # ``enable_grammar_window=True`` activates the route-aware bootstrap
             # (SHORT_BATCH/STRUCTURED_BATCH → compact batch, GROUPED_WINDOWED
             # → grammar-window window). A fake window executor + real publisher are

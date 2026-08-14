@@ -44,7 +44,7 @@ dependencies = [
     "mdit-py-plugins>=0.4.0,<1.0.0",
 ]
 
-# D6-I3Q: OSS-backed artifact IO (AliyunOssObjectReader / AliyunOssPresigner).
+# OSS-backed artifact IO (AliyunOssObjectReader / AliyunOssPresigner).
 # oss2 是可选依赖：缺省 fail closed（NullPresigner / 读取时报 oss_sdk_missing），
 # 安装 ``pip install -e ".[oss]"`` 后才启用真实 OSS 读写。
 [project.optional-dependencies]
@@ -63,7 +63,7 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# NOTE (D6-I3Q): the optional [oss] extra pulls in oss2 → aliyun-python-sdk-core,
+# NOTE (oss extra): the optional [oss] extra pulls in oss2 → aliyun-python-sdk-core,
 # which requires jmespath<1.0.0. Since uv lock resolves all extras into a single
 # lockfile, this downgrades jmespath from 1.1.0 to 0.10.0 in the shared graph.
 # This is unavoidable while the [oss] extra is declared here: pinning
@@ -100,7 +100,7 @@ markers = [
     "real_llm: calls a real LLM provider; requires CLAREAD_ALLOW_REAL_LLM_TESTS=1 + CLAREAD_REAL_LLM_MODEL=<model> + -m real_llm",
     "article_rag_smoke: opt-in real-provider Article RAG integration smoke; requires READER_ARTICLE_RAG_SMOKE=1 + -m article_rag_smoke",
     "no_network_default: default-passes I4Y test that must not hit any real network / LLM / vector store",
-    # Flat governance markers (TG-FOUNDATION R1): composable with plain
+    # Flat governance markers (TG-FOUNDATION): composable with plain
     # `pytest -m`, no plugins. Marking existing tests is progressive and
     # NOT required yet; --strict-markers only forbids undeclared markers.
     # business chains (chain_*) — one per test file

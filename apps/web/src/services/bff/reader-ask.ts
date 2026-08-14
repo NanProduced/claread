@@ -81,7 +81,7 @@ function missingReadingRecordIdResponse() {
   });
 }
 
-/** ASK-RETRY-CONTRACT-R0 — fail-closed before any upstream hop. */
+/** Fail closed before any upstream hop. */
 const PERSISTED_MESSAGE_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

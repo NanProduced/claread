@@ -1,4 +1,4 @@
-"""R4 RAG integration gate — entry-level zero-I/O and single-path contracts.
+"""RAG integration gate — entry-level zero-I/O and single-path contracts.
 
 Covers the production Ask entry for Article RAG:
   * flag off → zero I/O

@@ -1,4 +1,4 @@
-# task-history: A4 (renamed from test_a4_parser_result_sharing_diagnostics.py)
+# task-history: (renamed from test_a4_parser_result_sharing_diagnostics.py)
 """解析结果共享 + 诊断透传（TDD）。
 
 Tests that gate / normalizer / candidate creation accept an optional
@@ -65,7 +65,7 @@ def _parse(text: str):
 
 
 # ---------------------------------------------------------------------------
-# A4-1: gate accepts optional preparsed parameter
+# Gate accepts optional preparsed parameter
 # ---------------------------------------------------------------------------
 
 
@@ -125,7 +125,7 @@ def test_gate_without_preparsed_still_parses_internally() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A4-2: normalizer accepts preparsed + propagates warnings
+# Normalizer accepts preparsed + propagates warnings
 # ---------------------------------------------------------------------------
 
 
@@ -238,7 +238,7 @@ def test_normalizer_does_not_add_upgrade_warning_for_pure_markdown_source() -> N
 
 
 # ---------------------------------------------------------------------------
-# A4-3: legacy _strip_inline_markdown regex path is removed
+# Legacy _strip_inline_markdown regex path is removed
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +300,7 @@ def test_plain_text_path_preserves_inline_link_text_via_parser() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A4-4: candidate creation service accepts preparsed
+# Candidate creation service accepts preparsed
 # ---------------------------------------------------------------------------
 
 
@@ -347,7 +347,7 @@ def test_build_candidate_blocks_uses_preparsed_when_provided(
 
 
 # ---------------------------------------------------------------------------
-# A4-5: full pipeline share — gate + normalizer parse exactly once
+# Full pipeline share — gate + normalizer parse exactly once
 # ---------------------------------------------------------------------------
 
 

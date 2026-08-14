@@ -1,4 +1,4 @@
-// task-history: T4.2a-PUX-R4-R2.2-P2c-R1
+// Grammar-first incremental projection publishing contract.
 /**
  * grammar_note 首发语义 insert 纯函数测试。
  *

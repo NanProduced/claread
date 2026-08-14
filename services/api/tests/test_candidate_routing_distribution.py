@@ -1,4 +1,4 @@
-"""A7 — candidate routing distribution statistics (评审 R3/P0-4).
+"""candidate routing distribution statistics (评审).
 
 Runs the deterministic ``InputSuitabilityGate`` against:
 
@@ -15,7 +15,7 @@ Runs the deterministic ``InputSuitabilityGate`` against:
    that the minimal fixtures hit.
 
 The aggregate report is a pure in-memory data structure; no LLM, no DB,
-no network. The report's purpose (per plan §A7) is to quantify the
+no network. The report's purpose (per plan §) is to quantify the
 candidate rate attributable to raw HTML / footnote / unclosed fence /
 table / math so future copy relaxation and policy tweaks have a
 measurable baseline.
@@ -330,7 +330,7 @@ def _build_routing_report(
 
 def _format_report_text(report: _RoutingReport) -> str:
     lines: list[str] = []
-    lines.append("=== A7 Candidate Routing Distribution Report ===")
+    lines.append("=== Candidate Routing Distribution Report ===")
     lines.append("")
     lines.append(f"Total samples: {report.total_samples}")
     lines.append(
@@ -552,7 +552,7 @@ def test_report_text_includes_candidate_rate_summary() -> None:
     """The human-readable report MUST include the candidate rate line."""
     report = _build_full_report()
     text = _format_report_text(report)
-    assert "=== A7 Candidate Routing Distribution Report ===" in text
+    assert "=== Candidate Routing Distribution Report ===" in text
     assert "Outcome distribution:" in text
     assert "candidate=" in text
     assert "Markdown complexity rate:" in text
@@ -607,7 +607,7 @@ def test_real_style_samples_have_enough_english_to_clear_short_gate() -> None:
     """Real-style samples MUST carry ≥50 English words so the gate's
     ``too_short_for_learning`` rejection does not mask the actual
     routing signal. This is the prerequisite for the report to be a
-    meaningful candidate-rate baseline (per plan §A7)."""
+    meaningful candidate-rate baseline (per plan §)."""
     report = _build_full_report()
     for real_sample in _REAL_STYLE_SAMPLES:
         sample = next(s for s in report.samples if s.name == real_sample.name)

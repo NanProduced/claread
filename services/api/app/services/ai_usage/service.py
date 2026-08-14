@@ -217,7 +217,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
     """
     Persist an AI usage audit event without interrupting the main business flow.
 
-    T4.2a-O2: when a Reader ``ExecutionCorrelation`` is active, merges
+    When a Reader ``ExecutionCorrelation`` is active, merges
     correlation into metadata_json and emits usage-presence diagnostics.
     Without Reader scope, behaviour matches pre-O2 (persist only, no Reader
     diagnostics / private correlation metadata). Never logs prompt/article/
@@ -479,7 +479,7 @@ async def update_ai_usage_event_outcome(
     error_code: str | None = None,
     error_message: str | None = None,
 ) -> bool:
-    """R7-3b: update the publication outcome of an ALREADY-PERSISTED
+    """Update the publication outcome of an ALREADY-PERSISTED
     model-invocation usage event — the SAME row, never a second event.
 
     Sets the terminal ``status`` (e.g. ``layer_published`` /

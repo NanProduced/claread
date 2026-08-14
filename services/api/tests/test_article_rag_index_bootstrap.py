@@ -1,4 +1,4 @@
-# task-history: D6-I4B (renamed from test_d6_i4b_article_rag_index_bootstrap.py)
+# task-history: (renamed from test_d6_i4b_article_rag_index_bootstrap.py)
 """Tests for Article RAG index job bootstrap + index state foundation.
 
 Covers the 12+ test requirements from the task spec:
@@ -533,7 +533,7 @@ async def test_same_plan_idempotent_noop(index_env: asyncpg.Pool) -> None:
 
 
 async def test_idempotent_null_job_id_fails_closed(index_env: asyncpg.Pool) -> None:
-    """P1 fix: an existing active index run with a null job_id means the
+    """Fix: an existing active index run with a null job_id means the
     index is silently stuck. The bootstrap service must fail closed with
     reason_code='idempotent_run_inconsistent' rather than returning a
     no-op that misleads the caller into thinking the index is queued."""
@@ -579,7 +579,7 @@ async def test_idempotent_null_job_id_fails_closed(index_env: asyncpg.Pool) -> N
 async def test_idempotent_missing_job_row_fails_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1 fix: an existing active index run whose job_id points to a
+    """Fix: an existing active index run whose job_id points to a
     non-existent job row means the index is silently stuck. Fail closed."""
     await _seed_paragraph_environment(index_env)
     service = _build_service(index_env)
@@ -624,7 +624,7 @@ async def test_idempotent_missing_job_row_fails_closed(
 async def test_idempotent_mismatched_job_row_fails_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1 fix: an existing active index run whose job row has mismatched
+    """Fix: an existing active index run whose job row has mismatched
     fields (e.g. target_key changed) means the index is silently stuck.
     Fail closed."""
     await _seed_paragraph_environment(index_env)
@@ -667,7 +667,7 @@ async def test_idempotent_mismatched_job_row_fails_closed(
 async def test_idempotent_dead_job_status_fails_closed(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1 fix: an existing active index run whose job has a dead status
+    """Fix: an existing active index run whose job has a dead status
     (failed_terminal / cancelled / superseded) means the index is
     silently stuck. Fail closed."""
     await _seed_paragraph_environment(index_env)
@@ -1183,7 +1183,7 @@ async def test_convenience_wrapper_opens_own_transaction(
 async def test_bootstrap_has_no_embedding_or_vector_provider_attributes(
     index_env: asyncpg.Pool,
 ) -> None:
-    """P1-C §14: bootstrap MUST NOT depend on embedding or vector
+    """§14: bootstrap MUST NOT depend on embedding or vector
     providers.  Verified structurally: the bootstrap service carries
     no ``embedding_provider`` / ``vector_writer`` / ``vector_searcher``
     attributes, and its constructor accepts no such parameters.  This

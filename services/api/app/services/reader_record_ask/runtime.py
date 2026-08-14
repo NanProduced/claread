@@ -1,6 +1,6 @@
 """Reading Record Ask agent runtime — run loop entry (not production stream).
 
-R4-A5-7: constructs a :class:`TurnCoordinator`, commits the initial
+Constructs a :class:`TurnCoordinator`, commits the initial
 model-view assembly, then runs the agent. Does not re-implement a second
 state machine beyond coordinator + finalizer. Does not wire into
 ``service.py`` / SSE / turn persistence directly.
@@ -45,7 +45,7 @@ from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
 )
 
-# M3 C2 wiring: MapSourceMaterialProvider is imported under TYPE_CHECKING to
+# M3 wiring: MapSourceMaterialProvider is imported under TYPE_CHECKING to
 # avoid a circular import (see turn_coordinator.py header comment for the
 # cycle chain). It is only used as a type annotation here; the runtime
 # instance is constructed by production_stream.py and passed in.
@@ -96,7 +96,7 @@ class ReadingRecordAskRunResult:
     grounded runs carry immutable validated blocks that the finalizer consumes
     directly (no flat compatibility projection).
 
-    ASK-WEB-G1-R1: ``web_search_calls`` mirrors
+    ASK-WEB-G1-``web_search_calls`` mirrors
     :attr:`ReaderRecordAskDeps.web_search_calls` so production_stream can
     surface the per-turn web search budget in observability / logs.
     """
@@ -141,12 +141,12 @@ async def run_reading_record_ask(
     # existing test callers are unaffected.
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    # M3 C2 wiring: server-only map-source material provider. When None
+    # M3 wiring: server-only map-source material provider. When None
     # (tests / legacy callers), TurnCoordinator falls back to the unit-window
-    # map (pre-C2 behavior). Production wiring constructs the provider and
-    # passes it in so B3 heading enrichment (§4.2) takes effect.
+    # map (pre- behavior). Production wiring constructs the provider and
+    # passes it in so heading enrichment (§4.2) takes effect.
     map_source_material_provider: MapSourceMaterialProvider | None = None,
-    # ASK-WEB-G1-R1: web search capability + port + registry. The
+    # ASK-WEB-G1-web search capability + port + registry. The
     # capability is the server-owned execution truth — when ``None`` the
     # ``search_web`` tool must NOT be mounted. The backend port is
     # provider-neutral; ``None`` means fail-soft even when
@@ -158,11 +158,11 @@ async def run_reading_record_ask(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
-    # R1.5 P0-2: thread-memory integration. When ``memory_enabled=False``
+    # Thread-memory integration. When ``memory_enabled=False``
     # (default) the coordinator never touches the thread_memory package —
     # zero behavioral drift, zero DB I/O, prompt字节级不含 memory. When
     # ``True`` the coordinator loads + CAS-checks + fence-rebuilds +
-    # validates a deterministic snapshot (R1 path; no model call).
+    # validates a deterministic snapshot (path; no model call).
     # ``memory_repository`` and ``thread_id`` are required when ``True``.
     memory_enabled: bool = False,
     memory_repository: Any | None = None,
@@ -173,7 +173,7 @@ async def run_reading_record_ask(
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
-    Production path (R4-A5-7 / A5-8A1):
+    Production path:
     - :class:`TurnCoordinator` owns assembly, expand, and RAG model-views;
     - tools are expand_evidence + search_current_article only;
     - ``pointer_ledger`` is injectable; production default is the
@@ -185,7 +185,7 @@ async def run_reading_record_ask(
 
     ``event_sink`` / ``observation`` semantics match the prior runtime.
 
-    ASK-WEB-G1-R1: ``web_search_capability`` is the resolved execution
+    ASK-WEB-G1-``web_search_capability`` is the resolved execution
     truth for one turn; the runtime reads ``enabled_for_turn`` to decide
     whether to mount the ``search_web`` tool (G1-b4). The capability
     never enters the model surface — only the mounted tool does.
@@ -341,14 +341,14 @@ async def run_reading_record_ask(
         selection_prompt=assembly.selection_result.prompt_capability,
         baseline_prompt=assembly.baseline_result.prompt_capability,
         map_prompt=assembly.map_result.prompt_capability,
-        # R3 P2 — append the coordinator-rendered focus selections block
+        # Append the coordinator-rendered focus selections block
         # (untrusted article text; emphasis, not restriction).
         focus_section=assembly.focus_selections_text,
     )
 
     # G1-b4: conditionally mount the ``search_web`` tool. The flag is
     # the resolved execution truth — never the request toggle directly.
-    # ASK-WEB-R4: also gate ``expand_evidence`` and
+    # ASK-WEB-also gate ``expand_evidence`` and
     # ``search_current_article`` by real executable capability so the
     # model never sees a non-executable tool and no ``unavailable``
     # activity is produced for tools that would always return a safe

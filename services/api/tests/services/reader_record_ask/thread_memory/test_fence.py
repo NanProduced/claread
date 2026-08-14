@@ -1,6 +1,6 @@
-"""Tests for provenance fence re-check (R0.1 §8.1).
+"""Tests for provenance fence re-check (§8.1).
 
-A1 stub: 待 A1 完成后移除（schema/mapping 走 conftest 注入的 _stub）
+ stub: 待 完成后移除（schema/mapping 走 conftest 注入的 _stub）
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def test_check_binding_validity_record_id_mismatch_is_record_missing():
 
 
 def test_check_binding_validity_web_binding_returns_unchecked():
-    """Web bindings have no article fence (R0.1 §8.1 + H7)."""
+    """Web bindings have no article fence (§8.1 + H7)."""
     binding = _web_binding()
     result = check_binding_validity(
         binding,

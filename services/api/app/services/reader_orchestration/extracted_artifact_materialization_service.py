@@ -1,4 +1,4 @@
-"""D6-I3N Extracted Artifact Text → Stable/Candidate Materialization.
+"""Extracted Artifact Text → Stable/Candidate Materialization.
 
 Takes an **existing** reading_record + original_input (created by
 ``ArtifactInputApplicationService.submit_input``) and materializes the
@@ -12,7 +12,7 @@ either:
 - an **action_required** state transition (when the input is rejected).
 
 This service does **not** create new ``reading_records`` or ``original_inputs``
-— it operates on the existing ones. It does **not** do OCR/PDF parsing.
+it operates on the existing ones. It does **not** do OCR/PDF parsing.
 
 Transaction model: **service-owned single transaction**. The entire
 validate → suitability → freeze/persist → set_active_base → publish_event
@@ -93,7 +93,7 @@ _MARKDOWN_CONTENT_TYPES: frozenset[str] = frozenset({
 })
 _PLAIN_CONTENT_TYPES: frozenset[str] = frozenset({"text/plain"})
 
-# A4 — 解析结果共享: single module-level parser used to pre-parse the
+# 解析结果共享: single module-level parser used to pre-parse the
 # extracted artifact source text once and share the result across the
 # suitability gate, the normalizer, and the candidate block builder.
 # Reusing one parser instance avoids re-instantiating per request; the
@@ -362,7 +362,7 @@ class ExtractedArtifactMaterializationService:
                 reason_code="materialization_already_run",
             )
 
-        # R7-1: reading_records.language is the authoritative language
+        # Reading_records.language is the authoritative language
         # source for the sentence-segmentation policy (never guessed
         # from the body text). Missing/blank values use the Reader-wide
         # default rule, matching the article-ready / stable-ready
@@ -483,7 +483,7 @@ class ExtractedArtifactMaterializationService:
             filename=filename,
             source_metadata=source_metadata,
         )
-        # A4 — 解析结果共享: parse once on the normalized text and
+        # 解析结果共享: parse once on the normalized text and
         # thread the result through the gate + downstream stable /
         # candidate path. The gate, normalizer (stable path), and
         # ``_build_candidate_blocks`` (candidate path) all consume this
@@ -572,7 +572,7 @@ class ExtractedArtifactMaterializationService:
             filename=filename,
             source_metadata=source_metadata,
         )
-        # A4 — 解析结果共享: reuse the parse result produced by the
+        # 解析结果共享: reuse the parse result produced by the
         # caller; the normalizer MUST NOT re-parse.
         normalized = normalize_input_document(request, preparsed=preparsed)
 
@@ -633,7 +633,7 @@ class ExtractedArtifactMaterializationService:
             updated_at=now,
         )
 
-        # D6-I4V: Article RAG index auto-ensure (fail-soft).
+        # Article RAG index auto-ensure (fail-soft).
         rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
             conn,
             reading_record_id=record_id,
@@ -699,7 +699,7 @@ class ExtractedArtifactMaterializationService:
         confirmed_source: ConfirmedSourceDocument,
         now: datetime,
     ) -> MaterializationResult:
-        # A4 — 解析结果共享: reuse the parse result produced by the
+        # 解析结果共享: reuse the parse result produced by the
         # caller; ``_build_candidate_blocks`` MUST NOT re-parse the
         # markdown source.
         blocks, title = _build_candidate_blocks(

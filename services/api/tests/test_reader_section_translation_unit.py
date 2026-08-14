@@ -1,4 +1,4 @@
-# task-history: T5.6b (renamed from test_reader_section_translation_t56b.py)
+# task-history: (renamed from test_reader_section_translation_t56b.py)
 """Focused unit tests for section translation bootstrap/drain/publisher contracts (fake executor)."""
 
 from __future__ import annotations
@@ -821,7 +821,7 @@ def test_bg01_bg05_budget_layer_includes_translate_article() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Family force (P1)
+# Family force
 # ---------------------------------------------------------------------------
 
 
@@ -902,7 +902,7 @@ async def test_family_none_still_plans_as_translation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Trusted outline fail-closed (P1)
+# Trusted outline fail-closed
 # ---------------------------------------------------------------------------
 
 

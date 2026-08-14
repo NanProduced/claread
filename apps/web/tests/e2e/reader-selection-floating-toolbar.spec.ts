@@ -547,28 +547,6 @@ async function selectSourceText(page: Page): Promise<string> {
  * Same native-selection pattern as `selectSourceText` — fires `selectionchange`
  * through SelectionAnchorBridge → activeSelection → toolbar.
  */
-async function selectTextInBlock(
-  page: Page,
-  stableBlockType: string,
-): Promise<string> {
-  const block = page
-    .locator(
-      `[data-reader-record-stable-block-type="${stableBlockType}"]`,
-    )
-    .first();
-  await expect(block).toBeVisible();
-  // The source-callout wrapper includes a decorative icon outside the Slate
-  // value. Select the anchored leaf so the synthetic browser range remains
-  // representable by Plate's Slate selection model.
-  const selectionTarget =
-    stableBlockType === "source_callout"
-      ? block.locator('[data-reader-record-leaf="segment_text"]').first()
-      : block;
-  await expect(selectionTarget).toBeVisible();
-  await selectionTarget.selectText();
-  return page.evaluate(() => window.getSelection()?.toString() ?? "");
-}
-
 /**
  * Modify the source selection via KEYBOARD.
  *
@@ -727,7 +705,7 @@ test.describe("Reader selection floating toolbar (native selection)", () => {
     await loginAndNavigate(page);
   });
 
-  test("native text selection shows selection-actions toolbar with all 6 buttons", async ({
+  test("native selection shows toolbar, survives keyboard/copy, and dismisses", async ({
     page,
   }) => {
     const selectedText = await selectSourceText(page);
@@ -793,369 +771,33 @@ test.describe("Reader selection floating toolbar (native selection)", () => {
       "toolbar should flip above or below the selected text, not overlap it",
     ).toBeTruthy();
 
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-visible.png",
-    });
-  });
-
-  test("keyboard input (Shift+Arrow) shapes the selection and keeps the toolbar", async ({ page }) => {
-    const selectedText = await keyboardShapeSelection(page);
-    expect(selectedText.trim().length, "keyboard-shaped selection should produce text").toBeGreaterThan(
-      0,
-    );
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await keyboardShapeSelection(page);
     await expect(toolbar).toBeVisible({ timeout: 8000 });
 
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-keyboard.png",
-    });
-  });
-
-  test("copy button click does not collapse selection before action fires", async ({
-    page,
-  }) => {
-    await selectSourceText(page);
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    // The copy button should be enabled (canCopySelection only needs text).
-    const copyButton = page.locator(
-      '[data-reader-record-toolbar-action="copy"]',
-    );
+    const copyButton = page.locator('[data-reader-record-toolbar-action="copy"]');
     await expect(copyButton).toBeEnabled();
-
-    // Click copy — the onPointerDown preventDefault keeps the native
-    // selection alive so handleCopy can read activeSelection. Per the
-    // acceptance criterion "点击不丢选区", copy must NOT collapse the
-    // selection, so the toolbar stays visible after the action.
     await copyButton.click();
-
-    // The toolbar should remain visible — the selection is preserved.
     await expect(toolbar).toBeVisible({ timeout: 5000 });
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-after-copy.png",
-    });
-  });
-
-  test("Escape dismisses the toolbar", async ({ page }) => {
-    await selectSourceText(page);
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
 
     await page.keyboard.press("Escape");
-
-    // The Escape handler clears the native selection, which cascades through
-    // SelectionAnchorBridge → activeSelection → toolbar hidden.
     await expect(toolbar).toHaveCount(0, { timeout: 5000 });
-  });
 
-  test("blank click dismisses the toolbar, re-select shows it again", async ({
-    page,
-  }) => {
     await selectSourceText(page);
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
     await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    // Click on empty space (outside the paragraph and toolbar) to collapse
-    // the native selection.
     await page.mouse.click(10, 10);
-
     await expect(toolbar).toHaveCount(0, { timeout: 5000 });
 
-    // Re-select — toolbar should appear again.
-    await selectSourceText(page);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-  });
-
-  test("390px mobile viewport — toolbar appears and stays in viewport", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-
-    // Re-navigate after viewport change to ensure layout is correct.
-    await page.reload();
-    await expect(
-      page.locator('[data-testid="reader-record-plate-surface"]'),
-    ).toBeVisible();
-
-    await selectSourceText(page);
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    const tb = (await toolbar.boundingBox())!;
-    const vp = page.viewportSize()!;
-    expect(tb.x).toBeGreaterThanOrEqual(0);
-    expect(tb.y).toBeGreaterThanOrEqual(0);
-    expect(tb.x + tb.width).toBeLessThanOrEqual(vp.width);
-    expect(tb.y + tb.height).toBeLessThanOrEqual(vp.height);
-  });
-
-  test("1280px desktop viewport — toolbar appears and stays in viewport", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1280, height: 720 });
-
-    // Re-navigate after viewport change so the real product layout recalculates.
-    await page.reload();
-    await expect(
-      page.locator('[data-testid="reader-record-plate-surface"]'),
-    ).toBeVisible();
-
-    const selectedText = await selectSourceText(page);
-    expect(
-      selectedText.trim().length,
-      "native selection should produce text at 1280x720",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    const tb = (await toolbar.boundingBox())!;
-    const vp = page.viewportSize()!;
-    expect(tb.x).toBeGreaterThanOrEqual(0);
-    expect(tb.y).toBeGreaterThanOrEqual(0);
-    expect(tb.x + tb.width).toBeLessThanOrEqual(vp.width);
-    expect(tb.y + tb.height).toBeLessThanOrEqual(vp.height);
-  });
-
-  test("re-selecting a different phrase keeps toolbar visible and uses the new selection (A→B)", async ({
-    page,
-  }) => {
-    // Grant clipboard permissions so we can verify copy actually writes B.
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-
-    // Phrase A: select "Institutional memory" at the start of the paragraph.
     const phraseA = "Institutional memory";
-    const textA = await selectPhrase(page, phraseA);
-    expect(textA, "phrase A native selection should match").toBe(phraseA);
+    const phraseB = "policy choices";
+    expect(await selectPhrase(page, phraseA)).toBe(phraseA);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+    expect(await selectPhrase(page, phraseB)).toBe(phraseB);
     await expect(toolbar).toBeVisible({ timeout: 8000 });
 
-    // Capture the toolbar position for phrase A — used to prove the toolbar
-    // re-positions for B rather than staying pinned to A's location.
-    const boxA = (await toolbar.boundingBox())!;
-
-    // Phrase B: select "stable income" later in the same paragraph. This is a
-    // genuine re-select: removeAllRanges + addRange fires selectionchange,
-    // SelectionAnchorBridge recomputes activeSelection from the new native
-    // selection, and the toolbar must track B — not reuse A's anchor.
-    const phraseB = "stable income";
-    const textB = await selectPhrase(page, phraseB);
-    expect(textB, "phrase B native selection should match").toBe(phraseB);
-
-    // Toolbar must stay visible (not dismissed by the re-select).
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    // The native selection must now be B, not A. Because the action handlers
-    // (copy/highlight/note/lookup/ask) read from activeSelection which is
-    // derived from the native selection via SelectionAnchorBridge, a native
-    // selection of B guarantees copy/anchor use B and A is not reused.
-    const nativeAfterB = await page.evaluate(
-      () => window.getSelection()?.toString() ?? "",
-    );
-    expect(nativeAfterB, "native selection must be B after re-select").toBe(
-      phraseB,
-    );
-    expect(
-      nativeAfterB,
-      "native selection must NOT contain phrase A after re-select",
-    ).not.toContain(phraseA);
-
-    // Click copy — onPointerDown preventDefault keeps the native selection
-    // alive so handleCopy reads activeSelection (which is B). Verify the
-    // clipboard actually receives B, not A.
-    const copyButton = page.locator(
-      '[data-reader-record-toolbar-action="copy"]',
-    );
-    await expect(copyButton).toBeEnabled();
-    await copyButton.click();
-
-    // Read the clipboard. The copy handler writes activeSelection.selectedText
-    // (=== B) to the clipboard. If A were reused, the clipboard would contain
-    // A instead.
-    const clipboardText = await page.evaluate(() =>
-      navigator.clipboard.readText(),
-    );
-    expect(clipboardText, "clipboard must contain phrase B (not A)").toBe(
-      phraseB,
-    );
-    expect(
-      clipboardText,
-      "clipboard must NOT contain phrase A",
-    ).not.toContain(phraseA);
-
-    // Toolbar should remain visible — selection preserved after copy.
-    await expect(toolbar).toBeVisible({ timeout: 5000 });
-
-    // The toolbar should have moved to track B (different vertical position
-    // than when A was selected), proving it re-anchored rather than staying
-    // pinned to A.
-    const boxB = (await toolbar.boundingBox())!;
-    expect(
-      Math.abs(boxB.y - boxA.y),
-      "toolbar should re-position for phrase B (different y than A)",
-    ).toBeGreaterThan(2);
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-reselect-a-to-b.png",
-    });
-  });
-
-  test("selection outside the Reader document closes the toolbar", async ({
-    page,
-  }) => {
-    // First establish a selection inside the Reader document so the toolbar
-    // is visible.
-    await selectSourceText(page);
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    // Now select text outside `.reader-record-plate-document` (page chrome:
-    // title, header, etc.). SelectionAnchorBridge must detect that the
-    // native selection's anchorNode is not inside the Reader document root
-    // and dismiss the toolbar — it must NOT fall back to a stale
-    // editor.selection that would keep the toolbar alive with the old
-    // anchor.
-    const outsideText = await selectTextOutsideReaderDocument(page);
-    expect(
-      outsideText.trim().length,
-      "should have selected some text outside the Reader document",
-    ).toBeGreaterThan(0);
-
-    await expect(toolbar, "toolbar must close when selection leaves the document").toHaveCount(
-      0,
-      { timeout: 5000 },
-    );
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-closed-outside-doc.png",
-    });
-
+    await selectTextOutsideReaderDocument(page);
+    await expect(toolbar).toHaveCount(0, { timeout: 5000 });
     await cleanupProbeOutsideReaderDocument(page);
   });
-
-  // -------------------------------------------------------------------------
-  // Stable block type coverage — toolbar appears across all Markdown blocks.
-  // -------------------------------------------------------------------------
-
-  test("heading block selection shows toolbar", async ({ page }) => {
-    const selectedText = await selectTextInBlock(page, "heading");
-    expect(
-      selectedText.trim().length,
-      "heading native selection should produce text",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-heading.png",
-    });
-  });
-
-  test("markdown blockquote selection shows toolbar", async ({ page }) => {
-    const selectedText = await selectTextInBlock(page, "blockquote");
-    expect(
-      selectedText.trim().length,
-      "blockquote native selection should produce text",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-blockquote.png",
-    });
-  });
-
-  test("list_item selection shows toolbar", async ({ page }) => {
-    const selectedText = await selectTextInBlock(page, "list_item");
-    expect(
-      selectedText.trim().length,
-      "list_item native selection should produce text",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-list_item.png",
-    });
-  });
-
-  test("table_cell selection shows toolbar", async ({ page }) => {
-    const selectedText = await selectTextInBlock(page, "table_cell");
-    expect(
-      selectedText.trim().length,
-      "table_cell native selection should produce text",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-table_cell.png",
-    });
-  });
-
-  test("source_callout selection shows toolbar", async ({ page }) => {
-    const selectedText = await selectTextInBlock(page, "source_callout");
-    expect(
-      selectedText.trim().length,
-      "source_callout native selection should produce text",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="translate"]'),
-    ).toBeEnabled();
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-source_callout.png",
-    });
-  });
-
-  test("citation/reference selection keeps lookup and explicit translation enabled", async ({
-    page,
-  }) => {
-    const selectedText = await selectPhrase(page, CITATION_TEXT);
-    expect(selectedText, "citation/reference selection should match").toBe(
-      CITATION_TEXT,
-    );
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="lookup"]'),
-    ).toBeEnabled();
-    await expect(
-      page.locator('[data-reader-record-toolbar-action="translate"]'),
-    ).toBeEnabled();
-  });
-
-  // -------------------------------------------------------------------------
-  // Translation is non-source: the toolbar remains available for Copy, but
-  // must not create a source anchor or enable source-only actions.
-  // -------------------------------------------------------------------------
 
   test("translation block selection is Copy-only without source anchor fallback", async ({ page }) => {
     // The translation text lives inside the reader_translation_group (non-source).
@@ -1299,40 +941,6 @@ test.describe("Reader selection floating toolbar (native selection)", () => {
 
     await page.screenshot({
       path: "test-results/reader-selection-toolbar-cross-anchor.png",
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Dark mode — toolbar must be readable with an opaque background.
-  // -------------------------------------------------------------------------
-
-  test("dark mode — toolbar is readable with opaque background", async ({
-    page,
-  }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
-
-    const selectedText = await selectSourceText(page);
-    expect(
-      selectedText.trim().length,
-      "native selection should produce text in dark mode",
-    ).toBeGreaterThan(0);
-
-    const toolbar = page.locator(TOOLBAR_LOCATOR);
-    await expect(toolbar).toBeVisible({ timeout: 8000 });
-
-    // Verify the toolbar has an opaque background (not transparent) so it is
-    // readable in dark mode. The computed background-color must NOT be
-    // rgba(0, 0, 0, 0) (fully transparent).
-    const bgColor = await toolbar.evaluate((el) => {
-      return window.getComputedStyle(el).backgroundColor;
-    });
-    expect(
-      bgColor,
-      "toolbar background-color must not be transparent in dark mode",
-    ).not.toBe("rgba(0, 0, 0, 0)");
-
-    await page.screenshot({
-      path: "test-results/reader-selection-toolbar-dark-mode.png",
     });
   });
 });

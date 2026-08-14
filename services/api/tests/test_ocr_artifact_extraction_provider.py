@@ -1,4 +1,4 @@
-# task-history: D6-I3T (renamed from test_d6_i3t_ocr_artifact_extraction_provider.py)
+# task-history: (renamed from test_d6_i3t_ocr_artifact_extraction_provider.py)
 """Tests for the OCR provider foundation + image artifact extraction path.
 
 Covers:
@@ -662,7 +662,7 @@ def test_qwen_extractor_without_api_key_fails_closed() -> None:
 
 def test_qwen_extractor_with_api_key_and_fake_client_returns_result() -> None:
     """QwenOcrTextExtractor with API key + injected fake client returns a
-    real result (D6-I3U: the extractor is no longer a stub). The fake
+    real result (the extractor is no longer a stub). The fake
     client avoids any real network call."""
     from app.services.reader_orchestration.ocr_artifact_extraction_provider import (
         QwenOcrResponse,
@@ -769,7 +769,7 @@ async def test_router_image_gif_fails_closed_unsupported_ocr_image_type() -> Non
 
 async def test_router_image_with_unconfigured_extractor_fails_closed() -> None:
     """image/png with default UnconfiguredOcrTextExtractor → ocr_provider_unconfigured
-    (preserves the D6-I3S fail-closed contract)."""
+    (preserves the fail-closed contract)."""
     raw_bytes = _png_bytes()
     reader = FakeStorageObjectReader(data=raw_bytes)
     # OCR provider with no extractor → UnconfiguredOcrTextExtractor.
@@ -967,7 +967,7 @@ def test_build_ocr_extractor_enabled_qwen_without_api_key_fails_closed(
 ) -> None:
     """When OCR is enabled with provider_name='qwen' but DASHSCOPE_API_KEY
     is missing, the worker builds a QwenOcrTextExtractor that fails closed
-    with ``ocr_provider_unconfigured`` on first call (D6-I3U contract)."""
+    with ``ocr_provider_unconfigured`` on first call (contract)."""
     from scripts.run_reader_artifact_pipeline_worker import _build_ocr_extractor
 
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
@@ -994,7 +994,7 @@ def test_build_ocr_extractor_enabled_qwen_with_api_key_constructs_real_adapter(
 ) -> None:
     """With DASHSCOPE_API_KEY set + OCR enabled, ``_build_ocr_extractor``
     constructs a :class:`QwenOcrTextExtractor` with a real
-    :class:`DashScopeQwenOcrClient` (D6-I3U: no longer a stub).
+    :class:`DashScopeQwenOcrClient` (no longer a stub).
 
     The API key is resolved outside settings defaults and is never logged or
     surfaced in the extractor's public attributes. We verify construction without

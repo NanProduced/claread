@@ -136,7 +136,7 @@ def _parse_args() -> CliArgs:
         default=REPO_ROOT / "verification" / "reader_baseline" / "runs",
         help="Directory to write the per-sample reports into.",
     )
-    # T1 acceptance: aligned with DEFAULT_PIPELINE_MAX_TICKS / MAX_JOBS so
+    # Acceptance: aligned with DEFAULT_PIPELINE_MAX_TICKS / MAX_JOBS so
     # the CLI completes medium samples (reuters_bbc_970 needs 60 ticks in
     # 6-worker fake mode) without an explicit --max-ticks override.
     parser.add_argument("--max-ticks", type=int, default=96)

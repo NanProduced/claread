@@ -19,7 +19,7 @@ UserEditorialAssetScope = Literal[
 
 
 class UserEditorialAssetAnchorRange(BaseModel):
-    """Schema-only D6-U2 range item for future multi-anchor assets."""
+    """Schema-only range item for future multi-anchor assets."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -46,7 +46,7 @@ class UserEditorialAssetAnchorRange(BaseModel):
 
 
 class UserEditorialAssetAnchorSet(BaseModel):
-    """Schema-only D6-U2 draft for future multi_text editorial assets.
+    """Schema-only draft for future multi_text editorial assets.
 
     V1c production writes remain single-range first. This DTO exists so future
     multi-range work does not overload UserEditorialAssetAnchor or fall back to
@@ -64,10 +64,10 @@ class UserEditorialAssetAnchorSet(BaseModel):
 
 
 class UserEditorialAssetAnchor(BaseModel):
-    """Draft D6-U0 anchor contract for future user editorial assets.
+    """Draft anchor contract for future user editorial assets.
 
     This stays schema-only for now. Runtime writes remain on the legacy
-    `user_annotations` / `reader_notes` paths until D6-U1 wiring lands.
+    `user_annotations` / `reader_notes` paths because this contract has no runtime wiring.
     """
 
     model_config = ConfigDict(extra="forbid")

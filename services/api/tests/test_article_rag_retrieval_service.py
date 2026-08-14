@@ -1,4 +1,4 @@
-# task-history: D6-I4E (renamed from test_d6_i4e_article_rag_retrieval_service.py)
+# task-history: (renamed from test_d6_i4e_article_rag_retrieval_service.py)
 """Tests for the Article RAG retrieval service.
 
 Covers:
@@ -153,7 +153,7 @@ _BASE_ID = uuid.UUID("44444444-4444-4444-4444-444444444444")
 _OTHER_STABLE_DOC_ID = uuid.UUID("55555555-5555-5555-5555-555555555555")
 _OTHER_BASE_ID = uuid.UUID("66666666-6666-6666-6666-666666666666")
 
-# P1-F: frozen embedding + vector-space contract literals.  These
+# Frozen embedding + vector-space contract literals. These
 # mirror the module-level ``ARTICLE_RAG_EMBEDDING_CONTRACT`` in
 # ``article_rag_index_bootstrap``.  Tests use these to construct
 # indexed-run rows that are byte-aligned with the frozen contract, so
@@ -241,7 +241,7 @@ def _indexed_run_row(
     """Build the ``reader_article_rag_index_runs`` row that the
     retrieval service's ``_load_indexed_run`` queries.
 
-    P1-F: defaults are byte-aligned with the frozen
+    Defaults are byte-aligned with the frozen
     ``ARTICLE_RAG_EMBEDDING_CONTRACT`` so that contract-mismatch
     failures are pinned to the one field under test rather than to
     a default-vs-contract drift in the fixture itself.  Tests that
@@ -1179,20 +1179,20 @@ def test_retrieval_error_inherits_worker_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 21. Review-fix P1: indexed run's vector_collection routes the searcher
+# 21. Review-fix indexed run's vector_collection routes the searcher
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_vector_collection_passed_to_searcher_from_indexed_run(
 ) -> None:
-    """P1-F: the retrieval service routes the resolved profile's
+    """The retrieval service routes the resolved profile's
     ``vector_namespace`` to the searcher.  The indexed run's
     ``vector_collection`` MUST equal ``profile.vector_namespace``
     (validated in Phase C.3 Field 5); the searcher is then called with
     the profile value as the canonical source of truth.  A non-V1
     collection name is now rejected as a profile mismatch — the
-    custom-collection scenario from the original reviewer P1 fix is
+    custom-collection scenario from the original reviewer fix is
     no longer reachable because V1 is the only registered profile."""
     plan = _make_plan()
     row = _indexed_run_row(
@@ -1221,7 +1221,7 @@ async def test_vector_collection_passed_to_searcher_from_indexed_run(
 
 @pytest.mark.anyio
 async def test_vector_collection_empty_fails_closed() -> None:
-    """P1-F: a NULL ``vector_collection`` is rejected at Phase C as a
+    """A NULL ``vector_collection`` is rejected at Phase C as a
     contract mismatch — the indexed run's ``vector_collection`` MUST
     equal ``contract.vector_collection``.  The legacy
     ``retrieval_no_vector_collection`` routing-phase check is no
@@ -1249,7 +1249,7 @@ async def test_vector_collection_empty_fails_closed() -> None:
 
 @pytest.mark.anyio
 async def test_vector_collection_whitespace_only_fails_closed() -> None:
-    """P1-F: a whitespace-only ``vector_collection`` is rejected at
+    """A whitespace-only ``vector_collection`` is rejected at
     Phase C — it does not equal ``contract.vector_collection``
     and therefore fails closed as a contract mismatch.  The
     ``retrieval_no_vector_collection`` routing-phase check is no
@@ -1274,19 +1274,19 @@ async def test_vector_collection_whitespace_only_fails_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 22. Review-fix P2: indexed run's embedding_model routes the query embed
+# 22. Review-fix indexed run's embedding_model routes the query embed
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_embedding_model_passed_to_provider_from_indexed_run() -> None:
-    """P1-F: the retrieval service MUST pass the resolved profile's
+    """The retrieval service MUST pass the resolved profile's
     ``query_embedding_model`` to ``embed_texts``.  The indexed run's
     ``embedding_model`` (= ``profile.document_embedding_model`` in V1)
     is validated at Phase C.3 Field 4 but is NOT the model used to
     embed the query — the query model is a distinct profile field.
     In V1 both fields are ``"text-embedding-v4"``.  The legacy
-    custom-model scenario from the original reviewer P2 fix is no
+    custom-model scenario from the original reviewer fix is no
     longer reachable because V1 is the only registered profile."""
     plan = _make_plan()
     # V1-aligned indexed run: ``embedding_model`` equals
@@ -1320,7 +1320,7 @@ async def test_embedding_model_passed_to_provider_from_indexed_run() -> None:
 
 @pytest.mark.anyio
 async def test_embedding_model_mismatch_fails_closed() -> None:
-    """P1-F: if the embedding provider returns a vector built by a
+    """If the embedding provider returns a vector built by a
     different model than ``profile.query_embedding_model``, the query
     vector is in a different space than the indexed vectors → fail
     closed with ``retrieval_embedding_model_mismatch``.  The indexed
@@ -1329,7 +1329,7 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
     Field 4); the provider's returned model MUST equal
     ``profile.query_embedding_model`` (validated at Phase D.2).  The
     offending model name is NEVER echoed in the error message —
-    P1-F requires fixed local messages for all profile-mismatch
+     requires fixed local messages for all profile-mismatch
     failures.
     """
     from app.services.reader_orchestration.article_rag_index_worker import (
@@ -1373,7 +1373,7 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
         exc_info.value.failure_code
         == FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
     )
-    # P1-F: the offending model name is NEVER echoed in the error
+    # The offending model name is NEVER echoed in the error
     # message.  The message is a fixed local string that does not
     # interpolate any caller-supplied value.
     msg = str(exc_info.value)
@@ -1384,7 +1384,7 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
 
 @pytest.mark.anyio
 async def test_embedding_model_match_does_not_fail_closed() -> None:
-    """P1-F: when the indexed run's ``embedding_model`` equals
+    """When the indexed run's ``embedding_model`` equals
     ``profile.document_embedding_model`` (Phase C.3 Field 4 passes)
     AND the embedding provider returns ``profile.query_embedding_model``
     (Phase D.2 passes), the retrieval completes successfully.  In V1
@@ -1415,7 +1415,7 @@ async def test_embedding_model_match_does_not_fail_closed() -> None:
 
 @pytest.mark.anyio
 async def test_embedding_model_null_on_indexed_run_fails_closed() -> None:
-    """P1-F: a NULL ``embedding_model`` on the indexed run is now
+    """A NULL ``embedding_model`` on the indexed run is now
     rejected at Phase C as a contract mismatch.  The legacy
     NULL-bypass policy (defence in depth: pre-I4D rows still served)
     is removed because the frozen contract requires strict
@@ -1446,7 +1446,7 @@ async def test_embedding_model_null_on_indexed_run_fails_closed() -> None:
         exc_info.value.failure_code
         == FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH
     )
-    # P1-F: provider and searcher are NEVER called on contract-mismatch
+    # Provider and searcher are NEVER called on contract-mismatch
     # paths — the failure is detected before any I/O leaves the
     # service boundary.
     assert provider.call_count == 0
@@ -1470,7 +1470,7 @@ async def test_failure_codes_include_new_review_codes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 23. Reviewer P2 fix: entity-wrapper hit guard mismatch triggers fail-closed
+# 23. Reviewer fix: entity-wrapper hit guard mismatch triggers fail-closed
 # ---------------------------------------------------------------------------
 
 
@@ -1485,7 +1485,7 @@ async def test_entity_wrapper_hit_base_id_mismatch_fails_closed() -> None:
     plan = _make_plan()
     row = _indexed_run_row(plan)
     # Build the searcher to return the entity-wrapper shape directly
-    # — the fake searcher forwards whatever hits it's given.
+    # the fake searcher forwards whatever hits it's given.
     hits = [
         ArticleRagVectorSearchHit(
             chunk_id="chunk-aaa",
@@ -1592,10 +1592,10 @@ async def test_real_retrieval_smoke_is_opt_in_only() -> None:
 
 
 # ===========================================================================
-# P1-F: Article RAG Retrieval Frozen Embedding Contract Validation
+# Article RAG Retrieval Frozen Embedding Contract Validation
 # ===========================================================================
 #
-# The tests below lock in the P1-F closure:
+# The tests below lock in the closure:
 #
 #   indexed-run durable embedding + vector-space contract validation
 #     → plan hash validation
@@ -1611,7 +1611,7 @@ async def test_real_retrieval_smoke_is_opt_in_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-F fixtures for contract-mismatch call-count assertions
+# Fixtures for contract-mismatch call-count assertions
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -1634,7 +1634,7 @@ def searcher_call_counter():
     return _wrap
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #7: indexed embedding_model NULL / mismatch
+# Section 九 #7: indexed embedding_model NULL / mismatch
 # ---------------------------------------------------------------------------
 
 
@@ -1711,7 +1711,7 @@ async def test_indexed_run_embedding_model_mismatch_fails_closed(
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #8: indexed vector_collection NULL / mismatch
+# Section 九 #8: indexed vector_collection NULL / mismatch
 # ---------------------------------------------------------------------------
 
 
@@ -1818,7 +1818,7 @@ async def test_indexed_run_vector_collection_mismatch_fails_closed(
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #11: query embedding returns model mismatch
+# Section 九 #11: query embedding returns model mismatch
 # ---------------------------------------------------------------------------
 
 
@@ -1992,7 +1992,7 @@ async def test_query_embedding_dimension_matches_frozen_profile(
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #12: all contract-mismatch paths make 0 embedding /
+# Section 九 #12: all contract-mismatch paths make 0 embedding /
 # 0 vector-search calls (consolidated assertion)
 # ---------------------------------------------------------------------------
 
@@ -2055,7 +2055,7 @@ async def test_all_contract_mismatch_paths_zero_embedding_and_search_calls(
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #13: normal V1 retrieval uses profile model + namespace
+# Section 九 #13: normal V1 retrieval uses profile model + namespace
 # ---------------------------------------------------------------------------
 
 
@@ -2106,7 +2106,7 @@ async def test_normal_v1_retrieval_uses_profile_model_and_namespace() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1-F Section 九 #14: forged vector citation/profile metadata is not truth
+# Section 九 #14: forged vector citation/profile metadata is not truth
 # ---------------------------------------------------------------------------
 
 
@@ -2153,7 +2153,7 @@ async def test_forged_vector_citation_metadata_is_not_truth() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Round 1-R1: public retrieve seam without version selection
+# Round 1-public retrieve seam without version selection
 # ---------------------------------------------------------------------------
 
 

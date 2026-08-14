@@ -1,4 +1,4 @@
-"""S2.5: Reading Record Identity Projection — pure unit tests for the
+"""Reading Record Identity Projection — pure unit tests for the
 priority matrix and source_label mapping.
 
 These tests exercise

@@ -1,6 +1,6 @@
-"""ASK-TURN-LIFECYCLE R4-5 — heartbeat + stale-run production recovery tests.
+"""ASK-TURN-LIFECYCLE — heartbeat + stale-run production recovery tests.
 
-Verifies the R4-5 production recovery contract:
+Verifies the production recovery contract:
 
 1. ``heartbeat_turn_run`` updates ``updated_at`` on streaming rows and is
    a no-op (no raise) on terminal/missing rows.
@@ -63,7 +63,7 @@ def _row(
 
 
 class TestHeartbeatConstants:
-    """R4-5: heartbeat constants must satisfy the lease/heartbeat invariant."""
+    """Heartbeat constants must satisfy the lease/heartbeat invariant."""
 
     def test_heartbeat_interval_is_positive(self) -> None:
         assert HEARTBEAT_INTERVAL_SECONDS > 0
@@ -90,7 +90,7 @@ class TestHeartbeatConstants:
 
 
 class TestHeartbeatTurnRun:
-    """R4-5a: ``heartbeat_turn_run`` updates ``updated_at`` on streaming rows."""
+    """``Heartbeat_turn_run`` updates ``updated_at`` on streaming rows."""
 
     @pytest.mark.asyncio
     async def test_heartbeat_updates_updated_at_with_streaming_guard(self) -> None:
@@ -147,7 +147,7 @@ class TestHeartbeatTurnRun:
 
 
 class TestHeartbeatAwareStaleDetection:
-    """R4-5a: ``list_stale_streaming_turn_runs`` is heartbeat-aware."""
+    """``List_stale_streaming_turn_runs`` is heartbeat-aware."""
 
     @pytest.mark.asyncio
     async def test_list_query_filters_on_both_started_at_and_updated_at(
@@ -186,7 +186,7 @@ class TestHeartbeatAwareStaleDetection:
         query = captured_query[0]
         # Must filter on started_at (wall-clock threshold).
         assert "started_at < $1" in query
-        # Must filter on updated_at (heartbeat threshold) — the R4-5 addition.
+        # Must filter on updated_at (heartbeat threshold) — the addition.
         assert "updated_at < $2" in query
         # Must only scan streaming rows.
         assert "status = 'streaming'" in query
@@ -229,7 +229,7 @@ class TestHeartbeatAwareStaleDetection:
 
 
 class TestStartupStaleStreamSweep:
-    """R4-5b: ``run_startup_stale_stream_sweep`` is the production entry point."""
+    """``Run_startup_stale_stream_sweep`` is the production entry point."""
 
     @pytest.mark.asyncio
     async def test_startup_sweep_calls_batch_reconciler_with_cancelled(self) -> None:
@@ -345,7 +345,7 @@ class TestStartupStaleStreamSweep:
 
 
 class TestStaleStreamSweeper:
-    """R4-5b: ``StaleStreamSweeper`` is the periodic safety-net sweeper."""
+    """``StaleStreamSweeper`` is the periodic safety-net sweeper."""
 
     @pytest.mark.asyncio
     async def test_sweeper_start_creates_task(self) -> None:
@@ -485,7 +485,7 @@ class TestStaleStreamSweeper:
 
 
 class TestMultiWorkerIdempotency:
-    """R4-5: multi-worker / repeated execution must be idempotent.
+    """Multi-worker / repeated execution must be idempotent.
 
     The CAS guard (``WHERE status = 'streaming'`` in
     ``terminal_agentic_turn_run``) is the idempotency seam. Two workers
@@ -656,7 +656,7 @@ class TestMultiWorkerIdempotency:
 
 
 class TestSweeperConstants:
-    """R4-5: sweeper constants must be conservative."""
+    """Sweeper constants must be conservative."""
 
     def test_periodic_sweep_interval_is_positive(self) -> None:
         assert PERIODIC_SWEEP_INTERVAL_SECONDS > 0

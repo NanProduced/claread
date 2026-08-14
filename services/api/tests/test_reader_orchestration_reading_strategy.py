@@ -195,7 +195,7 @@ def test_exam_grammar_bundle_lines_differ_between_cet_gaokao_kaoyan() -> None:
     assert any("四六级" in line for line in cet_lines)
     assert any("高考" in line for line in gaokao_lines)
     assert any("考研" in line for line in kaoyan_lines)
-    # Soft lenses stay distinct (R4)
+    # Soft lenses stay distinct
     assert any("信息定位" in line or "信息" in line for line in cet_lines)
     assert any("中学" in line for line in gaokao_lines)
     assert any("层次" in line for line in kaoyan_lines)
@@ -333,7 +333,7 @@ def test_gaokao_grammar_allows_broad_scope_without_name_gate() -> None:
 
 
 def test_exam_vocabulary_soft_lenses_remain_distinguishable() -> None:
-    """R4: exam vocabulary policies stay differentiated without forced scripts."""
+    """Exam vocabulary policies stay differentiated without forced scripts."""
     cet = "\n".join(
         resolve_reader_variant_strategy("exam", "cet").layers["vocabulary"].prompt_lines
     )

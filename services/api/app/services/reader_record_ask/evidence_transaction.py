@@ -1,6 +1,6 @@
-"""Host-only compensation seam shared by Ask model-view transactions (R4-A5-3).
+"""Host-only compensation seam shared by Ask model-view transactions.
 
-Selection inject (A5-2) and evidence expand (A5-3) commit one charged
+Selection inject and evidence expand commit one charged
 observation through the same two mutable host stores:
 
 1. :class:`EvidenceRegistry` — the turn's observation set;

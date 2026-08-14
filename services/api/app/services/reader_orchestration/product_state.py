@@ -13,7 +13,7 @@ from .pipeline_runner import (
 
 PRODUCT_STATE_UPDATED_EVENT_TYPE = "record_product_state_updated"
 
-# D6-P4 keeps terminal failure mapping fail-closed. Only explicit, user-remediable
+# Keeps terminal failure mapping fail-closed. Only explicit, user-remediable
 # attention codes may surface as action_required; worker/system/provider/tool/runtime
 # failures stay in failed.
 USER_ACTION_REQUIRED_ATTENTION_CODES: frozenset[str] = frozenset(

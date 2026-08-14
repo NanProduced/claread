@@ -1,5 +1,5 @@
 /**
- * ASK-RETRY-CONTRACT-R8 — pending send / recovery helpers.
+ * Pending send / recovery helpers.
  *
  * Authority is client_submission_id (stored on PendingSendRequest).
  * Map keys may be local-assistant-* or a canonical UUID after
@@ -71,7 +71,7 @@ export function clearPendingSendKeys(
 }
 
 /**
- * R8: UUID that still has a pending recovery entry must resend (same
+ * A UUID that still has a pending recovery entry must resend (same
  * client_submission_id), never /retry regenerate.
  */
 export function classifyRetryTargetWithPending(

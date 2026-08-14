@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# DATA-SCHEMA-BASELINE D2: exact favorite target union. No bare strings,
+# Exact favorite target union. No bare strings,
 # no legacy targets, no aliases.
 FavoriteTargetType = Literal["daily_reader_article", "reading_record"]
 

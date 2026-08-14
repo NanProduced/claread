@@ -1,4 +1,4 @@
-"""G3-R3: Unified Web Search adapter registry (production wiring).
+"""G3-Unified Web Search adapter registry (production wiring).
 
 Single source of truth for translating a :class:`ResolvedModelConfig`
 into a :class:`ResolvedWebSearchBinding` that carries BOTH the
@@ -28,7 +28,7 @@ Contract
   material. Those fields live only on the constructed backend (which
   is ``repr=False`` on :class:`ReaderRecordAskExecutionConfig`).
 
-Exact-model fail-closed readiness (G3-R1)
+Exact-model fail-closed readiness (G3-)
 -----------------------------------------
 Only probed, production-validated model names are enabled. All other
 models — including unprobed variants on the same provider — are
@@ -40,7 +40,7 @@ unavailable:
   available.
 - Other Qwen/DeepSeek variants and unknown models are unavailable.
 
-Endpoint / credential boundary (G3-R1)
+Endpoint / credential boundary (G3-)
 ---------------------------------------
 Credentials are NEVER sent to an unvalidated origin. The resolved
 ``base_url`` is validated before any adapter construction:
@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 # max-calls / max-results mapping).
 WEB_SEARCH_CAPABILITY_POLICY_VERSION: str = "reader_record_ask_web_search_v1"
 
-# R5 frozen policy: at most two provider attempts, with the coordinator
+# Frozen policy: at most two provider attempts, with the coordinator
 # allowing the second only after the first outcome is ``no_results``.
 _DEFAULT_MAX_CALLS: int = 2
 _DEFAULT_MAX_RESULTS_PER_CALL: int = 5
@@ -125,7 +125,7 @@ _DEFAULT_MAX_RESULTS_PER_CALL: int = 5
 _QWEN_DASHSCOPE_RESPONSES_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _DEEPSEEK_ANTHROPIC_BASE_URL: str = "https://api.deepseek.com/anthropic"
 
-# Exact-model fail-closed whitelist (G3-R1). The DeepSeek V4 Flash and Pro
+# Exact-model fail-closed whitelist (G3-). The DeepSeek V4 Flash and Pro
 # product options share the same provider,
 # Anthropic-compatible Web Search endpoint, and adapter contract. Unknown
 # variants remain unavailable.
@@ -136,7 +136,7 @@ _DEEPSEEK_ALLOWED_MODELS: frozenset[str] = frozenset(
     {"deepseek-v4-flash", "deepseek-v4-pro"}
 )
 
-# Official origin hosts for endpoint validation (G3-R1).
+# Official origin hosts for endpoint validation (G3-).
 _QWEN_OFFICIAL_HOST: str = "dashscope.aliyuncs.com"
 _DEEPSEEK_OFFICIAL_HOST: str = "api.deepseek.com"
 
@@ -150,7 +150,7 @@ class WebSearchBackendFactory(Protocol):
     """Construct a :class:`WebSearchBackend` from resolved model config.
 
     Implementations MUST NOT make any network call during construction
-    — they only assemble the adapter object. Network calls happen in
+    they only assemble the adapter object. Network calls happen in
     :meth:`WebSearchBackend.search_web`.
 
     Raising any exception signals that the adapter is unverified or
@@ -237,7 +237,7 @@ class WebSearchAdapterRegistry:
         raises — adapter construction failures are caught and mapped
         to a disabled binding.
 
-        G3-R1: exact-model fail-closed. Only probed model names are
+        G3-exact-model fail-closed. Only probed model names are
         enabled. Endpoint origin is validated before any adapter
         construction — credentials are never sent to unvalidated
         origins.
@@ -300,7 +300,7 @@ class WebSearchAdapterRegistry:
         model_name: str,
         base_url: str,
     ) -> ResolvedWebSearchBinding:
-        # G3-R1: exact-model fail-closed.
+        # G3-exact-model fail-closed.
         if model_name not in _QWEN_ALLOWED_MODELS:
             return _unavailable_binding(
                 provider="dashscope",
@@ -311,7 +311,7 @@ class WebSearchAdapterRegistry:
                 provider="dashscope",
                 protocol="dashscope_responses",
             )
-        # G3-R1: endpoint origin validation.
+        # G3-endpoint origin validation.
         # Empty base_url (dashscope_native) → official DashScope endpoint.
         # Non-empty base_url → must be official HTTPS DashScope origin.
         if base_url:
@@ -356,7 +356,7 @@ class WebSearchAdapterRegistry:
         model_name: str,
         base_url: str,
     ) -> ResolvedWebSearchBinding:
-        # G3-R1: exact-model fail-closed.
+        # G3-exact-model fail-closed.
         if model_name not in _DEEPSEEK_ALLOWED_MODELS:
             return _unavailable_binding(
                 provider="deepseek",
@@ -367,7 +367,7 @@ class WebSearchAdapterRegistry:
                 provider="deepseek",
                 protocol="deepseek_anthropic",
             )
-        # G3-R1: endpoint origin validation.
+        # G3-endpoint origin validation.
         # The resolved base_url origin MUST be https://api.deepseek.com.
         # The Anthropic Web Search endpoint is constructed from this
         # validated origin. Credentials are NEVER sent to unvalidated
@@ -434,7 +434,7 @@ def build_production_web_search_adapter_registry() -> WebSearchAdapterRegistry:
             api_key=api_key,
             model_name=model_name,
             base_url=base_url,
-            # ASK-WEB-R4-R1: backend budget MUST come from the same
+            # ASK-WEB-backend budget MUST come from the same
             # configuration fact as the capability. The capability is
             # built with ``_DEFAULT_MAX_RESULTS_PER_CALL`` below; the
             # backend must mirror that exact value so the Coordinator's
@@ -455,7 +455,7 @@ def build_production_web_search_adapter_registry() -> WebSearchAdapterRegistry:
             api_key=api_key,
             model_name=model_name,
             base_url=base_url,
-            # ASK-WEB-R4-R1: backend budget MUST come from the same
+            # ASK-WEB-backend budget MUST come from the same
             # configuration fact as the capability (see qwen_factory).
             max_results_per_call=_DEFAULT_MAX_RESULTS_PER_CALL,
             timeout=18.0,

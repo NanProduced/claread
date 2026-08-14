@@ -262,7 +262,7 @@ async def test_real_executor_keeps_highest_priority_item_for_same_span(
     assert item_types == {"context_gloss", "phrase_gloss"}
     assert result.diagnostics is not None
     assert result.diagnostics["skipped_item_count"] == 2
-    # R7-2: the multiword vocab_highlight ("prompted the team" with a
+    # The multiword vocab_highlight ("prompted the team" with a
     # single-word headword) is fail-closed skipped by the single-
     # lexical-item guard BEFORE the span-conflict pass; the single-word
     # vocab_highlight still loses the same-span priority contest to

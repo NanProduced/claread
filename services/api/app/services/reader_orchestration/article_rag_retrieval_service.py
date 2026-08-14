@@ -1,7 +1,7 @@
-"""D6-I4E: Article RAG Retrieval Service.
+"""Article RAG Retrieval Service.
 
-Read-only retrieval service that combines the D6-I4A index plan,
-the D6-I4D embedding provider, and the D6-I4E vector searcher to
+Read-only retrieval service that combines the index plan,
+the embedding provider, and the vector searcher to
 answer a query against a single ``reading_record``.  The service is
 fail-closed end-to-end:
 
@@ -126,16 +126,16 @@ FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH = (
 # Fixed local error messages for contract / identity failures.  These
 # strings never interpolate caller-supplied input — the offending value
 # is never echoed in ``str``, ``repr``, ``args``, or traceback.
-_P1F_MSG_INDEXED_RUN_CONTRACT_MISMATCH = (
+_MSG_INDEXED_RUN_CONTRACT_MISMATCH = (
     "Article RAG index run identity does not match the frozen contract"
 )
-_P1F_MSG_INDEX_RUN_PLAN_MISMATCH = (
+_MSG_INDEX_RUN_PLAN_MISMATCH = (
     "Article RAG indexed run does not match the current plan"
 )
-_P1F_MSG_QUERY_EMBEDDING_MODEL_MISMATCH = (
+_MSG_QUERY_EMBEDDING_MODEL_MISMATCH = (
     "Article RAG query embedding model does not match the frozen contract"
 )
-_P1F_MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH = (
+_MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH = (
     "Article RAG query embedding dimension does not match the frozen contract"
 )
 
@@ -329,8 +329,8 @@ class ArticleRagRetrievalService:
 
     Combines:
       * :class:`ArticleRagIndexPlanService` to rebuild the current plan;
-      * the embedding provider (D6-I4D) to embed the query text;
-      * the vector searcher (D6-I4E vector search module) to find
+      * the embedding provider to embed the query text;
+      * the vector searcher to find
         candidate hits.
 
     The service is fail-closed: every intermediate check that fails
@@ -426,7 +426,7 @@ class ArticleRagRetrievalService:
                 failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
             )
 
-        # Phase 0: bind the frozen embedding + vector-space contract.
+        # Bind the frozen embedding + vector-space contract.
         # The Article RAG index is a single path — no resolver call,
         # no caller-supplied version string, no exception unwrapping.
         # All 4 contract fields (collection, model, dim, text_type)
@@ -484,7 +484,7 @@ class ArticleRagRetrievalService:
                 != contract.vector_collection
             ):
                 raise ArticleRagRetrievalServiceError(
-                    _P1F_MSG_INDEXED_RUN_CONTRACT_MISMATCH,
+                    _MSG_INDEXED_RUN_CONTRACT_MISMATCH,
                     retryable=False,
                     failure_code=FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH,
                 )
@@ -497,7 +497,7 @@ class ArticleRagRetrievalService:
                 or indexed.chunk_count != len(plan.chunks)
             ):
                 raise ArticleRagRetrievalServiceError(
-                    _P1F_MSG_INDEX_RUN_PLAN_MISMATCH,
+                    _MSG_INDEX_RUN_PLAN_MISMATCH,
                     retryable=False,
                     failure_code=(
                         FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH
@@ -573,7 +573,7 @@ class ArticleRagRetrievalService:
             or query_embedding.model != contract.query_embedding_model
         ):
             raise ArticleRagRetrievalServiceError(
-                _P1F_MSG_QUERY_EMBEDDING_MODEL_MISMATCH,
+                _MSG_QUERY_EMBEDDING_MODEL_MISMATCH,
                 retryable=False,
                 failure_code=(
                     FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH
@@ -591,7 +591,7 @@ class ArticleRagRetrievalService:
             or len(query_vector) != expected_dimension
         ):
             raise ArticleRagRetrievalServiceError(
-                _P1F_MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH,
+                _MSG_QUERY_EMBEDDING_DIMENSION_MISMATCH,
                 retryable=False,
                 failure_code=(
                     FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH

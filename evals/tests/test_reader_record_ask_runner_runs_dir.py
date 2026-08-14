@@ -1,8 +1,8 @@
-"""Tests for R4-A3 runner runs-dir path normalization (R4-A4-2R P0).
+"""Tests for runner runs-dir path normalization.
 
-Spec: R4-A4-2R — Real Eval Fixture Identity / Path Contract Repair.
+Spec: Real Eval Fixture Identity / Path Contract Repair.
 
-Audit finding (R4-A4-2): artifacts were written to
+Audit finding: artifacts were written to
 ``services/services/api/tmp/...`` because the runner passed a relative
 ``--runs-dir`` string to the pytest subprocess whose cwd was
 ``services/api/``. The same relative path resolved to

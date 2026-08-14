@@ -1,4 +1,4 @@
-"""Turn coordinator — single turn state center for Ask model-views (R4-A5-7).
+"""Turn coordinator — single turn state center for Ask model-views.
 
 Narrow public surface
 ---------------------
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
         MapSourceMaterialProvider,
     )
 
-    # R1.5 P0-1: typed store/adapter — coordinator no longer depends on Any.
+    # Typed store/adapter — coordinator no longer depends on Any.
     from app.services.reader_record_ask.thread_memory.repository import (
         ThreadMemoryRepository,
     )
@@ -168,7 +168,7 @@ _MAX_MAP_ENTRY_SOURCES = 32
 _MAX_DESCRIPTOR_MAP_ENTRY_SOURCES = 8
 
 # G1-b5: default web search call limit. Mirrors the G0/G1 capability
-# resolver default (2 as of ASK-WEB-QUALITY-R5). The actual limit comes from the
+# resolver default (2 as of ASK-WEB-QUALITY-). The actual limit comes from the
 # resolved capability's ``max_calls`` field; this constant is only used
 # when the coordinator is constructed without an explicit
 # ``max_web_search_calls`` AND the capability is unavailable (defensive
@@ -280,7 +280,7 @@ class HostBudgetExhausted(Exception):
 
 
 class _FenceFailure(Exception):
-    """R1.6 P1-1: sentinel raised when ``check_all_bindings`` crashes.
+    """Sentinel raised when ``check_all_bindings`` crashes.
 
     The caller (``_load_memory_snapshot``) catches this and skips memory
     injection entirely — old bindings must NEVER be reused because they
@@ -300,7 +300,7 @@ class MeteredToolReturn:
     duration_ms: int = 0
     # True when the host must abort the agent (no ToolReturnPart to model).
     host_budget_abort: bool = False
-    # ASK-WEB-R4-R1: safe, restricted diagnostic short-code carried from
+    # ASK-WEB-safe, restricted diagnostic short-code carried from
     # the Coordinator's web search decision tree. ONLY short codes from
     # the frozen allowlist appear here (``ok`` / ``empty`` / ``call_limit``
     # / ``capability_or_backend_missing`` / ``backend_exception`` /
@@ -327,7 +327,7 @@ class TurnAssembly:
     baseline_result: BaselineModelViewResult
     map_result: ArticleMapResult
     available_handle_ids: tuple[str, ...]
-    # ASK-UX-COT-COMPOSER-R3 P2 — rendered focus selections section
+    # ASK-UX-COT-COMPOSER- — rendered focus selections section
     # (additional user-pinned anchors beyond the primary selection),
     # charged to the selection account. Empty when absent / no fit.
     # Appended to the model-visible user prompt by the runtime; excluded
@@ -342,7 +342,7 @@ class _OuterTxnReceipt:
     selection_result: SelectionModelViewResult | None = None
     selection_observation: ServerEvidenceObservation | None = None
     selection_charge: int = 0
-    # R3 P2: focus selections charged to the shared selection account
+    # Focus selections charged to the shared selection account
     # (registry-free; refunded as plain chars on outer rollback).
     focus_charge: int = 0
     baseline_result: BaselineModelViewResult | None = None
@@ -390,12 +390,12 @@ class TurnCoordinator:
         # memory data block is injected. When False (default) the
         # assembly path behaves exactly as today. ``memory_repository``
         # and ``thread_id`` are required when ``memory_enabled`` is True.
-        # R1.5 P0-1: ``memory_repository`` is typed (no longer ``Any``);
+        # ``Memory_repository`` is typed (no longer ``Any``);
         # ``thread_id`` is a UUID string. Repository calls are keyword-only.
         memory_enabled: bool = False,
         memory_repository: ThreadMemoryRepository | None = None,
         thread_id: str | UUID | None = None,
-        # R2 production manager. Direct coordinator tests keep the R1
+        # Production manager. Direct coordinator tests keep the
         # deterministic path unless explicitly enabled.
         memory_manager_enabled: bool = False,
         memory_compactor: Any | None = None,
@@ -448,9 +448,9 @@ class TurnCoordinator:
         self.renderer = renderer if renderer is not None else ModelViewRenderer()
         self.max_search_current_article_calls = max_search_current_article_calls
         self.product_search_enabled = product_search_enabled
-        # M3 C2: server-only map-source material provider (§3.4 preflight).
+        # M3 server-only map-source material provider (§3.4 preflight).
         # None = no provider configured → coordinator falls back to the
-        # existing unit-window map (C2 skeleton; production wiring is a
+        # existing unit-window map ( skeleton; production wiring is a
         # separate task). When set, load() runs in preflight before the
         # outer transaction.
         self._map_source_material_provider = map_source_material_provider
@@ -529,7 +529,7 @@ class TurnCoordinator:
     # ------------------------------------------------------------------
 
     async def _load_memory_snapshot(self) -> ThreadMemorySnapshot | None:
-        """R1.5: load + CAS-check + fence-rebuild + validate the snapshot.
+        """Load + CAS-check + fence-rebuild + validate the snapshot.
 
         Runs **before** the outer commit transaction so no budget /
         registry / ledger mutation happens during memory loading. The
@@ -540,7 +540,7 @@ class TurnCoordinator:
         immediately — zero behavioral drift from the pre-R1A path, and
         **zero repository I/O** (no repository constructed, no DB call).
 
-        R1.5 P0-1/P0-4 hardening (replaces the R1A advisory-only flow):
+         Hardening (replaces the R1A advisory-only flow):
             1. Convert ``self.thread_id`` (str) → :class:`UUID`; reject
                non-UUID values (fail-soft → None, no injection).
             2. Load snapshot via keyword-only ``get_thread_memory_snapshot``.
@@ -554,14 +554,14 @@ class TurnCoordinator:
                episode's ``source_bindings`` with the returned list so
                render sees accurate ``status='invalid'`` markers. Failed
                article facts degrade to ``prior_mention`` at render time
-               WITHOUT retaining citation_ids (R0.1 §8.1).
+               WITHOUT retaining citation_ids (§8.1).
             5. Allowlist validate: ``validate_snapshot`` strips facts
                whose ``source_ids`` are not in the Host allowlist or
                whose article facts lack a Host binding. If stripped
                ratio > 20% → reject the whole snapshot and fall back to
                emergency_full_snapshot (deterministic rebuild). If the
                rebuild also fails validation → return None (window
-               fallback; R1 does not inject memory).
+               fallback; does not inject memory).
         """
         if not self.memory_enabled or self.memory_repository is None or not self.thread_id:
             return None
@@ -600,7 +600,7 @@ class TurnCoordinator:
             self._recent_history_view = prepared.recent_history_view
             return prepared.snapshot
 
-        # R1.5 P0-1: unify UUID thread_id; repository requires UUID.
+        # Unify UUID thread_id; repository requires UUID.
         try:
             thread_uuid = UUID(str(self.thread_id))
         except (ValueError, TypeError, AttributeError):
@@ -630,7 +630,7 @@ class TurnCoordinator:
         canonical_messages = list(canonical_view.canonical_messages)
         ok_turn_runs = list(canonical_view.ok_turn_runs)
 
-        # R1.6 P0-2: Host binding map — the single source of truth for
+        # Host binding map — the single source of truth for
         # binding content. Derived from canonical ok turn runs.
         host_bindings = build_host_bindings(ok_turn_runs)
 
@@ -658,12 +658,12 @@ class TurnCoordinator:
                 if snapshot is None or not snapshot.episodes:
                     return None
 
-        # R1.5 P0-4: fence rebuild — use check_all_bindings RETURN VALUE
+        # Fence rebuild — use check_all_bindings RETURN VALUE
         # to rebuild episode bindings. The old code discarded the return
         # value, so render never saw ``status='invalid'`` markers and
         # failed article facts were NOT degraded to prior_mention.
         #
-        # R1.6 P1-1: if check_all_bindings raises, the ENTIRE memory
+        # If check_all_bindings raises, the ENTIRE memory
         # snapshot is NOT injected — return None. Old validity_check
         # must NEVER be reused (it may carry a stale 'valid' status).
         fence_context = {
@@ -703,10 +703,10 @@ class TurnCoordinator:
     ) -> ThreadMemorySnapshot | None:
         """Fence rebuild + allowlist validate, with emergency fallback.
 
-        R1.6 P1-1: raises ``_FenceFailure`` if ``check_all_bindings``
+         Raises ``_FenceFailure`` if ``check_all_bindings``
         raises — the caller must skip memory injection entirely.
 
-        R1.6 P0-2: ``validate_snapshot`` receives the Host binding map
+         ``validate_snapshot`` receives the Host binding map
         (not just an id set) so tampered bindings are rejected.
         """
         from app.services.reader_record_ask.thread_memory.allowlist import (
@@ -793,7 +793,7 @@ class TurnCoordinator:
         if len(self.registry) != 0:
             raise RuntimeError("turn coordinator requires an empty registry before assemble")
 
-        # ---- M3 C2: map-source material preflight (§3.4 — before outer txn).
+        # ---- M3 map-source material preflight (§3.4 — before outer txn).
         # Pure I/O + planning: loads server-owned heading + descriptor
         # candidates. Fence failure (§5.1 6(b)) returns a material with
         # material_fence_ok=False; _map_sources_from_scope then falls back
@@ -948,7 +948,7 @@ class TurnCoordinator:
                 else 0
             )
 
-        # 1b) R3 P2 — focus selections: the user-pinned anchors BEYOND the
+        # 1b) — focus selections: the user-pinned anchors BEYOND the
         # primary selection (envelope.focus_anchors[1:]; the primary is
         # already the selection block above). Shares the selection account;
         # per-snippet fail-soft (a snippet that no longer fits is dropped,
@@ -997,7 +997,7 @@ class TurnCoordinator:
             )
 
         # 3) Map assemble (optional; budget_denied → absent-like, no raise).
-        # M3 C2: material (heading + descriptor candidates) is merged into
+        # M3 material (heading + descriptor candidates) is merged into
         # the SAME assemble_article_map() call — shared fit → charge →
         # issue cursor → rollback transaction (§5.3 19). Descriptor sources
         # are candidates (§3.5.1.3 / §5.1 25): cost-fit may silently drop
@@ -1261,7 +1261,7 @@ class TurnCoordinator:
             except Exception:  # noqa: BLE001
                 unproven.append("selection_refund")
 
-        # 4b) R3 P2 focus selections — registry-free chars on the shared
+        # 4b) focus selections — registry-free chars on the shared
         # selection account; refund after the selection observation rollback.
         if receipt.focus_charge > 0:
             if self.budget.spent("selection") >= receipt.focus_charge:
@@ -1293,7 +1293,7 @@ class TurnCoordinator:
     async def _load_map_source_material(self) -> MapSourceMaterial | None:
         """§3.4 preflight — load map-source material before outer transaction.
 
-        Returns ``None`` when no provider is configured (C2 skeleton —
+        Returns ``None`` when no provider is configured ( skeleton —
         production wiring is a separate task; coordinator falls back to
         the unit-window map). When the provider is configured, returns
         its :class:`MapSourceMaterial` — which may carry
@@ -1301,9 +1301,9 @@ class TurnCoordinator:
         (``_map_sources_from_scope``) handles the fallback.
 
         ``include_rag_ask_only`` is fixed to ``False`` in M3 stage C
-        (B3 heading baseline + wiring skeleton only; opt-in is a later
+        ( heading baseline + wiring skeleton only; opt-in is a later
         stage). Heading enrichments are populated regardless of opt-in
-        per §3.5.2 B3 heading-enabled baseline.
+        per §3.5.2 heading-enabled baseline.
 
         No cursor / ledger / budget mutation here — pure preflight I/O.
         """
@@ -1323,7 +1323,7 @@ class TurnCoordinator:
     ) -> list[ArticleMapEntrySource]:
         """Build map entry sources from document scope + map-source material.
 
-        M3 C2 — implements §5.4.1 (deterministic merge order), §5.4.2
+        M3 — implements §5.4.1 (deterministic merge order), §5.4.2
         (hard caps: 32 body + 8 descriptor = 40 max), §5.4.3 (overflow
         drop, no cross-kind substitution), §5.2 13 (heading only onto
         same unit source — no standalone heading entry), §5.1 6(b)
@@ -1342,7 +1342,7 @@ class TurnCoordinator:
         """
         # §5.1 6(b): material None (no provider) or fence failure →
         # unit-window fallback (no heading, no descriptor). This is the
-        # pre-C2 behavior, preserving the B3-heading-enabled-baseline-
+        # pre- behavior, preserving the -
         # before fallback shape per §5.1 6(b).
         if material is None or not material.material_fence_ok:
             units = sorted(scope.units, key=lambda u: u.order_index)
@@ -2135,7 +2135,7 @@ class TurnCoordinator:
             final_detail_code=self._web_search_final_detail_code,
         )
 
-    # ASK-WEB-R4: executable-capability properties used by the runtime to
+    # ASK-WEB-executable-capability properties used by the runtime to
     # decide whether to mount ``expand_evidence`` and
     # ``search_current_article``. When ``False``, the tool is NOT
     # registered on the agent and the model never sees it — no

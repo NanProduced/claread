@@ -1,4 +1,4 @@
-# task-history: D6-A0 (renamed from test_d6_a0_static_boundary.py)
+# task-history: (renamed from test_d6_a0_static_boundary.py)
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,12 +39,12 @@ def _has_module_import(source: str, module: str) -> bool:
 
 
 def test_user_editorial_assets_is_schema_only_no_runtime_service_import() -> None:
-    """D6-A0 boundary guard.
+    """Boundary guard.
 
     `app.schemas.user_editorial_assets` ships only draft anchor DTOs plus
     `UserEditorialAssetScope`. It must not be wired into any runtime service
     (`app/services/*`) except the dedicated Reading Record anchor gate module
-    added in D6-U1/D6-A1.
+    added in /.
     """
     service_files = _python_files(Path("services"))
 
@@ -67,10 +67,10 @@ def test_user_editorial_assets_is_schema_only_no_runtime_service_import() -> Non
 
 
 def test_user_editorial_assets_is_schema_only_no_agent_import() -> None:
-    """D6-A0 boundary guard.
+    """Boundary guard.
 
     Same rule as the service-side guard: agents under `app/agents/*` must not
-    import the schema-only `user_editorial_assets` until D6-A3 (Ask tool
+    import the schema-only `user_editorial_assets` until (Ask tool
     signature switch) lands. Agent runtime stays on legacy `target_sentence_id`
     / `target_key` until that work ships.
     """
@@ -90,7 +90,7 @@ def test_user_editorial_assets_is_schema_only_no_agent_import() -> None:
 
 
 def test_user_editorial_asset_anchor_set_is_schema_only_no_runtime_import() -> None:
-    """D6-U2 multi-anchor decision guard.
+    """Multi-anchor decision guard.
 
     `UserEditorialAssetAnchorSet` / `UserEditorialAssetAnchorRange` are
     schema-only drafts for future multi_text writes. V1c production remains
@@ -117,17 +117,17 @@ def test_user_editorial_asset_anchor_set_is_schema_only_no_runtime_import() -> N
                 offenders.append(f"{rel} -> {symbol}")
 
     assert offenders == [], (
-        "multi-anchor DTOs are schema-only in D6-U2; runtime offenders: " + ", ".join(offenders)
+        "multi-anchor DTOs are schema-only (schema layer only); runtime offenders: " + ", ".join(offenders)
     )
 
 
 def test_reader_orchestration_does_not_import_reader_ask_as_fact_source() -> None:
-    """D6-A0 boundary guard.
+    """Boundary guard.
 
     The new `reader_orchestration` package must not reach into the legacy
     `reader_ask` package to look up Reading Record facts. Reader Record fact
     lookup goes through the snapshot path; `reader_ask` keeps its own legacy
-    `render_scene_json` / `target_key` fact source until D6-A4 (Ask supplement
+    `render_scene_json` `target_key` fact source until (Ask supplement
     write cutover) lands.
     """
     orchestration_files = _python_files(Path("services/reader_orchestration"))
@@ -146,12 +146,12 @@ def test_reader_orchestration_does_not_import_reader_ask_as_fact_source() -> Non
 
     assert offenders == [], (
         "reader_orchestration must not import reader_ask as a fact source; "
-        "the following cross-package imports are forbidden until D6-A4: " + ", ".join(offenders)
+        "the following cross-package imports are forbidden until the ask/orchestration boundary is explicitly reopened: " + ", ".join(offenders)
     )
 
 
 def test_reader_record_api_does_not_read_render_scene_json() -> None:
-    """D6-A0 boundary guard.
+    """Boundary guard.
 
     Files that participate in the new `Reader Record` API surface
     (under `app/services/reader_orchestration` and the `reader_plate_*`
@@ -160,7 +160,7 @@ def test_reader_record_api_does_not_read_render_scene_json() -> None:
     Legacy `render_scene_json` remains acceptable inside `reader_ask/`,
     `reader_scene.py`, `reader_notes.py`, `user_annotations.py` because those
     services are explicitly kept on the legacy `/app/reader/{recordId}` path
-    until D6-A4..A6.
+    until...
     """
     forbidden_strings = (
         "render_scene_json",
@@ -195,7 +195,7 @@ def test_reader_record_api_does_not_read_render_scene_json() -> None:
 
 
 def test_retained_rr_asset_writers_only_import_allowlisted_modules() -> None:
-    """D6-A5 narrow boundary for retained Reading Record asset writers.
+    """Narrow boundary for retained Reading Record asset writers.
 
     ``user_annotations.py`` and ``reader_notes.py`` are retained RR asset
     writers. They may use only the four explicit orchestration seams needed
@@ -246,7 +246,7 @@ def test_retained_rr_asset_writers_only_import_allowlisted_modules() -> None:
 
 
 def test_reader_record_ask_modules_do_not_import_legacy_runtime_or_scene() -> None:
-    """D6-A6 minimal-slice boundary guard.
+    """Minimal-slice boundary guard.
 
     The new Reading Record Ask modules may validate Reading Record snapshot
     facts, but they must not import the legacy `reader_ask` runtime or the old
@@ -366,7 +366,7 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
 
 
 # ---------------------------------------------------------------------------
-# ARCH-OPT-C1 Phase L — Article RAG Ask exit guard
+# ARCH-OPT- Phase L — Article RAG Ask exit guard
 #
 # The 9 ``article_rag_ask_*`` modules under ``reader_orchestration`` are
 # the retired Ask prompt-integration chain.  Production Ask flows through
@@ -396,7 +396,7 @@ _ARTICLE_RAG_ASK_EXIT_LEGACY_FILES = frozenset(
 
 
 def test_production_app_does_not_import_legacy_article_rag_ask_chain() -> None:
-    """ARCH-OPT-C1 Phase L/P: legacy cluster stays dead, physically.
+    """ARCH-OPT- Phase L/P: legacy cluster stays dead, physically.
 
     First asserts all 9 retired ``article_rag_ask_*`` files are
     physically absent (Phase P deletion) — restoring any of them
@@ -433,7 +433,7 @@ def test_production_app_does_not_import_legacy_article_rag_ask_chain() -> None:
 
 
 def test_canonical_acceptance_and_runbook_avoid_legacy_article_rag_ask_chain() -> None:
-    """ARCH-OPT-C1 Phase L: canonical docs/tests must not recommend the
+    """ARCH-OPT- Phase L: canonical docs/tests must not recommend the
     retired Ask chain.
 
     The canonical Article RAG acceptance test and the operational

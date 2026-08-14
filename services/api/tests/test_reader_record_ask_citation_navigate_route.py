@@ -1,4 +1,4 @@
-"""Route-level secure citation navigation tests (ASK-PROV-P3-R1)."""
+"""Route-level secure citation navigation tests (ASK-PROV-)."""
 
 from __future__ import annotations
 

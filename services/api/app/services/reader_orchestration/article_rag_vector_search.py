@@ -1,7 +1,7 @@
-"""D6-I4E: Article RAG Vector Search Adapter Foundation.
+"""Article RAG Vector Search Adapter Foundation.
 
 Defines the read-side ``ArticleRagVectorSearcher`` Protocol that the
-D6-I4E retrieval service depends on, plus a real Zilliz / Milvus
+retrieval service depends on, plus a real Zilliz / Milvus
 search adapter foundation (lazy ``pymilvus`` init, fail-closed default,
 opt-in smoke), an in-memory ``FakeArticleRagVectorSearcher`` for tests,
 and a settings-driven ``build_default_article_rag_vector_searcher``
@@ -371,7 +371,7 @@ def _extract_field(entry: dict[str, Any], field_name: str) -> Any | None:
 class ZillizArticleRagVectorSearcher:
     """Real Zilliz / Milvus searcher for the Article RAG retrieval service.
 
-    Mirrors :class:`ZillizArticleRagVectorWriter` from D6-I4D:
+    Mirrors :class:`ZillizArticleRagVectorWriter`:
 
     * Constructor does **not** open a network connection.  The first
       :meth:`search` call lazily constructs

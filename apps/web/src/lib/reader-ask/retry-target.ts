@@ -1,5 +1,5 @@
 /**
- * ASK-RETRY-CONTRACT-R1 — explicit RetryTarget classification.
+ * Explicit RetryTarget classification.
  *
  * Never scatter `local-*` string checks through the panel. The UI must
  * distinguish:
@@ -44,7 +44,7 @@ export type PendingSendRequest = {
   entryAction: ReaderAskEntryActionDto;
   model: string | null | undefined;
   webSearchMode: WebSearchModeDto;
-  /** Client-generated UUID for idempotent claim (R2). */
+  /** Client-generated UUID for idempotent claim. */
   clientSubmissionId: string;
   /** Optimistic local pair ids (UI only). */
   localUserId: string;
@@ -78,7 +78,7 @@ export function classifyRetryTarget(messageId: string): RetryTarget | null {
 }
 
 /**
- * R8: when recovery is still open for this bubble (including after
+ * When recovery is still open for this bubble (including after
  * message.started promoted local → UUID), force pending_submission so
  * CTA is 重新发送 and never /retry.
  */

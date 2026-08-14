@@ -1,4 +1,4 @@
-"""T5.6a-P1 — SectionIdentity + strict delimiter-safe target keys."""
+"""SectionIdentity + strict delimiter-safe target keys."""
 
 from __future__ import annotations
 
@@ -191,7 +191,7 @@ def test_sc19_strict_decode_rejects_garbage_and_collision_trap() -> None:
 
 
 def test_codec_rejects_leading_zero_length_prefix() -> None:
-    # P1: `unit_range_v1|01.a|1.b|0.|0.` must throw.
+    # `Unit_range_v1|01.a|1.b|0.|0.` must throw.
     with pytest.raises(SectionIdentityError):
         decode_section_target_key("unit_range_v1|01.a|1.b|0.|0.")
     with pytest.raises(SectionIdentityError):

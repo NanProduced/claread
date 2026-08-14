@@ -14,7 +14,7 @@ numbers with measure words) from ``final_text``; each must appear in
 
 Failure ⇒ high severity.
 
-R4-A4-0 (Task 4) audit findings addressed here:
+Audit findings addressed here:
 
 1. Structural numbering (``1.`` / ``2.`` / ``3.`` from exercise answer
    lists and reference answer lists) was being picked up by
@@ -37,7 +37,7 @@ from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.evaluators.unsupported_temporal_claims import (
     YEAR_RE,
 )
-from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 DIMENSION = "numeric_grounding"
 
@@ -45,7 +45,7 @@ DIMENSION = "numeric_grounding"
 # grounded numeric claim. Replaced with a placeholder before extraction.
 ORDINAL_RE = re.compile(r"第\s*\d+\s*题")
 
-# R4-A4-0 (Task 4): top-level structural list markers
+# Top-level structural list markers
 # ``1.`` / ``2、`` / ``3)`` at the start of a line are structural
 # numbering (exercise items, reference-answer items, enumerated
 # answers). The digit inside is NOT a numeric claim about the article.
@@ -55,7 +55,7 @@ ORDINAL_RE = re.compile(r"第\s*\d+\s*题")
 # non-digit (including CJK characters) immediately follows the marker.
 LIST_MARKER_RE = re.compile(r"(?m)^[ \t]*\d+[ \t]*[.、)](?!\d)")
 
-# R4-A4-0 (Task 4): CN date components ``M月`` and ``D日``. After
+# CN date components ``M月`` and ``D日``. After
 # ``YEAR_RE`` strips ``YYYY年``, leftover ``6月`` / ``5日`` fragments
 # are date structure, not standalone numeric claims. They are still
 # caught by ``unsupported_temporal_claims`` via ``CN_DATE_RE`` /
@@ -82,7 +82,7 @@ def _bare_value(token: str) -> str:
 
 
 def evaluate_numeric_grounding(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
 ) -> EvalDimensionResult:
     final_text = artifact.final_text or ""
@@ -98,7 +98,7 @@ def evaluate_numeric_grounding(
     masked = YEAR_RE.sub(" ", final_text)
     masked = ORDINAL_RE.sub(" ", masked)
 
-    # R4-A4-0 (Task 4): mask structural list markers and CN date
+    # Mask structural list markers and CN date
     # components so their digits are not re-counted as numeric claims.
     masked = LIST_MARKER_RE.sub(" ", masked)
     masked = CN_DATE_COMPONENT_RE.sub(" ", masked)

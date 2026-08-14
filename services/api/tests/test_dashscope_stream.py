@@ -476,7 +476,7 @@ async def test_stream_skips_chunks_without_choices() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1: ThinkingPart continuation on tool rounds
+# ThinkingPart continuation on tool rounds
 # ---------------------------------------------------------------------------
 
 _SENTINEL_REASONING = "SENTINEL_REASONING_PRIVATE_9f3c_NEVER_SSE"

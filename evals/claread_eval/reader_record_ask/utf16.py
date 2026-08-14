@@ -1,7 +1,7 @@
-"""UTF-16 code unit helpers for R4-A3 harness.
+"""UTF-16 code unit helpers for the evaluation harness.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: UTF-16 长度修正（P1-3）.
+spec.md` — Requirement: UTF-16 长度修正.
 
 The previous harness computed UTF-16 length as::
 

@@ -1,4 +1,4 @@
-"""T5.6a — project SectionCandidate[] from a trusted outline (pure)."""
+"""project SectionCandidate[] from a trusted outline (pure)."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def project_section_candidates_from_outline(
 ) -> tuple[SectionCandidate, ...]:
     """Return stable-order candidates or empty on any fail-closed condition.
 
-    Rules (R1 / T5.6a):
+    Rules:
     - only ready|partial + matching source identity
     - **any** node with invalid range → zero candidates (full fail-closed)
     - same geometric range de-duplicated (first wins); nested ranges not merged

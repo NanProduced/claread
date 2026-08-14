@@ -1,4 +1,4 @@
-# task-history: D6-I3G (renamed from test_d6_i3g_source_artifact_service.py)
+# task-history: (renamed from test_d6_i3g_source_artifact_service.py)
 from __future__ import annotations
 
 import asyncio

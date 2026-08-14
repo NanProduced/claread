@@ -1,6 +1,6 @@
 """Compaction-input redaction (defense in depth).
 
-R0.1 §8.3 安全门第 3 条: every compaction input is scanned for
+ §8.3 安全门第 3 条: every compaction input is scanned for
 secrets a second time. The upstream ``IncrementalRedactor``
 (``reasoning_projection.py:353``) is the primary redaction seam and
 runs at reasoning-projection time. This module is the **second layer**
@@ -20,7 +20,7 @@ minimum rules (reasoning_projection.py:122-174):
 
 Replacements are typed markers (``[REDACTED:<kind>]``) so callers can
 audit hits per category. ``IncrementalRedactor`` itself is NOT modified
-— we re-apply its rule patterns here with our own replacement format.
+we re-apply its rule patterns here with our own replacement format.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def redact_for_compaction_input(
             metrics[kind] = hits
 
     # Build a complete metrics dict (zero-fill missing kinds).
-    # R1.5 P0-4: fix string-key bug — ``_RULES`` is ``tuple[(kind_str,
+    # Fix string-key bug — ``_RULES`` is ``tuple[(kind_str,
     # pattern), ...]`` so the kind STRING is the first element, not the
     # second. The old ``for _, kind in _RULES`` assigned the pattern
     # object to ``kind``, producing pattern-keyed (unusable) metrics.

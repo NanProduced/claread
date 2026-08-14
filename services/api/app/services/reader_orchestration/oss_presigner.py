@@ -1,4 +1,4 @@
-"""Aliyun OSS presigner for upload instructions (D6-I3Q).
+"""Aliyun OSS presigner for upload instructions.
 
 Provides a minimal :class:`Presigner` protocol that produces presigned PUT
 URLs for OSS object uploads. The default :class:`NullPresigner` returns

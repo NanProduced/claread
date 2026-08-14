@@ -1,10 +1,10 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: terminal span/anchor selection consistency tests.
+"""Terminal span/anchor selection consistency tests.
 
-P0 fix 验证：grammar_note item 的 descriptor ``anchor_segment_id`` 必须取
+ fix 验证：grammar_note item 的 descriptor ``anchor_segment_id`` 必须取
 **terminal span**（与 snapshot projection 的 ``show_note_chip=true`` span 同源），
 而非 ``spans[0]``。多 span 跨 anchor 时两者可能不同。
 
-P1 fix 验证：非空但无法解析的 grammar output 必须抛出
+ fix 验证：非空但无法解析的 grammar output 必须抛出
 :class:`GrammarLayerPayloadError` 触发同事务回滚，不再静默回退到 base_payload。
 
 参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
@@ -150,7 +150,7 @@ def _snapshot_chip_anchor_for_item(
 
 
 # ---------------------------------------------------------------------------
-# P0: terminal span/anchor selection
+# Terminal span/anchor selection
 # ---------------------------------------------------------------------------
 
 
@@ -361,7 +361,7 @@ def test_multi_item_across_multiple_terminal_anchors() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1: non-empty corrupt output must raise (no silent fallback)
+# Non-empty corrupt output must raise (no silent fallback)
 # ---------------------------------------------------------------------------
 
 

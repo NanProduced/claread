@@ -51,8 +51,8 @@ EvidenceSourceTool = Literal[
 # :data:`EvidenceSourceTool` adding ``baseline_context`` (the full-article
 # baseline seed origin produced by the baseline context assembler, never an
 # agent-callable tool), ``selection_expand`` (the host-owned opaque
-# selection expansion seam, R4-A5-3) and ``map_expand`` (the host-owned
-# article-map cursor expansion seam, R4-A5-4 — map entries themselves are
+# selection expansion seam, ) and ``map_expand`` (the host-owned
+# article-map cursor expansion seam, — map entries themselves are
 # never evidence; only text produced by expanding a map cursor is). None
 # of the expansion origins is an agent-callable tool name; the model only
 # supplies opaque pointers. Server evidence handles / minting / legal-map
@@ -73,7 +73,7 @@ LEGAL_EVIDENCE_KIND_SOURCE: dict[EvidenceKind, frozenset[EvidenceOrigin]] = {
     "read_range": frozenset({"read_range"}),
     "search_hit": frozenset({"search_current_article"}),
     # Generic observation may be produced by any first-wave source or by
-    # the host-owned expansion seams (R4-A5-3 selection, R4-A5-4 map).
+    # the host-owned expansion seams (selection, map).
     "observation": frozenset(
         {
             "initial_anchor",

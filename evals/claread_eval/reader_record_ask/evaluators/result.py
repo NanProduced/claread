@@ -1,4 +1,4 @@
-"""Structured evaluator result contract for the R4-A3 11-dimension evaluators.
+"""Structured result contract for the 11-dimension evaluators.
 
 Every evaluator returns :class:`EvalDimensionResult`. The aggregator
 (:mod:`evaluators.aggregator`) consumes these to build per-dimension /
@@ -10,7 +10,7 @@ deterministic ``passed=False`` to ``True``. ``llm_judge_used`` /
 ``llm_judge_note`` are recording fields only; the aggregator ignores them
 when counting pass/fail.
 
-R4-A4-0 final gate closure (P0-2 + P1 de-dup): the optional
+The optional
 ``classification`` field carries a typed reason tag (e.g.
 ``"fact_not_supported"``, ``"instrumentation_incomplete"``,
 ``"baseline_unavailable"``). The aggregator / readiness audit consults
@@ -53,7 +53,7 @@ class EvalDimensionResult(BaseModel):
     severity: Severity = "none"
     details: str = ""
     evidence_refs: list[str] = Field(default_factory=list)
-    # R4-A4-0 final gate closure (P0-2 + P1 de-dup): typed
+    # Typed
     # classification tag from the closed
     # :data:`ContextSupportClassification` vocabulary. Currently
     # populated only by the ``context_support`` evaluator. Other

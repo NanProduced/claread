@@ -228,7 +228,7 @@ export const ESCAPED_ASIDE_MD = `\\<aside>This is literal\\</aside>`;
 /** 不完整 <aside>（无闭合标签）。 */
 export const UNCLOSED_ASIDE_MD = `<aside>No closing tag here`;
 
-/** R-Aside-1R A1: `</aside>` 后紧接正文 — callout 与后续段落边界测试。 */
+/** `</aside>` 后紧接正文 — callout 与后续段落边界测试。 */
 export const ASIDE_WITH_TRAILING_TEXT_MD = `<aside>
 **Alignment**: this is a callout body.
 

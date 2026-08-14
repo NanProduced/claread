@@ -88,7 +88,7 @@ _PROFILE_NOTES: list[str] = [
     "logical_serialized_bytes: validated measurement scope for this profile",
     "HTTP Content-Length / Content-Encoding not validated (deferred to deployment/BFF verification)",
     "browser transfer / parse / render not collected (deferred to Web profiling slice)",
-    "snapshot_id is for profiling correlation only and MUST NOT be reused as an HTTP ETag (LP-R1 representation coverage audit pending)",
+    "snapshot_id is for profiling correlation only and MUST NOT be reused as an HTTP ETag (representation coverage audit pending)",
     "durations are local monotonic (time.perf_counter_ns); not comparable across machines and not wall clock",
     "value_json_utf8_bytes and enhancement_layers bytes use compact json.dumps standalone serialization and may differ slightly from embedded representation",
     "record_snapshot_load_duration_ns (when present) measures ArticleReadyPersistenceService.load_snapshot() wall time only (DB facts load + snapshot build); pool init/close, settings load, and HTTP route overhead are excluded; it is NOT pure DB duration, NOT pure build duration, and NOT HTTP route or end-to-end request time",

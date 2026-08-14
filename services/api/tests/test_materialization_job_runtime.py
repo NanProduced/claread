@@ -1,4 +1,4 @@
-# task-history: D6-I3O (renamed from test_d6_i3o_materialization_job_runtime.py)
+# task-history: (renamed from test_d6_i3o_materialization_job_runtime.py)
 """Tests for the materialization job runtime integration.
 
 Covers:

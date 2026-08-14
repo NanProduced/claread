@@ -47,7 +47,7 @@ def test_semantic_outline_validator_matches_shared_contract(case: dict[str, obje
 
 
 def test_canonical_semantic_outline_fragment_is_strict_and_optional_on_snapshot() -> None:
-    """Fragment stays strict; T5.4a optional snapshot field defaults to None."""
+    """Fragment stays strict; optional snapshot field defaults to None."""
     projection = ReaderSemanticOutlineProjection.model_validate(
         {
             "schema_kind": "reader_semantic_outline",
@@ -81,6 +81,6 @@ def test_canonical_semantic_outline_fragment_is_strict_and_optional_on_snapshot(
         ReaderSemanticOutlineProjection.model_validate(
             {**projection.model_dump(), "unexpected_field": True}
         )
-    # T5.4a: optional trusted ready|partial only; default None (JSON null wire).
+    # Optional trusted ready|partial only; default None (JSON null wire).
     assert "semantic_outline" in ReaderPlateSnapshot.model_fields
     assert ReaderPlateSnapshot.model_fields["semantic_outline"].default is None

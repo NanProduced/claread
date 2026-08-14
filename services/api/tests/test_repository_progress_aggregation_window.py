@@ -1,4 +1,4 @@
-"""Task A3: grammar-window window job_type 进入 progress 聚合.
+"""Task grammar-window window job_type 进入 progress 聚合.
 
 Verifies that ``build_grammar_bundle_window`` (introduced by migration 0015
 and the grammar-window analysis-window design §3.2) is wired into the reader snapshot
@@ -21,7 +21,7 @@ exercised here because:
 - ``tests/test_reader_orchestration_schema_baseline.py::BASELINE_SQL`` only
   loads migrations up to 0014; migration 0015 (which adds
   ``build_grammar_bundle_window`` to ``reader_jobs_job_type_check``) is not
-  part of BASELINE_SQL, and updating that constant is outside Task A3's
+  part of BASELINE_SQL, and updating that constant is outside Task
   strict modify scope (only ``repository.py`` + this test file).
 - The ``reader_service_env`` fixture used by sibling tests is local to those
   test modules and is not exposed via a shared ``conftest.py``.

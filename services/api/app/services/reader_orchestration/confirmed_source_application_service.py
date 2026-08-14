@@ -904,7 +904,7 @@ class ConfirmedSourceApplicationService:
                 f"article_ready: {exc}"
             ) from exc
 
-        # D6-I4V: Article RAG index auto-ensure (fail-soft)，镜像
+        # Article RAG index auto-ensure (fail-soft)，镜像
         # stable-ready / confirm 路径。
         rag_result = await self._get_auto_ensure_service().ensure_in_transaction(
             conn,

@@ -1,4 +1,4 @@
-"""ASK-REASONING-R1 wire tests: thinking options survive the Ask config chain.
+"""ASK-REASONING- wire tests: thinking options survive the Ask config chain.
 
 Proves, against the REAL production config files, that:
 
@@ -94,7 +94,7 @@ def _model_settings_dict(model: object) -> dict:
 
 def test_production_profiles_declare_thinking_for_all_ask_options() -> None:
     profiles = json.loads(_PROFILES_PATH.read_text(encoding="utf-8"))["profiles"]
-    # DeepSeek V4 Flash main + replan: thinking enabled (R1 correction).
+    # DeepSeek V4 Flash main + replan: thinking enabled (correction).
     for name in ("ask-main-deepseek-v4-flash", "ask-replan-deepseek-v4-flash"):
         assert profiles[name]["model_settings"]["extra_body"]["thinking"] == {
             "type": "enabled"

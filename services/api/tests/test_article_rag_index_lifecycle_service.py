@@ -1,4 +1,4 @@
-# task-history: D6-I4S (renamed from test_d6_i4s_article_rag_index_lifecycle_service.py)
+# task-history: (renamed from test_d6_i4s_article_rag_index_lifecycle_service.py)
 """Tests for the Article RAG index lifecycle coordinator.
 
 All tests are no-network: no real DB, DashScope, Zilliz, or LLM.
@@ -730,12 +730,12 @@ class TestStatusIndexed:
 
 
 # ===========================================================================
-# status: stale detection applies to ALL run statuses (P2)
+# status: stale detection applies to ALL run statuses
 # ===========================================================================
 
 
 class TestStatusStaleDetectionAllStatuses:
-    """P2 contract: stale consistency check must run *before* status-specific
+    """Contract: stale consistency check must run *before* status-specific
     mapping so a stale queued / indexing / failed / superseded run is reported
     as ``superseded_or_stale`` rather than as the run's own status."""
 

@@ -1,12 +1,12 @@
-"""Tests for R4-A3 DatasetIdentity (P0-2).
+"""Tests for DatasetIdentity.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: the R4-A3 working dataset lives under ``evals/tmp/`` and is
+Requirement: the working dataset lives under ``evals/tmp/`` and is
 gitignored, so the same ``dataset_id`` can silently drift between phases.
 This module computes a deterministic SHA-256 fingerprint over the
 dataset's actual file content (``dataset.yaml`` + all loader-resolved
 case files) so artifacts can carry an auditable content identity, and
-Phase 2/3/aggregate can fail-closed on drift.
+later stages and aggregate can fail-closed on drift.
 
 11 tests required by spec §二:
   1. Same dataset in two different absolute paths → same hash
@@ -14,8 +14,8 @@ Phase 2/3/aggregate can fail-closed on drift.
   3. Case filename change → hash changes
   4. dataset.yaml change → hash changes
   5. runs/ content change → hash unaffected
-  6. Phase 2 current/prior hash same → continues (no error)
-  7. Phase 2 hash mismatch → calls=0 (fail-closed)
+  6. current/prior hash same → continues (no error)
+  7. hash mismatch → calls=0 (fail-closed)
   8. Prior artifacts mixed hash → calls=0 (fail-closed)
   9. Prior artifact missing hash → calls=0 (fail-closed)
   10. Aggregate mismatch → no normal verdict
@@ -41,11 +41,11 @@ from claread_eval.reader_record_ask.dataset_identity import (
     find_identity_mismatched_artifacts,
 )
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
-from claread_eval.reader_record_ask.loader import load_r4_a3_dataset
+from claread_eval.reader_record_ask.loader import load_reader_record_ask_dataset
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -60,8 +60,8 @@ def _make_case(
     question_category: str = "main_idea",
     article_text: str = "Hello world. This is a synthetic article.",
     phase_tags: list[str] | None = None,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         article_text=article_text,
@@ -73,7 +73,7 @@ def _make_case(
         baseline_mode="complete",
         question=question,
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         tags=[],
         phase_tags=phase_tags if phase_tags is not None else ["real_phase1"],
     )
@@ -82,7 +82,7 @@ def _make_case(
 def _write_dataset(
     dataset_dir: Path,
     *,
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskCase],
     dataset_id: str = "test-dataset",
     schema_version: str = "test-schema-v1",
     description: str = "test dataset for DatasetIdentity tests",
@@ -115,8 +115,8 @@ def _write_dataset(
     return dataset_dir
 
 
-def _load(dataset_dir: Path) -> ReaderRecordAskR4A3Dataset:
-    return load_r4_a3_dataset(dataset_dir)
+def _load(dataset_dir: Path) -> ReaderRecordAskDataset:
+    return load_reader_record_ask_dataset(dataset_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ def test_runs_content_change_does_not_affect_hash(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests 6-9: Phase 2 prior-artifact identity fence (fail-closed, calls=0)
+# Tests 6-9: prior-artifact identity fence (fail-closed, calls=0)
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +271,7 @@ def _make_artifact(
     run_id: str = "phase1-test",
     dataset_id: str | None = "test-dataset",
     dataset_schema_version: str | None = "test-schema-v1",
-    # P0-1 strict contract: default must be a valid 64-lowercase-hex SHA
+    # Strict contract: default must be a valid 64-lowercase-hex SHA
     # so the helper produces a schema-valid RawArtifact by default.
     # Tests that exercise mismatch pass a DIFFERENT valid 64-hex SHA
     # (e.g. ``"b" * 64``) or ``None``.
@@ -293,7 +293,7 @@ def _current_identity() -> DatasetIdentity:
     return DatasetIdentity(
         dataset_id="test-dataset",
         schema_version="test-schema-v1",
-        # P0-1 strict contract: must be a valid 64-lowercase-hex SHA so
+        # Strict contract: must be a valid 64-lowercase-hex SHA so
         # it matches the default in ``_make_artifact`` (which now uses
         # ``"a" * 64``). ``DatasetIdentity`` itself is a plain frozen
         # dataclass without SHA format validation, but using a valid
@@ -304,7 +304,7 @@ def _current_identity() -> DatasetIdentity:
 
 
 def test_phase2_current_prior_hash_same_continues() -> None:
-    """Test 6: Phase 2 continues when prior artifacts all carry the same
+    """Test 6: processing continues when prior artifacts all carry the same
     identity AND it matches the current dataset identity.
 
     The fence function must NOT raise — the caller proceeds to provider
@@ -323,7 +323,7 @@ def test_phase2_current_prior_hash_same_continues() -> None:
 
 
 def test_phase2_hash_mismatch_calls_zero() -> None:
-    """Test 7: Phase 2 fail-closes (raises) when prior artifacts carry a
+    """Test 7: processing fails closed (raises) when prior artifacts carry a
     fingerprint that does NOT match the current dataset.
 
     The harness translates this raise into a ``pytest.skip`` BEFORE any
@@ -349,8 +349,8 @@ def test_phase2_hash_mismatch_calls_zero() -> None:
 
 
 def test_prior_artifacts_mixed_hash_calls_zero() -> None:
-    """Test 8: Phase 2 fail-closes when prior artifacts carry mixed
-    fingerprints (some Phase 1 runs against version A, some against
+    """Test 8: processing fails closed when prior artifacts carry mixed
+    fingerprints (some earlier runs against version A, some against
     version B). The caller cannot pick a "consistent" prior — must
     fail-closed.
     """
@@ -370,8 +370,8 @@ def test_prior_artifacts_mixed_hash_calls_zero() -> None:
 
 
 def test_prior_artifact_missing_hash_calls_zero() -> None:
-    """Test 9: Phase 2 fail-closes when a prior artifact is missing
-    identity fields (e.g. an old local artifact from before P0-2).
+    """Test 9: processing fails closed when a prior artifact is missing
+    identity fields (e.g. an old local artifact predating identity binding).
 
     Old artifacts without fingerprints are treated as unauditable and
     rejected at the preflight fence — no guessing, no auto-backfill.
@@ -459,15 +459,15 @@ def test_aggregate_mismatch_no_normal_verdict() -> None:
     identity_mismatched_count = len(mismatched)
     if identity_mismatched_count > 0:
         verdict = "blocked_dataset_identity_mismatch"
-        allow_r4_a4 = False
-        allow_r4_b1 = False
+        allow_correctness_followup = False
+        allow_streaming_provider_followup = False
     else:
         verdict = "accepted"
-        allow_r4_a4 = True
-        allow_r4_b1 = True
+        allow_correctness_followup = True
+        allow_streaming_provider_followup = True
     assert verdict == "blocked_dataset_identity_mismatch"
-    assert allow_r4_a4 is False
-    assert allow_r4_b1 is False
+    assert allow_correctness_followup is False
+    assert allow_streaming_provider_followup is False
 
 
 # ---------------------------------------------------------------------------

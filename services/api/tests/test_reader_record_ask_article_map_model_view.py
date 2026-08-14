@@ -1,4 +1,4 @@
-"""R4-A5-4: semantic article map model-view (offline core).
+"""Semantic article map model-view (offline core).
 
 Behavior tests for projection-metadata-only map + single untrusted map
 block + opaque server-bound cursors usable only via expand_evidence.
@@ -539,7 +539,7 @@ def test_map_source_has_no_io_or_model_retry() -> None:
 
 
 def test_map_module_wired_only_via_turn_coordinator() -> None:
-    """R4-A5-7: article map assembly is owned by TurnCoordinator."""
+    """Article map assembly is owned by TurnCoordinator."""
     import app.services.reader_record_ask.runtime as runtime_mod
     import app.services.reader_record_ask.turn_coordinator as coord_mod
 

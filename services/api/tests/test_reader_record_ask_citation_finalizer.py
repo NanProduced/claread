@@ -1,4 +1,4 @@
-"""ASK-PROV-P3: canonical finalizer + public citation projection."""
+"""ASK-PROV-canonical finalizer + public citation projection."""
 
 from __future__ import annotations
 

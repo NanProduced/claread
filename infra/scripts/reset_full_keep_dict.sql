@@ -12,7 +12,7 @@
 -- 词典三表数据量约 205 万行 / 1.25 GB,重新导入需 20+ 分钟,
 -- 且 exam_tags 字段需额外脚本标注,因此重置时必须保留。
 -- eval_example_lab_entries 是受保护的 Example Lab 数据,同样保留。
--- DATA-SCHEMA-BASELINE D2: DROP 清单与单一基线精确对齐
+-- DATA-SCHEMA-BASELINE: DROP 清单与单一基线精确对齐
 -- (49 张非保护表;无 legacy analysis / Eval 表残留)。
 -- ============================================================
 

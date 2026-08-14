@@ -960,7 +960,7 @@ class TestArticleMapEntrySourceSurface:
     """
 
     def test_constructible_with_heading_and_window_text(self) -> None:
-        """C3's descriptor_to_candidate_source constructs ArticleMapEntrySource
+        """The descriptor conversion constructs ArticleMapEntrySource
         with ``heading=...`` and ``window_text=...``. If ArticleMapEntrySource
         drops or renames these fields, the conversion breaks.
         """

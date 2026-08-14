@@ -191,7 +191,7 @@ class QwenDashscopeWebSearchBackend:
 
         See the module docstring for the full outcome mapping.
         """
-        # ASK-WEB-R4: inject Host current UTC date into the system prompt
+        # ASK-WEB-inject Host current UTC date into the system prompt
         # so the search engine has freshness context. Server-owned (never
         # provider-supplied); carries no user content.
         host_date = _host_utc_date_iso()
@@ -327,7 +327,7 @@ async def _extract_sources_from_sse(
     extracted: list[tuple[str, str | None]] = []
     data_buffer: list[str] = []
 
-    # G3-R1 §IV: the httpx stream context (caller's ``client.stream(...)``)
+    # G3- §IV: the httpx stream context (caller's ``client.stream(...)``)
     # owns the response lifecycle. We iterate ``aiter_bytes()`` directly
     # (the bottom of httpx's async iterator chain) and decode + split
     # lines ourselves. Using ``aiter_lines()`` or ``aiter_text()``
@@ -520,7 +520,7 @@ def _detail_for_http_status(status_code: int) -> str:
 def _host_utc_date_iso() -> str:
     """Return the current UTC date as a ``YYYY-MM-DD`` string.
 
-    ASK-WEB-R4: injected into the search-request system prompt so the
+    ASK-WEB-injected into the search-request system prompt so the
     provider has freshness context. Server-owned (never
     provider-supplied); carries no user content.
     """

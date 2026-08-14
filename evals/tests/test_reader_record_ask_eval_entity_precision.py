@@ -1,13 +1,13 @@
-"""Tests for entity_precision evaluator (P0-7 typed entity catalog).
+"""Tests for the entity_precision evaluator's typed entity catalog.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: entity_precision typed entity catalog（P0-7）.
+spec.md` — Requirement: entity_precision typed entity catalog.
 
 Covers:
 - Legacy ``allowed_entities_by_type`` contract still works (backwards compat).
 - New ``entity_catalog`` contract (preferred):
   - ``|``-separated aliases within an entity entry.
-  - Region-as-city type confusion detected (core P0-7 regression).
+  - Region-as-city type confusion detected (core regression).
   - Shared-alias non-confusion (entity allowed under multiple types).
   - Capability boundary signal ``unclassified_external_entity`` recorded
     in details when catalog is non-empty (cannot detect external
@@ -24,8 +24,8 @@ from claread_eval.reader_record_ask.evaluators.entity_precision import (
     evaluate_entity_precision,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -36,13 +36,13 @@ from claread_eval.reader_record_ask.schema import (
 def _make_case(
     *,
     allowed_by_type: dict[str, list[str]],
-) -> ReaderRecordAskR4A3Case:
+) -> ReaderRecordAskCase:
     """Build a case using the LEGACY ``allowed_entities_by_type`` field.
 
     Kept so we can assert backwards compatibility — the evaluator falls
     back to this field when ``entity_catalog`` is empty.
     """
-    return ReaderRecordAskR4A3Case(
+    return ReaderRecordAskCase(
         id="t-entity-precision",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -50,7 +50,7 @@ def _make_case(
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category="city_enumeration",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             allowed_entities_by_type=allowed_by_type,
         ),
     )
@@ -62,9 +62,9 @@ def _make_case_with_catalog(
     question_category: str = "city_enumeration",
     question: str = "文章提到了哪些城市？",
     case_id: str = "t-entity-precision-catalog",
-) -> ReaderRecordAskR4A3Case:
-    """Build a case using the NEW ``entity_catalog`` field (P0-7)."""
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    """Build a case using the NEW ``entity_catalog`` field."""
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         input_mode="manual",
@@ -72,7 +72,7 @@ def _make_case_with_catalog(
         baseline_mode="complete",
         question=question,
         question_category=question_category,
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             entity_catalog=entity_catalog,
         ),
     )
@@ -160,7 +160,7 @@ def test_llm_judge_called_when_no_deterministic_failure() -> None:
 
 
 def test_non_entity_question_skips_type_confusion() -> None:
-    case = ReaderRecordAskR4A3Case(
+    case = ReaderRecordAskCase(
         id="t-entity-precision-main",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -168,7 +168,7 @@ def test_non_entity_question_skips_type_confusion() -> None:
         baseline_mode="complete",
         question="这篇文章主要说了什么？",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             allowed_entities_by_type={"city": ["Thunder Bay"]},
         ),
     )
@@ -178,7 +178,7 @@ def test_non_entity_question_skips_type_confusion() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-7 regression: entity_catalog with |-separated aliases
+# Regression: entity_catalog with |-separated aliases
 # ---------------------------------------------------------------------------
 
 
@@ -213,7 +213,7 @@ def test_entity_catalog_aliases_case_insensitive_ascii() -> None:
 
 
 def test_entity_catalog_region_as_city_detected() -> None:
-    """P0-7 core regression: region entity ``"纽约州西部部分地区"``
+    """Core regression: region entity ``"纽约州西部部分地区"``
     appearing in a city answer is detected as type confusion.
 
     This is the failure case the previous implementation could NOT
@@ -282,7 +282,7 @@ def test_entity_catalog_completeness_and_precision_separate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-7: shared alias (entity allowed under multiple types) — non-confusion
+# Shared alias (entity allowed under multiple types) — non-confusion
 # ---------------------------------------------------------------------------
 
 
@@ -321,7 +321,7 @@ def test_shared_alias_via_pipe_not_flagged_as_confusion() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-7: capability boundary signal (unclassified_external_entity)
+# Capability boundary signal (unclassified_external_entity)
 # ---------------------------------------------------------------------------
 
 
@@ -376,7 +376,7 @@ def test_no_capability_boundary_signal_when_non_entity_question() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-7: precedence — entity_catalog wins over legacy field
+# Precedence — entity_catalog wins over legacy field
 # ---------------------------------------------------------------------------
 
 
@@ -384,7 +384,7 @@ def test_entity_catalog_precedence_over_legacy_field() -> None:
     """When BOTH ``entity_catalog`` and ``allowed_entities_by_type`` are
     declared, ``entity_catalog`` wins (it is the preferred field).
     """
-    case = ReaderRecordAskR4A3Case(
+    case = ReaderRecordAskCase(
         id="t-entity-precision-precedence",
         source_kind="synthetic_short",
         input_mode="manual",
@@ -392,7 +392,7 @@ def test_entity_catalog_precedence_over_legacy_field() -> None:
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category="city_enumeration",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             # Legacy field declares only city — would NOT catch
             # region-as-city confusion.
             allowed_entities_by_type={"city": ["Thunder Bay"]},

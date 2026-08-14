@@ -1,6 +1,6 @@
-"""Record-level semantic outline publisher (T5.3a).
+"""Record-level semantic outline publisher.
 
-Hard pipeline (T5.3-R0-R1):
+Hard pipeline:
 
     candidate nodes
       → allocate outline_revision
@@ -184,7 +184,7 @@ def validate_mapped_outline(
     mapped: SemanticOutlineOpaqueMapResult,
     worker_failure: bool = False,
 ) -> SemanticOutlineValidationResult:
-    """Run T5.2a validator on FINAL opaque ids (never on raw candidate refs)."""
+    """Run validator on FINAL opaque ids (never on raw candidate refs)."""
     return validate_semantic_outline_projection(
         context,
         SemanticOutlineValidationInput(

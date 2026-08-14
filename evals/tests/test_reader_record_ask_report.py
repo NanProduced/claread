@@ -1,4 +1,4 @@
-"""Tests for the R4-A3 report generator.
+"""Tests for the reader-record-ask report generator.
 
 Covers the 15 base sections + 4 rework closure sections (16-19) +
 sanitization invariants per spec
@@ -25,9 +25,9 @@ from claread_eval.reader_record_ask.report import (
     generate_eval_report,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ from claread_eval.reader_record_ask.schema import (
 # ---------------------------------------------------------------------------
 
 # Synthetic placeholder UUID — real local Reading Record UUIDs must
-# never appear in tracked fixtures (spec: P0 dataset Git governance §7).
+# never appear in tracked fixtures (dataset Git governance).
 _BBC_RECORD_ID = "00000000-0000-4000-8000-000000000000"
 
 
@@ -46,8 +46,8 @@ def _make_case(
     question_category: str = "city_enumeration",
     source_metadata: str = "unknown",
     record_id: str | None = _BBC_RECORD_ID,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind=source_kind,  # type: ignore[arg-type]
         record_id=record_id,
@@ -56,7 +56,7 @@ def _make_case(
         baseline_mode="complete",
         question="文章提到了哪些城市？",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskExpected(
             expected_entity_set={
                 "city": ["Thunder Bay", "纽约", "多伦多"],
             },
@@ -73,15 +73,15 @@ def _make_case(
     )
 
 
-def _make_dataset(case: ReaderRecordAskR4A3Case | None = None) -> (
-    ReaderRecordAskR4A3Dataset
+def _make_dataset(case: ReaderRecordAskCase | None = None) -> (
+    ReaderRecordAskDataset
 ):
     if case is None:
         case = _make_case()
-    return ReaderRecordAskR4A3Dataset(
+    return ReaderRecordAskDataset(
         id="reader-record-ask-r4-a3",
         schema_version="r4-a3-dataset-v1",
-        description="R4-A3 test dataset",
+        description="test dataset",
         case_globs=["cases/*.json"],
         tags=["r4-a3", "test"],
         cases=[case],
@@ -200,12 +200,12 @@ def _make_aggregated_with_clusters() -> AggregatedReport:
 def _default_report_kwargs(
     *,
     aggregated: AggregatedReport | None = None,
-    dataset: ReaderRecordAskR4A3Dataset | None = None,
+    dataset: ReaderRecordAskDataset | None = None,
     artifacts: list[RawArtifact] | None = None,
     real_model_blocked: bool = True,
     verdict: str = "blocked",
-    allow_r4_a4: bool = True,
-    allow_r4_b1: bool = False,
+    allow_correctness_followup: bool = True,
+    allow_streaming_provider_followup: bool = False,
 ) -> dict:
     if aggregated is None:
         aggregated = AggregatedReport(
@@ -267,8 +267,8 @@ def _default_report_kwargs(
             "ruff All checks passed."
         ),
         verdict=verdict,
-        allow_r4_a4=allow_r4_a4,
-        allow_r4_b1=allow_r4_b1,
+        allow_correctness_followup=allow_correctness_followup,
+        allow_streaming_provider_followup=allow_streaming_provider_followup,
         run_metadata=None,
     )
 
@@ -291,7 +291,7 @@ def test_report_contains_all_required_sections() -> None:
 def test_report_contains_title_and_dataset_metadata() -> None:
     """Report has a title block + dataset id."""
     report = generate_eval_report(**_default_report_kwargs())
-    assert "# TMP — Reader Record Ask R4-A3 评测报告" in report
+    assert "# TMP — Reader Record Ask 评测报告" in report
     assert "dataset: `reader-record-ask-r4-a3`" in report
     assert "verdict: **blocked**" in report
 
@@ -314,10 +314,14 @@ def test_report_contains_rework_closure_sections() -> None:
     assert "BudgetedUsageModel" in report
     assert "BudgetExhaustedError" in report
     assert "budget_exhausted" in report
-    # Section 19: thinking 验证方式
+    # Section 19: thinking 验证方式 — lock exact business subsection titles
     assert "## 19. thinking 验证方式" in report
+    assert "### 19.1 non-thinking evaluation (Flash non-thinking)" in report
+    assert "### 19.2 thinking evaluation (Flash thinking)" in report
+    assert "### 19.3 Pro evaluation (Pro thinking)" in report
     assert "thinking_enabled" in report
-    assert "Phase 1" in report and "Phase 2" in report and "Phase 3" in report
+    assert "extra_body" in report
+    assert "resolved model settings" in report
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +341,7 @@ def test_report_sanitized_no_bbc_body() -> None:
     long_bbc_chunk = (
         "SYNTHETIC_TEST_PROSE_PADDING_USED_ONLY_TO_VERIFY_THE_REPORT_"
         "SANITIZATION_LAYER_TRUNCATES_LONG_CONTIGUOUS_STRINGS_AS_REQUIRED_"
-        "BY_THE_P0_DATASET_GIT_GOVERNANCE_SPEC_SECTION_7_WHICH_FORBIDS_"
+        "BY_THE__"
         "REAL_BBC_BODY_CONTENT_FROM_TRACKED_FIXURES_EXTRA_PADDING_FOLLOWS_"
         + "a" * 80
     )
@@ -430,7 +434,7 @@ def test_report_blocked_verdict_when_no_artifacts() -> None:
 
 
 def test_report_section6_does_not_hardcode_pytest_counts() -> None:
-    """R4-A4-3: report must not claim exact passed/skipped pytest counts.
+    """The report must not claim exact passed/skipped pytest counts.
 
     Aggregate path does not invoke pytest; inventing ``4 passed, 3 skipped``
     is unauditable and was historically wrong when the suite grew.
@@ -483,16 +487,16 @@ def test_report_failure_clusters_blocked_falls_back_to_spec_anticipated() -> Non
 
 
 # ---------------------------------------------------------------------------
-# R4-A4 candidate suggestions
+# Candidate suggestions
 # ---------------------------------------------------------------------------
 
 
 def test_report_remediation_candidates_present() -> None:
-    """§11 R4-A4 candidate suggestions are present and marked not-implement."""
+    """§11 candidate suggestions are present and marked not-implement."""
     report = generate_eval_report(**_default_report_kwargs())
-    assert "## 11. R4-A4 候选修复建议" in report
+    assert "## 11. 候选修复建议" in report
     assert "不实施" in report
-    assert "待 R4-A4 立项" in report
+    assert "待 correctness follow-up 立项" in report
     # At least one candidate direction is named.
     assert "temporal claim policy" in report
     assert "instruction count validator" in report
@@ -513,20 +517,20 @@ def test_report_verdict_rework_when_artifacts_have_failures() -> None:
             artifacts=[artifact],
             real_model_blocked=False,
             verdict="rework",
-            allow_r4_a4=True,
-            allow_r4_b1=False,
+            allow_correctness_followup=True,
+            allow_streaming_provider_followup=False,
         )
     )
     assert "verdict: **rework**" in report
-    # R4-A4 allowed (立项) but R4-B1 deferred.
-    assert "**R4-A4**: 允许" in report
-    assert "**R4-B1**: 暂不允许" in report
+    # Quality gate allowed (立项) but streaming gate deferred.
+    assert "**correctness follow-up**: 允许" in report
+    assert "**streaming-provider follow-up**: 暂不允许" in report
 
 
 def test_report_tracker_section_points_to_tracker_file() -> None:
     """§14 references the tracker file path."""
     report = generate_eval_report(**_default_report_kwargs())
-    assert "## 14. R4 tracker 更新" in report
+    assert "## 14. tracker 更新" in report
     assert (
         "docs/tmp/reader-orchestration/"
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-17.md"
@@ -565,14 +569,14 @@ def test_failure_cluster_field_shape() -> str:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-0 (Task 5) — parameterized report date / files / tracker path /
+# Parameterized report date, files, and tracker path
 # dynamic per_config keys.
 # ---------------------------------------------------------------------------
 
 
 def _make_aggregated_with_real_flash_config() -> AggregatedReport:
-    """Build an AggregatedReport with a real ``deepseek-v4-flash`` Phase 1
-    config and no Phase 2/3 data — mirrors the R4-A3 Phase 1 baseline run.
+    """Build an AggregatedReport with a real ``deepseek-v4-flash`` initial-pass
+    config and no later-stage data — mirrors the initial baseline run.
     """
     from claread_eval.reader_record_ask.evaluators.aggregator import (
         CaseEvalResult,
@@ -603,8 +607,8 @@ def test_report_renders_real_flash_config_key() -> None:
     """§9 must render the real ``deepseek-v4-flash|thinking=False`` key
     instead of the hardcoded ``deepseek-chat|thinking=False``.
 
-    R4-A4-0 (Task 5) regression: the old report's ``_AB_CONFIGS`` was
-    hardcoded to ``deepseek-chat`` so Phase 1 real run with
+    Parameterization regression: the old report's ``_AB_CONFIGS`` was
+    hardcoded to ``deepseek-chat`` so the initial real run with
     ``deepseek-v4-flash`` showed ``N/A (no data)`` even though data
     existed. The fixed report matches by regex.
     """
@@ -617,14 +621,14 @@ def test_report_renders_real_flash_config_key() -> None:
         )
     )
     assert "## 9. Flash non-thinking / Flash thinking / Pro 对照" in report
-    # Real Phase 1 data is rendered with the real config key.
+    # Real initial-pass data is rendered with the real config key.
     assert "deepseek-v4-flash|thinking=False" in report
-    # Phase 2 / Phase 3 show explicit no-data rows.
+    # Later stages show explicit no-data rows.
     assert "N/A (no data)" in report
 
 
 def test_report_date_parameter_used_in_title() -> None:
-    """``report_date`` parameter flows into the title block (R4-A4-0 Task 5).
+    """``report_date`` parameter flows into the title block.
 
     The old report hardcoded ``2026-07-17``. The fixed report uses the
     parameter; when omitted, it defaults to today's date.
@@ -638,9 +642,9 @@ def test_report_date_parameter_used_in_title() -> None:
 
 
 def test_modified_files_parameter_used_in_section_2() -> None:
-    """``modified_files`` parameter flows into §2.1 (R4-A4-0 Task 5).
+    """``modified_files`` parameter flows into §2.1 (evaluation heading).
 
-    The old report hardcoded the previous round's Task 5 file list. The
+    The old report hardcoded the previous round's file list. The
     fixed report renders the caller-supplied list.
     """
     kwargs = _default_report_kwargs()
@@ -648,9 +652,9 @@ def test_modified_files_parameter_used_in_section_2() -> None:
         "evals/claread_eval/reader_record_ask/evaluators/numeric_grounding.py",
         "evals/claread_eval/reader_record_ask/report.py",
     ]
-    kwargs["task_label"] = "R4-A4-0"
+    kwargs["evaluation_heading"] = "focused evaluation"
     report = generate_eval_report(**kwargs)
-    assert "### 2.1 本轮修改文件（R4-A4-0）" in report
+    assert "### 2.1 本轮修改文件（focused evaluation）" in report
     assert "numeric_grounding.py" in report
     assert "report.py" in report
     # Old hardcoded stale files must NOT appear.
@@ -658,7 +662,7 @@ def test_modified_files_parameter_used_in_section_2() -> None:
 
 
 def test_tracker_path_parameter_used_in_section_14() -> None:
-    """``tracker_path`` parameter flows into §14 (R4-A4-0 Task 5)."""
+    """``tracker_path`` parameter flows into §14 (tracker path)."""
     kwargs = _default_report_kwargs()
     kwargs["tracker_path"] = (
         "docs/tmp/reader-orchestration/"
@@ -676,7 +680,7 @@ def test_tracker_path_parameter_used_in_section_14() -> None:
 def test_per_config_total_runs_rendered_in_section_7() -> None:
     """§7 per-config table must render ``total_runs`` explicitly.
 
-    R4-A4-0 (Task 5): aggregator now writes ``total_runs`` to per_config
+    Parameterization: aggregator now writes ``total_runs`` to per_config
     buckets; the report reads it via ``metrics.get('total_runs', 0)``.
     """
     aggregated = _make_aggregated_with_real_flash_config()
@@ -690,17 +694,17 @@ def test_per_config_total_runs_rendered_in_section_7() -> None:
     assert "## 7. 真实模型每配置调用次数/延迟/token/通过率" in report
     # total_runs column header is present.
     assert "total_runs" in report
-    # Real Phase 1 data shows total_runs=1 (single case_result).
+    # Real initial-pass data shows total_runs=1 (single case_result).
     assert "deepseek-v4-flash|thinking=False" in report
 
 
 def test_30_artifact_fixture_regression() -> None:
     """30-artifact fixture regression: build a synthetic 30-run aggregate
-    mirroring the R4-A3 Phase 1 baseline (10 cases × 3 runs each, all
+    mirroring the initial baseline (10 cases × 3 runs each, all
     on ``deepseek-v4-flash|thinking=False``) and verify the report shows
     consistent numbers in §7 and §17.
 
-    R4-A4-0 (Task 5): the user spec requires a "real 30-artifact
+    Regression: the user spec requires a "real 30-artifact
     fixture/report regression". This test uses synthetic artifacts
     (not the real run's raw answers) to avoid leaking BBC body / raw
     answer / raw reasoning into tracked fixtures.
@@ -787,10 +791,10 @@ def test_30_artifact_fixture_regression() -> None:
 
     # Build a dataset containing all 10 cases so §17 reports
     # "总 case 数: 10" and "有 artifact 的 case 数: 10".
-    dataset = ReaderRecordAskR4A3Dataset(
+    dataset = ReaderRecordAskDataset(
         id="reader-record-ask-r4-a3",
         schema_version="r4-a3-dataset-v1",
-        description="R4-A3 30-artifact fixture dataset",
+        description="30-artifact fixture dataset",
         case_globs=["cases/*.json"],
         tags=["r4-a3", "test"],
         cases=cases,
@@ -803,8 +807,8 @@ def test_30_artifact_fixture_regression() -> None:
             artifacts=artifacts,
             real_model_blocked=False,
             verdict="rework",
-            allow_r4_a4=True,
-            allow_r4_b1=False,
+            allow_correctness_followup=True,
+            allow_streaming_provider_followup=False,
         )
     )
 
@@ -818,6 +822,6 @@ def test_30_artifact_fixture_regression() -> None:
     assert "总 case 数: 10" in report
     assert "有 artifact 的 case 数: 10" in report
 
-    # §9 comparison: Phase 1 row has real data, Phase 2/3 show no data.
+    # §9 comparison: the initial row has real data, later stages show no data.
     assert "deepseek-v4-flash|thinking=False" in report
     assert "N/A (no data)" in report

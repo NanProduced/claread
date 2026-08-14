@@ -452,7 +452,7 @@ def _process_paragraph_inline(
     Returns (text, inline_marks, safe_links, unsafe_links, has_inline_html,
     starts_with_html_inline).
 
-    A3 — link safety single-point convergence:
+     link safety single-point convergence:
       html_inline + link overlap no longer "rescued" via
       ``_reconstruct_raw_with_html`` + regex re-parse. html_inline is
       detected and recorded as ``inline_html`` warning; the broken link
@@ -485,7 +485,7 @@ def _process_inline_with_marks(
     safe_links: list of {text, href} for safe-protocol links.
     unsafe_links: list of {text, href, reason} for unsafe-protocol links.
 
-    A3 — link safety single-point:
+     link safety single-point:
       markdown-it-py refuses to parse unsafe-protocol links (javascript:/vbscript:/data:),
       leaving them as raw ``[label](href)`` text. This function detects such
       patterns in text tokens, strips them to ``label``, records them in
@@ -675,7 +675,7 @@ def _process_inline_with_marks(
                     open_link["label_parts"].append(child.content)
             else:
                 has_inline_html = True
-                # Skip from text (A3: no rescue merge).
+                # Skip from text (no rescue merge).
                 continue
         elif ctype == "image":
             _append_text(child.content)
@@ -897,7 +897,7 @@ def _html_raw_is_aside(raw_html_chunks: list[str]) -> bool:
 def _split_aside_trailing(content: str) -> tuple[str, str]:
     """Split raw html_block content at the closing ``</aside>`` tag.
 
-    R-Aside-1R A3: ``</aside>Peer discussion`` on the same line must split —
+    R-Aside-1R ``< aside>Peer discussion`` on the same line must split —
     the aside part stays in the callout block, the trailing prose becomes a
     separate paragraph block. The old implementation stripped all tags from
     the whole token and joined the result, swallowing the trailing text into
@@ -1745,7 +1745,7 @@ class MarkdownSourceParser:
                     if parent_context:
                         parent_context.pop()
                     aside_open_block_id = None
-                    # R-Aside-1R A3: trailing text after </aside> on the
+                    # R-Aside-1R trailing text after < aside> on the
                     # same line becomes a separate paragraph block.
                     _, trailing = _split_aside_trailing(raw)
                     if trailing:
@@ -1772,7 +1772,7 @@ class MarkdownSourceParser:
                 agg_texts: list[str] = []
                 raw_html_chunks: list[str] = []
                 agg_end_map = token.map
-                # R-Aside-1R A3: trailing text after </aside> on the same line
+                # R-Aside-1R trailing text after < aside> on the same line
                 # must become a separate paragraph block, NOT be swallowed
                 # into the callout's text_content. Captured from the token
                 # that contains </aside>; emitted after the callout block.
@@ -1783,7 +1783,7 @@ class MarkdownSourceParser:
                     t = tokens[j]
                     if t.type == "html_block":
                         raw_content = t.content or ""
-                        # R-Aside-1R A3: if this token contains </aside>,
+                        # R-Aside-1R if this token contains < aside>,
                         # split the trailing prose out so it is NOT stripped
                         # and joined into the callout's text_content.
                         aside_part, trailing = _split_aside_trailing(raw_content)
@@ -1856,7 +1856,7 @@ class MarkdownSourceParser:
                 )
                 order_index += 1
 
-                # R-Aside-1R A3: emit trailing prose (after </aside> on the
+                # R-Aside-1R emit trailing prose (after < aside> on the
                 # same line) as a separate paragraph block. This must NOT
                 # carry the html_aside hint and must NOT be T-only by virtue
                 # of aside association. Only emit when there is actual
@@ -2293,7 +2293,7 @@ class MarkdownSourceParser:
                     # placeholders like vector<T>, preserved verbatim as
                     # intentional literal text), so no regex tag-stripping
                     # post-pass is applied here.
-                    # A3: html_inline is always flagged when present (no
+                    # Html_inline is always flagged when present (no
                     # "rescue" merge — link safety is single-point).
                     if has_inline_html:
                         flags.has_inline_html = True
@@ -2305,7 +2305,7 @@ class MarkdownSourceParser:
                         payload["links"] = safe_links
                     if unsafe_links:
                         payload["stripped_links"] = unsafe_links
-                    # A2: inline_marks only when non-empty (minimal payload).
+                    # Inline_marks only when non-empty (minimal payload).
                     if inline_marks:
                         payload["inline_marks"] = inline_marks
                     # M-6: paragraph starting with html_inline

@@ -1,6 +1,6 @@
 """Emergency deterministic compaction (Host fallback, no LLM call).
 
-Implements R0.1 §4.2(e) deterministic extraction step ``facts_det``:
+Implements §4.2(e) deterministic extraction step ``facts_det``:
 pure-Python structured field搬运 from canonical messages and ok turn
 runs into an :class:`Episode`. Mirrors the legacy
 ``build_structured_history_summary`` pattern (``reader_ask/runtime_contract.py``).
@@ -14,11 +14,11 @@ Excluded content categories are declared (not embedded) via
 ``excluded_content_markers``; emergency never reads reasoning_projection,
 tool_trace_json, raw provider payload, evh_ handles, or secrets.
 
-R1.6 P0-1: ``_compute_watermark`` duplicate removed — emergency now
+ ``_compute_watermark`` duplicate removed — emergency now
 calls the shared :func:`allowlist.compute_watermark` so watermark
 semantics are identical across emergency and coordinator paths.
 
-R1.6 P1-2: ``_extract_assistant_answer_facts`` now reads
+ ``_extract_assistant_answer_facts`` now reads
 ``citation_ids`` from answer blocks. Blocks with article citations
 produce ``source_type='article'`` facts (high confidence); blocks
 without citations produce ``source_type='assistant_answer'`` facts
@@ -47,14 +47,14 @@ from app.services.reader_record_ask.thread_memory.schema import (
     ThreadMemorySnapshot,
 )
 
-# Canonical turn range for the recent verbatim window (R0.1 §5).
+# Canonical turn range for the recent verbatim window (§5).
 # Emergency uses this to split aged vs. recent segments.
 _RECENT_PAIRS_DEFAULT: int = 6
 
-# Fact text truncation (R0.1 §6 StructuredFact.text ≤ 280 chars).
+# Fact text truncation (§6 StructuredFact.text ≤ 280 chars).
 _FACT_TEXT_MAX: int = 280
 
-# Markers explicitly excluded by emergency compaction (R0.1 §6 episode
+# Markers explicitly excluded by emergency compaction ( §6 episode
 # excluded_content_markers closed set).
 _EXCLUDED_MARKERS: tuple[str, ...] = (
     "reasoning",
@@ -64,7 +64,7 @@ _EXCLUDED_MARKERS: tuple[str, ...] = (
     "evh_handles",
 )
 
-# Heuristic user-correction triggers (R0.1 §4.2(e) facts_det). The
+# Heuristic user-correction triggers (§4.2(e) facts_det). The
 # compactor model would do intent classification; emergency uses a
 # keyword regex that errs on the side of marking a turn as correction
 # (protected facts are never evicted during budget shrinking).
@@ -84,7 +84,7 @@ def _truncate_fact_text(text: str) -> str:
 
 
 def _redact(text: str) -> str:
-    """R1.5 P0-4: apply second-layer redaction to one compaction input text.
+    """Apply second-layer redaction to one compaction input text.
 
     Returns only the redacted text (metrics are discarded — emergency is
     deterministic and any hit here is an upstream incident, logged by the
@@ -116,7 +116,7 @@ def _extract_assistant_answer_facts(
     shapes; it never reads ``reasoning_projection_json`` or
     ``tool_trace_json``.
 
-    R1.6 P1-2: blocks with ``citation_ids`` that map to Host article
+     blocks with ``citation_ids`` that map to Host article
     bindings produce ``source_type='article'`` facts (high confidence).
     Blocks without article citations produce
     ``source_type='assistant_answer'`` facts (medium confidence — never
@@ -141,12 +141,12 @@ def _extract_assistant_answer_facts(
         text = str(block.get("text") or "").strip()
         if not text:
             continue
-        # R1.5 P0-4: second-layer redaction on assistant answer text.
+        # Second-layer redaction on assistant answer text.
         text = _redact(text)
         if not text:
             continue
 
-        # R1.6 P1-2: read citation_ids and classify.
+        # Read citation_ids and classify.
         raw_citation_ids = block.get("citation_ids") or []
         if not isinstance(raw_citation_ids, list):
             raw_citation_ids = []
@@ -189,7 +189,7 @@ def _extract_assistant_answer_facts(
             continue
 
         # No article citation (or no Host map) → general assistant
-        # answer. Medium confidence — never high (P1-2: 不得冒充
+        # answer. Medium confidence — never high (不得冒充
         # article-grounded high confidence).
         facts.append(
             StructuredFact(
@@ -224,7 +224,7 @@ def _extract_web_fact(
         outcome = None
     if not outcome or not isinstance(outcome, str):
         return None
-    # R1.5 P0-4: second-layer redaction on web summary outcome text.
+    # Second-layer redaction on web summary outcome text.
     outcome = _redact(outcome)
     if not outcome:
         return None
@@ -254,7 +254,7 @@ def _extract_user_question_fact(
     ).strip()
     if not text:
         return None
-    # R1.5 P0-4: second-layer redaction on user question text.
+    # Second-layer redaction on user question text.
     text = _redact(text)
     if not text:
         return None
@@ -307,14 +307,14 @@ def emergency_compact(
     Pure-Python structured extraction; no LLM call. Inputs are the
     canonical messages and ok turn runs **for the segment covered by
     ``turn_range``** (caller pre-filters). ``turn_range`` is a closed
-    interval over canonical turn序号 (R0.1 §6: user message 1-based
+    interval over canonical turn序号 ( §6: user message 1-based
     position by ``created_at ASC``; retry does not increment).
 
     The first user message in the input corresponds to ``turn_range[0]``.
     Each subsequent user message increments the turn序号 by 1. Assistant
     messages inherit the turn序号 of the preceding user message.
 
-    R1.6 P1-2: ``host_bindings`` is the Host binding map. When provided,
+     ``Host_bindings`` is the Host binding map. When provided,
     answer blocks with article citations produce ``source_type='article'``
     facts; when None, all blocks fall back to ``assistant_answer``.
 
@@ -419,7 +419,7 @@ def emergency_full_snapshot(
 ) -> ThreadMemorySnapshot:
     """Build a full ThreadMemorySnapshot from canonical thread state.
 
-    Splits canonical messages into aged + recent (R0.1 §4.2(e) step 3:
+    Splits canonical messages into aged + recent (§4.2(e) step 3:
     window = ``recent_pairs×2`` + aged batch). Aged segment is
     emergency-compacted into one episode; recent segment is left
     verbatim (injected separately at assembly time, not stored here).
@@ -427,18 +427,18 @@ def emergency_full_snapshot(
     The watermark covers ALL canonical messages (aged + recent), so CAS
     detects any concurrent append or regenerate.
 
-    ``thread_id`` is required for the snapshot scope (R0.1 §6:
+    ``thread_id`` is required for the snapshot scope ( §6:
     thread-scoped, never cross-thread references).
 
-    R1.6 P0-1: watermark is computed via the shared
+     Watermark is computed via the shared
     :func:`allowlist.compute_watermark` — no duplicate implementation.
-    R1.6 P1-2: ``host_bindings`` is forwarded to ``emergency_compact``
+     ``host_bindings`` is forwarded to ``emergency_compact``
     so article-cited answer blocks produce ``source_type='article'`` facts.
     """
     if recent_pairs < 1:
         raise ValueError("recent_pairs must be >= 1")
 
-    # R1.6 P0-1: use the shared compute_watermark (no duplicate).
+    # Use the shared compute_watermark (no duplicate).
     watermark = compute_watermark(canonical_messages)
     aged_messages, _recent_messages = _split_aged_recent(
         canonical_messages, recent_pairs=recent_pairs
@@ -449,7 +449,7 @@ def emergency_full_snapshot(
         aged_user_count = _count_user_messages(aged_messages)
         if aged_user_count > 0:
             turn_range = (1, aged_user_count)
-            # R1.5 P0-3: aged episode 只能吸收其 turn range 内对应的 ok
+            # Aged episode 只能吸收其 turn range 内对应的 ok
             # run/binding，不能把整条 thread 的 bindings 混入。过滤
             # ok_turn_runs 到 message_id ∈ aged message ids 的子集。
             aged_msg_ids = {

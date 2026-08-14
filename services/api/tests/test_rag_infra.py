@@ -575,7 +575,7 @@ class TestEmbeddingClient:
 
     @pytest.mark.anyio
     async def test_embed_texts_with_metadata_provider_code_malicious_values_sanitized_to_none(self):
-        """P0 safe-return TDD: malicious ``resp.code`` must NOT leak.
+        """Safe-return TDD: malicious ``resp.code`` must NOT leak.
 
         The fake SDK response carries a hostile ``code`` value that
         contains spaces, a URI, an API-key sentinel, and exceeds 64
@@ -656,7 +656,7 @@ class TestEmbeddingClient:
 
     @pytest.mark.anyio
     async def test_embed_texts_with_metadata_provider_status_invalid_sanitized_to_none(self):
-        """P0 safe-return TDD: non-int / out-of-range status -> None + safe retryability.
+        """Safe-return TDD: non-int / out-of-range status -> None + safe retryability.
 
         The wrapper MUST coerce ``status_code`` to ``int | None`` in the
         100–599 range; anything else is set to None and the existing
@@ -705,7 +705,7 @@ class TestEmbeddingClient:
     async def test_embed_texts_with_metadata_provider_code_allowlist_rejects(
         self, malicious_code: str, label: str
     ):
-        """P0 Round 3 TDD: provider_code uses an explicit allowlist.
+        """Round 3 TDD: provider_code uses an explicit allowlist.
 
         Legacy ``isalnum()`` + length check accepts both key-like
         strings (``sk-1234567890abcdef``) and arbitrary Unicode
@@ -774,7 +774,7 @@ class TestEmbeddingClient:
     async def test_embed_texts_with_metadata_provider_code_allowlist_keeps_known(
         self, known_code: str
     ):
-        """P0 Round 3 TDD: known DashScope codes are retained by the allowlist."""
+        """Round 3 TDD: known DashScope codes are retained by the allowlist."""
         from app.infra.bailian_embedding import EmbeddingError, embed_texts_with_metadata
 
         class FakeTextEmbedding:
@@ -797,7 +797,7 @@ class TestEmbeddingClient:
 
     @pytest.mark.anyio
     async def test_embed_texts_with_metadata_sdk_call_raises_is_caught_and_sanitized(self):
-        """P0 SDK-raise closure TDD: SDK call raises RuntimeError directly.
+        """SDK-raise closure TDD: SDK call raises RuntimeError directly.
 
         The DashScope SDK can fail BEFORE returning a response object —
         e.g. on transport/auth/serialisation errors that surface as a

@@ -33,7 +33,7 @@ async function loginAsDebugUser(page: Page) {
   await expect(page.getByText("本地调试验证码已生成，请使用 888888。")).toBeVisible();
   await page.getByLabel("验证码").fill("888888");
   await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL("**/app/read");
+  await page.waitForURL((url) => url.pathname === "/app/read");
 }
 
 test.describe("Claread web routes", () => {
@@ -77,8 +77,19 @@ test.describe("Claread web routes", () => {
     await expect(page.getByRole("heading", { name: "Vocabulary Book." })).toBeVisible();
     await expect(page.getByRole("link", { name: "生词本", exact: true })).toHaveAttribute("aria-current", "page");
 
-    await page.goto("/app/settings");
-    await expect(page).toHaveURL(/\/app\/read$/);
+    for (const legacy of [
+      "/app/settings",
+      "/app/settings?section=account",
+      "/app/settings?section=preferences",
+      "/app/settings?section=usage",
+      "/app/settings?section=support",
+      "/app/settings/feedback",
+      "/app/settings/ledger",
+    ]) {
+      await page.goto(legacy);
+      await expect(page).toHaveURL(/\/app\/read$/);
+      await expect(page.getByRole("heading", { name: "设置", exact: true })).toHaveCount(0);
+    }
 
     await page.goto("/");
     const publicCta = page.locator("header").getByRole("link", { name: "打开 Claread", exact: true });
@@ -130,23 +141,22 @@ test.describe("Claread web routes", () => {
     )).toBe(false);
   });
 
-  test("removed Reader pages return 404 without aliases", async ({ page }) => {
-    await loginAsDebugUser(page);
-
-    const readerRecordResponse = await page.goto("/app/reader-record/mock-record");
-    expect(readerRecordResponse?.status()).toBe(404);
-
-    const readerPlateResponse = await page.goto("/app/reader-plate");
-    expect(readerPlateResponse?.status()).toBe(404);
-
-    const fixtureResponse = await page.goto("/app/f7-ask-fixture/mock-record");
-    expect(fixtureResponse?.status()).toBe(404);
-  });
-
-  test("removed Reader BFF namespaces return 404 without fallback handlers", async ({
+  test("retired Reader pages and BFF endpoints return 404 without aliases", async ({
+    page,
     request,
   }) => {
-    const removedPaths = [
+    await loginAsDebugUser(page);
+
+    for (const path of [
+      "/app/reader-record/mock-record",
+      "/app/reader-plate",
+      "/app/f7-ask-fixture/mock-record",
+    ]) {
+      const response = await page.goto(path);
+      expect(response?.status(), path).toBe(404);
+    }
+
+    for (const path of [
       "/api/web/reader-plate/mock-record/snapshot",
       "/api/web/reader-plate/submit",
       "/api/web/reader-ask/model-options",
@@ -159,23 +169,15 @@ test.describe("Claread web routes", () => {
       "/api/web/analysis/current",
       "/api/web/reader/mock-record",
       "/api/web/records/mock-record",
-    ];
-
-    for (const path of removedPaths) {
+    ]) {
       const response = await request.get(path);
       expect(response.status(), path).toBe(404);
     }
-  });
 
-  test("retired Reader submit endpoints return 404 for write methods", async ({
-    request,
-  }) => {
-    const removedSubmitPaths = [
+    for (const path of [
       "/api/web/reader/records/plain-text",
       "/api/web/reader-plate/submit",
-    ];
-
-    for (const path of removedSubmitPaths) {
+    ]) {
       const response = await request.post(path, {
         data: { plainText: "retired route probe" },
       });

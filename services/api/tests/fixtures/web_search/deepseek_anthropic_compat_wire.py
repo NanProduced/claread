@@ -21,7 +21,7 @@ the official DeepSeek docs referenced in
 - https://api-docs.deepseek.com/guides/thinking_mode/
 - https://api-docs.deepseek.com/quick_start/error_codes/
 - https://api-docs.deepseek.com/api/create-chat-completion/ (for context
-  — DeepSeek ChatCompletions has NO built-in web search; only the
+  DeepSeek ChatCompletions has NO built-in web search; only the
   Anthropic-compat path does)
 
 Anthropic Web Search reference (used for probe design ONLY — DeepSeek
@@ -36,8 +36,8 @@ which sets ``CLAREAD_REAL_LLM_MODEL=deepseek-chat``). Earlier drafts
 referenced ``deepseek-v4-flash`` / ``deepseek-v4-pro`` based on a
 hypothetical V4 release; those names have been removed because they
 are not confirmed by official DeepSeek docs and would diverge from
-the smoke configuration. ``deepseek-pro`` is kept as the Phase 3
-probe model to match the smoke script's Phase 3 invocation.
+the smoke configuration. ``deepseek-pro`` is kept as the
+probe model to match the smoke script's invocation.
 
 Non-goals
 ---------
@@ -146,10 +146,10 @@ from typing import Any, Literal
 # ---------------------------------------------------------------------------
 
 # DeepSeek model names aligned with the G3 smoke run configuration.
-# ``deepseek-chat`` is the chat model used for Phase 1/2 of the smoke
+# ``deepseek-chat`` is the chat model used for /2 of the smoke
 # (see ``evals/scripts/run_reader_record_ask_r4_a3.py`` which sets
 # ``CLAREAD_REAL_LLM_MODEL=deepseek-chat``). ``deepseek-pro`` is the
-# Phase 3 probe model. Earlier drafts used ``deepseek-v4-flash`` /
+# Probe model. Earlier drafts used ``deepseek-v4-flash`` /
 # ``deepseek-v4-pro`` based on a hypothetical V4 release; those names
 # are NOT confirmed by official docs and have been removed.
 #

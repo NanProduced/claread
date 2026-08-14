@@ -1,4 +1,4 @@
-"""R1: safe activity/progress SSE projection and concurrent visibility."""
+"""Safe activity/progress SSE projection and concurrent visibility."""
 
 from __future__ import annotations
 
@@ -1024,7 +1024,7 @@ async def test_zero_tool_progress_sequence() -> None:
 
 @pytest.mark.asyncio
 async def test_rag_off_search_unavailable_still_completes() -> None:
-    """RAG-off: ``search_current_article`` is NOT mounted (ASK-WEB-R4).
+    """RAG-off: ``search_current_article`` is NOT mounted (ASK-WEB-).
 
     The model directly produces a grounded answer without attempting to
     call the article search tool. No ``searching_article`` progress
@@ -1074,7 +1074,7 @@ async def test_rag_off_search_unavailable_still_completes() -> None:
     names = [n for n, _ in events]
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     search = [p for p in progress if p.get("phase") == "searching_article"]
-    # ASK-WEB-R4: no searching_article events because the tool is not
+    # ASK-WEB-no searching_article events because the tool is not
     # mounted when ``article_rag=None``.
     assert len(search) == 0
     assert EVENT_MESSAGE_COMPLETED in names

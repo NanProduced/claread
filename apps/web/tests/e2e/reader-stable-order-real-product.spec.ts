@@ -58,7 +58,7 @@ async function loginWithPhoneAuth(page: Page, phone: string) {
   await page.getByRole("button", { name: "发送验证码" }).click();
   await page.getByLabel("验证码").fill("888888");
   await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL("**/app/read");
+  await page.waitForURL((url) => url.pathname === "/app/read");
 }
 
 async function browserJson(

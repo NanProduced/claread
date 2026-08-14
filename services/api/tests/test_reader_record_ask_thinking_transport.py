@@ -1,4 +1,4 @@
-"""R4-A5-8A1 / A5-8A1R: thinking transport multi-turn + privacy (offline)."""
+"""/ thinking transport multi-turn + privacy (offline)."""
 
 from __future__ import annotations
 
@@ -373,7 +373,7 @@ async def test_production_stream_analysis_phase_no_reasoning_leak():
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1R2: output-validator ModelRetry lifecycle behavioral test.
+# Output-validator ModelRetry lifecycle behavioral test.
 #
 # Scenario: first round thinking → output-validator raises ModelRetry
 # (OutputToolResultEvent with RetryPromptPart) → second round thinking.
@@ -510,7 +510,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1R3: tool-arg ModelRetry lifecycle behavioral coverage.
+# Tool-arg ModelRetry lifecycle behavioral coverage.
 #
 # Scenario: first round thinking + tool call → tool raises ModelRetry
 # (FunctionToolResultEvent carrying RetryPromptPart) → second round
@@ -664,7 +664,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1R3R Obj3: PartEnd-only delivery proof.
+# Obj3: PartEnd-only delivery proof.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
@@ -877,7 +877,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
 
 
 # ---------------------------------------------------------------------------
-# R4-A6: answer-block text streaming via pydantic-core partial parse.
+# Answer-block text streaming via pydantic-core partial parse.
 #
 # FunctionModel string yields map to one TextPart streamed as
 # PartStartEvent(TextPart) + PartDeltaEvent(TextPartDelta)* +

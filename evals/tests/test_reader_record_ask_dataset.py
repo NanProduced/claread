@@ -1,7 +1,7 @@
-"""Dataset loader/schema tests for R4-A3 reader-record-ask.
+"""Dataset loader/schema tests for reader-record-ask.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement (P0 dataset Git governance): unit tests MUST NOT depend on
+Requirement (dataset Git governance): unit tests MUST NOT depend on
 the local ignored working dataset under ``evals/tmp/``. Instead, each
 test builds a minimal synthetic dataset via factory + ``tmp_path`` and
 exercises the loader/schema against it. No real Reading Record UUID,
@@ -18,14 +18,14 @@ from pydantic import ValidationError
 
 from claread_eval.reader_record_ask.loader import (
     ReaderRecordAskDatasetLoadError,
-    load_r4_a3_dataset,
+    load_reader_record_ask_dataset,
     serialize_dataset,
     validate_round_trip,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskDataset,
+    ReaderRecordAskExpected,
 )
 
 # ---------------------------------------------------------------------------
@@ -42,10 +42,10 @@ def _make_case(
     article_text: str | None = "synthetic article body for testing.",
     article_title: str | None = "synthetic title",
     record_id: str | None = None,
-    expected: ReaderRecordAskR4A3Expected | None = None,
+    expected: ReaderRecordAskExpected | None = None,
     phase_tags: list[str] | None = None,
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind=source_kind,  # type: ignore[arg-type]
         record_id=record_id,
@@ -58,21 +58,21 @@ def _make_case(
         baseline_mode="complete",
         question="测试问题？",
         question_category=question_category,  # type: ignore[arg-type]
-        expected=expected or ReaderRecordAskR4A3Expected(),
+        expected=expected or ReaderRecordAskExpected(),
         phase_tags=phase_tags or [],
     )
 
 
 def _write_dataset(
     tmp_path: Path,
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskCase],
     *,
     dataset_id: str = "reader-record-ask-r4-a3",
     case_globs: list[str] | None = None,
 ) -> Path:
     """Write a minimal synthetic dataset to ``tmp_path`` and return it.
 
-    Layout matches what :func:`load_r4_a3_dataset` expects:
+    Layout matches what the dataset loader expects:
     ``<dir>/dataset.yaml`` + ``<dir>/cases/<id>.json``.
     """
     dataset_dir = tmp_path / "dataset"
@@ -109,7 +109,7 @@ def test_dataset_loads_from_disk(tmp_path: Path) -> None:
         for i in range(3)
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     assert dataset.id == "reader-record-ask-r4-a3"
     assert dataset.schema_version == "r4-a3-dataset-v1"
@@ -123,7 +123,7 @@ def test_case_ids_unique(tmp_path: Path) -> None:
         _make_case(case_id="gamma"),
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     ids = [c.id for c in dataset.cases]
     assert len(ids) == len(set(ids)), f"duplicate case ids: {ids}"
@@ -144,15 +144,15 @@ def test_duplicate_case_ids_raise(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ReaderRecordAskDatasetLoadError) as exc_info:
-        load_r4_a3_dataset(dataset_dir)
-    assert "Duplicate R4-A3 case id" in str(exc_info.value)
+        load_reader_record_ask_dataset(dataset_dir)
+    assert "Duplicate case id" in str(exc_info.value)
 
 
 def test_round_trip_serialization_stable(tmp_path: Path) -> None:
     cases = [
         _make_case(
             case_id="round-trip",
-            expected=ReaderRecordAskR4A3Expected(
+            expected=ReaderRecordAskExpected(
                 expected_entity_set={"city": ["CityA", "CityB"]},
                 allowed_temporal_claims=["2026"],
                 allowed_numerics=["42"],
@@ -163,11 +163,11 @@ def test_round_trip_serialization_stable(tmp_path: Path) -> None:
         )
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     assert validate_round_trip(dataset) is True
     serialized = serialize_dataset(dataset)
-    rebuilt = ReaderRecordAskR4A3Dataset.model_validate_json(serialized)
+    rebuilt = ReaderRecordAskDataset.model_validate_json(serialized)
     assert rebuilt.model_dump() == dataset.model_dump()
 
 
@@ -191,7 +191,7 @@ def test_bbc_cases_have_no_article_text(tmp_path: Path) -> None:
         ),
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     bbc_cases = [c for c in dataset.cases if c.source_kind == "bbc_record"]
     assert bbc_cases, "expected at least one bbc_record case"
@@ -210,7 +210,7 @@ def test_exercise_cases_have_requested_count(tmp_path: Path) -> None:
         _make_case(
             case_id="ex-1",
             question_category="exercise_one",
-            expected=ReaderRecordAskR4A3Expected(
+            expected=ReaderRecordAskExpected(
                 requested_count=1,
                 requested_count_kind="exercise_items",
             ),
@@ -218,14 +218,14 @@ def test_exercise_cases_have_requested_count(tmp_path: Path) -> None:
         _make_case(
             case_id="mc-1",
             question_category="multiple_choice_one",
-            expected=ReaderRecordAskR4A3Expected(
+            expected=ReaderRecordAskExpected(
                 requested_count=1,
                 requested_count_kind="exercise_items",
             ),
         ),
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     exercise_cases = [
         c
@@ -258,7 +258,7 @@ def test_no_real_content_in_synthetic_cases(tmp_path: Path) -> None:
         ),
     ]
     dataset_dir = _write_dataset(tmp_path, cases)
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     synthetic_cases = [
         c for c in dataset.cases if c.source_kind.startswith("synthetic")
@@ -280,7 +280,7 @@ def test_no_real_content_in_synthetic_cases(tmp_path: Path) -> None:
 
 def test_required_field_missing_raises() -> None:
     with pytest.raises(ValidationError):
-        ReaderRecordAskR4A3Case.model_validate(
+        ReaderRecordAskCase.model_validate(
             {
                 "source_kind": "synthetic_short",
                 "input_mode": "manual",
@@ -295,7 +295,7 @@ def test_required_field_missing_raises() -> None:
 
 def test_expected_block_round_trip() -> None:
     """Smoke-check that the Expected model survives a round trip too."""
-    expected = ReaderRecordAskR4A3Expected(
+    expected = ReaderRecordAskExpected(
         expected_entity_set={"city": ["CityA"]},
         allowed_temporal_claims=["2026"],
         allowed_numerics=["42"],
@@ -303,7 +303,7 @@ def test_expected_block_round_trip() -> None:
         requested_count_kind="exercise_items",
         must_declare_no_year=False,
     )
-    rebuilt = ReaderRecordAskR4A3Expected.model_validate_json(
+    rebuilt = ReaderRecordAskExpected.model_validate_json(
         expected.model_dump_json()
     )
     assert rebuilt == expected
@@ -313,7 +313,7 @@ def test_missing_dataset_dir_raises(tmp_path: Path) -> None:
     """Loader must fail closed when the dataset dir does not exist."""
     missing = tmp_path / "does-not-exist"
     with pytest.raises(ReaderRecordAskDatasetLoadError) as exc_info:
-        load_r4_a3_dataset(missing)
+        load_reader_record_ask_dataset(missing)
     assert "dataset directory not found" in str(exc_info.value)
 
 
@@ -322,18 +322,18 @@ def test_missing_dataset_yaml_raises(tmp_path: Path) -> None:
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     with pytest.raises(ReaderRecordAskDatasetLoadError) as exc_info:
-        load_r4_a3_dataset(empty_dir)
+        load_reader_record_ask_dataset(empty_dir)
     assert "dataset.yaml not found" in str(exc_info.value)
 
 
 def test_legacy_required_article_facts_migrated(tmp_path: Path) -> None:
     """Legacy ``required_article_facts`` field auto-converts to atomic_facts."""
-    expected = ReaderRecordAskR4A3Expected(
+    expected = ReaderRecordAskExpected(
         required_article_facts=["The sky is blue.", "Water is wet."],
     )
     case = _make_case(case_id="legacy", expected=expected)
     dataset_dir = _write_dataset(tmp_path, [case])
-    dataset = load_r4_a3_dataset(dataset_dir)
+    dataset = load_reader_record_ask_dataset(dataset_dir)
 
     loaded = dataset.cases[0]
     assert len(loaded.expected.atomic_facts) == 2

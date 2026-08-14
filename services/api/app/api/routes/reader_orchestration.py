@@ -326,7 +326,7 @@ def _build_source_artifact_upload_init_response(
         presigned_url = presigned.url
         presigned_method = presigned.method
         presigned_expires_at = presigned.expires_at
-        # D6-I3Q: in presigned mode the headers MUST come from the presigner
+        # In presigned mode the headers MUST come from the presigner
         # so the client sends exactly the headers that were signed. Returning
         # the non-signed hints here would cause the client to upload with
         # ``content-sha256`` instead of the signed ``x-oss-content-sha256``,
@@ -423,7 +423,7 @@ async def submit_reader_input(
     current_user: AuthUserDep,
 ) -> ReaderUnifiedInputSubmitResponse:
     user_id = UUID(current_user.user_id)
-    # L2/A4 — 每请求只解析一次：路由预检 gate、stable-ready freeze 与
+    # L2 — 每请求只解析一次：路由预检 gate、stable-ready freeze 与
     # candidate 创建共用同一份 MarkdownParseResult；内容格式
     # （detected_format）由这同一份解析结果决定，与输入来源解耦。
     preparsed = MarkdownSourceParser().parse(
@@ -521,7 +521,7 @@ async def init_reader_source_artifact_upload(
     except SourceArtifactError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # D6-I3Q: build a presigned PUT URL if a presigner is configured.
+    # Build a presigned PUT URL if a presigner is configured.
     # build_default_presigner() returns NullPresigner when credentials are
     # missing or presigning is disabled — the response then falls back to
     # ``oss_put_object_pending_credentials`` with ``presigned_url=None``.
@@ -743,7 +743,7 @@ def _build_artifact_pipeline_status_response(
 @router.get(
     "/source-artifacts/{artifact_id}/pipeline-status",
     response_model=ReaderArtifactPipelineStatusResponse,
-    summary="Load read-only artifact input pipeline status (D6-I3V)",
+    summary="Load read-only artifact input pipeline status",
 )
 async def get_reader_source_artifact_pipeline_status(
     artifact_id: UUID,
@@ -1008,7 +1008,7 @@ async def put_reader_confirmed_source(
         },
     },
     summary="Load the current ready candidate document for confirmation "
-            "(S2: Candidate Recovery read model)",
+            "(Candidate Recovery read model)",
 )
 async def get_reader_candidate_document(
     record_id: UUID,
@@ -1315,7 +1315,7 @@ async def mark_reader_record_opened(
 
 
 # ===========================================================================
-# D6-I4T Article RAG Index Lifecycle API
+# Article RAG Index Lifecycle API
 #
 # Thin route layer that delegates to ``ArticleRagIndexLifecycleService``.
 # Both routes source ``user_id`` exclusively from ``AuthUserDep``; the
@@ -1399,7 +1399,7 @@ def _build_article_rag_index_ensure_response(
 @router.get(
     "/records/{record_id}/article-rag-index/status",
     response_model=ReaderArticleRagIndexStatusResponse,
-    summary="Load the Article RAG index lifecycle status (D6-I4T)",
+    summary="Load the Article RAG index lifecycle status",
 )
 async def get_reader_article_rag_index_status(
     record_id: UUID,
@@ -1455,7 +1455,7 @@ async def get_reader_article_rag_index_status(
 @router.post(
     "/records/{record_id}/article-rag-index/ensure",
     response_model=ReaderArticleRagIndexEnsureResponse,
-    summary="Ensure an Article RAG index build job exists for the record (D6-I4T)",
+    summary="Ensure an Article RAG index build job exists for the record",
 )
 async def ensure_reader_article_rag_index_job(
     record_id: UUID,
@@ -1515,7 +1515,7 @@ async def ensure_reader_article_rag_index_job(
 
 
 # ===========================================================================
-# T5.6c — Explicit section translation command
+# Explicit section translation command
 #
 # Bounded synchronous orchestration of the existing
 # ``SectionTranslationBootstrapService`` + ``SectionTranslationDrainService``
@@ -1578,7 +1578,7 @@ def _map_drain_outcome_to_response(
 @router.post(
     "/records/{record_id}/section-translation",
     response_model=ReaderSectionTranslationResponse,
-    summary="Trigger synchronous explicit-section translation (T5.6c)",
+    summary="Trigger synchronous explicit-section translation",
 )
 async def submit_section_translation(
     record_id: UUID,

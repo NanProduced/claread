@@ -1,4 +1,4 @@
-"""R1A-A3: memory injection + CAS check tests.
+"""R1A-memory injection + CAS check tests.
 
 Verifies the R1A integration layer:
 - flag=False (snapshot=None) → no memory block, behavior equals today
@@ -7,7 +7,7 @@ Verifies the R1A integration layer:
 - memory block wrapped with ``<transcript_data role="data" ...>``
 - CAS mismatch → emergency_full_snapshot rebuild (mocked)
 
-A1/A2 (thread_memory package) are not built yet; tests inject fake
+The thread_memory package are not built yet; tests inject fake
 modules into ``sys.modules`` so the lazy imports resolve.
 """
 
@@ -32,7 +32,7 @@ from app.services.reader_record_ask.turn_prompt import (
 )
 
 # ---------------------------------------------------------------------------
-# Fake thread_memory module scaffolding (A1/A2 not built yet)
+# Fake thread_memory module scaffolding (not built yet)
 # ---------------------------------------------------------------------------
 
 _THREAD_MEMORY_PKG = "app.services.reader_record_ask.thread_memory"
@@ -53,10 +53,10 @@ def _fake_thread_memory(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]
     """Auto-fixture: force fake thread_memory modules for every test.
 
     Uses ``monkeypatch.setitem(sys.modules, ...)`` so the override is
-    always applied — even when A1/A2's real modules are already cached
+    always applied even when real modules are already cached
     in ``sys.modules`` by sibling test files in the same run — and is
-    automatically restored after the test. This keeps the A3 tests
-    isolated from A1/A2's concrete implementations.
+    automatically restored after the test. This keeps the tests
+    isolated from concrete implementations.
     """
     pkg = types.ModuleType(_THREAD_MEMORY_PKG)
     pkg.__path__ = []  # type: ignore[attr-defined]
@@ -300,7 +300,7 @@ class _FakeSnapshot:
     ``snapshot.episodes[*].source_bindings`` (schema §6), not from the
     snapshot root. Tests construct fake episodes to match.
 
-    R1.5 P0-4 fix: production code now calls ``snapshot.model_copy(...)``
+     fix: production code now calls ``snapshot.model_copy(...)``
     during fence rebuild + ``validate_snapshot`` returns a tuple. The
     fake must support both so the CAS-match / fence-exception paths can
     reach the final ``return snapshot``.
@@ -342,7 +342,7 @@ class _FakeEpisode:
         structured_facts: list[Any] | None = None,
     ) -> None:
         self.source_bindings = source_bindings or []
-        # R1.5 P0-4: production code checks ``ep.structured_facts`` in the
+        # Production code checks ``ep.structured_facts`` in the
         # final guard before returning. Default to a non-empty list so the
         # snapshot is not discarded as empty.
         self.structured_facts = structured_facts if structured_facts is not None else [
@@ -366,7 +366,7 @@ def _make_coordinator(
 ) -> Any:
     """Build a TurnCoordinator with memory enabled + mock repository.
 
-    R1.5 P0-1: ``thread_id`` MUST be a valid UUID string — production
+     ``Thread_id`` MUST be a valid UUID string — production
     code now unifies on UUID and rejects non-UUID values (fail-soft →
     None). The old ``"thread-1"`` placeholder broke CAS tests because
     the UUID parse fails before any repository call is made.
@@ -418,7 +418,7 @@ async def test_cas_match_uses_existing_snapshot(
         )
     )
     _fake_thread_memory["allowlist"].compute_watermark.return_value = "match"
-    # R1.5 P0-4: validate_snapshot returns (snapshot, metrics). Configure
+    # Validate_snapshot returns (snapshot, metrics). Configure
     # the fake to pass through (rejected=False) so the snapshot survives.
     _fake_thread_memory["allowlist"].validate_snapshot.return_value = (
         snapshot,
@@ -450,7 +450,7 @@ async def test_cas_mismatch_triggers_emergency_rebuild(
         )
     )
     _fake_thread_memory["allowlist"].compute_watermark.return_value = "fresh"
-    # R1.5 P0-4: validate_snapshot must pass on the rebuilt snapshot.
+    # Validate_snapshot must pass on the rebuilt snapshot.
     _fake_thread_memory["allowlist"].validate_snapshot.return_value = (
         rebuilt_snapshot,
         {"rejected": False, "stripped": 0, "total": 0},
@@ -533,7 +533,7 @@ async def test_memory_disabled_returns_none() -> None:
 async def test_fence_check_does_not_abort_on_exception(
     _fake_thread_memory: dict[str, MagicMock],
 ) -> None:
-    """R1.6 P1-1: fence check failure → no memory injection (return None).
+    """Fence check failure → no memory injection (return None).
 
     The Ask pipeline itself does NOT crash — it continues without memory.
     Old bindings must NEVER be reused because they may carry a stale
@@ -552,7 +552,7 @@ async def test_fence_check_does_not_abort_on_exception(
         )
     )
     _fake_thread_memory["allowlist"].compute_watermark.return_value = "match"
-    # R1.5 P0-4: validate_snapshot must pass through.
+    # Validate_snapshot must pass through.
     _fake_thread_memory["allowlist"].validate_snapshot.return_value = (
         snapshot,
         {"rejected": False, "stripped": 0, "total": 0},
@@ -567,7 +567,7 @@ async def test_fence_check_does_not_abort_on_exception(
 
     result = await coord._load_memory_snapshot()
 
-    # R1.6 P1-1: fence crash → no validity info → return None (no memory).
+    # Fence crash → no validity info → return None (no memory).
     assert result is None
     _fake_thread_memory[
         "preparation"

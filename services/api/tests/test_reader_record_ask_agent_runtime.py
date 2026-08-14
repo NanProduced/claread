@@ -563,7 +563,7 @@ async def test_agent_direct_answer_zero_tools() -> None:
     assert result.search_current_article_calls == 0
     # Initial selection is registered even when the model uses zero tools.
     assert result.initial_anchor_handle is not None
-    # R4-A1: baseline context adds an article_seed observation alongside the
+    # Baseline context adds an article_seed observation alongside the
     # initial_anchor observation, so the total is 2 even with zero tool calls.
     assert len(result.evidence_observations) == 2
     kinds = {obs.handle.kind for obs in result.evidence_observations}
@@ -595,7 +595,7 @@ async def test_agent_direct_answer_without_selection_has_no_initial_evidence() -
     )
     assert result.read_range_calls == 0
     assert result.initial_anchor_handle is None
-    # R4-A1: even without a user selection, baseline context now produces
+    # Even without a user selection, baseline context now produces
     # exactly one article_seed observation. There is no initial_anchor.
     assert len(result.evidence_observations) == 1
     assert result.evidence_observations[0].handle.kind == "article_seed"
@@ -606,7 +606,7 @@ async def test_agent_direct_answer_without_selection_has_no_initial_evidence() -
 
 @pytest.mark.asyncio
 async def test_agent_one_expand_evidence_and_cites_handle() -> None:
-    """R4-A5-7: expand_evidence returns a citeable handle (replaces read_range)."""
+    """Expand_evidence returns a citeable handle (replaces read_range)."""
     import re
 
     from app.services.reader_record_ask.evidence_expansion import (
@@ -704,14 +704,14 @@ async def test_agent_budget_exhaustion_after_three_reads() -> None:
     Offline read_range executor still enforces its own call budget; this
     agent-loop test is skipped in favour of expand/RAG account metering.
     """
-    pytest.skip("read_range agent tool retired in R4-A5-7; see expand/RAG metering")
+    pytest.skip("read_range agent tool retired; see expand/RAG metering")
 
 
 @pytest.mark.asyncio
 async def test_document_injection_does_not_expand_tool_authority() -> None:
     """Forged system/tool instructions inside document text are data only.
 
-    R4-A5-7: injection text is XML-escaped inside untrusted baseline
+    Injection text is XML-escaped inside untrusted baseline
     blocks; the model answers without tools. Hostile instructions must
     not become callable tool authority.
     """
@@ -779,7 +779,7 @@ def test_envelope_version_constant_stable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0: scope identity / hash / registry binding / order-span cap
+# Scope identity / hash registry binding / order-span cap
 # ---------------------------------------------------------------------------
 
 
@@ -983,7 +983,7 @@ async def test_structured_output_exhausted_raises_unexpected_model_behavior() ->
 async def test_structured_output_success_still_runs_evidence_finalizer() -> None:
     """Valid structured draft (passes output_validator) still runs finalizer.
 
-    R4-A2: the grounding output_validator now gate-keeps foreign handles via
+    The grounding output_validator now gate-keeps foreign handles via
     ModelRetry, so a draft with an unknown handle never reaches the finalizer
     (foreign-handle rejection by the finalizer is covered directly in
     test_reader_record_ask_rag_finalizer.py). Here we verify the happy path:
@@ -1040,7 +1040,7 @@ async def test_rag_off_basic_answer_still_completes_via_initial_anchor() -> None
 
 
 # ---------------------------------------------------------------------------
-# R4-A2 sign-off: real output-validator seam integration tests.
+# Sign-off: real output-validator seam integration tests.
 #
 # These two tests drive the FULL agent.run path through
 # create_reading_record_ask_agent (which wires grounding_validator via the
@@ -1320,7 +1320,7 @@ async def test_first_model_request_has_no_host_policy_surface() -> None:
     assert result.agent_output.cited_evidence_handles
 
 
-# T10: the host-assembled user prompt is byte-stable across model calls
+# The host-assembled user prompt is byte-stable across model calls
 #      and carries no legacy host policy / correctness content.
 @pytest.mark.asyncio
 async def test_user_prompt_byte_stable_across_retries() -> None:
@@ -1459,12 +1459,12 @@ async def test_unit_order_span_rejects_overwide_span_before_join() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ASK-WEB-R4-R1: tool mounting matrix
+# ASK-WEB-tool mounting matrix
 # ---------------------------------------------------------------------------
 
 
 def test_tool_mounting_matrix_no_capabilities() -> None:
-    """ASK-WEB-R4-R1: when no capabilities are present, no host function
+    """ASK-WEB-when no capabilities are present, no host function
     tools are registered. The model cannot invoke ``expand_evidence``,
     ``search_current_article``, or ``search_web`` — and therefore no
     ``unavailable`` activity can be produced for them.

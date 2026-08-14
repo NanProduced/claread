@@ -1,4 +1,4 @@
-"""R1A-A3: budget account extension tests (RL2 + H5 + G11).
+"""R1A-budget account extension tests (RL2 + H5 + G11).
 
 Verifies the model_view_budget module exposes nine accounts (seven
 original + memory + recent_history), the reserves sum still equals
@@ -32,7 +32,7 @@ from app.services.reader_record_ask.model_view_budget import (
 
 
 def test_nine_accounts_exist_in_reserves() -> None:
-    """ACCOUNT_RESERVES must carry all nine accounts (R0.1 RL2/H5)."""
+    """ACCOUNT_RESERVES must carry all nine accounts (RL2/H5)."""
     expected = {
         "request_frame",
         "selection",
@@ -56,7 +56,7 @@ def test_memory_and_recent_history_constants() -> None:
 def test_reserves_sum_equals_cap() -> None:
     """Nine-account reserves must sum to MODEL_VISIBLE_TURN_PAYLOAD_CAP.
 
-    Ask text-only R2: memory/recent_history use one 128K character ledger.
+    Ask text-only memory/recent_history use one 128K character ledger.
     No parallel token-side ledger — ``assert sum == CAP`` stays valid.
     """
     total = sum(ACCOUNT_RESERVES.values())

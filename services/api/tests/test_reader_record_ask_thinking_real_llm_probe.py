@@ -1,4 +1,4 @@
-"""R4-A5-8A1: skip-by-default real-LLM thinking probes.
+"""Skip-by-default real-LLM thinking probes.
 
 Does **not** run unless the real_llm triple gate is opened by the
 operator: CLAREAD_ALLOW_REAL_LLM_TESTS=1 + CLAREAD_REAL_LLM_MODEL=<model>
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-# TG-FOUNDATION R1: route these probes through the standard real_llm
+# TG-FOUNDATION route these probes through the standard real_llm
 # triple gate (conftest skip_real_llm_tests / fail_on_real_llm_attempts)
 # instead of an ad-hoc env var, so any future real call is fail-closed
 # by the same mechanism as every other real_llm test.

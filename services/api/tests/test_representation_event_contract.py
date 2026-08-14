@@ -1,4 +1,4 @@
-"""T4.2a-O4-R2: Transactional Representation Event Coverage tests.
+"""Transactional Representation Event Coverage tests.
 
 Verifies that G1/G2/G3 write paths publish reader_events in the same
 PostgreSQL transaction as the business fact write, that true no-ops
@@ -1397,7 +1397,7 @@ class TestTransactionRollback:
 
 
 # ---------------------------------------------------------------------------#
-# Section 6: P1-1 — Stale base/generation fence (no event on stale assets)
+# Section 6: — Stale base/generation fence (no event on stale assets)
 # ---------------------------------------------------------------------------#
 
 
@@ -1717,7 +1717,7 @@ class TestStaleFenceNoEvent:
 
 
 # ---------------------------------------------------------------------------#
-# Section 7: P1-3 — Idempotent create no-op (reader_notes + highlight merge)
+# Section 7: — Idempotent create no-op (reader_notes + highlight merge)
 # ---------------------------------------------------------------------------#
 
 

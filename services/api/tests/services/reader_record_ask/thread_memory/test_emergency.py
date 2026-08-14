@@ -1,6 +1,6 @@
-"""Tests for emergency deterministic compaction (R0.1 §4.2(e) facts_det).
+"""Tests for emergency deterministic compaction (§4.2(e) facts_det).
 
-A1 stub: 待 A1 完成后移除（schema/mapping 走 conftest 注入的 _stub）
+ stub: 待 完成后移除（schema/mapping 走 conftest 注入的 _stub）
 """
 
 from __future__ import annotations
@@ -55,13 +55,13 @@ def test_emergency_compact_extracts_user_question_and_assistant_answer():
 
     assert isinstance(episode, Episode)
     assert episode.episode_id == "ep_1_1"
-    # A1 schema: turn_range is a TurnRange Pydantic model (not a dict).
+    # Schema: turn_range is a TurnRange Pydantic model (not a dict).
     assert episode.turn_range.start == 1
     assert episode.turn_range.end == 1
     assert episode.compaction_model == "none"
     assert episode.compaction_method == "emergency_deterministic"
     assert episode.compaction_input_watermark == ""
-    # Excluded content markers cover the R0.1 §6 closed set.
+    # Excluded content markers cover the §6 closed set.
     assert set(episode.excluded_content_markers) == {
         "reasoning",
         "raw_tool_payload",
@@ -196,7 +196,7 @@ def test_emergency_compact_collects_bindings_via_derive_source_bindings():
 
 
 def test_emergency_full_snapshot_watermark_is_deterministic():
-    """R1.6 P0-1 + R1.6.1 P0-1: watermark follows canonical revision."""
+    """ + watermark follows canonical revision."""
     messages = [
         _user_msg("m1", "Q1"),
         _assistant_msg("m2", answer_blocks=[{"text": "A1"}]),
@@ -206,7 +206,7 @@ def test_emergency_full_snapshot_watermark_is_deterministic():
     snap1 = emergency_full_snapshot(messages, [], thread_id="t1")
     snap2 = emergency_full_snapshot(messages, [], thread_id="t1")
     assert snap1.watermark == snap2.watermark
-    # R1.6.1 P0-1: verify against the structured revision-digest watermark.
+    # Verify against the structured revision-digest watermark.
     # User digest = SHA256(content_md).
     # Assistant digest = SHA256(JSON({run_id, answer_texts, web_outcome})).
     # The test messages don't set canonical_turn_run_id → run_id="".
@@ -262,11 +262,11 @@ def test_emergency_full_snapshot_compacts_aged_segment():
     assert len(snap.episodes) == 1
     ep = snap.episodes[0]
     # 10 user msgs total, recent_pairs=6 → aged has 4 user msgs → turn_range (1,4)
-    # A1 schema: turn_range is a TurnRange Pydantic model.
+    # Schema: turn_range is a TurnRange Pydantic model.
     assert ep.turn_range.start == 1
     assert ep.turn_range.end == 4
     assert ep.episode_id == "ep_1_4"
-    # R1.6.1 P0-1: watermark follows canonical revision via structured
+    # Watermark follows canonical revision via structured
     # digest. user digest = SHA-256(content_md); assistant digest =
     # SHA-256(JSON({run_id:"", answer_texts:[A{i}], web_outcome:""})).
     # The structured form fixes the single-element join bug (separator

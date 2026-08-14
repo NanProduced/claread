@@ -1,4 +1,4 @@
-# task-history: D6-I3I (renamed from test_d6_i3i_source_artifact_upload_complete_route.py)
+# task-history: (renamed from test_d6_i3i_source_artifact_upload_complete_route.py)
 from __future__ import annotations
 
 from types import SimpleNamespace

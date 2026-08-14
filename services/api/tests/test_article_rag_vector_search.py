@@ -1,4 +1,4 @@
-# task-history: D6-I4E (renamed from test_d6_i4e_article_rag_vector_search.py)
+# task-history: (renamed from test_d6_i4e_article_rag_vector_search.py)
 """Tests for the Article RAG vector search adapter foundation.
 
 Covers:
@@ -738,7 +738,7 @@ async def test_real_zilliz_search_smoke_is_opt_in_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. Hit parsing — real pymilvus shapes (reviewer P1 fix)
+# 9. Hit parsing — real pymilvus shapes (reviewer fix)
 # ---------------------------------------------------------------------------
 
 

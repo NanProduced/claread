@@ -90,7 +90,7 @@ function AskComposerSurface({
         }
         return onSubmit(value);
       }}
-      // P1 — quiet low-elevation surface: very light border, no shadow,
+      // Quiet low-elevation surface: very light border, no shadow,
       // no heavy ring. The composer recedes; focus + send own the blue.
       className="w-full rounded-lg border-border/50 bg-muted/30 shadow-none transition-colors focus-within:border-border/80"
     >
@@ -154,7 +154,7 @@ function AskComposerSurface({
               onClick={() =>
                 onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
               }
-              // R2.3 — web toggle is a secondary control: neutral muted
+              // Web toggle is a secondary control: neutral muted
               // surface when on (not primary blue — blue is reserved for
               // focus + send), quiet border when off. Blue appears only
               // in the focus-visible ring.
@@ -236,7 +236,7 @@ export function AskComposer({
   return (
     <div className="shrink-0 border-t border-border/60 bg-background px-4 pb-3 pt-1.5">
       {displayErrorMessage ? (
-        // R2.4 — composer banner errors are recoverable (network/retry/
+        // Composer banner errors are recoverable (network/retry/
         // capability). Use warning+fill for a low-disturbance amber surface
         // instead of a full red border. Only unrecoverable validation
         // errors (not currently surfaced here) would use variant="error".

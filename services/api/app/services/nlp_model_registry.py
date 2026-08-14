@@ -11,7 +11,7 @@ The repository already contains a domain-specific dictionary spaCy loader
 (``app.services.dictionary.nlp``). The Reader
 sentence-segmentation provider needs a parser-backed ``en_core_web_sm``
 pipeline, and adding a third independent loader inline in the reader
-base builder was explicitly ruled out (R7-1). This registry is the
+base builder is intentionally not duplicated. This registry is the
 narrow interface that the Reader and future consumers can share.
 
 Guarantees

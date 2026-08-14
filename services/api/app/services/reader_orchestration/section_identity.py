@@ -1,4 +1,4 @@
-"""T5.6a — pure SectionIdentity + versioned delimiter-safe target keys.
+"""pure SectionIdentity + versioned delimiter-safe target keys.
 
 No I/O, no jobs, no LLM. node_id / outline_revision never enter identity or keys.
 """

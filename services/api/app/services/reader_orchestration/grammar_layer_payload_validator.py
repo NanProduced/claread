@@ -1,6 +1,6 @@
 """Grammar layer payload validator (layer_published extended payload).
 
-T4.2a-PUX-R4-R2.2-P2b-R1 — Grammar First-Publish Layer Event Payload
+Grammar First-Publish Layer Event Payload
 
 为 grammar_note 首发的 ``layer_published`` 事件提供专用 payload validator。
 不复用 ``representation_event_payload.py``（那是 projection_ops / record_state_changed
@@ -34,7 +34,7 @@ MAX_KEY_LENGTH = 256
 # operation 白名单：rev2 收窄，仅允许 insert_after_anchor
 ALLOWED_OPERATIONS: frozenset[str] = frozenset({"insert_after_anchor"})
 
-# insertions[].kind 白名单：P2b 只处理 grammar_note；sentence_analysis 留给 P3
+# insertions[].kind 白名单：P2b 只处理 grammar_note；sentence_analysis 留给
 ALLOWED_INSERTION_KINDS: frozenset[str] = frozenset({"grammar_note"})
 
 # 顶层字段白名单：

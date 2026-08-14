@@ -1,10 +1,10 @@
-"""T4.2a-R2-R1 durable execution budget guard for the reader enhancement pipeline.
+"""Durable execution budget guard for the reader enhancement pipeline.
 
 Provides a deterministic, **cross-pipeline-run** budget tracker that limits
 the number of effective LLM calls per layer (translation, vocabulary,
 grammar).
 
-T4.2a-R2-R1 fix: the budget is no longer an in-memory counter recreated
+ fix: the budget is no longer an in-memory counter recreated
 every ``runner.run()``. It is loaded from durable DB state
 (``reader_jobs.attempt_count`` / ``reader_jobs.max_attempts``) so that
 multiple ``run()`` calls within the same WorkerLoop cycle cannot exceed
@@ -91,7 +91,7 @@ class DurableBudgetLoadResult:
     ``layer_snapshots`` maps each budget layer to its durable snapshot.
     ``non_superseded_fingerprints`` records the sorted tuple of
     operation_fingerprint values that were included in the budget
-    calculation, for observability. T4.2a-R2-R2: this is a *set*, not
+    calculation, for observability. This is a *set*, not
     a single "active" fingerprint — the budget conservatively
     aggregates across all non-superseded fingerprints because the
     existing schema cannot reliably determine a single active
@@ -107,7 +107,7 @@ class DurableBudgetLoadResult:
 class ExecutionBudget:
     """Cross-pipeline-run durable budget tracker.
 
-    T4.2a-R2-R1: the budget is loaded from ``reader_jobs.attempt_count``
+    The budget is loaded from ``reader_jobs.attempt_count``
     and ``reader_jobs.max_attempts`` at the start of each ``run()``.
     The in-memory ``_consumed`` counter is only used for intra-run
     tracking (so a single run that dispatches multiple workers sees
@@ -122,7 +122,7 @@ class ExecutionBudget:
     _planned: dict[BudgetLayer, int] = field(default_factory=dict)
     _max: dict[BudgetLayer, int] = field(default_factory=dict)
     _consumed: dict[BudgetLayer, int] = field(default_factory=dict)
-    # T4.2a-R2-R2: sorted tuple of non-superseded fingerprints per layer.
+    # Sorted tuple of non-superseded fingerprints per layer.
     # Not a single "active" fingerprint — see DurableBudgetLoadResult docs.
     _non_superseded_fingerprints: dict[BudgetLayer, tuple[str, ...]] = field(
         default_factory=dict
@@ -168,7 +168,7 @@ class ExecutionBudget:
         - ``max_effective_calls`` = SUM(max_attempts).
         - ``consumed_calls`` = SUM(attempt_count).
 
-        T4.2a-R2-R2: "active fingerprint" is now a **conservative
+        "Active fingerprint" is now a **conservative
         sorted set** of all non-superseded fingerprints per layer, not
         a single last-wins value. The budget aggregates across all
         non-superseded fingerprints because the existing schema cannot
@@ -331,7 +331,7 @@ class ExecutionBudget:
     def to_diagnostics(self) -> dict[str, dict[str, int | list[str]]]:
         """Serialize to a diagnostics-friendly dict for span metadata.
 
-        T4.2a-R2-R2: includes ``non_superseded_fingerprints`` as a
+        Includes ``non_superseded_fingerprints`` as a
         sorted list per layer for observability.
         """
         result: dict[str, dict[str, int | list[str]]] = {}
@@ -353,7 +353,7 @@ class ExecutionBudget:
     ) -> tuple[str, ...]:
         """Return the sorted non-superseded fingerprints for the layer.
 
-        T4.2a-R2-R2: this is a *set*, not a single active fingerprint.
+        This is a *set*, not a single active fingerprint.
         The budget conservatively aggregates across all non-superseded
         fingerprints. Returns an empty tuple if the layer has no jobs.
         """

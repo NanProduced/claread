@@ -1,7 +1,7 @@
-# task-history: READER-PARSE-EVAL-R1 (renamed from test_reader_parse_eval_r1.py)
-"""R1 split-package tests for ``verification.reader_baseline.parse_eval``.
+# task-history: READER-PARSE-EVAL- (renamed from test_reader_parse_eval_r1.py)
+"""Split-package tests for ``verification.reader_baseline.parse_eval``.
 
-These tests cover the R1 corrections to Task 5A:
+These tests cover the corrections to
 
 1. **Reader adapter evidence** — the official
    :func:`.reader_adapter.build_artifact_from_snapshot` maps a
@@ -112,7 +112,7 @@ def _build_non_empty_layer_artifact_with_evidence() -> (
 ):
     """Build the non-empty-layer fake artifact + evidence with sidecar payloads.
 
-    R2 (P1-4): the evidence MUST carry ``sidecar_payloads`` so the
+    The evidence MUST carry ``sidecar_payloads`` so the
     gate can resolve each ``sidecar_ref`` layer and verify its
     ``sidecar_sha256``. Without this, the gate would reject the
     grammar_note layer with ``sidecar_payload_unresolved``.
@@ -140,7 +140,7 @@ def _build_non_empty_layer_artifact_with_evidence() -> (
 
 
 # ---------------------------------------------------------------------------
-# Fixed sample ids covered by the R1 tests
+# Fixed sample ids covered by the tests
 # ---------------------------------------------------------------------------
 
 FIXED_SAMPLE_IDS: tuple[str, ...] = (
@@ -301,7 +301,7 @@ def test_adapter_artifact_passes_gate_with_evidence() -> None:
 
 def test_adapter_artifact_provenance_fake_executor() -> None:
     """The fake-executor fixture carries explicit fake markers and
-    empty model fields (R2 / P1-3: hand-constructed content must
+    empty model fields ( hand-constructed content must
     never be labelled ``executor_mode='real'``)."""
     from verification.reader_baseline.parse_eval.reader_snapshot_fixture import (
         build_fake_artifact_with_non_empty_layers,
@@ -317,12 +317,12 @@ def test_adapter_artifact_provenance_fake_executor() -> None:
 
 
 def test_schema_only_real_artifact_from_fixture_rejected_by_gate() -> None:
-    """R3: A fixture-produced artifact that claims real execution
+    """A fixture-produced artifact that claims real execution
     (``executor_mode='real'`` + ``is_fake=False``) MUST be rejected
     by the gate with ``fixture_claims_real_execution``.
 
     This test replaces the old ``build_schema_only_real_provenance_fixture``
-    public helper (deleted in R3 / P1). The artifact is constructed
+    public helper (deleted in). The artifact is constructed
     test-locally by mutating a valid fake artifact's provenance fields
     to claim real execution while keeping the fixture producer_module.
     The schema branch accepts it (Pydantic does not know which module
@@ -385,7 +385,7 @@ def test_schema_only_real_artifact_from_fixture_rejected_by_gate() -> None:
 
 
 def test_real_artifact_from_non_adapter_producer_rejected_by_gate() -> None:
-    """R3: An artifact claiming real execution whose producer_module
+    """An artifact claiming real execution whose producer_module
     is neither a known fixture nor the official adapter MUST be
     rejected by the gate with ``real_artifact_from_non_adapter_producer``.
     """
@@ -440,7 +440,7 @@ def test_real_artifact_from_non_adapter_producer_rejected_by_gate() -> None:
 
 
 def test_adapter_real_mode_without_pipeline_summary_raises() -> None:
-    """R3 (P3): ``build_artifact_from_snapshot`` with
+    """``Build_artifact_from_snapshot`` with
     ``executor_mode='real'`` and ``pipeline_summary=None`` MUST raise
     ``ValueError`` — a real-execution artifact must carry actual
     pipeline run evidence."""
@@ -470,7 +470,7 @@ def test_adapter_real_mode_without_pipeline_summary_raises() -> None:
 
 
 def test_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
-    """R3 regression: a fake non-empty-layer artifact with correct
+    """Regression: a fake non-empty-layer artifact with correct
     sidecar evidence MUST still pass the gate. The new provenance
     policy only fires for artifacts claiming real execution — fake
     artifacts from fixture producers are legitimate."""
@@ -486,7 +486,7 @@ def test_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2b. R2 / P1-2: adapter fail-closed on snapshot.base mismatch
+# 2b. Adapter fail-closed on snapshot.base mismatch
 # ---------------------------------------------------------------------------
 #
 # The adapter MUST refuse to produce an artifact when the source
@@ -499,7 +499,7 @@ def test_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
 
 def test_adapter_rejects_snapshot_with_zero_content_sha256() -> None:
     """A snapshot whose ``base.content_sha256`` is all-zeros MUST be
-    rejected by the adapter (P1-2 negative test)."""
+    rejected by the adapter (negative test)."""
     import dataclasses
 
     from verification.reader_baseline.parse_eval.reader_adapter import (
@@ -534,7 +534,7 @@ def test_adapter_rejects_snapshot_with_zero_content_sha256() -> None:
 
 def test_adapter_rejects_snapshot_with_mismatched_text_length_utf16() -> None:
     """A snapshot whose ``base.text_length_utf16`` is off by one MUST
-    be rejected by the adapter (P1-2 negative test)."""
+    be rejected by the adapter (negative test)."""
     import dataclasses
 
     from verification.reader_baseline.parse_eval.reader_adapter import (
@@ -607,7 +607,7 @@ def test_adapter_rejects_snapshot_with_missing_base() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2c. R2 / P1-6: adapter accepts a real ``ReaderPlateSnapshot`` schema
+# 2c. Adapter accepts a real ``ReaderPlateSnapshot`` schema
 # ---------------------------------------------------------------------------
 #
 # At least one adapter test must construct a real
@@ -622,7 +622,7 @@ def test_adapter_builds_artifact_from_real_reader_plate_snapshot() -> None:
     """The adapter accepts a real ``ReaderPlateSnapshot`` Pydantic
     instance whose ``base.content_sha256`` / ``text_length_utf16``
     match the passed canonical text, and produces a valid artifact
-    (P1-6: real schema, not shadow dataclass)."""
+    (real schema, not shadow dataclass)."""
     from datetime import datetime
 
     from app.schemas.reader_orchestration import (
@@ -736,7 +736,7 @@ def test_adapter_builds_artifact_from_real_reader_plate_snapshot() -> None:
 def test_gate_passes_with_evidence_for_fixed_sample(
     sample_id: str,
 ) -> None:
-    """The R1 gate passes with 0 findings for each fixed sample when
+    """The gate passes with 0 findings for each fixed sample when
     the canonical-text evidence matches."""
     from verification.reader_baseline.parse_eval.gate import run_gate
 
@@ -814,14 +814,14 @@ def test_gate_rejects_zero_segment_text_hash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4b. R2 (P1-1): artifact_id recompute regression negatives
+# 4b. artifact_id recompute regression negatives
 # ---------------------------------------------------------------------------
 
 
 def test_gate_rejects_zero_artifact_id() -> None:
     """An artifact whose ``artifact_id`` is all-zeros MUST fail.
 
-    R2 (P1-1) regression negative: the gate MUST recompute
+     regression negative: the gate MUST recompute
     ``derive_artifact_id(...)`` from the declared
     ``artifact_id_semantic_inputs`` and reject any artifact whose
     declared ``artifact_id`` does not match. Setting ``artifact_id``
@@ -850,7 +850,7 @@ def test_gate_rejects_wrong_artifact_id() -> None:
     """An artifact whose ``artifact_id`` is a valid but wrong hex
     string MUST fail the recompute check.
 
-    R2 (P1-1) regression negative: flipping the last hex char of the
+     regression negative: flipping the last hex char of the
     real ``artifact_id`` yields a valid 64-hex string that does NOT
     match the value recomputed from the semantic inputs. The gate
     must catch this via ``derive_artifact_id(...)`` recompute.
@@ -878,7 +878,7 @@ def test_gate_rejects_wrong_artifact_id() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4c. R2 (P1-4): sidecar_ref resolver seam regression negatives
+# 4c. sidecar_ref resolver seam regression negatives
 # ---------------------------------------------------------------------------
 
 
@@ -886,7 +886,7 @@ def test_gate_rejects_sidecar_payload_unresolved() -> None:
     """An artifact with a ``sidecar_ref`` layer MUST fail the gate
     when the evidence does not carry the corresponding sidecar payload.
 
-    R2 (P1-4) regression negative: without the resolver seam, the
+     regression negative: without the resolver seam, the
     gate only checked that ``sidecar_ref`` was a non-empty string.
     Now the gate resolves ``sidecar_ref`` via
     ``evidence.sidecar_payloads``; a missing payload is a finding.
@@ -923,7 +923,7 @@ def test_gate_rejects_sidecar_sha_mismatch() -> None:
     when the resolved sidecar payload's SHA-256 does not match the
     embedded ``sidecar_sha256``.
 
-    R2 (P1-4) regression negative: the gate recomputes the SHA-256
+     regression negative: the gate recomputes the SHA-256
     over the resolved sidecar payload and compares it to the layer's
     ``sidecar_sha256``. A corrupted payload or hash is a finding.
     """

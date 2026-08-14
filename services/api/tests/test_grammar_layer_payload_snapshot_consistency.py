@@ -1,4 +1,4 @@
-"""T4.2a-PUX-R4-R2.2-P2b-R1: snapshot projection consistency test.
+"""Snapshot projection consistency test.
 
 以真实 snapshot projection 验证 grammar payload 的每个 ``item_id`` 可被准确定位
 到对应的 grammar callout（spec: "以真实 snapshot projection 验证 item_id 可定位"）。

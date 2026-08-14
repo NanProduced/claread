@@ -20,7 +20,7 @@ from app.services.reader_orchestration.smoke_harness import (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare a local D5 reader smoke record for snapshot reload / Web inspection."
+        description="Prepare a local snapshot-ready reader smoke record for snapshot reload / Web inspection."
     )
     parser.add_argument("--user-id", required=True, help="Target user UUID")
     parser.add_argument("--plain-text", required=True, help="Plain text input to submit")

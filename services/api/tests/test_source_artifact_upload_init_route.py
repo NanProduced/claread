@@ -1,4 +1,4 @@
-# task-history: D6-I3H (renamed from test_d6_i3h_source_artifact_upload_init_route.py)
+# task-history: (renamed from test_d6_i3h_source_artifact_upload_init_route.py)
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -211,7 +211,7 @@ def test_init_source_artifact_upload_response_includes_upload_target_without_cre
     assert "authorization" not in {
         key.lower() for key in response_json["headers"].keys()
     }
-    # D6-I3Q: no presigner configured in test env → presigned fields are null
+    # No presigner configured in test env → presigned fields are null
     # and the response must never leak access keys / secrets.
     response_text = str(response_json)
     assert "access_key" not in response_text.lower()

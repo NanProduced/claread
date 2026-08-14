@@ -1,11 +1,11 @@
 """evaluate_artifact — single 11-dimension evaluator entrypoint.
 
 Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
-Requirement: evaluator-based Phase 2/3 失败选择（P0-3）.
+Requirement: evaluator-based 失败选择.
 
 Prior to this module, the harness and the aggregate script each duplicated
 the list of 11 evaluators and applied them with slightly different
-filtering. Worse, Phase 2/3 case selection only checked *terminal*
+filtering. Worse, staged case selection only checked *terminal*
 failures (exception / finalized_status != ok / final_text empty), missing
 content-quality failures such as:
 
@@ -19,9 +19,9 @@ This module exposes one deep module with a small interface:
 
 - :func:`evaluate_artifact` — run all 11 evaluators on one (case, artifact)
   and return a list of :class:`EvalDimensionResult`. Used by both the
-  harness (Phase 1) and the aggregate script.
+  harness and the aggregate script.
 - :func:`is_content_failure` — True if any content-quality dimension
-  failed. Used by :class:`PhasePlanner` to select Phase 2 cases. Returns
+  failed. Used by :class:`PhasePlanner` to select follow-up cases. Returns
   ``False`` when only ``usage_observability`` failed.
 - :func:`has_usage_gap_only` — True when ``usage_observability`` is the
   *only* failing dimension. The planner uses this to record an
@@ -73,7 +73,7 @@ from claread_eval.reader_record_ask.evaluators.usage_observability import (
 )
 
 if TYPE_CHECKING:
-    from claread_eval.reader_record_ask.schema import ReaderRecordAskR4A3Case
+    from claread_eval.reader_record_ask.schema import ReaderRecordAskCase
 
 # ---------------------------------------------------------------------------
 # Canonical dimension set
@@ -96,7 +96,7 @@ DIMENSION_ORDER: tuple[str, ...] = (
 )
 
 # Dimensions whose failure indicates a content-quality problem and should
-# trigger Phase 2 selection (spec: "default 不要仅因 usage 缺失升级模型").
+# trigger model-upgrade selection (spec: "default 不要仅因 usage 缺失升级模型").
 CONTENT_QUALITY_DIMENSIONS: frozenset[str] = frozenset(
     d for d in DIMENSION_ORDER if d != "usage_observability"
 )
@@ -105,7 +105,7 @@ CONTENT_QUALITY_DIMENSIONS: frozenset[str] = frozenset(
 # upgrade on its own, but is recorded in the report as a gap.
 OBSERVABILITY_DIMENSIONS: frozenset[str] = frozenset({"usage_observability"})
 
-# Type alias for per-repetition prior eval results (P0-2 multi-repetition
+# Type alias for per-repetition prior eval results (multi-repetition
 # fix). Outer dict: case_id. Outer list: one entry per repetition
 # (sorted by run_index). Inner list: 11 EvalDimensionResult for that
 # repetition. Replaces the prior ``dict[str, list[EvalDimensionResult]]``
@@ -124,7 +124,7 @@ LlmJudgeHook = Callable[[str, dict], dict]
 
 
 def evaluate_artifact(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskCase,
     artifact: RawArtifact,
     *,
     llm_judge: LlmJudgeHook | None = None,
@@ -132,9 +132,9 @@ def evaluate_artifact(
     """Run all 11 deterministic evaluators on one (case, artifact) pair.
 
     Returns a list of :class:`EvalDimensionResult` in :data:`DIMENSION_ORDER`.
-    Both the harness (Phase 1) and the aggregate script MUST call this
+    Both the harness and the aggregate script MUST call this
     entrypoint — they MUST NOT duplicate the evaluator list, because
-    divergence between the two was the root cause of the P0-3 bug
+    divergence between the two was the root cause of the bug
     (terminal-ok artifacts hiding content-quality failures).
 
     ``llm_judge`` is reserved for the ``entity_precision`` dimension and
@@ -232,7 +232,7 @@ def has_usage_gap_only(dimensions: list[EvalDimensionResult]) -> bool:
     """True when ``usage_observability`` is the *only* failing dimension.
 
     The planner records this as an observability gap in the report
-    without selecting the case for Phase 2 model upgrade.
+    without selecting the case for model upgrade.
     """
     has_content_failure = False
     has_usage_failure = False
@@ -249,10 +249,10 @@ def has_usage_gap_only(dimensions: list[EvalDimensionResult]) -> bool:
 def any_repetition_content_failure(
     repetitions: list[list[EvalDimensionResult]],
 ) -> bool:
-    """True if ANY repetition produced a content-quality failure (P0-2).
+    """True if ANY repetition produced a content-quality failure.
 
     Spec: "任意一个 repetition 出现 content failure，则该 case 进入
-    Phase 2". This replaces the prior shape where only the last
+    后续升级". This replaces the prior shape where only the last
     repetition's results were kept (silently masking intermittent
     hallucination failures like fail→pass→pass).
 

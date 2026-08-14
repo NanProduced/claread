@@ -1,6 +1,6 @@
 """Provenance fence re-check for thread memory source bindings.
 
-Implements R0.1 §8.1 article claim validity rules:
+Implements §8.1 article claim validity rules:
 
     valid(binding) ⟺ reading_record 仍存在
                     ∧ stable_document_id 仍可解析
@@ -16,7 +16,7 @@ On failure, the binding's ``validity_check.status`` flips to
 ``'invalid'`` with a typed ``invalidation_reason``. The associated
 fact is NOT stripped here (episodes are immutable in spirit); the
 caller renders the fact as ``prior_mention`` at injection time and
-drops it from ``citation_ids`` (R0.1 §8.1).
+drops it from ``citation_ids`` (§8.1).
 
 Web bindings have no article fence — they are always 'unchecked' here
 and rely on the upstream ``degrade_web_citation_to_hint`` path (H7).
@@ -50,7 +50,7 @@ def check_binding_validity(
     current_generation: int,
     current_base_id: str,
 ) -> SourceBinding:
-    """Re-validate one binding against the live fence (R0.1 §8.1).
+    """Re-validate one binding against the live fence (§8.1).
 
     ``reading_record_id`` is the live record id; if the record was
     deleted upstream, the caller passes ``record_missing=True`` via a
@@ -80,7 +80,7 @@ def check_binding_validity(
     binding_base = str(fence.get("base_id") or "")
     binding_gen_raw = fence.get("record_generation")
 
-    # R1.6 P1-1: article binding 缺少任一必需 fence 值（record、stable
+    # Article binding 缺少任一必需 fence 值（record、stable
     # document、base、generation）即 invalid。此前 record_id / base /
     # generation 缺失时被静默跳过，可能把不完整 binding 当作有效。
     # record_missing: live record absent OR binding has no record_id
@@ -166,9 +166,9 @@ async def check_all_bindings(
     Returns a new list of SourceBindings with updated
     ``validity_check``. Fence-invalidated bindings stay in the list —
     episode immutability forbids deletion. Fact降级 to
-    ``prior_mention`` happens at render time (R0.1 §4.2(d) step 7).
+    ``prior_mention`` happens at render time (§4.2(d) step 7).
 
-    R1.6 P1-1: if this function raises, the caller MUST NOT reuse the
+     if this function raises, the caller MUST NOT reuse the
     old bindings (they may carry a stale ``validity_check='valid'``).
     The caller must skip memory injection entirely — return ``None``
     so the Ask pipeline continues without memory. This function does

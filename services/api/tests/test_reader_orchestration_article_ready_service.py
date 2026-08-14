@@ -820,7 +820,7 @@ def test_article_ready_service_modules_do_not_reference_render_scene_json() -> N
 
 
 # ---------------------------------------------------------------------------
-# D6-U5: user_assets read projection tests
+# User_assets read projection tests
 # ---------------------------------------------------------------------------
 
 
@@ -959,7 +959,7 @@ async def _insert_reading_record_reader_note(
 async def test_snapshot_includes_reading_record_user_assets(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U8: snapshot.user_assets exposes stable highlight + note contracts."""
+    """Snapshot.user_assets exposes stable highlight + note contracts."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -1106,7 +1106,7 @@ async def test_snapshot_includes_reading_record_user_assets(
 async def test_snapshot_excludes_other_user_reading_record_user_assets(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U5.2: snapshot.user_assets is scoped to the requesting user."""
+    """Snapshot.user_assets is scoped to the requesting user."""
     user_id = await _insert_user(reader_service_env)
     other_user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
@@ -1193,7 +1193,7 @@ async def test_snapshot_excludes_other_user_reading_record_user_assets(
 async def test_snapshot_excludes_stale_base_generation_user_assets(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U5: stale base/generation rows do not appear in snapshot."""
+    """Stale base/generation rows do not appear in snapshot."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -1206,7 +1206,7 @@ async def test_snapshot_excludes_stale_base_generation_user_assets(
     record_id = result.record_id
     active_base_id = result.base_id
 
-    # Use a random UUID as the stale base_id. D6-U4 deliberately does not add
+    # Use a random UUID as the stale base_id. deliberately does not add
     # FKs from user_annotations.base_id to reading_bases, so a row can carry a
     # base_id that does not match the active base. The snapshot query filters
     # by base_id = active_base_id, so this row must not appear.
@@ -1288,7 +1288,7 @@ async def test_snapshot_excludes_stale_base_generation_user_assets(
 async def test_snapshot_excludes_user_asset_with_mismatched_text_hash(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U5.1: selected_text / text_hash mismatch rows are defensively filtered."""
+    """Selected_text text_hash mismatch rows are defensively filtered."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(
@@ -1362,7 +1362,7 @@ async def test_snapshot_excludes_user_asset_with_mismatched_text_hash(
 async def test_snapshot_excludes_user_asset_with_offset_outside_segment(
     reader_service_env: asyncpg.Pool,
 ) -> None:
-    """D6-U5.1: offsets outside anchor_segment range are defensively filtered."""
+    """Offsets outside anchor_segment range are defensively filtered."""
     user_id = await _insert_user(reader_service_env)
     service = ArticleReadyPersistenceService(pool=reader_service_env)
     request = PlainTextArticleReadySubmitRequest(

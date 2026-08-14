@@ -1,4 +1,4 @@
-"""ASK-COMPACTION-INTEGRATED-R1 — provider-free integrated-chain test helpers.
+"""ASK-COMPACTION-INTEGRATED- — provider-free integrated-chain test helpers.
 
 In-process doubles + seeding helpers so an integration test can drive the
 **real** repository / manager / runtime / production_stream against **real**

@@ -161,7 +161,7 @@ class StableReadyInputApplicationService:
         frozen_at = now or datetime.now(UTC)
         language_value = resolve_default_reader_language(language)
         source_metadata_value = dict(source_metadata or {})
-        # L2/A4 — 每请求只解析一次：调用方（unified input route）已解析
+        # L2 每请求只解析一次：调用方（unified input route）已解析
         # 时直接复用；否则在这里解析一次并喂给 gate + normalizer。
         normalized_source_text = _normalize_source_text(text)
         if preparsed is None:
@@ -340,7 +340,7 @@ class StableReadyInputApplicationService:
                             f"Failed to mark reading record {record_id} as article_ready: {exc}"
                         ) from exc
 
-                    # D6-I4V: Article RAG index auto-ensure (fail-soft).
+                    # Article RAG index auto-ensure (fail-soft).
                     # Called inside the same transaction so the index job
                     # commits atomically with the article_ready transition.
                     # Any failure is swallowed by the service and returned

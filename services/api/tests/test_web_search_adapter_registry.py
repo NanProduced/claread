@@ -1,4 +1,4 @@
-"""G3-R3: Web Search adapter registry + capability resolution (OFFLINE).
+"""G3-Web Search adapter registry + capability resolution (OFFLINE).
 
 Tests the unified runtime binding contract:
 
@@ -125,7 +125,7 @@ class _StubBackend:
         *,
         query: str,
         max_results: int,
-    ) -> Any:  # noqa: D401
+    ) -> Any: # noqa:
         raise AssertionError(
             "Stub backend should never be called from registry tests"
         )
@@ -332,7 +332,7 @@ class TestProductionRegistryRealFactories:
         assert binding.capability.enabled_for_turn is True
         assert binding.capability.protocol == "dashscope_responses"
         assert isinstance(binding.backend, QwenDashscopeWebSearchBackend)
-        # ASK-WEB-R4-R1: capability, backend, and Coordinator execution
+        # ASK-WEB-capability, backend, and Coordinator execution
         # upper bound must come from the same configuration fact.
         assert binding.capability.max_results_per_call == 5
         assert binding.backend.max_results_per_call == 5
@@ -349,7 +349,7 @@ class TestProductionRegistryRealFactories:
         assert binding.capability.enabled_for_turn is True
         assert binding.capability.protocol == "deepseek_anthropic"
         assert isinstance(binding.backend, DeepseekAnthropicWebSearchBackend)
-        # ASK-WEB-R4-R1: capability, backend, and Coordinator execution
+        # ASK-WEB-capability, backend, and Coordinator execution
         # upper bound must come from the same configuration fact.
         assert binding.capability.max_results_per_call == 5
         assert binding.backend.max_results_per_call == 5
@@ -551,12 +551,12 @@ class TestSendRetrySymmetry:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §I: Exact-model fail-closed readiness
+# G3- §I: Exact-model fail-closed readiness
 # ---------------------------------------------------------------------------
 
 
 class TestExactModelFailClosed:
-    """G3-R1: only probed, production-validated model names are enabled.
+    """G3-only probed, production-validated model names are enabled.
 
     All other models — including unprobed variants on the same provider —
     are unavailable. Readiness requires provider + adapter + model_name +
@@ -726,12 +726,12 @@ class TestExactModelFailClosed:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §II: Endpoint / credential boundary validation
+# G3- §II: Endpoint / credential boundary validation
 # ---------------------------------------------------------------------------
 
 
 class TestEndpointOriginValidation:
-    """G3-R1: credentials are NEVER sent to an unvalidated origin.
+    """G3-credentials are NEVER sent to an unvalidated origin.
 
     The resolved ``base_url`` is validated before any adapter
     construction. Invalid origins → unavailable binding (no backend
@@ -928,12 +928,12 @@ class TestEndpointOriginValidation:
 
 
 # ---------------------------------------------------------------------------
-# G3-R1 §III: Secret-safe adapter repr
+# G3- §III: Secret-safe adapter repr
 # ---------------------------------------------------------------------------
 
 
 class TestReprSecretSafety:
-    """G3-R1: ``api_key`` must use ``field(repr=False)`` so that
+    """G3-``api_key`` must use ``field(repr=False)`` so that
     ``repr(adapter)``, exception messages, and log output never leak
     the credential. Capability / binding repr must not indirectly
     leak the backend credential either.

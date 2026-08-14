@@ -488,7 +488,7 @@ class DiagnosticsCoverageGrader:
 class SpanConflictArbitrationGrader:
     """Verify same-span collision is arbitrated by priority.
 
-    The D5-V3 worker resolves priorities as
+    The worker resolves priorities as
     `context_gloss > phrase_gloss > vocab_highlight`. After arbitration
     the final published output must not contain two items sharing the
     same `(anchor_segment_id, start_offset, end_offset)` triple. For

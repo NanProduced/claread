@@ -1,4 +1,4 @@
-"""R4-A5-8A1R: Direct DeepSeek V4 wire correctness (offline HTTP capture).
+"""Direct DeepSeek V4 wire correctness (offline HTTP capture).
 
 Captures the actual OpenAI-compatible request JSON via an injectable
 ``httpx.AsyncClient`` transport — no process-global HTTP monkeypatch.
@@ -96,7 +96,7 @@ def _build_direct_model(
             extra["reasoning_effort"] = effort
     elif thinking_mode == "disabled":
         extra["thinking"] = {"type": "disabled"}
-    # absent: no thinking field in config; R3 normalizes to explicit
+    # absent: no thinking field in config; normalizes to explicit
     # enabled on wire via apply_thinking_to_model_settings.
     settings = RunModelSettings(extra_body=extra or None)
     cap = resolve_thinking_capability(
@@ -332,9 +332,9 @@ def test_factory_dashscope_deepseek_compat_profile_without_hint() -> None:
 
 @pytest.mark.asyncio
 async def test_direct_deepseek_absent_mode_emits_explicit_enabled() -> None:
-    """absent configured mode emits explicit {"type":"enabled"} on wire (R3).
+    """absent configured mode emits explicit {"type":"enabled"} on wire.
 
-    R4-A5-8A1R3: absent configuration must be normalized to an explicit
+    Absent configuration must be normalized to an explicit
     ``{"thinking": {"type": "enabled"}}`` so the wire payload is
     self-describing and cannot fall into a non-thinking code path.
     No reasoning_effort is emitted when the caller did not configure one.
@@ -352,7 +352,7 @@ async def test_direct_deepseek_absent_mode_emits_explicit_enabled() -> None:
     first = transport.requests[0]
     # absent → explicit enabled on wire (NOT field deletion).
     assert first.get("thinking") == {"type": "enabled"}, (
-        "absent mode must emit explicit {type: enabled} on wire (R3)"
+        "absent mode must emit explicit {type: enabled} on wire ()"
     )
     assert "reasoning_effort" not in first, (
         "absent mode without configured effort must not emit reasoning_effort"
@@ -364,7 +364,7 @@ async def test_direct_deepseek_absent_mode_emits_explicit_enabled() -> None:
 
 @pytest.mark.asyncio
 async def test_direct_deepseek_absent_mode_with_tools_omits_tool_choice() -> None:
-    """absent mode + tools → explicit enabled + tool_choice omitted (R3).
+    """absent mode + tools → explicit enabled + tool_choice omitted.
 
     The tool_choice omission rule fires when the effective wire thinking
     state is enabled — which includes absent (normalized to enabled).
@@ -552,7 +552,7 @@ async def test_direct_deepseek_disabled_mode_with_tools_keeps_tool_choice() -> N
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1R3: Profile conflict fail-closed tests (3 paths).
+# Profile conflict fail-closed tests (3 paths).
 #
 # All three recognition paths for Direct/DashScope DeepSeek must enforce
 # canonical thinking fields:
@@ -665,10 +665,10 @@ def test_profile_conflict_qwen_not_affected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A5-8A1R3: True single-instance concurrency + cancel/exception recovery.
+# True single-instance concurrency + cancel/exception recovery.
 #
-# R2's concurrency test used two model instances (different transports).
-# R3 requires a single ``DirectDeepSeekChatModel`` instance shared by two
+# concurrency test used two model instances (different transports).
+# Requires a single ``DirectDeepSeekChatModel`` instance shared by two
 # Agents running concurrently. The stateless ``_get_tool_choice`` override
 # must not leak per-request state across concurrent calls.
 # ---------------------------------------------------------------------------
@@ -737,7 +737,7 @@ class _BarrierCaptureTransport(httpx.AsyncBaseTransport):
 
 @pytest.mark.asyncio
 async def test_concurrent_same_instance_barrier_proves_both_first_requests_inflight() -> None:
-    """R4-A5-8A1R3R Obj1: barrier proves two first requests are concurrent.
+    """Obj1: barrier proves two first requests are concurrent.
 
     Two independent Agents with **different prompts** share one
     ``DirectDeepSeekChatModel`` instance and one transport. The barrier
@@ -850,7 +850,7 @@ class _BlockingThenSucceedingTransport(httpx.AsyncBaseTransport):
 
 @pytest.mark.asyncio
 async def test_real_cancellation_recovery_same_instance_correct_payload() -> None:
-    """R4-A5-8A1R3R Obj2: real cancellation then recovery on same instance.
+    """Obj2: real cancellation then recovery on same instance.
 
     1. Transport blocks the first in-flight request on a Future.
     2. Cancel the agent run task → ``CancelledError`` must propagate.
@@ -904,7 +904,7 @@ async def test_real_cancellation_recovery_same_instance_correct_payload() -> Non
 
 @pytest.mark.asyncio
 async def test_non_cancellation_exception_not_swallowed() -> None:
-    """R4-A5-8A1R3R Obj2: non-CancelledError exceptions must propagate.
+    """Obj2: non-CancelledError exceptions must propagate.
 
     A ``RuntimeError`` raised by the transport must NOT be swallowed
     by cancellation handling or any generic ``except`` in the model
@@ -962,7 +962,7 @@ class _FailingThenSucceedingTransport(httpx.AsyncBaseTransport):
 
 @pytest.mark.asyncio
 async def test_exception_recovery_same_instance_no_state_pollution() -> None:
-    """R4-A5-8A1R3R: exception recovery — second request emits correct wire.
+    """Exception recovery — second request emits correct wire.
 
     The model instance must not retain any per-request state from the
     failed request that would corrupt the wire payload of the next

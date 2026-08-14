@@ -1,4 +1,4 @@
-"""P1 — last_opened_at endpoint contract tests.
+"""last_opened_at endpoint contract tests.
 
 These tests exercise the new ``POST /reader/records/{record_id}/opened``
 route and the ``last_opened_at`` field on the ``GET /reader/records``

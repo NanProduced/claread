@@ -1,25 +1,25 @@
-"""Adversarial tests for R4-A3 artifact audit boundary closure (P0-1 + P0-2).
+"""Adversarial tests for artifact audit boundary closure.
 
-Spec: `.trae/specs/audit-r4-a3-eval-harness-final-closure/spec.md`
+Spec: the accepted artifact-audit closure contract.
 
 This module closes 4 adjacent boundaries in one pass:
 
-1. **P0-1 Artifact strict schema** — ``RawArtifact`` audit-critical fields
+1. **Artifact strict schema** — ``RawArtifact`` audit-critical fields
    use ``Strict*`` types + format validators so Pydantic coercion CANNOT
    turn ``run_index=True`` into ``1``, ``budget_exhausted="false"`` into
    ``False``, or accept malformed dataset identity SHAs.
 
-2. **P0-1 Artifact load audit** — :func:`load_artifacts_with_audit`
+2. **Artifact load audit** — :func:`load_artifacts_with_audit`
    produces a typed :class:`ArtifactLoadResult` with counts for
    invalid_json / invalid_schema / foreign_run_id. Corrupt/invalid/
    foreign artifacts are COUNTED, not silently dropped.
 
-3. **P0-2 Dataset case binding** — manifest planned case IDs MUST be a
+3. **Dataset case binding** — manifest planned case IDs MUST be a
    subset of the current dataset's cases_by_id. Artifacts referencing
    unknown cases are counted (``unknown_artifact_case_count``) and
    force ``blocked_incomplete_real_model_run``.
 
-4. **P0-2 Evaluation completeness** — :class:`AggregateReadinessAudit`
+4. **Evaluation completeness** — :class:`AggregateReadinessAudit`
    is the single source of truth for normal-verdict readiness.
    ``_decide_normal_verdict([])`` MUST NOT return ``accepted``
    (structural fix for the ``all([]) → True`` bug).
@@ -56,8 +56,8 @@ from claread_eval.reader_record_ask.run_manifest import (
     write_manifest_atomic,
 )
 from claread_eval.reader_record_ask.schema import (
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Expected,
+    ReaderRecordAskCase,
+    ReaderRecordAskExpected,
 )
 from claread_eval.reader_record_ask.session import RunSessionLayout
 
@@ -100,8 +100,8 @@ def _make_case(
     *,
     case_id: str = "case-a",
     article_text: str = "Hello world.",
-) -> ReaderRecordAskR4A3Case:
-    return ReaderRecordAskR4A3Case(
+) -> ReaderRecordAskCase:
+    return ReaderRecordAskCase(
         id=case_id,
         source_kind="synthetic_short",
         article_text=article_text,
@@ -113,7 +113,7 @@ def _make_case(
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskExpected(),
         tags=[],
         phase_tags=["real_phase1"],
     )
@@ -122,7 +122,7 @@ def _make_case(
 def _write_dataset_dir(
     dataset_dir: Path,
     *,
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskCase],
     dataset_id: str = "test-dataset",
     schema_version: str = "test-schema-v1",
 ) -> Path:
@@ -353,7 +353,7 @@ def _write_completed_manifest(
 
 
 # ===========================================================================
-# SECTION 1: RawArtifact strict schema (P0-1)
+# SECTION 1: RawArtifact strict schema
 #
 # Audit-critical fields MUST reject Pydantic coercion. Each test below
 # feeds a coerced/wrong type and asserts ValidationError is raised.
@@ -361,7 +361,7 @@ def _write_completed_manifest(
 
 
 class TestRawArtifactStrictSchema:
-    """P0-1: RawArtifact audit-critical fields reject Pydantic coercion."""
+    """RawArtifact audit-critical fields reject Pydantic coercion."""
 
     # ------------------------------------------------------------------
     # run_index strict int (reject bool / str / float / negative)
@@ -601,7 +601,7 @@ class TestRawArtifactStrictSchema:
     def test_valid_artifact_with_none_identity_does_not_regress(self) -> None:
         """A RawArtifact with ``dataset_content_sha256=None`` MUST construct.
 
-        ``None`` is allowed for backwards compat with pre-P0-2 artifacts.
+        ``None`` is allowed for backwards compatibility with older artifacts.
         """
         artifact = RawArtifact(
             case_id="c",
@@ -614,7 +614,7 @@ class TestRawArtifactStrictSchema:
 
 
 # ===========================================================================
-# SECTION 2: Artifact load audit (P0-1)
+# SECTION 2: Artifact load audit
 #
 # load_artifacts_with_audit MUST produce typed counts for each failure
 # mode. Corrupt/invalid/foreign artifacts MUST NOT silently disappear.
@@ -622,7 +622,7 @@ class TestRawArtifactStrictSchema:
 
 
 class TestArtifactLoadAudit:
-    """P0-1: load_artifacts_with_audit counts every failure mode."""
+    """load_artifacts_with_audit counts every failure mode."""
 
     def test_corrupt_json_counted_as_invalid_json(self, tmp_path: Path) -> None:
         """A file with invalid JSON syntax → invalid_json_count=1."""
@@ -886,7 +886,7 @@ class TestArtifactLoadAudit:
 
 
 # ===========================================================================
-# SECTION 3: Coverage / evaluation readiness (P0-2)
+# SECTION 3: Coverage / evaluation readiness
 #
 # AggregateReadinessAudit is the single source of truth for normal-verdict
 # readiness. _decide_normal_verdict([]) MUST NOT return accepted. Unknown
@@ -895,7 +895,7 @@ class TestArtifactLoadAudit:
 
 
 class TestEvaluationReadiness:
-    """P0-2: AggregateReadinessAudit + _decide_normal_verdict + _decide_final_verdict."""
+    """AggregateReadinessAudit + _decide_normal_verdict + _decide_final_verdict."""
 
     # ------------------------------------------------------------------
     # run_index=true cannot satisfy planned index=1 (schema-level)
@@ -906,7 +906,7 @@ class TestEvaluationReadiness:
         can never produce a RawArtifact that satisfies a manifest's
         ``planned_run_index=1``.
 
-        This is the P0-1 repro 1 regression guard: previously Pydantic
+        This regression guard covers the prior Pydantic
         coerced ``True`` → ``1``, which then matched the manifest's
         planned run_index=1 and bypassed the coverage audit.
         """
@@ -1071,7 +1071,7 @@ class TestEvaluationReadiness:
         assert allow_b1 is False
 
     # ------------------------------------------------------------------
-    # Unknown dataset case binding (P0-2)
+    # Unknown dataset case binding
     # ------------------------------------------------------------------
 
     def test_unknown_planned_case_yields_incomplete(self) -> None:
@@ -1157,19 +1157,19 @@ class TestEvaluationReadiness:
         """End-to-end: an artifact with a case_id NOT in the dataset →
         ``blocked_incomplete_real_model_run`` (NOT accepted).
 
-        This is the P0-2 repro 2 regression guard: previously the
+        This regression guard covers the prior behavior where the
         ``warn + continue`` path let unknown-case artifacts be silently
         skipped, producing ``case_results=[]`` and the
         ``all([]) → accepted`` bug.
         """
         from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
+            load_reader_record_ask_dataset_with_snapshot,
         )
 
         cases = [_make_case(case_id="case-a")]
         dataset_dir = tmp_path / "dataset"
         _write_dataset_dir(dataset_dir, cases=cases)
-        snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+        snapshot = load_reader_record_ask_dataset_with_snapshot(dataset_dir)
         identity = snapshot.identity
 
         # Artifact references case-b which doesn't exist in the dataset.
@@ -1480,7 +1480,7 @@ def _read_verdict_from_report(report_path: Path) -> str:
 
 
 # ===========================================================================
-# SECTION 4: P0-2 Evaluator-scored structural fields strict schema
+# SECTION 4: Evaluator-scored structural fields strict schema
 #
 # These fields directly drive evaluator verdicts (tool_decision,
 # evidence_minimality, usage_observability, answer_success). Coercion
@@ -1490,7 +1490,7 @@ def _read_verdict_from_report(report_path: Path) -> str:
 
 
 class TestRawArtifactEvaluatorScoredStrictSchema:
-    """P0-2: Evaluator-scored structural fields reject Pydantic coercion.
+    """Evaluator-scored structural fields reject Pydantic coercion.
 
     These are NOT display fields — they directly drive evaluator
     verdicts. See the Evaluator-consumed Field Matrix in the delivery
@@ -1829,12 +1829,12 @@ class TestRawArtifactEvaluatorScoredStrictSchema:
 
 
 # ===========================================================================
-# SECTION 5: P0-2 RawEvidenceObservation strict schema
+# SECTION 5: RawEvidenceObservation strict schema
 # ===========================================================================
 
 
 class TestRawEvidenceObservationStrictSchema:
-    """P0-2: RawEvidenceObservation fields reject coercion / typos.
+    """RawEvidenceObservation fields reject coercion / typos.
 
     The ``evidence_minimality`` evaluator reads ``handle_id`` (set
     membership), ``kind`` (``== "search_hit"``), and ``snippet``
@@ -1950,7 +1950,7 @@ class TestRawEvidenceObservationStrictSchema:
             )
 
     def test_provenance_valid_literals_pass(self) -> None:
-        # P0-3: each provenance Literal value must be accepted when
+        # Each provenance Literal value must be accepted when
         # paired with a LEGAL kind (see LEGAL_EVIDENCE_KIND_PROVENANCE).
         # The previous version of this test used ``kind="observation"``
         # for ALL four provenances, which incorrectly accepted the
@@ -2082,12 +2082,12 @@ class TestRawEvidenceObservationStrictSchema:
 
 
 # ===========================================================================
-# SECTION 6: P0-2 Non-regression — valid artifact with full evaluator input
+# SECTION 6: Non-regression — valid artifact with full evaluator input
 # ===========================================================================
 
 
 class TestRawArtifactValidEvaluatorInputNonRegression:
-    """P0-2: A well-formed artifact with all evaluator-scored fields
+    """A well-formed artifact with all evaluator-scored fields
     populated MUST construct without error.
 
     This is the non-regression guard: the strict validators must not
@@ -2148,7 +2148,7 @@ class TestRawArtifactValidEvaluatorInputNonRegression:
 
 
 # ===========================================================================
-# SECTION 7: P1 UTF-8 / empty / binary / BOM decoding (artifact side)
+# SECTION 7: UTF-8 / empty / binary / BOM decoding (artifact side)
 #
 # load_artifacts_with_audit MUST classify decoding failures as
 # invalid_json_count instead of raising UnicodeDecodeError.
@@ -2156,7 +2156,7 @@ class TestRawArtifactValidEvaluatorInputNonRegression:
 
 
 class TestArtifactLoadAuditUTF8Decoding:
-    """P1: Invalid UTF-8 / truncated multi-byte / empty / binary / BOM
+    """Invalid UTF-8 / truncated multi-byte / empty / binary / BOM
     files are classified as ``invalid_json_count`` — the loader MUST
     NOT raise ``UnicodeDecodeError``.
     """
@@ -2306,12 +2306,12 @@ class TestArtifactLoadAuditUTF8Decoding:
 
 
 # ===========================================================================
-# SECTION 8: P1 Aggregate — invalid encoding → blocked_incomplete
+# SECTION 8: Aggregate — invalid encoding → blocked_incomplete
 # ===========================================================================
 
 
 class TestAggregateUTF8DecodingIncomplete:
-    """P1: An invalid-UTF-8 artifact (or manifest) forces the aggregate
+    """An invalid-UTF-8 artifact (or manifest) forces the aggregate
     verdict to ``blocked_incomplete_real_model_run`` — the run started
     but its audit trail is broken.
     """
@@ -2382,7 +2382,7 @@ class TestAggregateUTF8DecodingIncomplete:
 
 
 # ===========================================================================
-# SECTION 9: P0-2 Schema-rejected vs evaluator-preserved boundary
+# SECTION 9: Schema-rejected vs evaluator-preserved boundary
 #
 # Proves the semantic boundary from spec section 三:
 # - Type/format invalid → rejected at artifact load boundary
@@ -2391,7 +2391,7 @@ class TestAggregateUTF8DecodingIncomplete:
 
 
 class TestSchemaRejectedVsEvaluatorPreservedBoundary:
-    """P0-2: The schema rejects TYPE/FORMAT corruption but PRESERVES
+    """The schema rejects TYPE/FORMAT corruption but PRESERVES
     content-quality issues for the evaluator to detect.
 
     This is the key semantic boundary from spec section 三:
@@ -2465,7 +2465,7 @@ class TestSchemaRejectedVsEvaluatorPreservedBoundary:
 
 
 # ===========================================================================
-# SECTION 10: P0-2 Coercion regression THROUGH real evaluators
+# SECTION 10: Coercion regression THROUGH real evaluators
 #
 # Spec section 四 requires tests that go "穿过真实 evaluator" — proving
 # that coercion no longer changes scoring results. The strict schema
@@ -2489,7 +2489,7 @@ class TestSchemaRejectedVsEvaluatorPreservedBoundary:
 
 
 class TestCoercionRegressionThroughEvaluators:
-    """P0-2 spec section 四: prove coercion no longer changes scoring.
+    """Prove coercion no longer changes scoring.
 
     Each test writes an artifact JSON FILE (not just a RawArtifact
     constructor call), runs it through :func:`load_artifacts_with_audit`
@@ -2795,7 +2795,7 @@ class TestCoercionRegressionThroughEvaluators:
 
 
 # ===========================================================================
-# SECTION 11: P1 Manifest UTF-8 decoding fail-closed
+# SECTION 11: Manifest UTF-8 decoding fail-closed
 #
 # Spec section 五: ``read_manifest_with_state`` must catch
 # ``UnicodeDecodeError`` / ``UnicodeError`` and classify as
@@ -2804,7 +2804,7 @@ class TestCoercionRegressionThroughEvaluators:
 
 
 class TestManifestUTF8DecodingFailClosed:
-    """P1: ``read_manifest_with_state`` classifies UTF-8 decoding
+    """``read_manifest_with_state`` classifies UTF-8 decoding
     failures as ``ManifestState.CORRUPT`` — never raises, never
     classifies as ``ABSENT``.
     """

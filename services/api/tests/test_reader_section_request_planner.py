@@ -1,4 +1,4 @@
-"""T5.6a-P1 — Planner authority, triggers, family isolation, canonical identity."""
+"""Planner authority, triggers, family isolation, canonical identity."""
 
 from __future__ import annotations
 

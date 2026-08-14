@@ -1,4 +1,4 @@
-"""D6-I4S: Article RAG Index Lifecycle Coordinator.
+"""Article RAG Index Lifecycle Coordinator.
 
 Coordinates the *trigger* and *status query* for Article RAG index
 builds without owning the embedding / vector write path.

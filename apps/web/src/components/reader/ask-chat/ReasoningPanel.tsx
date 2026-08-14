@@ -13,7 +13,7 @@ type ReasoningPanelProps = {
   reasoningMd: string | null | undefined;
   reasoningStatus: ReaderAskMessageDto["reasoning_status"];
   /**
-   * ASK-TURN-LIFECYCLE R3 — when `true`, the visible `reasoningMd` was
+   * When `true`, the visible `reasoningMd` was
    * truncated by the server-side projection char cap. The panel surfaces
    * an explicit "达到展示上限" indicator below the reasoning body. The
    * body itself never carries a truncation marker.
@@ -28,7 +28,7 @@ type ReasoningPanelProps = {
 /**
  * Ask reasoning surface (legacy reasoning.* + agentic.reasoning.* share it).
  *
- * ASK-REASONING-R1 contract:
+ * Reasoning panel contract:
  * - collapsed by default (`defaultOpen={false}` — no auto-open while
  *   streaming); the trigger carries a low-weight shimmer while running;
  * - expanded view appends projected text live as deltas arrive;
@@ -37,7 +37,7 @@ type ReasoningPanelProps = {
  *   returned none, or the turn never produced a projection), nothing
  *   renders — never an empty "model returned no reasoning" placeholder.
  *
- * ASK-TURN-LIFECYCLE R3:
+ * Truncation display:
  * - `reasoningTruncated` toggles an explicit "达到展示上限" indicator
  *   below the body; the body itself never contains a marker.
  */
