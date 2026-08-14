@@ -28,7 +28,7 @@
  *   - `block_id`, `parent_block_id`, `order_index`, `text_content` are
  *     preserved as-is. `text_content: null` is preserved (not coerced).
  *
- * Reference: apps/web/docs/reader-ia.md §5 合同与 Fixture
+ * Reference: apps/web/docs/reader-ia.md 合同与 Fixture
  */
 
 import type {

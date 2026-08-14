@@ -12,7 +12,7 @@
  *   - empty input → empty output
  *   - text_content: null preserved (not coerced)
  *
- * Reference: apps/web/docs/reader-ia.md §5 合同与 Fixture
+ * Reference: apps/web/docs/reader-ia.md 合同与 Fixture
  */
 
 import { describe, expect, it } from "vitest";

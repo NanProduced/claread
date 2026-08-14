@@ -11,7 +11,7 @@ article into one of three routing modes:
     - ``GROUPED_WINDOWED``   -> per-window batch jobs (translate_article /
                                  build_vocabulary_layer_article windows)
 
-Design contract (see docs/architecture/reader-orchestration.md §5.2 / §6.1 / §6.3):
+Design contract (see docs/architecture/reader-orchestration.md):
 
     - Raw ``content_utf16_length`` is NO LONGER the sole short/non-short
       discriminator. ``estimated_word_count`` is the PRIMARY router; the
@@ -26,7 +26,7 @@ Design contract (see docs/architecture/reader-orchestration.md §5.2 / §6.1 / �
     - No tokenizer dependency. ``estimated_token_count`` is a deterministic
       word/char heuristic (non-CJK ~1.4 tokens/word, CJK ~1.5 tokens/char),
       calibrated so a 984-English-word BBC article estimates ~1380 tokens,
-      matching design §6.1 (``estimated_token_count < 2000``).
+      matching the short-batch heuristic (``estimated_token_count < 2000``).
 
 This module does NOT:
     - call the database (the caller loads ``base_text`` and ``unit_types``),
@@ -58,7 +58,7 @@ DOCUMENT_FEATURE_EXTRACTOR_VERSION = "document_feature_v1"
 # slightly-longer BBC near-threshold article (~990-1010 words / ~6100-6500
 # chars) -- which the legacy raw-``content_utf16_length`` router sent into
 # the heavy grouped/windowed path -- is correctly kept on the short batch
-# path. See design §6.1: ``estimated_token_count < 2000`` (~1400 tokens for
+# path. See the short-batch heuristic: ``estimated_token_count < 2000`` (~1400 tokens for
 # 984 English words).
 SHORT_ARTICLE_MAX_WORD_COUNT: Final[int] = 1100
 
@@ -77,7 +77,7 @@ SHORT_ARTICLE_MAX_WORD_COUNT: Final[int] = 1100
 STRUCTURED_ARTICLE_MAX_WORD_COUNT: Final[int] = 2000
 
 # ``STRUCTURED_ARTICLE_MAX_CHAR_GUARDRAIL`` is the coarse UTF-16 guardrail
-# (design §6.1) capping the structured tier. Even when the word count says
+# (UTF-16 guardrail) capping the structured tier. Even when the word count says
 # "structured", an article whose UTF-16 length exceeds this guardrail falls
 # through to grouped/windowed so a single batch job never receives an
 # oversized input. 12000 is 2x the legacy short char threshold and safely
@@ -115,7 +115,7 @@ _NON_CJK_WORD_CHAR = re.compile(rf"[^\W_{_CJK_RANGES_IN_CLASS}]")
 
 
 class ArticleRoute(str, Enum):
-    """Three-mode article routing decision (design §6 strategy families)."""
+    """Three-mode article routing decision (strategy families)."""
 
     SHORT_BATCH = "short_batch"
     STRUCTURED_BATCH = "structured_batch"
@@ -292,7 +292,7 @@ def classify_article_route(profile: DocumentFeatureProfile) -> ArticleRoute:
            -> :data:`ArticleRoute.STRUCTURED_BATCH`.
            The missing middle tier: medium articles that still fit safely
            in a single whole-article batch job. The char guardrail is a
-           coarse safety cap (design §6.1) so one batch job never receives
+           coarse safety cap so one batch job never receives
            an oversized input.
 
         3. Otherwise -> :data:`ArticleRoute.GROUPED_WINDOWED`.

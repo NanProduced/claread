@@ -1520,7 +1520,7 @@ export interface ReaderStableDocumentResponseDto {
 // stable-document-resolver continue to read the wide string. The literal
 // union below is the renderer's view of the G0 closed block-type set.
 //
-// Reference: apps/web/docs/reader-ia.md §4 / §5 合同与 Fixture
+// Reference: apps/web/docs/reader-ia.md 合同与 Fixture
 // ---------------------------------------------------------------------------
 
 export type ReaderStructuredSourceBlockType =

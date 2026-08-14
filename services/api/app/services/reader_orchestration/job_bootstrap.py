@@ -137,7 +137,7 @@ _logger = logging.getLogger(__name__)
 # enhancement_layers rows so the existing frontend snapshot contract is
 # preserved.
 #
-# Design: docs/architecture/reader-orchestration.md §6.2 (Short Article Recovery Path).
+# Design: docs/architecture/reader-orchestration.md (Short Article Recovery Path).
 TRANSLATION_BATCH_JOB_TYPE = "translate_article"
 TRANSLATION_BATCH_TARGET_SCOPE = "unit_range"
 TRANSLATION_BATCH_OPERATION_FINGERPRINT = "translation_article_v1"
@@ -461,7 +461,7 @@ def _route_document_features(state: _LockedActiveBaseState) -> dict[str, Any] | 
 # ``plan_vocabulary_windows`` to get a list of consecutive, non-overlapping
 # windows. Each window becomes one ``build_vocabulary_layer_article`` job.
 #
-# Design constraints (see implementation-plan.md):
+# Design constraints (see docs/development/mainline.md and docs/operations/testing.md):
 # - Unit is the minimum boundary; never split a unit across windows.
 # - Windows must be consecutive and non-overlapping, ordered by reading order.
 # - A single unit larger than safety max becomes its own window.
@@ -562,7 +562,7 @@ def plan_vocabulary_windows(
 # ``plan_translation_windows`` to get a list of consecutive, non-overlapping
 # windows. Each window becomes one ``translate_article`` batch job.
 #
-# Design constraints (see implementation-plan.md):
+# Design constraints (see docs/development/mainline.md and docs/operations/testing.md):
 # - Unit is the minimum boundary; never split a unit across windows.
 # - Windows must be consecutive and non-overlapping, ordered by reading order.
 # - A single unit larger than safety max becomes its own window.
@@ -1727,7 +1727,7 @@ class EnhancementJobBootstrapService:
         # reading_records, so calling it inside the outer transaction would
         # deadlock against the lock we already hold. Idempotent: if the plan
         # already exists with its windows/jobs, it is reused as-is.
-        # Design: enhancement-layers-and-parsed.md worker migration.
+        # Design: docs/architecture/reader-orchestration.md worker migration.
         # Pass the same trace_id used by display/translation/vocab runs so
         # window reader_runs.envelope_json carries the shared trace root
         # (requirement 5: same-record runs share one trace_id).
@@ -1877,7 +1877,7 @@ class EnhancementJobBootstrapService:
         Cross-window duplicate headword policy (v1): each window may
         independently highlight the same headword once. Cross-window
         dedup is NOT performed; this is acceptable for v1 and is locked
-        by tests. See implementation-plan.md risk A.
+        by tests. See docs/development/mainline.md and docs/operations/testing.md (risk A).
         """
         if trace_id is None:
             trace_id = uuid4()
@@ -2160,7 +2160,7 @@ class EnhancementJobBootstrapService:
           unpublished units in a single LLM call; no
           ``analysis_windows`` / ``layer_analysis_plans`` are created.
 
-        Design: docs/architecture/reader-orchestration.md §6.3 / §4.2.
+        Design: docs/architecture/reader-orchestration.md.
         """
         if force_legacy_grammar:
             results = await self._bootstrap_grammar_jobs(

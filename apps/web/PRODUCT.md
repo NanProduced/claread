@@ -62,5 +62,5 @@ PRODUCT.md 不复制路由、DTO、状态枚举或切换门槛；这些事实由
 ## 权威来源
 
 - Reader Agentic orchestration 的术语、目标架构、模块合同与任务状态：docs/architecture/reader-orchestration.md。
-- Reader 画布、锚点、Plate 与专项组件规则：docs/design/component-system.md。
+- Reader 画布、锚点、Plate 与专项组件规则：apps/web/docs/design/component-system.md。
 - Web 的视觉 token、组件与交互规范：DESIGN.md。

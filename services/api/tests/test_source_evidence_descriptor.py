@@ -1,7 +1,6 @@
 """Tests for SourceEvidenceDescriptor adapter (M3 stage C).
 
-Contract: docs/architecture/reader-orchestration.mdmodules/
-ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
+Contract: docs/architecture/ask-claread.md (accepted, 2026-07-25).
 
 Covers:
   * §3.5.1.2 — chunk_qualifies_for_descriptor 4 AND conditions +
