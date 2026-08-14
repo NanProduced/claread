@@ -1,7 +1,7 @@
 # Claread Web 统一主题与语义 Token 调研
 
-> 日期：2026-07-16  
-> 范围：只研究 Claread Web 的 `system | light | dark` 主题偏好、CSS semantic tokens 与 shadcn/ui、Tailwind 的衔接；不改产品代码或配置。  
+> 日期：2026-07-16
+> 范围：只研究 Claread Web 的 `system | light | dark` 主题偏好、CSS semantic tokens 与 shadcn/ui、Tailwind 的衔接；不改产品代码或配置。
 > 依据：仅使用 shadcn/ui 和 Tailwind CSS 官方文档。本文不是视觉稿，也不替代后续无障碍审计。
 
 ## 结论摘要

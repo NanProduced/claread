@@ -1,6 +1,6 @@
 # Dark-mode reading and inline annotation color research
 
-**Date:** 2026-07-16  
+**Date:** 2026-07-16
 **Scope:** Dark palette for sustained Claread reading, including the multi-class
 inline annotations on the analysis page. This is research and a token audit, not
 an implementation specification.
@@ -201,4 +201,3 @@ First create the semantic roles (`reader-stage`, `reading-ink`,
 replace hex values or tweak all annotations at once. Make `grammar-ink` and
 `structure-ink` mandatory before either is used as small text. Then evaluate a
 single representative analysis page in both themes before widening the change.
-

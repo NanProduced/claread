@@ -218,5 +218,3 @@ class TestFavoriteRoutes:
 
         assert response.status_code == 200
         assert response.json() == {"deleted": True}
-
-
