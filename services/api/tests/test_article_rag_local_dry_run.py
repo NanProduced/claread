@@ -61,14 +61,8 @@ import pytest
 # Repo-relative paths.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 API_ROOT = REPO_ROOT / "services" / "api"
-RUNBOOK_DOC = (
-    REPO_ROOT
-    / "docs"
-    / "initiatives"
-    docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
-    / "modules"
-    / "local-article-rag-runbook.md"
-)
+RUNBOOK_DOC = REPO_ROOT / "docs" / "operations" / "reader-runtime.md"
+# Architecture reference: docs/architecture/reader-rag.md
 
 # The canonical real-chain acceptance test. This module is
 # the SINGLE real-chain entry point; the prior smoke-collection

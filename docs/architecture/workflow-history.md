@@ -1,6 +1,6 @@
 # Workflow 历史经验
 
-docs/architecture/reader-orchestration.md
+本文是参考文档，只记录旧 workflow 方案为什么被放弃，以及迁移到新仓库后应避免重复的问题。当前生产架构是 Reader orchestration，见 `docs/architecture/reader-orchestration.md`；旧 v3 workflow 的稳定事实快照见 `docs/architecture/workflow.md`（历史文档）。不要用本文覆盖当前代码事实。
 
 ## v0
 

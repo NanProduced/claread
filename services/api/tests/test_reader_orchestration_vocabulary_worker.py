@@ -3343,7 +3343,7 @@ def test_build_vocabulary_batch_prompt_exposes_item_caps() -> None:
 # When a non-short article is split into multiple vocabulary windows, the
 # cross-unit dedup policy only applies WITHIN a single window (single batch
 # job). The same headword may independently appear in different windows.
-docs/development/mainline.md + docs/operations/testing.md
+# This is the documented v1 behavior (implementation-plan.md risk A):
 # each window may highlight the same headword once. Full-text dedup is NOT
 # claimed.
 

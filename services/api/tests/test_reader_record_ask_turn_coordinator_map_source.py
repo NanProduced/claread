@@ -1,8 +1,8 @@
 """Turn-coordinator map-source ingress tests.
 
 # task-history: M3 stage C /
-docs/architecture/ask-claread.md
-docs/architecture/ask-claread.md
+Contract: docs/architecture/reader-orchestration.mdmodules/
+ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
 Covers the Ask-owner side of map-source material consumption —
 ``MapSourceMaterial`` inside ``TurnCoordinator``:

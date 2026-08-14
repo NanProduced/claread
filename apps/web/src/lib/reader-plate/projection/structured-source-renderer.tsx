@@ -23,7 +23,7 @@
  *     executed (static only, per G0 §5.1 `mermaid_static_only`).
  *   - Raw HTML is never rendered as a first-class block type (G0 §3.5).
  *
- apps/web/docs/reader-ia.md
+ * Reference: apps/web/docs/reader-ia.md §5 合同与 Fixture
  */
 
 import { Fragment, type ReactNode } from "react";

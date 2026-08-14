@@ -974,7 +974,7 @@ export type ReaderUnifiedInputSubmitResponseDto =
 // GET/PUT /reader/records/{record_id}/confirmed-source — L2 Confirmed Source
 //
 // Frozen contract:
-docs/architecture/reader-orchestration.md
+// `docs/architecture/reader-orchestration.md` — Confirmed Source 生命周期.
 // The backend L2 endpoints are being implemented by another owner; the web
 // client is developed against this frozen shape with a mock BFF.
 // ---------------------------------------------------------------------------
@@ -1520,7 +1520,7 @@ export interface ReaderStableDocumentResponseDto {
 // stable-document-resolver continue to read the wide string. The literal
 // union below is the renderer's view of the G0 closed block-type set.
 //
-apps/web/docs/reader-ia.md
+// Reference: apps/web/docs/reader-ia.md §4 / §5 合同与 Fixture
 // ---------------------------------------------------------------------------
 
 export type ReaderStructuredSourceBlockType =

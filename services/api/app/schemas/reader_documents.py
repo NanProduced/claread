@@ -73,7 +73,7 @@ StableDocumentBlockType = Literal[
 ]
 
 # Mirrors interpretation_policy_json.allowed_source_scope values used by
-apps/web/docs/reader-ia.md + docs/architecture/reader-rag.md
+# docs/.../modules/rag-substrate.md and plate-reader-projection.md.
 StableDocumentSourceScope = Literal[
     "main_reading_text",
     "heading",
@@ -102,8 +102,8 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 
 # Per-block-type interpretation policy defaults. Mirrors the
 # projection rules in
-apps/web/docs/reader-ia.md
-docs/architecture/reader-rag.md
+# docs/architecture/reader-orchestration.mdmodules/plate-reader-projection.md
+# and the RAG scope taxonomy in rag-substrate.md. The textual narrative
 # blocks (paragraph / heading / list_item / blockquote / caption) flow
 # into main grammar / sentence analysis on first freeze. Since the
 # Markdown ecosystem policy treats code_block and the table hierarchy

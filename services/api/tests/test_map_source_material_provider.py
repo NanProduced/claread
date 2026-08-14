@@ -1,7 +1,7 @@
 """Tests for MapSourceMaterialProvider (M3 stage C, with heading enrichment).
 
-docs/architecture/ask-claread.md
-docs/architecture/ask-claread.md
+Contract: docs/architecture/reader-orchestration.mdmodules/
+ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
 Covers:
   * §3.5.1.1 — 唯一规范签名:

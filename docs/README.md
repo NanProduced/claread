@@ -116,7 +116,6 @@ claread/
 ├── evals/             # 评测数据与样本集（旧 Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog）
 ├── docs/
 │   ├── design/
-
 │   └── reference/
 └── scripts/           # 后续 / 按需
 ```

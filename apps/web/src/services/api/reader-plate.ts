@@ -32,7 +32,7 @@ import type {
 /**
  * Upstream client for the Reader Plate vertical slice.
  *
- docs/README.md
+ * Targets the new endpoints introduced by the Reader orchestration
  * initiative:
  *   - POST /reader/records/plain-text
  *   - GET  /reader/records/{record_id}/snapshot

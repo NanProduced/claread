@@ -72,14 +72,8 @@ no_network_default = pytest.mark.no_network_default
 REPO_ROOT = Path(__file__).resolve().parents[3]
 API_ROOT = REPO_ROOT / "services" / "api"
 ENV_EXAMPLE = API_ROOT / ".env.example"
-RUNBOOK_DOC = (
-    REPO_ROOT
-    / "docs"
-    / "initiatives"
-    docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
-    / "modules"
-    / "local-article-rag-runbook.md"
-)
+RUNBOOK_DOC = REPO_ROOT / "docs" / "operations" / "reader-runtime.md"
+# Architecture reference: docs/architecture/reader-rag.md
 PYPROJECT_TOML = API_ROOT / "pyproject.toml"
 ENTRY_POINT_MODULE = "scripts.run_reader_article_rag_index_worker"
 

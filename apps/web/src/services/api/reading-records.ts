@@ -9,7 +9,7 @@ import type {
 /**
  * Upstream client for the Reading Record list endpoint.
  *
- docs/README.md
+ * Targets the new endpoint introduced by the Reader orchestration
  * initiative:
  *   - GET /reader/records
  *

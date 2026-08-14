@@ -1,6 +1,6 @@
 """SourceEvidenceDescriptor — server-only adapter for rag_ask_only blocks.
 
-docs/architecture/ask-claread.md
+Implements contract docs/architecture/ask-claread.md
 v5 sections §3.2 (field definitions), §3.3 (expansion_text assembly rules
 with fail-closed fallback), §3.5.1.2 (precise chunk filtering with frozen
 field-read source), §5.4.4 (display label rules), and §5.4.1/§5.4.2

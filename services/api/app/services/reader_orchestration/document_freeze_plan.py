@@ -11,7 +11,7 @@ persistence transaction will commit. It does NOT:
       Layer (that helper is preview-only; see ``document_blocks.py``).
 
 Canonical Text Layer derivation rules (mirrors the projection rules in
-apps/web/docs/reader-ia.md
+``docs/architecture/reader-orchestration.mdmodules/plate-reader-projection.md``
 and the per-block-type defaults materialized by
 ``app.schemas.reader_documents.default_interpretation_policy_for``):
 

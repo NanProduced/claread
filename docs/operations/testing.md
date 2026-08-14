@@ -51,17 +51,18 @@ uv run pytest -m "real_llm" -v   # 需同时满足三重门禁环境变量
 uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 ```
 
-## Naming guard and evidence slots 与证据槽位（含编排交叉引用）
-### TEST-GOVERNANCE 最终证据（landing 后填写，本 slot 不预填）
+## 任务编号 naming guard
 
-- TEST-GOV terminal commit：
-- residual=0 证明：
-- guard 最终通过数：
-- Gate D/E 结果：
-- landing 后 naming guard 路径复扫结果：
-- API collect/full、evals、Web vitest、Playwright 数量：
+TEST-GOVERNANCE 已本地 landing 的稳定事实（不复制临时 ceiling / matcher，不以 `C:\tmp` 为正式文档 authority）：
 
-只填证据指针，不复制 matcher / ceiling 时点数据。
+- TEST-GOV source：`bdaa32b05620b78a9e64482bbc06cd8caa08d515`
+- locally landed compact：`0c071e8cf1f4406e357e42fba05f08fcf4066687`
+- Gate A-C residual：`0`
+- Gate D：`PASS`
+- Gate E：`PASS`
+- Playwright portfolio：18 permanent / 11 core
+- naming guards 保留
+- provider attempts：`0`
 
 任务编号是历史追踪信息，不是业务身份，不应出现在新测试文件名、测试标识符或生产符号中。仓库提供两条静态 guard 阻止其回流：
 

@@ -7,7 +7,7 @@ Each entry maps a stable sample id to:
 - the chain strategy the sample is meant to exercise
 
 The samples intentionally cover the five shapes called out in
-docs/development/mainline.md + docs/operations/testing.md
+`docs/development/mainline.md`:
 
 - `short_news`           : short single-genre news (well under the short-path band)
 - `reuters_bbc_970`      : ~970-word Reuters/BBC-style article (the historical

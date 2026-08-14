@@ -446,13 +446,10 @@ def test_canonical_acceptance_and_runbook_avoid_legacy_article_rag_ask_chain() -
     repo_root = REPO_ROOT.parents[1]
     targets = (
         REPO_ROOT / "tests" / "test_article_rag_single_path_real_acceptance.py",
-        repo_root
-        / "docs"
-        / "initiatives"
-        docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
-        / "modules"
-        docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
+        repo_root / "docs" / "operations" / "reader-runtime.md",
+        repo_root / "docs" / "architecture" / "reader-rag.md",
     )
+
     forbidden_tokens = tuple(
         name.split(".")[-1] for name in ARTICLE_RAG_ASK_EXIT_MODULES
     ) + ("ArticleRagAsk",)

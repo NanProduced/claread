@@ -1,8 +1,8 @@
 # Reader 运行时操作
 
-> **状态**: `CURRENT` | **事实快照**: 2026-08-12（immutable evidence commit `d6a251befb0b40b2115afc69a92a9f54ad0abe7b`；本文为 DOC-CONSOLIDATION-PREP-R2.1 草稿，尚未提交仓库）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-14
 >
-> **PROVISIONAL_AT_d6a251**: 本文所有引用行号、`git show` evidence 路径与符号位置均按 immutable commit `d6a251b` 取证。TEST-GOV R3 landing 后必须 final refresh 行号、枚举与字段名；本任务不得宣称 repo-ready/landing-ready。
+> 代码事实基线：`0c071e8cf1f4406e357e42fba05f08fcf4066687`。TEST-GOV source：`bdaa32b05620b78a9e64482bbc06cd8caa08d515`。DOC consolidation branch：`codex/orchestration-doc-final-refresh-r2`。符号与代码路径优先；过期行号不是当前 authority。
 >
 > 本文记录 Reader orchestration 主链路的本地真实运行方式：
 
@@ -319,6 +319,8 @@ READER_ARTICLE_RAG_SMOKE=false
 - Zilliz URI/token 可复用 `ZILLIZ_URI/TOKEN` fallback，但 collection 必须保持 Article RAG 专用，不能复用 few-shot collection。
 - worker 无配置也永远能起来：provider 处于 unconfigured 时拿到 job 立刻 `failed_terminal`（`embedding_provider_unconfigured` / `vector_writer_unconfigured`），不写 fake 数据；index_run 失败不回滚 `readiness_state`。
 - **Secret 红线**：`DASHSCOPE_API_KEY`、`BAILIAN_API_KEY`、`ZILLIZ_TOKEN`、`READER_ARTICLE_RAG_ZILLIZ_TOKEN` 不得出现在任何日志、HTTP detail、prompt sidecar、metadata repr；409 detail 为固定字符串，不 echo 异常。
+
+本地默认是 **no-network dry-run**：`READER_ARTICLE_RAG_SMOKE` 是 opt-in，默认 `false`，不得把真实 provider smoke 写成默认路径。真实链路的唯一 acceptance 入口是 `test_article_rag_single_path_real_acceptance`；不要再用已退役的 smoke-collection namespace。
 
 启动：`uv run reader-article-rag-index-worker`（或 `python -m scripts.run_reader_article_rag_index_worker`）；常用参数 `--poll-interval-seconds 5 --lease-duration-seconds 120 --lease-owner-prefix reader-article-rag-index-worker --max-ticks 100 --once`。
 

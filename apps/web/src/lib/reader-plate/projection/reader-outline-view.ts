@@ -15,7 +15,7 @@
  *
  * Rationale: the backend stable document model is the source of truth and the
  * Plate/value layer is a web projection (see
- apps/web/docs/reader-ia.md
+ * apps/web/docs/reader-ia.md);
  * binding the UI to a source-agnostic view model — rather than to either
  * `semantic_outline` or a Markdown AST — keeps that boundary clean.
  */

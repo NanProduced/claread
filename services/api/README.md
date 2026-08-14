@@ -76,7 +76,7 @@ uv run reader-enhancement-worker --once
 uv run reader-artifact-pipeline-worker --once
 ```
 
-docs/operations/reader-runtime.md
+如果上传文件已经写入 OSS，但 `input_artifact_extraction` 长时间保持 `queued`、`attempt_count = 0`，且 Reading Record 没有 active base，通常是 artifact worker 未启动或未消费队列。如果纯文本已进入 `article_ready`，但 `translate_unit` 等任务持续排队，则检查 enhancement worker。完整本地链路和诊断 SQL 见 `docs/operations/reader-runtime.md`。
 
 运行测试：
 

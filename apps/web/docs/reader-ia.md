@@ -15,8 +15,7 @@
 - **反馈、收藏、生词、批注围绕阅读上下文出现**。
 - **三层基础设施先行**：Reader 继续围绕 Claread `Paper / Light / Dark` 主题体系、Reader Floating Layer、Annotation Anchor Model 演进。新组件必须先归入主题 token、浮层 slot 或锚点模型之一，避免为单个交互临时造一套定位和样式规则。
 
-## Implementation status and projection boundary与投影边界（含编排交叉引用）
-### Stable document 到 Plate 的投影边界
+## 当前实现状态与投影边界
 
 权威事实源是 `docs/architecture/reader-orchestration.md` 的 Truth Chain Authority Layers。Stable Blocks / Canonical Text / Reading Units / Anchor Segments 投影到 Plate readOnly tree。Plate / DOM / Slate path 不是后端 truth。heading / navigation 必须解析为 `anchor_segment_id`；selection 只承诺 single-range。Web Reader 是 desktop-first。当前无 SSE；snapshot 使用 polling。Markdown / multi_text 早期调研不得写成当前产品能力。
 

@@ -1,6 +1,6 @@
 # 多端架构
 
-docs/architecture/workflow-history.md + docs/development/mainline.md + docs/product/current-state.md
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Analysis service 写入路径与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构；旧 `analysis_*` 表的精确状态见 `docs/architecture/workflow-history.md`）
 
 ## 结论
 

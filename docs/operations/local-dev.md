@@ -241,7 +241,8 @@ dev/staging/prod 由构建环境注入。
 | `dict_ai` | workflow-* | openai_compatible | 关闭 | 词典 AI |
 | `daily_annotation` | workflow-* | openai_compatible | 关闭 | 批量标注 |
 | `daily_analysis` | workflow-* | openai_compatible | 关闭 | 批量分析 |
-| `daily_review` | workflow-* | openai_compatible | off | batch review | <!-- reader-runtime --> |
+| `daily_review` | workflow-* | openai_compatible | 关闭 | 批量复查 |
+
 Reader worker / Article RAG / compaction 的环境变量与运行入口见 `docs/operations/reader-runtime.md`。单文件边界、pending/available 可达性与 provider=0 fail-closed 见该文档 Artifact Input Operations Contract。
 
 结构化输出链路对模型能力敏感。更换 `DEFAULT_MODEL_PROFILE` 或 `ANNOTATION_MODEL_PROFILE` 后，需要重新验证解析结果是否包含词汇、语法、句式和翻译字段。

@@ -3,7 +3,7 @@
 /**
  * Content Check 状态机（L2 Confirmed Source，mock BFF 开发）。
  *
- docs/architecture/reader-orchestration.md
+ * 冻结合同：docs/architecture/reader-orchestration.md — Confirmed Source 生命周期
  *   - GET  /records/{id}/confirmed-source — draft 读取 / resume 入口（“GET draft / resume 语义”）
  *   - PUT  /records/{id}/confirmed-source — 整篇更新 + reparse（“PUT whole-document update” +
  *     “`expected_revision` 乐观并发”；stale 409 可恢复：重取最新草稿重放编辑）

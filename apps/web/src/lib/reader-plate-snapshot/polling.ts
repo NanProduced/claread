@@ -58,7 +58,7 @@ export type PollingDecision =
  * Pure decision function: given the cursor sent and the poll response,
  * decide what the polling loop should do next.
  *
- docs/architecture/reader-orchestration.md + apps/web/docs/reader-ia.md
+ * Contract reference: `docs/architecture/reader-orchestration.md`
  * - `after_sequence == last_event_sequence` with empty events → caught up, no reload.
  * - `reload_required` → reload.
  * - Use the payload-aware classifier for each event by calling
