@@ -4,7 +4,6 @@
 验证所有 spec 校验项（基础字段 / operation / insertions / descriptor /
 脱敏 / 大小限制）。
 
-参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
 """
 
 from __future__ import annotations

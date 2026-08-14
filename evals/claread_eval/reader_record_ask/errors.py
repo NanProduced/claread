@@ -1,7 +1,6 @@
 """Safe error projection for harness artifacts and reports.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: 安全错误投影.
+Requirement: 安全错误投影.
 
 The previous harness wrote ``f"{type(exc).__name__}: {str(exc)[:200]}"``
 into ``RawArtifact.error``. Truncation is NOT sanitization — provider

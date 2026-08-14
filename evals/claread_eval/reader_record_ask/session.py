@@ -1,6 +1,5 @@
 """RunSessionLayout — single source of truth for run/session/artifact paths.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: RunSessionLayout 深模块.
 
 Prior to this module, the harness hardcoded `phase{N}-<ts>` run ids and wrote

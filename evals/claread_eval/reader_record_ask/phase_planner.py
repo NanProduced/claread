@@ -1,7 +1,6 @@
 """PhasePlanner — explicit case manifest + fixed repetitions + evaluator-based
 failure selection + budget stop result.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirements: PhasePlanner 深模块 + 固定重复, evaluator-based
 retry-stage failure selection.
 

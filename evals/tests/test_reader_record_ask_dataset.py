@@ -1,6 +1,5 @@
 """Dataset loader/schema tests for reader-record-ask.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement (dataset Git governance): unit tests MUST NOT depend on
 the local ignored working dataset under ``evals/tmp/``. Instead, each
 test builds a minimal synthetic dataset via factory + ``tmp_path`` and

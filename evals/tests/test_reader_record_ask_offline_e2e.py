@@ -1,6 +1,5 @@
 """Offline end-to-end test for the evaluation closure.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: 离线端到端验收.
 
 This test exercises the full closure flow WITHOUT any real LLM call:

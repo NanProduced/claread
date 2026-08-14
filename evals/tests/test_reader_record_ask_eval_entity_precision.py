@@ -1,7 +1,6 @@
 """Tests for the entity_precision evaluator's typed entity catalog.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: entity_precision typed entity catalog.
+Requirement: entity_precision typed entity catalog.
 
 Covers:
 - Legacy ``allowed_entities_by_type`` contract still works (backwards compat).

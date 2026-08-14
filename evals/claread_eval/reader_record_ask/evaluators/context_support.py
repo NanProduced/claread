@@ -1,7 +1,6 @@
 """Dimension 2/11 — context_support.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: context_support atomic fact contract.
+Requirement: context_support atomic fact contract.
 
 Authoritative model-visible context binding
 ==================================================================

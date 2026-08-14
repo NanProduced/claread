@@ -7,7 +7,6 @@
 3. payload 脱敏：扩展 payload 不含 note / selected_text / grammar_point /
    pattern / spans / text 等 forbidden key。
 
-参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
 """
 
 from __future__ import annotations

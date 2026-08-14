@@ -1,7 +1,6 @@
 """Tests for safe error projection.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: 安全错误投影.
+Requirement: 安全错误投影.
 
 Covers:
 - ``project_exception`` returns allowlisted ``safe_code`` only.

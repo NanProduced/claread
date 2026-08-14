@@ -1,11 +1,9 @@
 """Tests for the reader-record-ask report generator.
 
 Covers the 15 base sections + 4 rework closure sections (16-19) +
-sanitization invariants per spec
-(`.trae/specs/reader-record-ask-r4-a3-correctness-eval/spec.md` —
-Requirement: 交付报告内容 + 报告脱敏与可聚合;
-rework spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-
-eval-closure/spec.md` — 能力边界 / 覆盖状态 / budget 语义 / thinking 验证).
+sanitization invariants
+(Requirement: 交付报告内容 + 报告脱敏与可聚合;
+rework: 能力边界 / 覆盖状态 / budget 语义 / thinking 验证).
 """
 
 from __future__ import annotations

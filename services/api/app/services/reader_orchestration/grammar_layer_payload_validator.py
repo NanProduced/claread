@@ -8,7 +8,6 @@ Grammar First-Publish Layer Event Payload
 执行。失败时抛出 ValueError，调用方的事务会 rollback，layer INSERT、event INSERT、
 sequence 增量全部回滚。
 
-参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
 参考设计: ``docs/architecture/reader-orchestration.md``
 """
 

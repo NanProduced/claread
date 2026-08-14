@@ -1,6 +1,5 @@
 """Tests for RunSessionLayout — single source of truth for run paths.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: RunSessionLayout 深模块.
 
 Covers:

@@ -8,8 +8,7 @@ Default-skipped. To run, all gates must be open:
     CLAREAD_R4_A3_RUN_ID=phase1-<ts> \\
         uv run pytest tests/test_reader_record_ask_real_llm_eval.py -m real_llm -v
 
-Rework closure (spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-
-eval-closure/spec.md`): this harness now consumes the four deep modules —
+Rework closure: this harness now consumes the four deep modules —
 :class:`RunSessionLayout`, :func:`evaluate_artifact`, :class:`PhasePlanner`,
 :class:`BudgetedUsageModel` — plus :func:`project_exception` and
 :func:`utf16_code_units`. The harness itself is reduced to scenario and

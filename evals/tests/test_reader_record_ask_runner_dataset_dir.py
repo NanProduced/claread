@@ -1,6 +1,5 @@
 """Tests for explicit runner dataset-dir binding.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: real runs and aggregate MUST explicitly
 declare the dataset directory via ``--dataset-dir`` CLI or
 ``CLAREAD_R4_A3_DATASET_DIR`` env. No silent fallback to

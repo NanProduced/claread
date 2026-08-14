@@ -1,6 +1,5 @@
 """evaluate_artifact — single 11-dimension evaluator entrypoint.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: evaluator-based 失败选择.
 
 Prior to this module, the harness and the aggregate script each duplicated

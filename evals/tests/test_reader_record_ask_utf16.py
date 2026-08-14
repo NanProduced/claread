@@ -1,7 +1,6 @@
 """Tests for UTF-16 code unit helpers.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: UTF-16 长度修正.
+Requirement: UTF-16 长度修正.
 
 Covers:
 - ``utf16_code_units`` returns correct count for BMP and astral-plane

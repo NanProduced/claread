@@ -5,8 +5,7 @@ projection of :class:`ReadingRecordAskRunResult` plus
 :class:`FinalizedAskResult` / :class:`BaselineAgentContext`. Evaluators must
 NOT import runtime classes; they consume this artifact only.
 
-Field names follow the spec (``.trae/specs/reader-record-ask-r4-a3-
-correctness-eval/spec.md`` — Requirement: 11 维确定性 evaluator + 真实模型运行
+Field names follow the evaluator contract (Requirement: 11 维确定性 evaluator + 真实模型运行
 策略 + 报告脱敏与可聚合).
 
 Strict contract (artifact audit boundary):

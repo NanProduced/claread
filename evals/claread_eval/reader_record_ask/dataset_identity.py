@@ -1,6 +1,5 @@
 """Deterministic content identity for the working dataset.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement (dataset identity): the working dataset lives
 under ``evals/tmp/`` and is gitignored, so the same ``dataset_id`` can
 silently drift between phases. This module computes a deterministic

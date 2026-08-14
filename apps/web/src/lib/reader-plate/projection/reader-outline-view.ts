@@ -243,7 +243,7 @@ function semanticToOutlineViewModel(
  *   - Coverage `endUnitId` falls back to the last unit when the heading is the
  *     final one or no subsequent same-or-shallower heading exists.
  *
- * Reference: .trae/documents/markdown-ecosystem-refactor-plan-2026-07-24.md B4
+ * Reference: apps/web/docs/design/component-system.md
  */
 export function projectMarkdownOutlineView(
   snapshot: ReaderPlateSnapshotDto,

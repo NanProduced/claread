@@ -1,7 +1,6 @@
 """Tests for BudgetedUsageModel — test-only provider request/usage
 instrumentation.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: BudgetedUsageModel 深模块.
 
 These tests require ``pydantic_ai`` (only available in the services/api

@@ -7,7 +7,6 @@
  fix 验证：非空但无法解析的 grammar output 必须抛出
 :class:`GrammarLayerPayloadError` 触发同事务回滚，不再静默回退到 base_payload。
 
-参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
 """
 
 from __future__ import annotations

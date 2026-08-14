@@ -22,8 +22,7 @@ Usage (run from ``evals/``)::
         --report-output ../evals/tmp/reader-record-ask-r4-a3/review/\\
 TMP-reader-record-ask-r4-a3-eval-2026-07-17.md
 
-Rework closure (spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-
-eval-closure/spec.md`):
+Rework closure:
 
 - ``--prior-run-id`` is required for follow-up stages and is passed to the
   harness via ``CLAREAD_R4_A3_PRIOR_RUN_ID`` env var. No more scanning

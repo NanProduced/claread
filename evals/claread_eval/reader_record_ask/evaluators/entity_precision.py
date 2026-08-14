@@ -1,7 +1,6 @@
 """Dimension 5/11 — entity_precision.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: entity_precision typed entity catalog.
+Requirement: entity_precision typed entity catalog.
 
 Previous implementation only checked "other declared types" against
 ``allowed_entities_by_type``. When a BBC case declared only the

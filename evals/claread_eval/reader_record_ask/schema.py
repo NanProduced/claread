@@ -27,8 +27,7 @@ AtomicFactsOrigin = Literal["explicit", "legacy_migrated"]
 class AtomicExpectedFact(BaseModel):
     """One atomic expected fact for the context_support evaluator.
 
-    Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-    spec.md` — Requirement: context_support atomic fact contract.
+    Requirement: context_support atomic fact contract.
 
     Replaces the prior ``required_article_facts: list[str]`` contract
     which required a hand-rewritten full sentence to appear verbatim in

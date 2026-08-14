@@ -1,7 +1,6 @@
 """Dimension 7/11 — instruction_following.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: instruction count effectiveness.
+Requirement: instruction count effectiveness.
 
 Exercise item count semantics
 ================================================

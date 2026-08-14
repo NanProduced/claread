@@ -1,7 +1,6 @@
 """Tests for instruction_following evaluator effectiveness.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/
-spec.md` — Requirement: instruction count effectiveness.
+Requirement: instruction count effectiveness.
 
 Exercise item count semantics
 ================================================

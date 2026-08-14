@@ -1,6 +1,5 @@
 """Tests for evaluate_artifact — single 11-dimension evaluator entrypoint.
 
-Spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-eval-closure/spec.md`
 Requirement: evaluator-based rerun-stage failure selection.
 
 Covers:
