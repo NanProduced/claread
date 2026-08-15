@@ -5,6 +5,7 @@ No live runtime wiring, no real LLM, no real RAG/embedding/vector I/O.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
@@ -861,6 +862,78 @@ async def test_rag_port_none_zero_io_and_safe_view():
     assert result.host_budget_abort is False
     assert result.status == "unavailable"
     assert port.call_count == 0
+
+
+class _BlockingRagPort:
+    """RAG port fake whose single search blocks until released.
+
+    Lets two coordinator-level calls genuinely overlap, proving the
+    per-turn call-limit is enforced under concurrency (no sleep-based
+    timing guesses).
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self._release = asyncio.Event()
+        self._first_entered = asyncio.Event()
+
+    async def search_current_article(
+        self,
+        *,
+        user_id,
+        reading_record_id,
+        base_id,
+        record_generation,
+        stable_document_id,
+        query,
+        limit,
+    ):
+        del user_id, reading_record_id, base_id, record_generation
+        del stable_document_id, query, limit
+        self.call_count += 1
+        self._first_entered.set()
+        await self._release.wait()
+        return ArticleRagSearchOutcome(
+            status="empty",
+            summary="released",
+            detail_code="t",
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rag_calls_do_not_break_per_turn_limit():
+    """F3: two overlapping search_current_article calls with limit=1.
+
+    Deterministic overlap via events (no sleep): the first call blocks
+    inside the port; the second call is gathered while the first is still
+    in flight. Exactly ONE port call may happen; the other must return a
+    typed unavailable/call_limit view (not a host budget abort), and the
+    coordinator counter must end at exactly 1.
+    """
+    port = _BlockingRagPort()
+    coord = _coordinator(article_rag=port)
+    await coord.assemble_turn()
+    assert coord.max_search_current_article_calls == 1
+
+    first_task = asyncio.create_task(coord.search_current_article("q1"))
+    await asyncio.wait_for(port._first_entered.wait(), timeout=5)
+
+    # While call 1 is still blocked inside the port, start call 2.
+    second_task = asyncio.create_task(coord.search_current_article("q2"))
+    # Give call 2 the chance to (wrongly) reach the port if the limit
+    # check raced; it must be rejected without a second port call.
+    port._release.set()
+
+    r1, r2 = await asyncio.gather(first_task, second_task)
+
+    assert port.call_count == 1, "concurrent calls must not exceed limit=1"
+    assert coord.search_current_article_calls == 1
+    statuses = {r1.status, r2.status}
+    assert "empty" in statuses, "one call must complete the normal path"
+    rejected = r2 if r1.status == "empty" else r1
+    assert rejected.host_budget_abort is False
+    # Typed safe-unavailable view, not a host budget abort.
+    assert rejected.status == "unavailable"
 
 
 @pytest.mark.asyncio

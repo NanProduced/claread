@@ -228,6 +228,30 @@ async def _run_drain_cycle(
             "article RAG index worker: recovered stale leases",
             extra={"recovered": recovered, "recover_batch_size": recover_batch_size},
         )
+
+    # Converge index runs orphaned by job-level recovery / fence
+    # supersede (job terminal or requeued while the index run stayed
+    # active). Runs AFTER recovery so job states are already converged,
+    # and BEFORE process_next so reconciled runs are not mistaken for
+    # in-flight work. Fail-open: bootstrap's idempotent fail-closed check
+    # remains the safety net; a reconcile bug must not stop healthy
+    # indexing.
+    try:
+        reconciled = await service.reconcile_orphaned_index_runs(
+            batch_size=recover_batch_size,
+        )
+    except Exception:
+        logger.exception(
+            "article RAG index worker: orphan reconciliation failed; "
+            "continuing drain cycle (bootstrap fail-closed remains the "
+            "safety net)"
+        )
+    else:
+        if reconciled:
+            logger.info(
+                "article RAG index worker: reconciled orphaned index runs",
+                extra={"reconciled": reconciled},
+            )
     results: list[ArticleRagIndexWorkerResult] = []
     for _ in range(max_ticks):
         result = await service.process_next(

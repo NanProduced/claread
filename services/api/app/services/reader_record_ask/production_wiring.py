@@ -212,4 +212,32 @@ def build_production_article_rag_port(
         embedding_provider=embedding,
         vector_searcher=searcher,
     )
-    return RetrievalBackedArticleRagPort(retrieval=retrieval)
+    return RetrievalBackedArticleRagPort(
+        retrieval=retrieval,
+        lifecycle_status_probe=_build_lifecycle_status_probe(db_pool),
+    )
+
+
+def _build_lifecycle_status_probe(db_pool: Any) -> Any:
+    """Probe closure over the shared DB pool + lifecycle service.
+
+    Returns only the lifecycle status string; the adapter owns the
+    status -> typed outcome mapping. Exceptions propagate to the
+    adapter's existing fail-soft handling (fall through to retrieval).
+    """
+    from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
+        ArticleRagIndexLifecycleService,
+    )
+
+    lifecycle_service = ArticleRagIndexLifecycleService()
+
+    async def _probe(*, reading_record_id: UUID, user_id: UUID) -> str:
+        async with db_pool.acquire() as conn:
+            status = await lifecycle_service.load_article_rag_index_lifecycle_status(
+                conn,
+                reading_record_id=reading_record_id,
+                user_id=user_id,
+            )
+        return str(status.status)
+
+    return _probe

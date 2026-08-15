@@ -44,7 +44,12 @@ from scripts.run_reader_article_rag_index_worker import (
     build_worker_service,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_pure_unit, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +110,7 @@ class _FakeWorkerService:
     ) -> None:
         self._results = list(process_next_results or [])
         self.process_next_calls: list[dict[str, Any]] = []
+        self.reconcile_calls: list[int] = []
 
     async def process_next(
         self,
@@ -123,6 +129,14 @@ class _FakeWorkerService:
         if not self._results:
             return None
         return self._results.pop(0)
+
+    async def reconcile_orphaned_index_runs(
+        self,
+        *,
+        batch_size: int = 100,
+    ) -> int:
+        self.reconcile_calls.append(batch_size)
+        return 0
 
 
 def _make_result(
@@ -797,4 +811,64 @@ class TestStaleLeaseRecovery:
         # Plan-mandated: recover MUST run before process_next.
         assert call_order and call_order[0] == "recover", (
             f"recover_stale_leases must run before process_next; order was {call_order}"
+        )
+
+    async def test_drain_cycle_reconciles_after_recover_before_process_next(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Drain cycle must run the orphan reconciliation pass after
+        ``recover_stale_leases`` (so job-level recovery is already
+        converged) and before any ``process_next`` claim, with the
+        independent ``recover_batch_size``.
+        """
+        from unittest.mock import AsyncMock
+
+        from app.services.reader_orchestration import job_runtime
+
+        call_order: list[str] = []
+
+        async def _recover_side_effect(*, batch_size: int) -> int:
+            call_order.append("recover")
+            return 0
+
+        monkeypatch.setattr(
+            job_runtime.ReaderJobRuntime,
+            "recover_stale_leases",
+            AsyncMock(side_effect=_recover_side_effect),
+        )
+
+        svc = _FakeWorkerService(process_next_results=[None])
+        original_process_next = svc.process_next
+        original_reconcile = svc.reconcile_orphaned_index_runs
+
+        async def _tracking_process_next(**kwargs: Any) -> Any:
+            call_order.append("process_next")
+            return await original_process_next(**kwargs)
+
+        async def _tracking_reconcile(**kwargs: Any) -> int:
+            call_order.append("reconcile")
+            return await original_reconcile(**kwargs)
+
+        svc.process_next = _tracking_process_next  # type: ignore[method-assign]
+        svc.reconcile_orphaned_index_runs = _tracking_reconcile  # type: ignore[method-assign]
+        _stub_infra(monkeypatch, fake_service=svc)  # type: ignore[arg-type]
+
+        from scripts.run_reader_article_rag_index_worker import _run_drain_cycle
+
+        results = await _run_drain_cycle(
+            service=svc,  # type: ignore[arg-type]
+            lease_owner="test-owner",
+            lease_duration=timedelta(seconds=30),
+            max_ticks=3,
+            recover_batch_size=200,
+        )
+        assert results == []
+        # Reconcile ran exactly once, with the independent batch size.
+        assert svc.reconcile_calls == [200], (
+            f"reconcile must use recover_batch_size; got {svc.reconcile_calls}"
+        )
+        # Ordering: recover -> reconcile -> process_next.
+        assert call_order[:3] == ["recover", "reconcile", "process_next"], (
+            f"expected recover -> reconcile -> process_next; order was {call_order}"
         )

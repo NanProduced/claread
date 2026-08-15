@@ -50,6 +50,7 @@ from app.database.json_compat import jsonb_param
 
 from .article_rag_index_bootstrap import (
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+    ARTICLE_RAG_INDEX_BUILD_RUN_TYPE,
     ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
     compute_article_rag_index_build_input_hash,
 )
@@ -624,6 +625,206 @@ class ArticleRagIndexWorkerService:
             retry_delay=retry_delay,
         )
 
+    async def reconcile_orphaned_index_runs(
+        self,
+        *,
+        batch_size: int = 100,
+    ) -> int:
+        """Converge active index runs whose job died outside this worker.
+
+        ``ReaderJobRuntime.recover_stale_leases`` and the claim-time fence
+        only converge ``reader_jobs`` — they cannot know about the
+        article-RAG-owned ``reader_article_rag_index_runs``. When a build
+        job dies outside the worker (stale-lease max-attempt exhaustion,
+        claim-fence / route-flip supersede, or a dangling job row), the
+        index run stays ``queued``/``indexing`` as an active orphan and
+        fail-closes every subsequent bootstrap ensure with
+        ``idempotent_run_inconsistent``.
+
+        This pass converges each orphan in ONE transaction (index run +
+        reader run, with the job's terminal state re-verified under the
+        index-run row lock):
+
+        * job missing / ``failed_terminal`` → index run ``failed``,
+          reader run ``failed_terminal`` (guarded to non-terminal runs);
+        * job ``cancelled`` / ``superseded`` → index run ``superseded``,
+          reader run ``superseded`` (guarded);
+        * job requeued (``queued`` / ``retry_later`` / ``paused``) with
+          index run left at ``indexing`` / ``planned`` → index run back
+          to ``queued`` (in-flight semantics; the job will be re-claimed);
+        * job ``claimed`` → legitimate in-flight combo, untouched.
+
+        Returns the number of converged index runs. Vector data is NOT
+        touched — external cleanup is a separate, async concern.
+        """
+        candidates = await self.get_pool().fetch(
+            """
+            SELECT ir.id AS index_run_id, ir.status AS index_status,
+                   ir.job_id, ir.reader_run_id
+            FROM reader_article_rag_index_runs ir
+            LEFT JOIN reader_jobs j ON j.id = ir.job_id
+            WHERE ir.status IN ('planned', 'queued', 'indexing')
+              AND (
+                    j.id IS NULL
+                    OR j.status IN ('failed_terminal', 'cancelled', 'superseded')
+                    OR (
+                        j.status IN ('queued', 'retry_later', 'paused')
+                        AND ir.status IN ('planned', 'indexing')
+                    )
+              )
+            ORDER BY ir.created_at
+            LIMIT $1
+            """,
+            batch_size,
+        )
+        reconciled = 0
+        for row in candidates:
+            reconciled += await self._reconcile_orphan_row(row)
+        return reconciled
+
+    async def _reconcile_orphan_row(self, row: asyncpg.Record) -> int:
+        """Converge one orphan candidate atomically; 0 if it raced away.
+
+        The index run's ``job_id`` / ``reader_run_id`` linkage fields carry
+        no FK and are treated as untrusted: the reader run is only updated
+        when ownership can be re-established under the lock. run type /
+        reading record / generation only prove "same kind of run" (the
+        same record can hold multiple build runs); ownership requires the
+        bootstrap-minted reverse identity
+        ``reader_runs.envelope_json.index_run_id == index_run.id``, plus —
+        when the job row still exists — the job's own ``run_id`` equaling
+        the index run's ``reader_run_id``. Otherwise only the index run
+        converges; a corrupted linkage must never terminalize an
+        unrelated run.
+        """
+        index_run_id: UUID = row["index_run_id"]
+        job_id: UUID | None = row["job_id"]
+
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                # Re-verify under the index-run row lock: a concurrent
+                # worker may have already converged or advanced it.
+                current = await conn.fetchrow(
+                    """
+                    SELECT status, job_id, reader_run_id,
+                           reading_record_id, record_generation
+                    FROM reader_article_rag_index_runs
+                    WHERE id = $1 FOR UPDATE
+                    """,
+                    index_run_id,
+                )
+                if current is None or current["status"] not in (
+                    "planned", "queued", "indexing",
+                ):
+                    return 0
+                # Prefer the locked row's linkage over the candidate
+                # snapshot's.
+                job_id = current["job_id"]
+                reader_run_id: UUID | None = current["reader_run_id"]
+
+                job_status: str | None = None
+                job_run_id: UUID | None = None
+                job_failure_class: str | None = None
+                job_failure_code: str | None = None
+                if job_id is not None:
+                    job_row = await conn.fetchrow(
+                        """
+                        SELECT status, run_id, failure_class, failure_code
+                        FROM reader_jobs WHERE id = $1
+                        """,
+                        job_id,
+                    )
+                    if job_row is not None:
+                        job_status = str(job_row["status"])
+                        job_run_id = job_row["run_id"]
+                        job_failure_class = job_row["failure_class"]
+                        job_failure_code = job_row["failure_code"]
+
+                if job_status == "claimed":
+                    # Became legitimately in-flight after candidate
+                    # selection — leave it alone.
+                    return 0
+
+                if job_status in (None, "failed_terminal"):
+                    index_target = "failed"
+                    run_target = "failed_terminal"
+                    reason = (
+                        "reconcile_job_missing"
+                        if job_status is None
+                        else "reconcile_dead_job"
+                    )
+                elif job_status in ("cancelled", "superseded"):
+                    index_target = "superseded"
+                    run_target = "superseded"
+                    reason = "reconcile_dead_job"
+                else:
+                    # Job requeued by stale-lease recovery; realign the
+                    # index run to in-flight-queued semantics.
+                    index_target = "queued"
+                    run_target = None
+                    reason = "reconcile_inflight_requeued"
+
+                error_json: dict[str, Any] = {}
+                if index_target in ("failed", "superseded"):
+                    error_json = {
+                        "failure_class": job_failure_class
+                        or "lifecycle_reconciliation",
+                        "failure_code": job_failure_code or reason,
+                        "rationale_code": reason,
+                    }
+
+                await self._update_index_run_status_in_transaction(
+                    conn,
+                    index_run_id,
+                    status=index_target,
+                    error_json=error_json,
+                )
+                if reader_run_id is not None and run_target is not None:
+                    # Linkage trust gate: only terminalize the reader run
+                    # when it is verifiably THIS index run's build run.
+                    # run_type / record / generation only prove "same kind
+                    # of run" — the same record can legitimately hold
+                    # multiple build runs. Ownership is established by the
+                    # bootstrap-minted reverse identity
+                    # ``reader_runs.envelope_json.index_run_id`` (plus the
+                    # job's own run_id when the job row still exists).
+                    # Covers all non-terminal run statuses (including
+                    # failed_retryable / paused / waiting_*) by excluding
+                    # the explicit terminal set.
+                    await conn.execute(
+                        """
+                        UPDATE reader_runs
+                        SET status = $2,
+                            failure_class = $3,
+                            failure_code = $4,
+                            finished_at = COALESCE(finished_at, NOW()),
+                            updated_at = NOW()
+                        WHERE id = $1
+                          AND status NOT IN (
+                                'completed', 'failed_terminal',
+                                'cancelled', 'superseded'
+                              )
+                          AND run_type = $5
+                          AND reading_record_id = $6
+                          AND record_generation = $7
+                          AND envelope_json ->> 'index_run_id' = $9
+                          AND (
+                                $8::uuid IS NULL
+                                OR $8::uuid = $1
+                          )
+                        """,
+                        reader_run_id,
+                        run_target,
+                        job_failure_class,
+                        job_failure_code or reason,
+                        ARTICLE_RAG_INDEX_BUILD_RUN_TYPE,
+                        current["reading_record_id"],
+                        current["record_generation"],
+                        job_run_id,
+                        str(index_run_id),
+                    )
+                return 1
+
     # ------------------------------------------------------------------
     # Claimed-job execution
     # ------------------------------------------------------------------
@@ -786,6 +987,21 @@ class ArticleRagIndexWorkerService:
                 message=str(exc),
             )
         except ArticleRagIndexWorkerError as exc:
+            if exc.failure_class == "plan_hash_mismatch":
+                # Obsolete truth: the truth layer changed between bootstrap
+                # and worker execution, so the persisted index run no longer
+                # describes the current document. Supersede (not fail) —
+                # this is content churn, not an infrastructure defect, and
+                # must not pollute failure metrics. Same semantics as the
+                # plan-service-level ArticleRagIndexPlanError branch above.
+                return await self._handle_supersede(
+                    claim=claim,
+                    context=context,
+                    rationale_code=exc.rationale_code or exc.failure_code,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    message=str(exc),
+                )
             if exc.retryable:
                 return await self._handle_retry_later(
                     claim=claim,
@@ -1450,31 +1666,45 @@ class ArticleRagIndexWorkerService:
         failure_code: str,
         message: str,
     ) -> ArticleRagIndexWorkerResult:
-        """Transition job → superseded, index run → superseded."""
-        await self._job_runtime.transition(
-            job_id=claim.job_id,
-            target_status="superseded",
-            lease_token=claim.lease_token,
-            rationale_code=rationale_code,
-        )
-        await self._mark_run_status(
-            claim.run_id,
-            status="superseded",
-            failure_class=failure_class,
-            failure_code=failure_code,
-            finished_at=datetime.now(UTC),
-        )
-        if context is not None:
-            await self._update_index_run_status(
-                context.index_run_id,
-                status="superseded",
-                error_json={
-                    "failure_class": failure_class,
-                    "failure_code": failure_code,
-                    "rationale_code": rationale_code,
-                    "message": message,
-                },
-            )
+        """Transition job → superseded, run → superseded, index run →
+        superseded — atomically in one caller-owned transaction.
+
+        All three writes commit or roll back together; a mid-group failure
+        can no longer leave a terminal job paired with an active index
+        run (the orphan combo that fail-closes bootstrap ensure).
+        """
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                await self._job_runtime.transition_in_transaction(
+                    conn,
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    failure_class=failure_class,
+                    failure_code=failure_code,
+                    failure_message=message,
+                    rationale_code=rationale_code,
+                )
+                await self._mark_run_status_in_transaction(
+                    conn,
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=failure_class,
+                    failure_code=failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                if context is not None:
+                    await self._update_index_run_status_in_transaction(
+                        conn,
+                        context.index_run_id,
+                        status="superseded",
+                        error_json={
+                            "failure_class": failure_class,
+                            "failure_code": failure_code,
+                            "rationale_code": rationale_code,
+                            "message": message,
+                        },
+                    )
         return ArticleRagIndexWorkerResult(
             job_id=claim.job_id,
             index_run_id=context.index_run_id if context else UUID(int=0),

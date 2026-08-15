@@ -495,6 +495,11 @@ class TurnCoordinator:
         # a provider call that did not happen.
         self.web_search_calls: int = 0
         self.web_search_tool_requests: int = 0
+        # Per-instance Article RAG call-limit serialization: model tool
+        # calls may be scheduled together; the check -> port I/O ->
+        # increment window must not admit a second port call (same
+        # discipline as ``_web_search_lock`` below).
+        self._article_rag_search_lock = asyncio.Lock()
         self._web_search_lock = asyncio.Lock()
         self._web_search_clock = monotonic_clock or time.perf_counter
         if not isinstance(web_search_deadline_seconds, int | float):
@@ -1449,7 +1454,21 @@ class TurnCoordinator:
         query: str,
         limit: int | None = None,
     ) -> MeteredToolReturn:
-        """RAG search via ArticleRagSearchPort + assemble_rag_model_view."""
+        """RAG search via ArticleRagSearchPort + assemble_rag_model_view.
+
+        The lock is intentional: model tool calls may be scheduled
+        together, but the per-turn call-limit window (check -> fence ->
+        port I/O -> increment) must complete before a second call is
+        admitted.
+        """
+        async with self._article_rag_search_lock:
+            return await self._search_current_article_locked(query, limit)
+
+    async def _search_current_article_locked(
+        self,
+        query: str,
+        limit: int | None,
+    ) -> MeteredToolReturn:
         started = time.perf_counter()
         effective_limit = 5 if limit is None else max(1, min(int(limit), 10))
 

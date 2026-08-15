@@ -39,6 +39,7 @@ catches that and returns a fail-soft result instead of raising.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -48,6 +49,8 @@ from app.services.reader_orchestration.article_rag_index_lifecycle_service impor
     ArticleRagIndexEnsureResult,
     ArticleRagIndexLifecycleService,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import asyncpg
@@ -143,11 +146,24 @@ class ArticleRagAutoEnsureService:
                     now=now,
                 )
             )
-        except Exception:
+        except Exception as exc:
             # Swallow ALL exceptions — the main article_ready flow must
             # never be blocked by a RAG ensure failure.  The reason_code
             # is a fixed, safe identifier; raw exception messages, tokens,
             # URIs, chunk text, or SDK internals are NEVER included.
+            # Fail-soft is not fail-silent: emit exactly one structured
+            # warning with safe fields only (no exc_info, no message
+            # interpolation, no user_id).
+            logger.warning(
+                "Article RAG auto-ensure failed softly; "
+                "article_ready flow unaffected",
+                extra={
+                    "reason_code": REASON_AUTO_ENSURE_UNEXPECTED_ERROR,
+                    "exception_type": type(exc).__name__,
+                    "reading_record_id": reading_record_id,
+                    "expected_generation": expected_generation,
+                },
+            )
             return ArticleRagAutoEnsureResult(
                 status=AUTO_ENSURE_STATUS_FAIL_SOFT_ERROR,
                 reason_code=REASON_AUTO_ENSURE_UNEXPECTED_ERROR,

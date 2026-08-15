@@ -97,7 +97,10 @@ class TestSettingsSurface:
     def _make_settings(self) -> object:
         from app.config.settings import Settings  # local import — only here
 
-        return Settings()
+        # ``_env_file=None`` opts out of the local ``.env`` overlay so
+        # the typed field defaults (not machine-local overrides) are
+        # exercised.
+        return Settings(_env_file=None)
 
     def test_feature_flag_default_is_false(self) -> None:
         settings = self._make_settings()
@@ -184,7 +187,9 @@ class TestFactoriesReturnUnconfiguredByDefault:
     def _make_settings(self) -> object:
         from app.config.settings import Settings
 
-        return Settings()
+        # ``_env_file=None`` opts out of the local ``.env`` overlay so
+        # the "no provider configured" default surface is exercised.
+        return Settings(_env_file=None)
 
     def test_embedding_factory_returns_unconfigured(
         self, monkeypatch: pytest.MonkeyPatch
@@ -364,7 +369,7 @@ class TestWorkerEntryScript:
         class _SentinelPool:
             pass
 
-        settings = Settings()
+        settings = Settings(_env_file=None)
         service = build_worker_service(settings=settings, pool=_SentinelPool())
         assert isinstance(service, ArticleRagIndexWorkerService)
         assert isinstance(
@@ -391,7 +396,7 @@ class TestWorkerEntryScript:
         ):
             monkeypatch.delenv(var, raising=False)
 
-        result = subprocess.run( # noqa: — fixed args
+        result = subprocess.run(
             [
                 sys.executable,
                 "-m",

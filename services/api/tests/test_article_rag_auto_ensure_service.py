@@ -23,6 +23,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+
 from app.services.reader_orchestration.article_rag_auto_ensure_service import (
     AUTO_ENSURE_STATUS_DISABLED,
     AUTO_ENSURE_STATUS_FAIL_SOFT_ERROR,
@@ -125,7 +126,38 @@ class _WiringFakeConn:
         return _WiringFakeTransaction(self)
 
     async def execute(self, query: str, *args: Any) -> str:
+        # freeze_confirmed_source asserts the UPDATE-1 contract; every
+        # other write on this path is a plain INSERT.
+        if query.lstrip().upper().startswith("UPDATE"):
+            return "UPDATE 1"
         return "INSERT 0 1"
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any]:
+        # Minimal INSERT ... RETURNING for the real
+        # ``insert_confirmed_source`` call (stable-ready shell creation).
+        # Positional params follow the production SQL contract:
+        # $1=source_document_id, $2=record_id, $3=user_id, $4=generation,
+        # $5=original_input_id, $6=markdown_text, $7=content_sha256,
+        # $8=edit_source, $9=now; revision=1 / status='draft' are SQL
+        # constants. Returned keys mirror production ``_row_to_model``.
+        if "INSERT INTO confirmed_source_documents" not in query:
+            raise AssertionError(
+                "_WiringFakeConn.fetchrow only supports the "
+                "insert_confirmed_source contract; unexpected query: "
+                f"{query.split()[0:4]}"
+            )
+        return {
+            "id": args[0],
+            "reading_record_id": args[1],
+            "user_id": args[2],
+            "record_generation": args[3],
+            "original_input_id": args[4],
+            "markdown_text": args[5],
+            "revision": 1,
+            "content_sha256": args[6],
+            "status": "draft",
+            "edit_source": args[7],
+        }
 
     def is_in_transaction(self) -> bool:
         return self._in_transaction
@@ -450,6 +482,115 @@ class TestAutoEnsureServiceFailSoft:
         assert "zilliz.example.com" not in result.reason_code
         assert "api_key" not in result.reason_code
 
+    def test_unexpected_exception_emits_one_safe_structured_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F5: fail-soft must not be fail-silent.
+
+        The failure path emits EXACTLY ONE warning with fixed safe fields
+        (reason_code, exception_type, reading_record_id,
+        expected_generation). The raw exception message / sentinel
+        provider text / user_id must not appear in any log record field.
+        """
+        import logging
+
+        sentinel_msg = (
+            "token=sk-sentinel-do-not-log uri=https://sentinel.example.com"
+        )
+        fake_lifecycle = _FakeLifecycleService(
+            raise_exc=RuntimeError(sentinel_msg),
+        )
+        service = ArticleRagAutoEnsureService(
+            lifecycle_service=fake_lifecycle,
+            enabled=True,
+        )
+        with caplog.at_level(
+            logging.WARNING,
+            logger="app.services.reader_orchestration."
+            "article_rag_auto_ensure_service",
+        ):
+            result = asyncio.run(
+                service.ensure_in_transaction(
+                    _FakeConn(),
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                    expected_generation=3,
+                )
+            )
+
+        # Behavior unchanged: fail-soft DTO.
+        assert result.status == AUTO_ENSURE_STATUS_FAIL_SOFT_ERROR
+        assert result.reason_code == "auto_ensure_unexpected_error"
+
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+            and r.name == (
+                "app.services.reader_orchestration."
+                "article_rag_auto_ensure_service"
+            )
+        ]
+        assert len(warnings) == 1, "exactly one warning expected"
+        record = warnings[0]
+        # Safe structured fields present.
+        assert getattr(record, "reason_code", None) == (
+            "auto_ensure_unexpected_error"
+        )
+        assert getattr(record, "exception_type", None) == "RuntimeError"
+        assert getattr(record, "reading_record_id", None) == _RECORD_ID
+        assert getattr(record, "expected_generation", None) == 3
+        # Sensitive values absent from message AND every record field.
+        for field_value in (
+            record.getMessage(),
+            *(str(v) for v in record.__dict__.values()),
+        ):
+            assert "sk-sentinel-do-not-log" not in field_value
+            assert "sentinel.example.com" not in field_value
+            assert str(_USER_ID) not in field_value
+
+    def test_success_and_disabled_emit_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-error paths (success / typed result / disabled) stay silent."""
+        import logging
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="app.services.reader_orchestration."
+            "article_rag_auto_ensure_service",
+        ):
+            ok_service = ArticleRagAutoEnsureService(
+                lifecycle_service=_FakeLifecycleService(),
+                enabled=True,
+            )
+            result = asyncio.run(
+                ok_service.ensure_in_transaction(
+                    _FakeConn(),
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                    expected_generation=1,
+                )
+            )
+            assert result.status == ENSURE_STATUS_ENQUEUED
+
+            disabled_service = ArticleRagAutoEnsureService(
+                lifecycle_service=_FakeLifecycleService(),
+                enabled=False,
+            )
+            disabled_result = asyncio.run(
+                disabled_service.ensure_in_transaction(
+                    _FakeConn(),
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                    expected_generation=1,
+                )
+            )
+            assert disabled_result.status == AUTO_ENSURE_STATUS_DISABLED
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings == []
+
     def test_no_network_calls(self) -> None:
         """Auto-ensure service does NOT call embedding/vector/LLM/network.
 
@@ -573,6 +714,9 @@ class TestStableReadyWiring:
                             "outcome": "stable_document_ready",
                             "flags": [],
                             "reasons": [],
+                            # L1 三级 adaptation 记录：freeze plan 读取
+                            # suitability.adaptations（空 = 无 adaptations）。
+                            "adaptations": [],
                         },
                     )(),
                     "normalized_text": _english_text(),
@@ -583,6 +727,9 @@ class TestStableReadyWiring:
                     # 会读取 normalized.parser_identity。mock 需同步，
                     # pasted_text 路径为 None。
                     "parser_identity": None,
+                    # L1 三级 adaptation 记录：freeze plan source
+                    # profile 读取 normalized.adaptations（空 = 无）。
+                    "adaptations": [],
                 },
             )()
             mock_plan.return_value = object()
@@ -661,6 +808,9 @@ class TestStableReadyWiring:
                             "outcome": "stable_document_ready",
                             "flags": [],
                             "reasons": [],
+                            # L1 三级 adaptation 记录：freeze plan 读取
+                            # suitability.adaptations（空 = 无 adaptations）。
+                            "adaptations": [],
                         },
                     )(),
                     "normalized_text": _english_text(),
@@ -671,6 +821,9 @@ class TestStableReadyWiring:
                     # 会读取 normalized.parser_identity。mock 需同步，
                     # pasted_text 路径为 None。
                     "parser_identity": None,
+                    # L1 三级 adaptation 记录：freeze plan source
+                    # profile 读取 normalized.adaptations（空 = 无）。
+                    "adaptations": [],
                 },
             )()
             mock_plan.return_value = object()
@@ -743,6 +896,9 @@ class TestStableReadyWiring:
                             "outcome": "stable_document_ready",
                             "flags": [],
                             "reasons": [],
+                            # L1 三级 adaptation 记录：freeze plan 读取
+                            # suitability.adaptations（空 = 无 adaptations）。
+                            "adaptations": [],
                         },
                     )(),
                     "normalized_text": _english_text(),
@@ -753,6 +909,9 @@ class TestStableReadyWiring:
                     # 会读取 normalized.parser_identity。mock 需同步，
                     # pasted_text 路径为 None。
                     "parser_identity": None,
+                    # L1 三级 adaptation 记录：freeze plan source
+                    # profile 读取 normalized.adaptations（空 = 无）。
+                    "adaptations": [],
                 },
             )()
             mock_plan.return_value = object()

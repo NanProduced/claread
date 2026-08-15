@@ -40,6 +40,8 @@ from app.services.reader_orchestration.article_rag_embedding_provider import (
     DashScopeArticleRagEmbeddingProvider,
 )
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
+    ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+    ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
     ArticleRagIndexBootstrapService,
 )
 from app.services.reader_orchestration.article_rag_index_worker import (
@@ -678,13 +680,14 @@ async def test_worker_reloads_plan_and_validates_hash(
 # ===================================================================
 
 
-async def test_plan_hash_mismatch_fail_closed_no_vector_write(
+async def test_plan_hash_mismatch_supersedes_obsolete_truth_no_vector_write(
     worker_env: asyncpg.Pool,
 ) -> None:
-    """Requirement 5: when the truth layer changes between bootstrap and
-    worker execution (plan_content_sha256 differs), the worker fails
-    closed with failure_code=plan_hash_mismatch and does NOT call the
-    vector writer."""
+    """Requirement 5 (revised semantics): when the truth layer changes
+    between bootstrap and worker execution (plan_content_sha256 differs),
+    the persisted index run describes obsolete truth. The worker
+    supersedes the job / run / index run atomically (failure_code=
+    plan_hash_mismatch) and does NOT call the vector writer."""
     first_text = "Indexable paragraph for happy path."
     second_text = "Second paragraph added after bootstrap."
     await _seed_paragraph_environment(worker_env, paragraph_text=first_text)
@@ -737,9 +740,8 @@ async def test_plan_hash_mismatch_fail_closed_no_vector_write(
     )
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "superseded"
     assert result.failure_code == "plan_hash_mismatch"
-    assert result.retryable is False
 
     # Embedding provider may or may not have been called (plan reload
     # happens before embedding).  Vector writer must NOT have been called.
@@ -747,16 +749,22 @@ async def test_plan_hash_mismatch_fail_closed_no_vector_write(
 
     async with worker_env.acquire() as conn:
         job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
-        assert job["status"] == "failed_terminal"
-        assert job["failure_code"] == "plan_hash_mismatch"
+        assert job["status"] == "superseded"
+        # Superseded transitions persist rationale_code (failure_* fields
+        # are reserved for failed_terminal / retry_later / paused in the
+        # generic job runtime contract).
+        assert job["rationale_code"] == "plan_hash_mismatch"
+
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        assert run["status"] == "superseded"
 
         index_run = await _fetch_index_run(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        assert index_run["status"] == "failed"
+        assert index_run["status"] == "superseded"
+        assert index_run["completed_at"] is not None
         error_json = dict(index_run["error_json"])
         assert error_json["failure_code"] == "plan_hash_mismatch"
-        assert error_json["retryable"] is False
 
 
 # ===================================================================
@@ -3803,3 +3811,720 @@ async def test_indexed_normal_match_returns_idempotent_noop(
     assert result.idempotent_noop is True
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
+
+
+# ===================================================================
+# Lifecycle closure (P0): supersede atomicity + orphan reconciliation
+# ===================================================================
+
+
+async def test_supersede_atomic_rollback_when_index_run_update_fails(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """If the index-run update throws mid-supersede, the whole
+    job/run/index-run group rolls back.
+
+    Mirrors ``test_terminal_failure_rollback_when_index_run_update_fails``
+    for the supersede path: patches the in-transaction index-run updater
+    to raise after the job transition was applied within the same
+    caller-owned transaction. Asserts job stays ``claimed``, run stays
+    ``running``, index run stays ``indexing``, and 0 ``job_superseded``
+    events were written.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Fence mutation during embedding routes _process_claimed_job into
+    # _handle_supersede.
+    embedding_provider = _FenceMutatingEmbeddingProvider(
+        pool=worker_env,
+        mutation="bump_generation",
+    )
+    vector_writer = FakeArticleRagVectorWriter()
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=embedding_provider,
+        vector_writer=vector_writer,
+    )
+
+    original_update = service._update_index_run_status_in_transaction
+    call_count = {"update": 0}
+
+    async def _explode(
+        conn,  # noqa: ANN001
+        index_run_id: UUID,
+        *,
+        status: str,
+        error_json: dict[str, Any],
+    ) -> None:
+        call_count["update"] += 1
+        assert conn.is_in_transaction(), (
+            "supersede index-run update must run inside the caller-owned "
+            "transaction"
+        )
+        raise RuntimeError("injected supersede index-run update failure")
+
+    service._update_index_run_status_in_transaction = _explode  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="injected supersede index-run update failure"):
+        await service.process_next(
+            lease_owner=_LEASE_OWNER,
+            lease_duration=_LEASE_DURATION,
+            retry_delay=_RETRY_DELAY,
+        )
+
+    assert call_count["update"] == 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        superseded_events = await conn.fetchval(
+            "SELECT count(*) FROM reader_job_events WHERE job_id = $1 "
+            "AND event_type = 'job_superseded'",
+            bootstrap_result.job_id,
+        )
+
+    # Rollback proof: the supersede group is all-or-nothing.
+    assert job["status"] == "claimed"
+    assert run["status"] == "running"
+    assert index_run["status"] == "indexing"
+    assert superseded_events == 0
+
+    service._update_index_run_status_in_transaction = original_update  # type: ignore[assignment]
+
+
+async def _force_orphan_state(
+    pool: asyncpg.Pool,
+    *,
+    job_id: UUID,
+    run_id: UUID,
+    index_run_id: UUID,
+    job_status: str,
+    index_status: str,
+    run_status: str = "running",
+) -> None:
+    """Force a post-crash row combo directly (bypassing the worker).
+
+    Emulates what recover_stale_leases + a dead worker leave behind:
+    job converged to a terminal/queued status while run + index run were
+    never converged.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = $2,
+                failure_class = 'lease_lost',
+                failure_code = 'max_attempts_exceeded',
+                lease_owner = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            job_id,
+            job_status,
+        )
+        await conn.execute(
+            "UPDATE reader_runs SET status = $2 WHERE id = $1",
+            run_id,
+            run_status,
+        )
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = $2 WHERE id = $1",
+            index_run_id,
+            index_status,
+        )
+
+
+async def test_reconcile_converges_failed_terminal_job_and_unblocks_ensure(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """Stale-lease max-attempt exhaustion combo (job=failed_terminal,
+    run=running, index=indexing) is converged atomically by the
+    reconciliation pass, and a subsequent bootstrap ensure can enqueue a
+    fresh run (no permanent ``idempotent_run_inconsistent`` block)."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _force_orphan_state(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        run_id=await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id),
+        index_run_id=bootstrap_result.index_run_id,
+        job_status="failed_terminal",
+        index_status="indexing",
+    )
+
+    service = _build_worker_service(worker_env)
+    reconciled = await service.reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    # Three-table terminal combo converged (job untouched: already terminal).
+    assert job["status"] == "failed_terminal"
+    assert job["failure_code"] == "max_attempts_exceeded"
+    assert run["status"] == "failed_terminal"
+    assert run["finished_at"] is not None
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+    error_json = dict(index_run["error_json"])
+    assert error_json["failure_code"] == "max_attempts_exceeded"
+
+    # Ensure unblocked: bootstrap enqueues a fresh run instead of failing
+    # closed with idempotent_run_inconsistent.
+    second = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    assert second.idempotent_noop is False
+    assert second.job_id is not None
+    assert second.job_id != bootstrap_result.job_id
+    assert second.index_run_id != bootstrap_result.index_run_id
+
+    async with worker_env.acquire() as conn:
+        active_runs = await conn.fetchval(
+            """
+            SELECT count(*) FROM reader_article_rag_index_runs
+            WHERE stable_document_id = $1
+              AND status IN ('planned', 'queued', 'indexing', 'indexed')
+            """,
+            bootstrap_result.stable_document_id,
+        )
+    assert active_runs == 1
+
+
+async def _fetch_job_row_run_id(
+    pool: asyncpg.Pool,
+    job_id: UUID,
+) -> UUID:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            "SELECT run_id FROM reader_jobs WHERE id = $1", job_id
+        )
+    assert value is not None
+    return value
+
+
+async def test_reconcile_converges_superseded_job_orphan(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """Claim-fence / route-flip supersede combo (job=superseded,
+    run=running, index=indexing) converges to superseded semantics."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _force_orphan_state(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        run_id=await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id),
+        index_run_id=bootstrap_result.index_run_id,
+        job_status="superseded",
+        index_status="indexing",
+    )
+
+    service = _build_worker_service(worker_env)
+    reconciled = await service.reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    assert job["status"] == "superseded"
+    assert run["status"] == "superseded"
+    assert index_run["status"] == "superseded"
+    assert index_run["completed_at"] is not None
+
+
+async def test_reconcile_realigns_inflight_indexing_to_queued(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """Sub-final stale-lease requeue combo (job=queued via recovery,
+    index=indexing left over from the dead claim): reconciliation realigns
+    the index run to ``queued`` so it no longer claims to be indexing."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    await _force_orphan_state(
+        worker_env,
+        job_id=bootstrap_result.job_id,
+        run_id=await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id),
+        index_run_id=bootstrap_result.index_run_id,
+        job_status="queued",
+        index_status="indexing",
+    )
+
+    service = _build_worker_service(worker_env)
+    reconciled = await service.reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    assert job["status"] == "queued"
+    assert run["status"] == "running"
+    assert index_run["status"] == "queued"
+    assert index_run["completed_at"] is None
+
+
+async def test_reconcile_skips_healthy_claimed_job(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """Negative control: job=claimed + index=indexing is a legitimate
+    in-flight combo; reconciliation must not touch it."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'claimed',
+                lease_owner = 'dead-worker',
+                lease_token = $2,
+                lease_expires_at = NOW() + INTERVAL '60 seconds',
+                attempt_count = 1,
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+            uuid4(),
+        )
+        await conn.execute(
+            "UPDATE reader_runs SET status = 'running' WHERE id = $1",
+            await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id),
+        )
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = 'indexing' "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+
+    service = _build_worker_service(worker_env)
+    reconciled = await service.reconcile_orphaned_index_runs()
+    assert reconciled == 0
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+    assert job["status"] == "claimed"
+    assert index_run["status"] == "indexing"
+
+
+async def test_reconcile_converges_missing_job_row(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """Missing job row (job_id dangling) with an active index run:
+    reconciliation converges index run to failed and the reader run to
+    failed_terminal."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    run_id = await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id)
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM reader_job_events WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+        await conn.execute(
+            "DELETE FROM reader_jobs WHERE id = $1", bootstrap_result.job_id
+        )
+        await conn.execute(
+            "UPDATE reader_runs SET status = 'running' WHERE id = $1", run_id
+        )
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = 'indexing' "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+
+    service = _build_worker_service(worker_env)
+    reconciled = await service.reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        run = await _fetch_run(conn, run_id=run_id)
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+
+
+# ===================================================================
+# Wave 2 review rework: non-terminal run coverage, linkage trust,
+# and REAL recover_stale_leases -> reconcile chains.
+# ===================================================================
+
+
+async def test_reconcile_converges_failed_retryable_run_after_external_supersede(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-1 regression: retry path leaves run=failed_retryable + index=queued;
+    a later external supersede (claim fence / route flip on re-claim)
+    converges only the job. Reconcile must converge BOTH the index run and
+    the failed_retryable reader run to superseded — the queued/running-only
+    guard would strand the run in failed_retryable forever."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Real worker retry path: job -> retry_later, run -> failed_retryable,
+    # index run -> queued.
+    service = _build_worker_service(
+        worker_env,
+        embedding_provider=_RetryableEmbeddingProvider(),
+        vector_writer=FakeArticleRagVectorWriter(),
+    )
+    result = await service.process_next(
+        lease_owner=_LEASE_OWNER,
+        lease_duration=_LEASE_DURATION,
+        retry_delay=_RETRY_DELAY,
+    )
+    assert result is not None
+    assert result.status == "retry_later"
+
+    # External supersede of the requeueable job (what claim-time fence /
+    # route-flip recovery does to the job, outside this worker).
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'superseded',
+                lease_owner = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                rationale_code = 'stale_route_fingerprint',
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+        )
+
+    reconciled = await _build_worker_service(worker_env).reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=bootstrap_result.job_id)
+        run = await _fetch_run(conn, run_id=job["run_id"])
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    assert job["status"] == "superseded"
+    assert run["status"] == "superseded"
+    assert run["finished_at"] is not None
+    assert index_run["status"] == "superseded"
+    assert index_run["completed_at"] is not None
+
+
+async def test_reconcile_skips_run_update_when_job_run_linkage_mismatch(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-2 regression: index run linkage fields carry no FK. A corrupted
+    reader_run_id pointing at a foreign run must NOT be marked terminal by
+    reconcile. The index run itself still converges; only the run update
+    is skipped when job.run_id does not match the index run's
+    reader_run_id."""
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # Foreign run row (same record, correct run type, but NOT the job's run).
+    async with worker_env.acquire() as conn:
+        foreign_run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version,
+                trigger_kind
+            )
+            VALUES ($1, $2, 'article_rag_index_build', 'running', 1,
+                    '{}'::jsonb, 'v1', 'manual')
+            RETURNING id
+            """,
+            _RECORD_ID,
+            _USER_ID,
+        )
+        # Corrupt the index run's linkage: reader_run_id -> foreign run.
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET reader_run_id = $2 "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+            foreign_run_id,
+        )
+        # Kill the job (its own run row is the legitimate one).
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'failed_terminal',
+                failure_class = 'lease_lost',
+                failure_code = 'max_attempts_exceeded',
+                lease_owner = NULL, lease_token = NULL,
+                lease_expires_at = NULL, updated_at = NOW()
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+        )
+
+    reconciled = await _build_worker_service(worker_env).reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        foreign_run = await _fetch_run(conn, run_id=foreign_run_id)
+        legit_run = await _fetch_run(
+            conn, run_id=await _fetch_job_row_run_id(
+                worker_env, bootstrap_result.job_id,
+            ),
+        )
+
+    # Index run converged; BOTH runs untouched (linkage untrusted).
+    assert index_run["status"] == "failed"
+    assert foreign_run["status"] == "running"
+    assert legit_run["status"] == "queued"
+
+
+async def test_real_stale_lease_recovery_requeue_then_reconcile(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P2-1 integration: REAL recover_stale_leases() requeue result is
+    converged by the REAL reconciler. Only the clock (lease expiry) and
+    the crash point (index already at 'indexing') are forced."""
+    from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
+
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    runtime = ReaderJobRuntime(pool=worker_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="dead-worker",
+        lease_duration=_LEASE_DURATION,
+        job_type=ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+        target_type=ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
+    )
+    assert claim is not None
+
+    async with worker_env.acquire() as conn:
+        # Crash point: post mark-indexing, pre heartbeat; expire the lease.
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = 'indexing' "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+        await conn.execute(
+            "UPDATE reader_runs SET status = 'running' WHERE id = $1",
+            claim.run_id,
+        )
+        await conn.execute(
+            "UPDATE reader_jobs SET lease_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = $1",
+            claim.job_id,
+        )
+
+    recovered = await runtime.recover_stale_leases()
+    assert recovered == 1
+
+    reconciled = await _build_worker_service(worker_env).reconcile_orphaned_index_runs()
+    assert reconciled == 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=claim.job_id)
+        run = await _fetch_run(conn, run_id=claim.run_id)
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    # Real chain converged: job requeued, index realigned to queued, run
+    # stays in-flight.
+    assert job["status"] == "queued"
+    assert run["status"] == "running"
+    assert index_run["status"] == "queued"
+    assert index_run["completed_at"] is None
+
+
+async def test_real_stale_lease_exhaustion_then_reconcile_terminal(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P2-1 integration: REAL recover_stale_leases() max-attempt exhaustion
+    result is converged by the REAL reconciler to the terminal trio."""
+    from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
+
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    runtime = ReaderJobRuntime(pool=worker_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="dead-worker",
+        lease_duration=_LEASE_DURATION,
+        job_type=ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+        target_type=ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
+    )
+    assert claim is not None
+
+    async with worker_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = 'indexing' "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+        )
+        await conn.execute(
+            "UPDATE reader_runs SET status = 'running' WHERE id = $1",
+            claim.run_id,
+        )
+        # Final attempt: recovery must terminalize, not requeue.
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second',
+                attempt_count = max_attempts
+            WHERE id = $1
+            """,
+            claim.job_id,
+        )
+
+    recovered = await runtime.recover_stale_leases()
+    assert recovered == 1
+
+    reconciled = await _build_worker_service(worker_env).reconcile_orphaned_index_runs()
+    assert reconciled == 1
+
+    async with worker_env.acquire() as conn:
+        job = await _fetch_job(conn, job_id=claim.job_id)
+        run = await _fetch_run(conn, run_id=claim.run_id)
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+
+    assert job["status"] == "failed_terminal"
+    assert job["failure_code"] == "max_attempts_exceeded"
+    assert run["status"] == "failed_terminal"
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+    error_json = dict(index_run["error_json"])
+    assert error_json["failure_code"] == "max_attempts_exceeded"
+
+
+async def test_reconcile_missing_job_corrupted_linkage_spares_all_runs(
+    worker_env: asyncpg.Pool,
+) -> None:
+    """P1-2 wave 3 regression: the job-missing degradation path must not
+    trust record/type/generation alone. Same record + run_type +
+    generation can legitimately hold MULTIPLE Article RAG build runs
+    (e.g. bootstrap re-enqueues after a failed run); those fields only
+    prove "same kind of run", not ownership.
+
+    Scenario (reviewer-specified): two same-shape build runs, the original
+    job deleted, the index run's reader_run_id repointed at the OTHER
+    run. Reconcile may converge the index run, but NEITHER reader run may
+    be modified — the surviving reverse identity is the bootstrap-minted
+    ``reader_runs.envelope_json.index_run_id``, which no longer matches.
+    """
+    await _seed_paragraph_environment(worker_env)
+    bootstrap_result = await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    legit_run_id = await _fetch_job_row_run_id(worker_env, bootstrap_result.job_id)
+
+    # Second same-shape build run (same record / run_type / generation),
+    # carrying a DIFFERENT index_run_id in its envelope.
+    async with worker_env.acquire() as conn:
+        other_run_id = await conn.fetchval(
+            """
+            INSERT INTO reader_runs (
+                reading_record_id, user_id, run_type, status,
+                record_generation, envelope_json, policy_version,
+                trigger_kind
+            )
+            VALUES ($1, $2, 'article_rag_index_build', 'running', 1,
+                    $3::jsonb, 'v1', 'manual')
+            RETURNING id
+            """,
+            _RECORD_ID,
+            _USER_ID,
+            json.dumps({"index_run_id": str(uuid4())}),
+        )
+        # Delete the original job (job-missing degradation path).
+        await conn.execute(
+            "DELETE FROM reader_job_events WHERE job_id = $1",
+            bootstrap_result.job_id,
+        )
+        await conn.execute(
+            "DELETE FROM reader_jobs WHERE id = $1", bootstrap_result.job_id,
+        )
+        # Corrupt the linkage: index run now points at the OTHER run.
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET reader_run_id = $2 "
+            "WHERE id = $1",
+            bootstrap_result.index_run_id,
+            other_run_id,
+        )
+
+    reconciled = await _build_worker_service(worker_env).reconcile_orphaned_index_runs()
+    assert reconciled >= 1
+
+    async with worker_env.acquire() as conn:
+        index_run = await _fetch_index_run(
+            conn, index_run_id=bootstrap_result.index_run_id,
+        )
+        legit_run = await _fetch_run(conn, run_id=legit_run_id)
+        other_run = await _fetch_run(conn, run_id=other_run_id)
+
+    # Index run converges; BOTH same-shape reader runs are untouched.
+    assert index_run["status"] == "failed"
+    assert index_run["completed_at"] is not None
+    assert legit_run["status"] == "queued"
+    assert legit_run["finished_at"] is None
+    assert other_run["status"] == "running"
+    assert other_run["finished_at"] is None

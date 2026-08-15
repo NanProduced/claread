@@ -15,7 +15,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -253,6 +253,157 @@ def test_factory_ready_builds_port_single_retrieval_construction() -> None:
         embedding_provider=embedding,
         vector_searcher=searcher,
     )
+
+
+# ---------------------------------------------------------------------------
+# A2. Production lifecycle probe wiring (F2)
+# ---------------------------------------------------------------------------
+
+
+class _FakePoolCtx:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+class _FakeLifecyclePool:
+    def acquire(self) -> _FakePoolCtx:
+        return _FakePoolCtx()
+
+
+@pytest.mark.asyncio
+async def test_production_port_reports_indexing_without_retrieval_io() -> None:
+    """F2: the production port must consult the lifecycle probe.
+
+    When the (real) lifecycle service reports ``indexing`` for the record,
+    the production-built port must surface typed ``indexing`` and NEVER
+    touch retrieval (which would otherwise hit plan loading / embedding /
+    vector search).
+    """
+    settings = SimpleNamespace(reader_article_rag_enabled=True)
+    pool = _FakeLifecyclePool()
+    retrieval = MagicMock()
+    with patch(
+        "app.services.reader_orchestration.article_rag_embedding_provider."
+        "build_default_article_rag_embedding_provider",
+        return_value=object(),
+    ):
+        with patch(
+            "app.services.reader_orchestration.article_rag_vector_search."
+            "build_default_article_rag_vector_searcher",
+            return_value=object(),
+        ):
+            with patch(
+                "app.services.reader_orchestration.article_rag_retrieval_service."
+                "ArticleRagRetrievalService",
+                return_value=retrieval,
+            ):
+                port = build_production_article_rag_port(settings, pool=pool)
+    assert isinstance(port, RetrievalBackedArticleRagPort)
+
+    from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
+        ArticleRagIndexLifecycleService,
+    )
+
+    with patch.object(
+        ArticleRagIndexLifecycleService,
+        "load_article_rag_index_lifecycle_status",
+    ) as load_status:
+        load_status.return_value = SimpleNamespace(status="indexing")
+        outcome = await port.search_current_article(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            query="main idea",
+            limit=5,
+        )
+
+    assert outcome.status == "indexing"
+    # Probe was consulted with the caller's identity.
+    assert load_status.call_count == 1
+    # Zero retrieval I/O (no plan load / embedding / vector search).
+    retrieval.retrieve_for_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_production_port_indexed_still_reaches_retrieval() -> None:
+    """F2 negative guard: ``indexed`` must NOT be short-circuited by the
+    probe — retrieval still runs so the probe can never permanently
+    block queries."""
+    settings = SimpleNamespace(reader_article_rag_enabled=True)
+    pool = _FakeLifecyclePool()
+    retrieval = MagicMock()
+    retrieval.retrieve_for_record = AsyncMock(
+        return_value=SimpleNamespace(
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            hits=[
+                SimpleNamespace(
+                    chunk_id="chunk-1",
+                    text="eligible text",
+                    source_scope="main_reading_text",
+                    block_type="paragraph",
+                    content_sha256=_CHUNK,
+                    canonical_text_start_utf16=0,
+                    canonical_text_end_utf16=10,
+                    score=0.9,
+                    reading_record_id=_RECORD,
+                    stable_document_id=_DOC,
+                    base_id=_BASE,
+                    record_generation=1,
+                )
+            ],
+            index_run_id=_RUN,
+            plan_content_sha256=_PLAN,
+        )
+    )
+    with patch(
+        "app.services.reader_orchestration.article_rag_embedding_provider."
+        "build_default_article_rag_embedding_provider",
+        return_value=object(),
+    ):
+        with patch(
+            "app.services.reader_orchestration.article_rag_vector_search."
+            "build_default_article_rag_vector_searcher",
+            return_value=object(),
+        ):
+            with patch(
+                "app.services.reader_orchestration.article_rag_retrieval_service."
+                "ArticleRagRetrievalService",
+                return_value=retrieval,
+            ):
+                port = build_production_article_rag_port(settings, pool=pool)
+    assert isinstance(port, RetrievalBackedArticleRagPort)
+
+    from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
+        ArticleRagIndexLifecycleService,
+    )
+
+    with patch.object(
+        ArticleRagIndexLifecycleService,
+        "load_article_rag_index_lifecycle_status",
+    ) as load_status:
+        load_status.return_value = SimpleNamespace(status="indexed")
+        outcome = await port.search_current_article(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            query="main idea",
+            limit=5,
+        )
+
+    # Probe consulted AND retrieval reached — probe did not block.
+    assert load_status.call_count == 1
+    retrieval.retrieve_for_record.assert_awaited_once()
+    assert outcome.status != "indexing"
 
 
 # ---------------------------------------------------------------------------
