@@ -853,7 +853,9 @@ describe("applySemanticOutlineRoles (semantic group vs section)", () => {
     expect(view.panelItems[1]!.depth).toBe(2);
     expect(view.panelItems[2]!.role).toBe("section");
     expect(view.panelItems[2]!.depth).toBe(2);
-    expect(view.tickItems.map((n) => n.key)).toEqual(["root"]);
+    // Single-root outline: the lone root would make a useless solo tick, so
+    // the rail falls back to the root's direct children as tick targets.
+    expect(view.tickItems.map((n) => n.key)).toEqual(["a", "b"]);
   });
 
   it("the priority combinator never applies the semantic group rule", () => {

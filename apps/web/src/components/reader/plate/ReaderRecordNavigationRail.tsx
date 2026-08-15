@@ -350,7 +350,7 @@ function VisualTicks({
             className={cn(
               "block h-[1.5px] rounded-full transition-all duration-150 ease-[var(--cl-ease-standard)]",
               key === activeKey
-                ? "w-5 bg-ink/60"
+                ? "w-5 bg-lens-blue"
                 : "w-3.5 bg-ink/18 group-hover:bg-ink/40",
             )}
           />
@@ -1036,7 +1036,7 @@ function OutlineRow({
           "relative w-full py-1.5 pr-2.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
           "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
           active
-            ? "bg-[var(--app-control-current)] font-medium text-ink"
+            ? "font-medium text-lens-blue"
             : "text-ink/60 hover:bg-ink/[0.035] hover:text-ink",
         )}
       >

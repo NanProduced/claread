@@ -57,7 +57,7 @@ export interface OutlineItem {
   /** Stable, unique-within-source row key (semantic nodeId / future heading id). */
   key: string;
   parentKey: string | null;
-  /** 1-based depth; flat sources use 1. Drives mini-rail ticks (depth===1) + indent. */
+  /** 1-based depth; flat sources use 1. Drives mini-rail ticks (top level, with single-root fallback) + indent. */
   depth: number;
   title: string;
   /** Only the *start* target — the rail only needs it for click-to-scroll. */
@@ -177,6 +177,26 @@ export function applySemanticOutlineRoles(
   });
 }
 
+/**
+ * Mini-rail tick selection.
+ *
+ * Preferred ticks are the top-level (depth 1) sections in reading order. When
+ * the outline collapses to a single root — e.g. one article node with every
+ * real section nested beneath it — depth-1 filtering would render a lone,
+ * useless tick. In that case fall back to the root's direct children so the
+ * rail still reflects the actual section structure. A single root without
+ * children keeps the lone tick (there is nothing else to show).
+ */
+function selectOutlineTickItems(panelItems: OutlineItem[]): OutlineItem[] {
+  const topLevel = panelItems.filter((item) => item.depth === 1);
+  if (topLevel.length !== 1) return topLevel;
+  const root = topLevel[0]!;
+  const children = panelItems.filter(
+    (item) => item.depth === 2 && item.parentKey === root.key,
+  );
+  return children.length >= 2 ? children : topLevel;
+}
+
 function semanticToOutlineViewModel(
   sem: ReaderSemanticOutlineNavProjection,
 ): ReaderOutlineViewModel {
@@ -193,7 +213,7 @@ function semanticToOutlineViewModel(
       revision: sem.outlineRevision,
     },
     panelItems,
-    tickItems: panelItems.filter((item) => item.depth === 1),
+    tickItems: selectOutlineTickItems(panelItems),
     orderedUnitIds: sem.orderedUnitIds,
     unitOrderById: sem.unitOrderById,
   };
@@ -410,7 +430,7 @@ export function projectMarkdownOutlineView(
     }
   }
 
-  const tickItems = panelItems.filter((item) => item.depth === 1);
+  const tickItems = selectOutlineTickItems(panelItems);
 
   return {
     available: true,

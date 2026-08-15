@@ -455,13 +455,13 @@ body {
 
 :root {
   /*
-   * `--reading-paper-surface` is a legacy compat alias derived directly
-   * from the root/.dark `--reader-paper` token. It is intentionally
-   * class-free: no runtime canvas theme selector exists, and the Reader
-   * surface no longer paints an independent Paper gradient — it follows
-   * the global AppearanceProvider resolution like every other surface.
+   * `--reading-paper-surface` is a legacy compat alias for the sticky reader
+   * top bar. It follows the app canvas (`--web-canvas`) so the chrome blends
+   * seamlessly into the reading page instead of painting a separate tint.
+   * No runtime canvas theme selector exists; it follows the global
+   * AppearanceProvider resolution like every other surface.
    */
-  --reading-paper-surface: var(--reader-paper);
+  --reading-paper-surface: var(--web-canvas);
   --reader-floating-surface: rgba(255, 255, 255, 0.985);
   --reader-floating-surface-strong: rgba(255, 255, 255, 0.965);
   --reader-floating-border: color-mix(in srgb, var(--hairline) 90%, transparent);
@@ -647,11 +647,6 @@ body {
   --brand-aperture-shell-border: rgba(217, 209, 195, 0.7);
   --brand-aperture-shell-shadow: 0 8px 18px rgba(17, 17, 17, 0.08);
   --brand-aperture-mark-filter: none;
-}
-
-.dark .reader-record-plate-document {
-  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 36%, var(--surface));
-  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 36%, var(--surface));
 }
 
 .dark {
@@ -1061,6 +1056,10 @@ select {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--reader-stage-rule) 12%, var(--reader-stage-rule) 88%, transparent);
   opacity: 0.9;
+}
+
+.reader-header-band--clean {
+  background: none;
 }
 
 .reader-header-band--clean::after {
@@ -1862,8 +1861,8 @@ select {
   --reader-record-inline-code-size: 0.9em;
   --reader-record-note-padding-block: 0.75rem;
   --reader-record-note-padding-inline: 1rem;
-  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 40%, var(--surface));
-  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 40%, var(--surface));
+  --reader-record-note-fill-grammar: var(--reader-annotation-grammar-fill);
+  --reader-record-note-fill-analysis: var(--reader-annotation-context-fill);
   --reader-record-note-fill-supplement: var(--reader-record-note-fill-grammar);
   --reader-record-source-paragraph-gap: 0.86rem;
   --reader-record-source-translation-gap: 0.38rem;
@@ -2685,8 +2684,8 @@ select {
 .reader-record-plate-callout--grammar-active {
   background-color: color-mix(
     in srgb,
-    var(--grammar-violet) 62%,
-    var(--surface)
+    var(--grammar-violet) 20%,
+    var(--reader-record-note-fill-grammar)
   );
 }
 
@@ -2765,17 +2764,17 @@ select {
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-row
   + .reader-record-plate-callout--grammar-row {
-  border-top: 1px solid color-mix(in srgb, var(--surface) 46%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--grammar-violet) 14%, transparent);
 }
 
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-active {
-  background-color: color-mix(in srgb, var(--surface) 26%, transparent);
+  background-color: color-mix(in srgb, var(--grammar-violet) 12%, transparent);
 }
 
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-row:hover {
-  background-color: color-mix(in srgb, var(--surface) 18%, transparent);
+  background-color: color-mix(in srgb, var(--grammar-violet) 6%, transparent);
 }
 
 .reader-record-plate-callout-group:has(+ .reader-record-plate-sentence-analysis) {
@@ -3035,7 +3034,7 @@ select {
 .reader-record-plate-sentence-analysis
   [data-reader-record-sentence-analysis-chunk-active="true"] {
   border-radius: var(--radius-xs);
-  background-color: color-mix(in srgb, var(--context-blue) 7%, transparent);
+  background-color: color-mix(in srgb, var(--context-blue) 10%, transparent);
   box-shadow: none;
 }
 
@@ -3043,7 +3042,7 @@ select {
   [data-reader-record-sentence-analysis-chunk]:hover,
 .reader-record-plate-sentence-analysis
   [data-reader-record-sentence-analysis-chunk]:focus-visible {
-  background-color: color-mix(in srgb, var(--context-blue) 4.4%, transparent);
+  background-color: color-mix(in srgb, var(--context-blue) 6%, transparent);
 }
 
 .reader-mark--vocab {

@@ -588,7 +588,7 @@ function ReaderCalloutGroupComponent({
         attributes?.className ?? ""
       }`.trim()}
       role="group"
-      aria-label={`语法解析 · ${calloutCount} 条`}
+      aria-label={calloutCount > 1 ? `语法解析 · ${calloutCount} 条` : "语法解析"}
       {...readerRecordNavigableNodeAttrs({ nodeKind: "callout-group" })}
       data-reader-record-callout-group="grammar"
       data-reader-record-callout-group-count={calloutCount}
@@ -603,7 +603,7 @@ function ReaderCalloutGroupComponent({
           <WandSparkles size={16} strokeWidth={1.8} />
         </span>
         <span className="reader-record-plate-callout-group-label">
-          语法解析 · {calloutCount} 条
+          {calloutCount > 1 ? `语法解析 · ${calloutCount} 条` : "语法解析"}
         </span>
       </div>
       <ReaderGrammarCalloutGroupContext.Provider value={contextValue}>

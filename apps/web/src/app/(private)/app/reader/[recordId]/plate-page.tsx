@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
+import { useRecentReading } from "@/components/layout/recent-reading-context";
 import { notify } from "@/components/primitives/notification-center";
 import { useReaderPlatePolling, type ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import {
@@ -263,6 +264,20 @@ export default function ReadingRecordPage({
   const reloadInFlightRef = useRef(false);
 
   const snapshot = snapshotState.kind === "loaded" ? snapshotState.snapshot : null;
+
+  // Sidebar sync: title generation completes asynchronously after the record
+  // is created. When the accepted snapshot first carries a generated display
+  // title, refresh the recent-reading list once so the sidebar stops showing
+  // the import placeholder (e.g. "粘贴文本") without a full page navigation.
+  const { refetch: refetchRecentReading } = useRecentReading();
+  const lastSyncedDisplayTitleRef = useRef<string | null>(null);
+  const displayTitleZh = snapshot?.record.display_title_zh?.trim() ?? "";
+  useEffect(() => {
+    if (!displayTitleZh) return;
+    if (lastSyncedDisplayTitleRef.current === displayTitleZh) return;
+    lastSyncedDisplayTitleRef.current = displayTitleZh;
+    void refetchRecentReading();
+  }, [displayTitleZh, refetchRecentReading]);
   // Single cursor path: polling reads last_event_sequence from the *accepted*
   // snapshot only. Rejected reloads never update snapshotState, so cursor holds.
   const initialCursor = snapshot?.last_event_sequence ?? 0;

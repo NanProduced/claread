@@ -1395,7 +1395,7 @@ describe("ReaderRecordPlateSurface", () => {
       /\.reader-record-plate-callout--grammar-row::before\s*\{[\s\S]*?content:\s*counter\(reader-record-grammar-row\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--surface\) 18%, transparent\)/,
+      /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--grammar-violet\) 6%, transparent\)/,
     );
     expect(globalsSource).toMatch(
       /\.reader-record-plate-sentence-analysis-chunks\s*\{[\s\S]*?border-left:\s*1px solid color-mix\(in srgb, var\(--context-blue\) 16%, var\(--hairline\)\)/,
@@ -1417,16 +1417,18 @@ describe("ReaderRecordPlateSurface", () => {
     );
   });
 
-  it("keeps light note-card fills quiet without changing dark mode", () => {
+  it("uses the quiet annotation-fill tokens for note cards in both themes", () => {
     const globalsSource = readFileSync(
       resolve(process.cwd(), "src/app/globals.css"),
       "utf8",
     );
     expect(globalsSource).toMatch(
-      /(?:^|\n)\.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 40%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 40%, var\(--surface\)\)/,
+      /(?:^|\n)\.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*var\(--reader-annotation-grammar-fill\)[\s\S]*?--reader-record-note-fill-analysis:\s*var\(--reader-annotation-context-fill\)/,
     );
-    expect(globalsSource).toMatch(
-      /\.dark \.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 36%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 36%, var\(--surface\)\)/,
+    // Dark theme reuses the same annotation tokens (overridden at the token
+    // layer), so no per-document dark override should remain.
+    expect(globalsSource).not.toMatch(
+      /\.dark \.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill/,
     );
     expect(globalsSource).toMatch(
       /--reader-record-note-fill-supplement:\s*var\(--reader-record-note-fill-grammar\)/,

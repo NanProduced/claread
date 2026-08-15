@@ -2227,25 +2227,25 @@ function ReaderRecordMoreMenu({
         align="end"
         sideOffset={8}
         className={cn(
-          "w-[340px] overflow-hidden rounded-xl border border-hairline/80 p-0 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-          "bg-surface-raised text-ink",
+          "w-[340px] overflow-hidden rounded-xl border border-hairline/70 p-0 shadow-[var(--reader-floating-shadow)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "bg-surface text-ink",
         )}
         data-testid="reader-record-more-menu-content"
         data-reader-record-more-menu-panel="true"
       >
         {/* Compact header */}
-        <div className="flex items-center justify-between border-b border-hairline/60 px-3.5 py-2.5">
-          <span className="text-sm font-semibold text-ink">阅读体验</span>
-          <span className="text-xs font-medium text-muted-foreground">{modeLabel}</span>
+        <div className="flex items-center justify-between border-b border-hairline/60 px-4 py-3">
+          <span className="text-sm font-semibold tracking-[0.01em] text-ink">阅读体验</span>
+          <span className="text-[0.72rem] font-medium text-muted-foreground/80">{modeLabel}</span>
         </div>
 
         <div className="p-2">
           {/* Article status section */}
           <div
             data-reader-record-more-article-status="true"
-            className="space-y-1 px-1 pb-1 pt-0.5"
+            className="space-y-1 px-2 pb-1.5 pt-1"
           >
-            <span className="block text-xs font-semibold text-muted-foreground">文章状态</span>
+            <span className="block text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground/90">文章状态</span>
             <span
               className="block text-sm font-semibold text-ink"
               data-reader-record-more-article-status-label={articleStatusKey}
@@ -2266,11 +2266,9 @@ function ReaderRecordMoreMenu({
               onClick={() => onModeChange("intensive")}
               data-reader-record-more-mode="intensive"
               className={cn(
-                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
-                "hover:bg-ink/[0.04] active:bg-ink/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-                surfaceMode === "intensive"
-                  ? "bg-lens-blue/[0.08] text-ink"
-                  : "text-ink/90",
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                "hover:bg-ink/[0.045] active:bg-ink/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                surfaceMode === "intensive" ? "font-medium text-ink" : "text-ink/85",
               )}
             >
               <span className="flex items-center gap-2.5">
@@ -2289,11 +2287,9 @@ function ReaderRecordMoreMenu({
               onClick={() => onModeChange("immersive")}
               data-reader-record-more-mode="immersive"
               className={cn(
-                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
-                "hover:bg-ink/[0.04] active:bg-ink/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-                surfaceMode === "immersive"
-                  ? "bg-lens-blue/[0.08] text-ink"
-                  : "text-ink/90",
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                "hover:bg-ink/[0.045] active:bg-ink/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                surfaceMode === "immersive" ? "font-medium text-ink" : "text-ink/85",
               )}
             >
               <span className="flex items-center gap-2.5">
@@ -2313,8 +2309,8 @@ function ReaderRecordMoreMenu({
 
           {/* Font preview section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted-foreground">字体</span>
-            <div className="grid grid-cols-3 gap-2">
+            <span className="block px-2 text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground/90">字体</span>
+            <div className="grid grid-cols-3 gap-1.5">
               {MORE_MENU_FONT_FAMILY_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -2323,15 +2319,18 @@ function ReaderRecordMoreMenu({
                   data-reader-record-more-font-family={option.value}
                   className={cn(
                     "flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2.5 text-center transition-colors",
-                    "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                    "hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     readerSettings.fontFamily === option.value
-                      ? "border-surface-raised bg-surface-raised/60"
-                      : "bg-transparent",
+                      ? "border-lens-blue/50 bg-lens-blue/[0.05]"
+                      : "border-hairline/60 bg-transparent hover:border-hairline",
                   )}
                 >
                   <span
                     className={cn(
-                      "text-[1.35rem] leading-none text-ink",
+                      "text-[1.35rem] leading-none",
+                      readerSettings.fontFamily === option.value
+                        ? "text-lens-blue"
+                        : "text-ink",
                       option.value === "sans"
                         ? "reader-font-sans"
                         : option.value === "book"
@@ -2341,7 +2340,16 @@ function ReaderRecordMoreMenu({
                   >
                     Ag
                   </span>
-                  <span className="text-[0.7rem] font-medium text-muted-foreground">{option.label}</span>
+                  <span
+                    className={cn(
+                      "text-[0.7rem] font-medium",
+                      readerSettings.fontFamily === option.value
+                        ? "text-lens-blue"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {option.label}
+                  </span>
                 </button>
               ))}
             </div>
@@ -2351,8 +2359,8 @@ function ReaderRecordMoreMenu({
 
           {/* Theme section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted-foreground">主题</span>
-            <div className="grid grid-cols-3 gap-2">
+            <span className="block px-2 text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground/90">主题</span>
+            <div className="grid grid-cols-3 gap-1.5">
               {MORE_MENU_THEME_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -2360,11 +2368,11 @@ function ReaderRecordMoreMenu({
                   onClick={() => onThemeChange(option.value)}
                   data-reader-record-more-theme={option.value}
                   className={cn(
-                    "rounded-lg border px-2 py-1.5 text-xs font-semibold transition-colors",
-                    "border-hairline/60 hover:border-hairline hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                    "rounded-lg border px-2 py-1.5 text-xs transition-colors",
+                    "hover:bg-ink/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     themePreference === option.value
-                      ? "border-surface-raised bg-surface-raised/60 text-ink"
-                      : "bg-transparent text-muted-foreground",
+                      ? "border-lens-blue/50 bg-lens-blue/[0.05] font-semibold text-ink"
+                      : "border-hairline/60 bg-transparent font-medium text-muted-foreground hover:border-hairline",
                   )}
                 >
                   {option.label}
@@ -2377,8 +2385,8 @@ function ReaderRecordMoreMenu({
 
           {/* Font scale section */}
           <div className="space-y-2">
-            <span className="block px-1 text-xs font-semibold text-muted-foreground">字号</span>
-            <div className="flex rounded-lg border border-hairline/60 p-0.5">
+            <span className="block px-2 text-[0.72rem] font-medium tracking-[0.02em] text-muted-foreground/90">字号</span>
+            <div className="flex rounded-lg border border-hairline/60 bg-surface-raised/50 p-0.5">
               {MORE_MENU_FONT_SCALE_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -2386,11 +2394,11 @@ function ReaderRecordMoreMenu({
                   onClick={() => updateSettings("fontScale", option.value)}
                   data-reader-record-more-font-scale={option.value}
                   className={cn(
-                    "flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors",
+                    "flex-1 rounded-md py-1.5 text-xs transition-colors",
                     "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                     readerSettings.fontScale === option.value
-                      ? "bg-surface-raised/70 text-ink shadow-sm"
-                      : "text-muted-foreground hover:bg-ink/[0.03]",
+                      ? "bg-surface font-semibold text-ink shadow-sm"
+                      : "font-medium text-muted-foreground hover:bg-ink/[0.03]",
                   )}
                 >
                   {option.label}
@@ -2409,9 +2417,9 @@ function ReaderRecordMoreMenu({
               disabled={copied}
               data-reader-record-more-action="copy-link"
               className={cn(
-                "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
-                "hover:bg-ink/[0.04] active:bg-ink/[0.08] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-                copied ? "text-structure-green" : "text-ink/90",
+                "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                "hover:bg-ink/[0.045] active:bg-ink/[0.07] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                copied ? "font-medium text-structure-green" : "text-ink/85",
               )}
             >
               {copied ? (
@@ -2428,8 +2436,8 @@ function ReaderRecordMoreMenu({
                 rel="noopener noreferrer"
                 data-reader-record-more-action="open-source-url"
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-                  "hover:bg-ink/[0.04] active:bg-ink/[0.08] text-ink/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
+                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                  "hover:bg-ink/[0.045] active:bg-ink/[0.07] text-ink/85 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
                 )}
               >
                 <Globe className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
@@ -2438,7 +2446,7 @@ function ReaderRecordMoreMenu({
             ) : null}
             <div
               data-reader-record-more-action="source-info"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground/80"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground/75"
             >
               <Globe className="h-4 w-4 text-muted-foreground/60" strokeWidth={1.5} />
               <span>
@@ -2453,7 +2461,7 @@ function ReaderRecordMoreMenu({
 
           {/* Footer metadata */}
           <div
-            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1 text-[0.7rem] text-muted-foreground"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 pb-1 pt-0.5 text-[0.7rem] tabular-nums text-muted-foreground/80"
             data-reader-record-more-metadata="true"
           >
             {sourceWordCount !== null ? <span>{sourceWordCount} 词</span> : null}
