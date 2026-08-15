@@ -122,6 +122,9 @@ FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH = (
 FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH = (
     "retrieval_embedding_contract_mismatch"
 )
+# Missing asyncpg pool is a configuration error, not an embedding
+# failure — keep it attribution-distinct from embedding failures.
+FAILURE_CODE_RETRIEVAL_POOL_UNCONFIGURED = "retrieval_pool_unconfigured"
 
 # Fixed local error messages for contract / identity failures.  These
 # strings never interpolate caller-supplied input — the offending value
@@ -440,7 +443,7 @@ class ArticleRagRetrievalService:
             raise ArticleRagRetrievalServiceError(
                 "ArticleRagRetrievalService has no asyncpg pool configured",
                 retryable=False,
-                failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
+                failure_code=FAILURE_CODE_RETRIEVAL_POOL_UNCONFIGURED,
             )
 
         async with pool.acquire() as conn:

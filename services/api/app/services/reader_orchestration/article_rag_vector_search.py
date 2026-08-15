@@ -45,19 +45,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from .article_rag_index_worker import (
-    ArticleRagIndexWorkerError,
     FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
-    UnconfiguredArticleRagVectorWriter,
+    ArticleRagIndexWorkerError,
 )
 
 if TYPE_CHECKING:
-    from app.config.settings import Settings
     from pymilvus import MilvusClient
+
+    from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +228,14 @@ class FakeArticleRagVectorSearcher:
         self,
         *,
         hits: list[ArticleRagVectorSearchHit] | None = None,
+        enforce_identity_filter: bool = True,
     ) -> None:
         self._hits: list[ArticleRagVectorSearchHit] = list(hits or [])
+        # Off-switch for tests that simulate store-side corruption
+        # (the store ignoring its own filter) to exercise the retrieval
+        # service's defense-in-depth guard.  Default mirrors the
+        # production filter.
+        self._enforce_identity_filter = enforce_identity_filter
         self.search_calls: list[dict[str, Any]] = []
 
     @property
@@ -262,11 +269,26 @@ class FakeArticleRagVectorSearcher:
                 hits=(),
                 provider_metadata={"provider": self.provider_name},
             )
+        # Mirror the production Zilliz searcher's identity filter: when
+        # the caller scopes the search to one stable document, hits
+        # carrying a DIFFERENT stable document id must not leak into
+        # the result.  Hits whose ``stable_document_id`` is None mirror
+        # the production "SDK did not surface the column" shape and stay
+        # permissive (the retrieval service guard-checks them later).
+        if stable_document_id is not None and self._enforce_identity_filter:
+            scoped = [
+                h
+                for h in self._hits
+                if h.stable_document_id is None
+                or h.stable_document_id == stable_document_id
+            ]
+        else:
+            scoped = list(self._hits)
         # Score-descending order is preserved by the caller passing
         # already-sorted hits; we still slice defensively in case a
         # test author forgets.
         sorted_hits = sorted(
-            self._hits, key=lambda h: h.score, reverse=True
+            scoped, key=lambda h: h.score, reverse=True
         )
         return ArticleRagVectorSearchResult(
             hits=tuple(sorted_hits[:limit]),
@@ -414,13 +436,13 @@ class ZillizArticleRagVectorSearcher:
         self._uri = uri.strip()
         self._token = token.strip()
         self._collection = collection.strip()
-        self._client: "MilvusClient | None" = None
+        self._client: MilvusClient | None = None
 
     @property
     def provider_name(self) -> str:
         return READER_ARTICLE_RAG_VECTOR_SEARCHER_ZILLIZ
 
-    def _ensure_client(self) -> "MilvusClient":
+    def _ensure_client(self) -> MilvusClient:
         """Lazily construct the pymilvus MilvusClient on first use.
 
         Raises :class:`ArticleRagVectorSearcherError` with
@@ -552,9 +574,15 @@ class ZillizArticleRagVectorSearcher:
                 continue
             score_raw = entry.get("distance")
             try:
-                score = float(score_raw) if score_raw is not None else 0.0
+                score = float(score_raw)  # type: ignore[arg-type]
+                if not math.isfinite(score):
+                    raise ValueError("non-finite distance")
             except (TypeError, ValueError):
-                score = 0.0
+                # Invalid distance (missing / non-float / NaN / Infinity):
+                # DROP the hit entirely — a corrupt distance must not be
+                # disguised as a legal score=0.0 hit competing for top-k.
+                # One bad row must not discard the valid rest of the batch.
+                continue
             # Guard fields.  Each is read via ``_extract_field`` so an
             # entity-wrapper hit (``{"entity": {...}, "id": ...}``)
             # also surfaces its guard metadata.  Without this, a

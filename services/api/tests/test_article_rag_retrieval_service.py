@@ -725,6 +725,9 @@ async def test_top_k_truncates_to_limit() -> None:
 async def test_vector_metadata_mismatch_stable_document_id_fails_closed() -> None:
     plan = _make_plan()
     row = _indexed_run_row(plan)
+    # Simulate store-side corruption: the store ignored its own
+    # stable_document_id filter and surfaced a foreign-document hit.
+    # The retrieval-level guard must still fail closed.
     searcher = FakeArticleRagVectorSearcher(
         hits=[
             ArticleRagVectorSearchHit(
@@ -732,7 +735,8 @@ async def test_vector_metadata_mismatch_stable_document_id_fails_closed() -> Non
                 score=0.9,
                 stable_document_id=_OTHER_STABLE_DOC_ID,
             ),
-        ]
+        ],
+        enforce_identity_filter=False,
     )
     service = _build_service(
         plan=plan, indexed_run_row=row, searcher=searcher
@@ -2206,3 +2210,53 @@ async def test_retrieve_rejects_legacy_index_version_kwarg_before_io() -> None:
         )
     assert provider.call_count == 0
     assert searcher.search_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Wave 5 (C5): missing asyncpg pool is a configuration error, not an
+# embedding failure — dedicated stable failure code.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_no_pool_configured_uses_dedicated_failure_code() -> None:
+    """C5: when neither the retrieval service nor its plan service can
+    resolve an asyncpg pool, the failure must carry the dedicated
+    ``retrieval_pool_unconfigured`` code (configuration error), NOT the
+    embedding failure code. Message stays fixed and safe: no provider,
+    token, query, or chunk text."""
+    from app.services.reader_orchestration.article_rag_index_plan import (
+        ArticleRagIndexPlanService,
+    )
+
+    plan_service = ArticleRagIndexPlanService()
+    plan_service._get_pool = lambda: None  # type: ignore[assignment]
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = ArticleRagRetrievalService(
+        pool=None,
+        plan_service=plan_service,
+        embedding_provider=provider,
+        vector_searcher=searcher,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert exc_info.value.failure_code == "retrieval_pool_unconfigured"
+    assert (
+        exc_info.value.failure_code
+        != FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED
+    )
+    assert exc_info.value.retryable is False
+    # Fixed safe message: no provider / token / query / chunk text.
+    message = str(exc_info.value)
+    assert "hello" not in message
+    assert "token" not in message.lower()

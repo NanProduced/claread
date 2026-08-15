@@ -23,30 +23,28 @@ AND a real token is set; it is skipped by default.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
 import sys
 import types
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.reader_orchestration.article_rag_vector_search import (
-    ArticleRagVectorSearchHit,
-    ArticleRagVectorSearchResult,
-    ArticleRagVectorSearcherError,
-    FakeArticleRagVectorSearcher,
-    FAILURE_CODE_VECTOR_SEARCHER_UNCONFIGURED,
-    READER_ARTICLE_RAG_VECTOR_SEARCHER_ZILLIZ,
-    UnconfiguredArticleRagVectorSearcher,
-    ZillizArticleRagVectorSearcher,
-    build_default_article_rag_vector_searcher,
-)
 from app.services.reader_orchestration.article_rag_index_worker import (
     FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
     ArticleRagIndexWorkerError,
+)
+from app.services.reader_orchestration.article_rag_vector_search import (
+    FAILURE_CODE_VECTOR_SEARCHER_UNCONFIGURED,
+    READER_ARTICLE_RAG_VECTOR_SEARCHER_ZILLIZ,
+    ArticleRagVectorSearcherError,
+    ArticleRagVectorSearchHit,
+    ArticleRagVectorSearchResult,
+    FakeArticleRagVectorSearcher,
+    UnconfiguredArticleRagVectorSearcher,
+    ZillizArticleRagVectorSearcher,
+    build_default_article_rag_vector_searcher,
 )
 
 pytestmark = [
@@ -1040,3 +1038,134 @@ async def test_zilliz_searcher_mixed_shape_guard_metadata(
     assert result.hits[0].base_id is not None
     assert result.hits[1].base_id is not None
     assert str(result.hits[0].base_id) == str(result.hits[1].base_id)
+
+
+# ---------------------------------------------------------------------------
+# Wave 5 (C6): invalid distance entries are DROPPED, never disguised as
+# score=0; valid hits in the same batch survive.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_zilliz_searcher_drops_invalid_distance_hits(
+    _pymilvus_clean: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C6: distance missing / non-float / NaN / Infinity entries must be
+    skipped — a corrupt hit must not surface as a legal score=0.0 hit.
+    Valid hits in the SAME result set must survive."""
+    hits = [
+        {
+            "chunk_id": "valid-high",
+            "distance": 0.9,
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "a" * 64,
+        },
+        # Missing distance entirely.
+        {
+            "chunk_id": "missing-distance",
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "b" * 64,
+        },
+        # Non-float garbage.
+        {
+            "chunk_id": "not-a-float",
+            "distance": "not-a-number",
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "c" * 64,
+        },
+        # NaN — float() succeeds, so the finiteness guard must catch it.
+        {
+            "chunk_id": "nan-distance",
+            "distance": float("nan"),
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "d" * 64,
+        },
+        # Infinity — finite check must catch it too.
+        {
+            "chunk_id": "inf-distance",
+            "distance": float("inf"),
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "e" * 64,
+        },
+        # A second valid hit proves single bad rows do not nuke the batch.
+        {
+            "chunk_id": "valid-low",
+            "distance": 0.4,
+            "stable_document_id": str(uuid.uuid4()),
+            "base_id": str(uuid.uuid4()),
+            "plan_content_sha256": "f" * 64,
+        },
+    ]
+    _install_pymilvus_stub(monkeypatch, hits=hits)
+    searcher = ZillizArticleRagVectorSearcher(
+        uri=_FAKE_URI, token=_FAKE_TOKEN, collection=_FAKE_COLLECTION
+    )
+    result = await searcher.search(
+        collection=_FAKE_COLLECTION,
+        query_vector=(0.1,),
+        limit=10,
+    )
+
+    assert [h.chunk_id for h in result.hits] == ["valid-high", "valid-low"]
+    assert result.hits[0].score == pytest.approx(0.9)
+    assert result.hits[1].score == pytest.approx(0.4)
+    # No hit may carry a fabricated zero score from a corrupt distance.
+    assert all(h.score != 0.0 for h in result.hits)
+
+
+# ---------------------------------------------------------------------------
+# Wave 5 (B3): fake searcher must apply the same document-identity
+# filter the production searcher applies via its Milvus filter expr.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_fake_searcher_filters_hits_by_stable_document_id() -> None:
+    """B3: when ``stable_document_id`` is provided, the fake must return
+    only that document's hits — mirroring the production filter
+    ``stable_document_id == "..."``. Without the filter (None), all hits
+    are returned (legacy direct-call semantics)."""
+    doc_a = uuid.uuid4()
+    doc_b = uuid.uuid4()
+    fake = FakeArticleRagVectorSearcher(
+        hits=[
+            ArticleRagVectorSearchHit(
+                chunk_id="a1", score=0.9, stable_document_id=doc_a
+            ),
+            ArticleRagVectorSearchHit(
+                chunk_id="b1", score=0.8, stable_document_id=doc_b
+            ),
+            ArticleRagVectorSearchHit(
+                chunk_id="a2", score=0.7, stable_document_id=doc_a
+            ),
+            # No identity — mirrors the production "SDK did not surface
+            # the column" shape; the retrieval service guard-checks such
+            # hits permissively, so the fake must keep returning them.
+            ArticleRagVectorSearchHit(chunk_id="anon", score=0.6),
+        ]
+    )
+
+    result = await fake.search(
+        collection=_FAKE_COLLECTION,
+        query_vector=(0.1,),
+        limit=10,
+        stable_document_id=doc_a,
+    )
+    # doc_b's hit (different stable document) must be filtered out;
+    # the identity-unknown hit stays permissive.
+    assert [h.chunk_id for h in result.hits] == ["a1", "a2", "anon"]
+
+    # No filter requested → legacy behavior (all hits, score order).
+    unfiltered = await fake.search(
+        collection=_FAKE_COLLECTION,
+        query_vector=(0.1,),
+        limit=10,
+    )
+    assert [h.chunk_id for h in unfiltered.hits] == [
+        "a1", "b1", "a2", "anon",
+    ]
