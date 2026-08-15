@@ -155,15 +155,10 @@ async def test_bootstrap_uses_grammar_window_path_when_plan_exists(
         assert len(legacy_jobs) == 0
 
 
-async def test_bootstrap_uses_grammar_window_path_by_default(
+async def test_bootstrap_does_not_create_grammar_windows_by_default(
     test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """默认走 grammar-window 路径，无需 pre-create plan。
-
-    ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 grammar-window，
-    由 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +
-    windows + window jobs。
-    """
+    """Automatic bootstrap no longer creates grammar-window jobs."""
     pool, record_id, base_id, user_id = test_db_pool_without_plan
     service = EnhancementJobBootstrapService(pool=pool)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
@@ -176,8 +171,13 @@ async def test_bootstrap_uses_grammar_window_path_by_default(
             "SELECT * FROM reader_jobs "
             "WHERE job_type = 'build_grammar_bundle' AND target_type = 'unit'"
         )
-        assert len(window_jobs) > 0
+        batch_jobs = await conn.fetch(
+            "SELECT * FROM reader_jobs "
+            "WHERE job_type = 'build_grammar_bundle' AND target_type = 'unit_range'"
+        )
+        assert len(window_jobs) == 0
         assert len(legacy_jobs) == 0
+        assert len(batch_jobs) == 1
 
 
 async def test_bootstrap_uses_legacy_path_when_forced(
@@ -255,9 +255,9 @@ async def test_bootstrap_shares_trace_id_across_display_translation_vocab_window
             WHERE job.reading_record_id = $1
               AND job.job_type IN (
                     'generate_display_title_zh',
-                    'translate_unit',
-                    'build_vocabulary_layer',
-                    'build_grammar_bundle_window'
+                    'translate_article',
+                    'build_vocabulary_layer_article',
+                    'build_grammar_bundle'
                   )
             """,
             record_id,
@@ -281,17 +281,7 @@ async def test_bootstrap_shares_trace_id_across_display_translation_vocab_window
         )
         trace_ids[row["job_type"]] = str(trace_id)
 
-    # All 4 run types must share the same trace_id (requirement 5).
     shared = trace_ids["generate_display_title_zh"]
-    assert trace_ids["translate_unit"] == shared, (
-        f"translation run trace_id {trace_ids['translate_unit']!r} "
-        f"!= display trace_id {shared!r}"
-    )
-    assert trace_ids["build_vocabulary_layer"] == shared, (
-        f"vocabulary run trace_id {trace_ids['build_vocabulary_layer']!r} "
-        f"!= display trace_id {shared!r}"
-    )
-    assert trace_ids["build_grammar_bundle_window"] == shared, (
-        f"window run trace_id {trace_ids['build_grammar_bundle_window']!r} "
-        f"!= display trace_id {shared!r}"
-    )
+    assert trace_ids["translate_article"] == shared
+    assert trace_ids["build_vocabulary_layer_article"] == shared
+    assert trace_ids["build_grammar_bundle"] == shared

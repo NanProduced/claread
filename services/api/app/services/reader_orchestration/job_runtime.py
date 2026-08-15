@@ -44,6 +44,9 @@ from app.services.model_execution_journal.models import (
 from app.services.model_execution_journal.service import (
     ModelExecutionJournalService,
 )
+from app.services.reader_orchestration.analysis_section_jobs import (
+    sql_blocked_by_active_translation,
+)
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
     current_span,
@@ -413,6 +416,7 @@ class ReaderJobRuntime:
                         FROM reader_jobs
                         WHERE status IN ('queued', 'retry_later')
                           AND available_at <= NOW()
+                          AND NOT {sql_blocked_by_active_translation(job_alias="reader_jobs")}
                           AND ($1::text IS NULL OR job_type = $1)
                           AND ($2::text IS NULL OR target_type = $2)
                           AND ($3::text IS NULL
