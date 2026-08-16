@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.contracts.annotation import compute_text_range_hash, slice_by_utf16_offsets
 from app.schemas.reader_orchestration import (
     GrammarNoteLayerOutput,
+    ReaderAnalysisProgress,
     ReaderEnhancementProgress,
     ReaderEnhancementProgressLayer,
     ReaderPlateSnapshot,
@@ -55,6 +56,7 @@ def build_reader_plate_snapshot(
     user_assets: Sequence[ReaderSnapshotUserAsset] | None = None,
     parsed_decisions: Sequence[ReaderSnapshotParsedDecision] | None = None,
     enhancement_progress: ReaderEnhancementProgress | None = None,
+    analysis_progress: ReaderAnalysisProgress,
     snapshot_id: str | None = None,
 ) -> ReaderPlateSnapshot:
     _validate_snapshot_inputs(
@@ -87,7 +89,13 @@ def build_reader_plate_snapshot(
     return ReaderPlateSnapshot(
         snapshot_id=(
             snapshot_id
-            or _build_snapshot_id(build_result, last_event_sequence, layers, decisions)
+            or _build_snapshot_id(
+                build_result,
+                last_event_sequence,
+                layers,
+                decisions,
+                analysis_progress,
+            )
         ),
         snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=last_event_sequence,
@@ -145,6 +153,7 @@ def build_reader_plate_snapshot(
         value=_build_plate_value(build_result, layers),
         stable_document_tree=_build_stable_document_tree(build_result),
         semantic_outline=semantic_outline,
+        analysis_progress=analysis_progress,
     )
 
 
@@ -300,13 +309,25 @@ def _build_snapshot_id(
     last_event_sequence: int,
     enhancement_layers: Sequence[ReaderSnapshotLayer],
     parsed_decisions: Sequence[ReaderSnapshotParsedDecision],
+    analysis_progress: ReaderAnalysisProgress,
 ) -> str:
     parts = [
         build_result.base.reading_record_id,
         build_result.base.base_id,
         build_result.base.content_sha256,
         str(last_event_sequence),
+        "ap:"
+        f"{analysis_progress.mode}:{analysis_progress.overall_status}:"
+        f"{analysis_progress.translation_status}:"
+        f"{analysis_progress.completed_section_count}",
     ]
+    parts.extend(
+        "aps:"
+        f"{section.section_id}:{section.status}:"
+        f"{section.vocabulary_status}:{section.grammar_status}:"
+        f"{section.failure_code or ''}"
+        for section in analysis_progress.sections
+    )
     parts.extend(
         f"layer:{layer.layer_id}:{layer.target_scope}:{layer.target_key}:{layer.schema_version}"
         for layer in enhancement_layers

@@ -16,6 +16,7 @@ from app.schemas.reader_orchestration import (
 )
 
 from ._text import resolve_default_reader_language
+from .analysis_progress_projection import ReaderAnalysisProgressProjection
 from .base_builder import LowImpactReadingBaseBuildInput, build_low_impact_reading_base
 from .repository import ReaderOrchestrationRepository
 from .snapshot import build_reader_plate_snapshot
@@ -192,6 +193,11 @@ class ArticleReadyPersistenceService:
                     expected_base_id=expected_base_id,
                     expected_generation=expected_generation,
                 )
+                analysis_progress = await ReaderAnalysisProgressProjection(
+                    pool=self._pool
+                ).load_progress_on_connection(
+                    conn, record_id=record_id, user_id=user_id
+                )
 
         return build_reader_plate_snapshot(
             facts.build_result,
@@ -201,6 +207,7 @@ class ArticleReadyPersistenceService:
             enhancement_layers=facts.enhancement_layers,
             parsed_decisions=facts.parsed_decisions,
             enhancement_progress=facts.enhancement_progress,
+            analysis_progress=analysis_progress,
             user_assets=facts.user_assets,
             ask_supplements=facts.ask_supplements,
         )

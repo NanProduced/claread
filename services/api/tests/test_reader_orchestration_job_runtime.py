@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -20,6 +21,16 @@ from app.services.model_execution_journal import (
 from app.services.model_execution_journal.service import (
     ModelExecutionJournalService,
 )
+from app.services.reader_orchestration.analysis_section_jobs import (
+    ANALYSIS_PROGRESS_CHANGED_EVENT,
+    ANALYSIS_SECTION_REQUEST_ORIGIN,
+    USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN,
+    VOCABULARY_ANALYSIS_SECTION_FINGERPRINT,
+)
+from app.services.reader_orchestration.analysis_section_plan import (
+    ANALYSIS_SECTION_PLAN_VERSION,
+)
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.job_runtime import (
     FAKE_JOB_NAMESPACE,
     JOB_RUNTIME_SCOPE_FAKE,
@@ -255,6 +266,7 @@ async def _insert_job(
     idempotency_key: str | None = None,
     max_attempts: int = 3,
     attempt_count: int = 0,
+    input_json: dict | None = None,
 ) -> UUID:
     if idempotency_key is None:
         idempotency_key = f"id-{uuid4().hex}"
@@ -266,14 +278,14 @@ async def _insert_job(
                 job_type, target_type, target_key, status,
                 priority, available_at,
                 expected_generation, operation_fingerprint, idempotency_key,
-                max_attempts, attempt_count
+                max_attempts, attempt_count, input_json
             )
             VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7, $8,
                 $9, COALESCE($10, NOW()),
                 $11, $12, $13,
-                $14, $15
+                $14, $15, $16
             )
             RETURNING id
             """,
@@ -292,6 +304,7 @@ async def _insert_job(
             idempotency_key,
             max_attempts,
             attempt_count,
+            input_json or {},
         )
     assert isinstance(job_id, UUID)
     return job_id
@@ -3173,3 +3186,384 @@ async def test_validate_claim_in_transaction_expired_lease_fail_closed(
     assert job["status"] == STATUS_CLAIMED
     events_after = await _count_job_events(job_runtime_env, job_id)
     assert events_after == events_before
+
+
+_PROGRESS_EVENT_KEYS = frozenset(
+    {"base_id", "generation", "accepted_section_ids", "mutation", "topic"}
+)
+
+
+def _section_input(origin: str, section_id: str = "ras1_runtime") -> dict:
+    return {
+        "request_origin": origin,
+        "analysis_section_id": section_id,
+        "analysis_section_plan_version": ANALYSIS_SECTION_PLAN_VERSION,
+    }
+
+
+async def _progress_events(
+    pool: asyncpg.Pool, record_id: UUID
+) -> list[asyncpg.Record]:
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT sequence, event_type, payload_json
+            FROM reader_events
+            WHERE reading_record_id = $1
+              AND event_type = $2
+              AND payload_json->>'topic' = 'analysis_progress'
+            ORDER BY sequence ASC
+            """,
+            record_id,
+            ANALYSIS_PROGRESS_CHANGED_EVENT,
+        )
+
+
+def _assert_one_progress_event(events: list[asyncpg.Record], section_id: str) -> None:
+    assert len(events) == 1
+    payload = events[0]["payload_json"]
+    assert set(payload) <= _PROGRESS_EVENT_KEYS
+    assert payload["topic"] == "analysis_progress"
+    assert payload["accepted_section_ids"] == [section_id]
+    assert "input_json" not in payload
+    assert "exception" not in payload
+    assert "prompt" not in payload
+    assert "provider" not in payload
+
+
+async def test_ordinary_pause_of_section_job_publishes_one_progress_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_runtime",
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:now",
+        input_json=_section_input(USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN),
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    await runtime.transition(
+        job_id=job_id,
+        target_status=STATUS_PAUSED,
+        pause_owner="quota",
+        failure_code="budget_exhausted",
+        rationale_code="quota_paused",
+    )
+    events = await _progress_events(job_runtime_env, record_id)
+    _assert_one_progress_event(events, "ras1_runtime")
+    assert events[0]["payload_json"]["mutation"] == "capability_paused"
+
+
+async def test_model_execution_pauses_publish_one_progress_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    for origin, target_key, captured in (
+        (ANALYSIS_SECTION_REQUEST_ORIGIN, "ras1_auto_amb", False),
+        (USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN, "ras1_user_cap", True),
+    ):
+        job_id = await _insert_job(
+            job_runtime_env,
+            record_id=record_id,
+            run_id=run_id,
+            user_id=user_id,
+            base_id=base_id,
+            job_type="build_vocabulary_layer_article",
+            target_type="unit_range",
+            target_key=target_key,
+            operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:{target_key}",
+            input_json=_section_input(origin, target_key),
+        )
+        claim = await runtime.claim_next_job(
+            lease_owner=f"owner-{target_key}",
+            lease_duration=timedelta(seconds=30),
+            reading_record_id=record_id,
+            job_type="build_vocabulary_layer_article",
+            target_type="unit_range",
+        )
+        assert claim is not None and claim.job_id == job_id
+        await _begin_journal_for_claim(
+            job_runtime_env, claim=claim, captured=captured
+        )
+        async with job_runtime_env.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_jobs
+                SET lease_expires_at = NOW() - INTERVAL '1 second'
+                WHERE id = $1
+                """,
+                job_id,
+            )
+        assert await runtime.recover_stale_leases() == 1
+        events = await _progress_events(job_runtime_env, record_id)
+        matching = [
+            row
+            for row in events
+            if row["payload_json"]["accepted_section_ids"] == [target_key]
+        ]
+        _assert_one_progress_event(matching, target_key)
+        row = await _fetch_job(job_runtime_env, job_id)
+        assert row["status"] == STATUS_PAUSED
+
+
+async def test_failed_terminal_and_lease_max_publish_one_progress_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    ordinary_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_fail",
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:fail",
+        input_json=_section_input(USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN, "ras1_fail"),
+    )
+    claimed = await runtime.claim_next_job(
+        lease_owner="fail-owner",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+    )
+    assert claimed is not None and claimed.job_id == ordinary_id
+    await runtime.transition(
+        job_id=ordinary_id,
+        target_status=STATUS_FAILED_TERMINAL,
+        lease_token=claimed.lease_token,
+        failure_code="provider_error",
+        rationale_code="worker_failed",
+    )
+    fail_events = [
+        row
+        for row in await _progress_events(job_runtime_env, record_id)
+        if row["payload_json"]["accepted_section_ids"] == ["ras1_fail"]
+    ]
+    _assert_one_progress_event(fail_events, "ras1_fail")
+    assert fail_events[0]["payload_json"]["mutation"] == "capability_failed"
+
+    lease_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_lease",
+        max_attempts=1,
+        attempt_count=1,
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:lease",
+        input_json=_section_input(
+            ANALYSIS_SECTION_REQUEST_ORIGIN, "ras1_lease"
+        ),
+    )
+    claimed_lease = await runtime.claim_next_job(
+        lease_owner="lease-owner",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+    )
+    assert claimed_lease is not None and claimed_lease.job_id == lease_id
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second',
+                attempt_count = max_attempts
+            WHERE id = $1
+            """,
+            lease_id,
+        )
+    assert await runtime.recover_stale_leases() == 1
+    lease_events = [
+        row
+        for row in await _progress_events(job_runtime_env, record_id)
+        if row["payload_json"]["accepted_section_ids"] == ["ras1_lease"]
+    ]
+    _assert_one_progress_event(lease_events, "ras1_lease")
+    row = await _fetch_job(job_runtime_env, lease_id)
+    assert row["status"] == STATUS_FAILED_TERMINAL
+
+
+async def test_progress_event_write_failure_rolls_back_job_and_job_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_rollback",
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:rb",
+        input_json=_section_input(USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN, "ras1_rollback"),
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    events_before = await _count_job_events(job_runtime_env, job_id)
+    with patch.object(
+        ReaderEventRuntime,
+        "publish_event_in_transaction",
+        side_effect=RuntimeError("event write failed"),
+    ):
+        with pytest.raises(RuntimeError, match="event write failed"):
+            await runtime.transition(
+                job_id=job_id,
+                target_status=STATUS_PAUSED,
+                pause_owner="quota",
+                failure_code="budget_exhausted",
+            )
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_QUEUED
+    assert await _count_job_events(job_runtime_env, job_id) == events_before
+    assert await _progress_events(job_runtime_env, record_id) == []
+
+
+async def test_non_section_job_does_not_publish_progress_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="translate_unit",
+        target_key="u-non-section",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="plain",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claimed is not None and claimed.job_id == job_id
+    await runtime.transition(
+        job_id=job_id,
+        target_status=STATUS_PAUSED,
+        lease_token=claimed.lease_token,
+        pause_owner="quota",
+        failure_code="budget_exhausted",
+    )
+    await runtime.transition(
+        job_id=job_id,
+        target_status=STATUS_FAILED_TERMINAL,
+        failure_code="provider_error",
+    )
+    assert await _progress_events(job_runtime_env, record_id) == []
+
+
+async def test_paused_to_paused_same_fields_does_not_emit_reader_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_noop",
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:noop",
+        input_json=_section_input(USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN, "ras1_noop"),
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    await runtime.transition(
+        job_id=job_id,
+        target_status=STATUS_PAUSED,
+        pause_owner="quota",
+        failure_code="budget_exhausted",
+        rationale_code="quota_paused",
+    )
+    before = await _progress_events(job_runtime_env, record_id)
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM reader_jobs WHERE id = $1", job_id
+            )
+            await runtime._apply_transition(
+                conn,
+                job_row=row,
+                target_status=STATUS_PAUSED,
+                available_at=None,
+                pause_owner="quota",
+                output_ref=None,
+                failure_class=row["failure_class"],
+                failure_code="budget_exhausted",
+                failure_message=None,
+                rationale_code="quota_paused",
+            )
+    assert await _progress_events(job_runtime_env, record_id) == before
+
+
+async def test_paused_to_paused_disposition_change_emits_one_reader_event(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        job_type="build_vocabulary_layer_article",
+        target_type="unit_range",
+        target_key="ras1_disp",
+        operation_fingerprint=f"{VOCABULARY_ANALYSIS_SECTION_FINGERPRINT}:disp",
+        input_json=_section_input(USER_EXPLICIT_ANALYSIS_SECTION_ORIGIN, "ras1_disp"),
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claimed = await runtime.claim_next_job(
+        lease_owner="disp-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claimed is not None
+    await _begin_journal_for_claim(job_runtime_env, claim=claimed, captured=True)
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+    assert await runtime.recover_stale_leases() == 1
+    before = await _progress_events(job_runtime_env, record_id)
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = '{"raw_provider_response":{}}'
+            WHERE reader_job_id = $1
+            """,
+            job_id,
+        )
+    assert (
+        await runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner="invalid-owner",
+            lease_duration=timedelta(seconds=30),
+        )
+        is None
+    )
+    after = await _progress_events(job_runtime_env, record_id)
+    assert len(after) == len(before) + 1
+    _assert_one_progress_event([after[-1]], "ras1_disp")

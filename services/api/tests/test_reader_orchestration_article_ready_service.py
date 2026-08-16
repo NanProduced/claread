@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -28,6 +29,7 @@ from app.services.reader_orchestration.stable_annotation_analysis import (
     DIAGNOSTICS_READBACK_MATCH,
     AnnotationDiagnosticsReadback,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL
 
 pytestmark = pytest.mark.anyio
@@ -396,9 +398,9 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
             recomputed=(),
         ),
         enhancement_layers=(),
-        enhancement_progress=build_reader_plate_snapshot(
-            build_result,
-            snapshot_taken_at=snapshot_taken_at,
+        enhancement_progress=build_reader_plate_snapshot(build_result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=snapshot_taken_at,
             last_event_sequence=1,
             record=snapshot_record,
         ).enhancement_progress,
@@ -410,13 +412,25 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
         repository=repository,
         pool=_FakePool(conn),  # type: ignore[arg-type]
     )
+    seen: list[object] = []
 
-    snapshot = await service.load_snapshot(
-        record_id=record_id,
-        user_id=user_id,
-        expected_base_id=base_id,
-        expected_generation=1,
-    )
+    async def _fake_progress(self, loaded_conn, **kwargs):
+        seen.append(loaded_conn)
+        return fixture_analysis_progress()
+
+    with patch(
+        "app.services.reader_orchestration.article_ready_service."
+        "ReaderAnalysisProgressProjection.load_progress_on_connection",
+        _fake_progress,
+    ):
+        snapshot = await service.load_snapshot(
+            record_id=record_id,
+            user_id=user_id,
+            expected_base_id=base_id,
+            expected_generation=1,
+        )
+    assert seen == [conn]
+    assert snapshot.analysis_progress.plan_version
 
     assert conn.transaction_kwargs == {
         "isolation": "repeatable_read",
@@ -549,6 +563,7 @@ async def test_snapshot_reloads_from_db_facts_equivalent_to_builder(
     )
     expected_snapshot = build_reader_plate_snapshot(
         expected_build_result,
+        analysis_progress=result.snapshot.analysis_progress,
         snapshot_taken_at=result.snapshot.snapshot_taken_at,
         last_event_sequence=result.article_ready_sequence,
         record=result.snapshot.record,

@@ -20,6 +20,10 @@ from app.schemas.reader_orchestration import (
     VocabularyLayerOutput,
 )
 
+from .analysis_section_jobs import (
+    GRAMMAR_ANALYSIS_SECTION_FINGERPRINT,
+    VOCABULARY_ANALYSIS_SECTION_FINGERPRINT,
+)
 from .event_runtime import ReaderEventEnvelope, ReaderEventRuntime
 from .grammar_layer_payload import build_grammar_layer_published_payload
 from .grammar_layer_payload_validator import (
@@ -1456,12 +1460,15 @@ class VocabularyLayerPublisher:
                         operation_fingerprint,
                         VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
                     )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        VOCABULARY_ANALYSIS_SECTION_FINGERPRINT,
+                    )
                 ):
                     raise ValueError(
                         f"vocabulary batch publish fingerprint "
-                        f"{operation_fingerprint!r} does not match either "
-                        f"{VOCABULARY_BATCH_OPERATION_FINGERPRINT!r} or "
-                        f"{VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
+                        f"{operation_fingerprint!r} does not match a "
+                        f"vocabulary batch fingerprint"
                     )
 
                 input_json = job_row["input_json"]
@@ -2105,12 +2112,15 @@ class GrammarBundleLayerPublisher:
                         operation_fingerprint,
                         GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
                     )
+                    or _fingerprint_matches_base(
+                        operation_fingerprint,
+                        GRAMMAR_ANALYSIS_SECTION_FINGERPRINT,
+                    )
                 ):
                     raise ValueError(
                         "grammar batch publish fingerprint "
-                        f"{operation_fingerprint!r} does not match either "
-                        f"{GRAMMAR_BATCH_OPERATION_FINGERPRINT!r} or "
-                        f"{GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT!r}"
+                        f"{operation_fingerprint!r} does not match a "
+                        f"grammar batch fingerprint"
                     )
 
                 # Fail-closed: the batch output must cover exactly the units
