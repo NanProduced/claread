@@ -1523,6 +1523,23 @@ class ReaderRecordRecentRemovedResponse(BaseModel):
     recent_hidden_at: datetime
 
 
+class ReaderRecordDeletedResponse(BaseModel):
+    """Response for ``DELETE /reader/records/{record_id}``.
+
+    Product-level irreversible removal backed by a PostgreSQL soft
+    delete: parsing data, audit rows, and related assets are retained.
+    ``vector_gc_intent_recorded`` confirms the same-transaction
+    ``reading_record_deleted_v1`` GC intent event exists for Wave 9.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    status: Literal["deleted", "already_deleted"]
+    deleted_at: datetime
+    vector_gc_intent_recorded: bool
+
+
 class ReaderEventPollResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -992,6 +992,79 @@ class ReaderJobRuntime:
                     rationale_code=rationale_code,
                 )
 
+    async def administrative_cancel_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        rationale_code: str,
+        updated_at: datetime,
+    ) -> int:
+        """Administratively cancel every non-terminal job of a record.
+
+        Wave 8 reading-record deletion seam: runs inside the caller's
+        deletion transaction under the ``reading_records`` row lock, so
+        no worker claim can interleave. Unlike
+        ``transition_in_transaction`` this path does not require the
+        worker lease — the administrative caller owns the row — but it
+        keeps the same state-machine targets (only ``queued`` /
+        ``claimed`` / ``retry_later`` / ``paused`` jobs are cancelled),
+        clears all lease / pause fields, and writes exactly one
+        ``job_cancelled`` ``reader_job_events`` row per transitioned job.
+
+        Returns the number of jobs transitioned to ``cancelled``.
+        """
+        _assert_caller_transaction_active(
+            conn, seam="administrative_cancel_in_transaction"
+        )
+        rows = await conn.fetch(
+            """
+            SELECT id, run_id, status
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND status IN ('queued', 'claimed', 'retry_later', 'paused')
+            ORDER BY created_at ASC, id ASC
+            FOR UPDATE
+            """,
+            record_id,
+        )
+        for row in rows:
+            updated = await conn.fetchrow(
+                """
+                UPDATE reader_jobs
+                SET status = 'cancelled',
+                    lease_owner = NULL,
+                    lease_token = NULL,
+                    lease_expires_at = NULL,
+                    claimed_at = NULL,
+                    pause_owner = NULL,
+                    rationale_code = $2,
+                    updated_at = $3
+                WHERE id = $1
+                RETURNING reading_record_id, run_id, id
+                """,
+                row["id"],
+                rationale_code,
+                updated_at,
+            )
+            if updated is None:
+                raise IllegalTransitionError(
+                    f"administrative cancel lost the row lock for job {row['id']}"
+                )
+            await self._insert_job_event(
+                conn,
+                reading_record_id=updated["reading_record_id"],
+                run_id=updated["run_id"],
+                job_id=updated["id"],
+                event_type=_EVENT_TYPE_FOR_TRANSITION[STATUS_CANCELLED],
+                payload={
+                    "previous_status": row["status"],
+                    "target_status": STATUS_CANCELLED,
+                    "rationale_code": rationale_code,
+                },
+            )
+        return len(rows)
+
     async def transition_in_transaction(
         self,
         conn: asyncpg.Connection,

@@ -284,6 +284,11 @@ async def get_reading_record_ask_thread(
     thread_id: UUID,
 ):
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    # Shared record access guard: deleted records close thread-detail
+    # access exactly like every other record-bound Ask entry point.
+    await _load_snapshot_facts(
+        user_id=user_id, reading_record_id=parsed_record_id
+    )
     return await thread_service.get_reading_record_thread_detail(
         user_id,
         thread_id,

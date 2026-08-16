@@ -33,6 +33,7 @@ from app.schemas.reader_orchestration import (
     ReaderEventPollResponse,
     ReaderEventResponse,
     ReaderPlateSnapshot,
+    ReaderRecordDeletedResponse,
     ReaderRecordListItem,
     ReaderRecordListResponse,
     ReaderRecordOpenedResponse,
@@ -124,6 +125,9 @@ from app.services.reader_orchestration.oss_presigner import (
     PresignedUpload,
     Presigner,
     build_default_presigner,
+)
+from app.services.reader_orchestration.reading_record_deletion_service import (
+    ReadingRecordDeletionService,
 )
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 from app.services.reader_orchestration.section_request_planner import (
@@ -1346,6 +1350,42 @@ async def remove_reader_record_from_recent(
         record_id=str(record_id),
         status="already_removed" if already_hidden else "removed_from_recent",
         recent_hidden_at=recent_hidden_at,
+    )
+
+
+@router.delete(
+    "/records/{record_id}",
+    response_model=ReaderRecordDeletedResponse,
+    summary="Soft-delete a Reading Record (irreversible for the user)",
+)
+async def delete_reader_record(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderRecordDeletedResponse:
+    """Product-level irreversible removal.
+
+    One PostgreSQL transaction: soft delete (``deleted_at`` /
+    ``lifecycle_status='deleted'`` / ``product_state='deleted'``),
+    convergence of non-terminal jobs / runs / Article RAG index runs,
+    and the persistent ``reading_record_deleted_v1`` Vector GC intent
+    event (consumed by the Wave 9 GC worker). Parsing data, audit rows,
+    and related assets are retained. Idempotent: repeat calls return
+    ``already_deleted`` with the first ``deleted_at``.
+    """
+    service = ReadingRecordDeletionService()
+    result = await service.delete_record(
+        record_id=record_id,
+        user_id=UUID(current_user.user_id),
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        )
+    return ReaderRecordDeletedResponse(
+        record_id=str(result.record_id),
+        status=result.status,
+        deleted_at=result.deleted_at,
+        vector_gc_intent_recorded=result.vector_gc_intent_recorded,
     )
 
 
