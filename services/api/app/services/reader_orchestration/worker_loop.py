@@ -13,6 +13,7 @@ import asyncpg
 from app.database import connection as db_connection
 from app.services.model_execution_journal.service import ModelExecutionJournalService
 
+from .analysis_section_jobs import sql_blocked_by_active_translation
 from .completion_finalizer import (
     CompletionFinalizationResult,
     CompletionFinalizer,
@@ -168,7 +169,7 @@ class ReaderEnhancementWorkerLoopService:
 
         async with self.get_pool().acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 WITH scoped_records AS (
                     SELECT
                         record.id AS record_id,
@@ -216,6 +217,7 @@ class ReaderEnhancementWorkerLoopService:
                               )
                               AND (job.input_json->>'request_origin')
                                   IS DISTINCT FROM 'section_v1'
+                              AND NOT {sql_blocked_by_active_translation(job_alias="job")}
                         ) AS runnable_job_count
                     FROM reading_records record
                     JOIN reading_bases base

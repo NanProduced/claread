@@ -12,6 +12,19 @@ import asyncpg
 from app.config.settings import Settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.services.reader_orchestration.analysis_section_jobs import (
+    ANALYSIS_SECTION_REQUEST_ORIGIN,
+    GRAMMAR_ANALYSIS_SECTION_FINGERPRINT,
+    GRAMMAR_ANALYSIS_SECTION_POLICY_VERSION,
+    VOCABULARY_ANALYSIS_SECTION_FINGERPRINT,
+    VOCABULARY_ANALYSIS_SECTION_POLICY_VERSION,
+)
+from app.services.reader_orchestration.analysis_section_plan import (
+    ANALYSIS_SECTION_PLAN_VERSION,
+    AnalysisSection,
+    AnalysisSectionUnit,
+    plan_analysis_sections,
+)
 from app.services.reader_orchestration.automatic_layer_policy import (
     AutomaticLayerName,
     AutomaticLayerTargetUnit,
@@ -41,6 +54,19 @@ from app.services.reader_orchestration.translation_prompt_profile import (
     compose_translation_prompt_profile_fingerprint_token,
     translation_prompt_profile_input_fields,
 )
+from app.services.reader_orchestration.translation_window_plan import (
+    TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT as TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT,
+)
+from app.services.reader_orchestration.translation_window_plan import (
+    TRANSLATION_WINDOW_TARGET_CHAR_COUNT as TRANSLATION_WINDOW_TARGET_CHAR_COUNT,
+)
+from app.services.reader_orchestration.translation_window_plan import (
+    TranslationWindowPlan as TranslationWindowPlan,
+)
+from app.services.reader_orchestration.translation_window_plan import (
+    TranslationWindowUnit,
+    plan_translation_windows,
+)
 
 TRANSLATION_RUN_TYPE = "translation_layer"
 TRANSLATION_JOB_TYPE = "translate_unit"
@@ -69,7 +95,8 @@ DEFAULT_GRAMMAR_MAX_ATTEMPTS = 3
 # articles use a single whole-article grammar batch job instead of the
 # heavy grammar-window analysis-window path. One LLM call covers all unpublished
 # units; the publisher splits the output back into per-unit grammar_note
-# / sentence_analysis layers. GROUPED_WINDOWED keeps the grammar-window path.
+# / sentence_analysis layers. GROUPED_WINDOWED uses one first-section
+# compact grammar batch job instead of analysis windows.
 #
 # Route-specific fingerprints (pattern): STRUCTURED_BATCH gets a
 # distinct fingerprint base + policy_version so a route change (short ->
@@ -197,14 +224,8 @@ VOCABULARY_WINDOW_SAFETY_MAX_CHAR_COUNT = 5000
 # (never exceed). A single unit larger than safety max becomes its own
 # window. The unit is the minimum boundary — units are never split.
 #
-# Translation windows are intentionally larger than vocabulary windows
-# Translation output is per-group translated_text and needs more
-# source context for coherent group planning/hydration. A target of 6000
-# chars (one short-article equivalent) yields ~5 LLM calls on a 30k-char
-# article instead of ~30 per-unit calls, matching the short-article
-# per-char cost profile.
-TRANSLATION_WINDOW_TARGET_CHAR_COUNT = 6000
-TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT = 10000
+# Translation window target/safety constants live in
+# ``translation_window_plan`` and are re-exported above.
 
 # Maps each enhancement job_type to the variant policy layer name it belongs
 # to. ``generate_display_title_zh`` has no entry because the display title job
@@ -272,6 +293,66 @@ def _unit_rows_to_maps(rows: Any) -> list[dict[str, Any]]:
             item["unit_type"] = str(row["unit_type"])
         result.append(item)
     return result
+
+
+async def _plan_first_analysis_section(
+    conn: asyncpg.Connection,
+    *,
+    state: _LockedActiveBaseState,
+) -> AnalysisSection | None:
+    rows = await conn.fetch(
+        """
+        SELECT unit_id, order_index, base_start_utf16, base_end_utf16
+        FROM reading_units
+        WHERE reading_record_id = $1
+          AND base_id = $2
+        ORDER BY order_index ASC
+        """,
+        state.record_id,
+        state.base_id,
+    )
+    if not rows:
+        return None
+    sections = plan_analysis_sections(
+        str(state.base_id),
+        [
+            AnalysisSectionUnit(
+                unit_id=str(row["unit_id"]),
+                order_index=int(row["order_index"]),
+                text_length=int(row["base_end_utf16"]) - int(row["base_start_utf16"]),
+            )
+            for row in rows
+        ],
+    )
+    return sections[0] if sections else None
+
+
+def _units_in_analysis_section(
+    units: list[dict[str, Any]],
+    section: AnalysisSection,
+) -> list[dict[str, Any]]:
+    by_id = {str(unit["unit_id"]): unit for unit in units}
+    return [
+        by_id[unit_id]
+        for unit_id in section.target_unit_ids
+        if unit_id in by_id
+    ]
+
+
+def _analysis_section_job_fields(
+    section: AnalysisSection,
+    *,
+    article_route: str,
+) -> dict[str, Any]:
+    return {
+        "request_origin": ANALYSIS_SECTION_REQUEST_ORIGIN,
+        "analysis_section_id": section.section_id,
+        "analysis_section_plan_version": ANALYSIS_SECTION_PLAN_VERSION,
+        "analysis_section_order_index": section.order_index,
+        "analysis_section_unit_ids": list(section.target_unit_ids),
+        "requires_translation_terminal": True,
+        "article_route": article_route,
+    }
 
 
 def _filter_units_for_layer(
@@ -554,106 +635,7 @@ def plan_vocabulary_windows(
     return windows
 
 
-# ---------------------------------------------------------------------------#
-# Non-short translation batch window planner
-# ---------------------------------------------------------------------------#
-# Pure dataclasses + function. No DB access, no side effects. The bootstrap
-# method loads unit metadata (unit_id, order_index, text_length) and calls
-# ``plan_translation_windows`` to get a list of consecutive, non-overlapping
-# windows. Each window becomes one ``translate_article`` batch job.
-#
-# Design constraints (see docs/development/mainline.md and docs/operations/testing.md):
-# - Unit is the minimum boundary; never split a unit across windows.
-# - Windows must be consecutive and non-overlapping, ordered by reading order.
-# - A single unit larger than safety max becomes its own window.
-# - ``window_id`` is a stable hash of the sorted unit_ids in the window, so
-#   re-planning after partial publish produces the same window_id for
-#   unchanged windows (idempotency relies on this).
-# - The translation and vocabulary planners are intentionally separate: each
-#   layer has its own default thresholds and its own idempotency namespace
-#   (job_type + operation_fingerprint differ, so window_id collisions across
-#   layers never cause idempotency false-positives).
-
-
-@dataclass(frozen=True, slots=True)
-class TranslationWindowUnit:
-    """A single unit's metadata for translation window planning."""
-
-    unit_id: str
-    order_index: int
-    text_length: int
-
-
-@dataclass(frozen=True, slots=True)
-class TranslationWindowPlan:
-    """A planned translation batch window: a consecutive range of units."""
-
-    units: tuple[TranslationWindowUnit, ...]
-
-    @property
-    def window_id(self) -> str:
-        """Stable 12-char hex hash of the sorted unit_ids in this window.
-
-        Two windows with the same unit set produce the same window_id
-        regardless of planning order, so idempotency checks on
-        ``target_key = f"{record_id}:window:{window_id}"`` correctly
-        detect that a window job already exists.
-        """
-        sorted_ids = ":".join(sorted(u.unit_id for u in self.units))
-        return hashlib.sha256(sorted_ids.encode("utf-8")).hexdigest()[:12]
-
-    @property
-    def target_unit_ids(self) -> tuple[str, ...]:
-        return tuple(u.unit_id for u in self.units)
-
-
-def plan_translation_windows(
-    units: list[TranslationWindowUnit] | tuple[TranslationWindowUnit, ...],
-    *,
-    target_char_count: int = TRANSLATION_WINDOW_TARGET_CHAR_COUNT,
-    safety_max_char_count: int = TRANSLATION_WINDOW_SAFETY_MAX_CHAR_COUNT,
-) -> list[TranslationWindowPlan]:
-    """Plan translation batch windows for non-short articles.
-
-    Greedy accumulator over units ordered by ``order_index``:
-
-    1. Start a new window with the first remaining unit.
-    2. Add the next unit if ``current_chars + next.text_length`` does not
-       exceed ``safety_max_char_count``.
-    3. If adding would exceed safety max, close the current window and
-       start a new one with that unit.
-    4. If the current window reaches ``target_char_count``, close it.
-
-    A single unit larger than safety max becomes its own window.
-
-    Returns an empty list if ``units`` is empty. Every input unit appears
-    in exactly one output window (coverage + no-overlap).
-    """
-    if not units:
-        return []
-    sorted_units = sorted(units, key=lambda u: u.order_index)
-    windows: list[TranslationWindowPlan] = []
-    current: list[TranslationWindowUnit] = []
-    current_chars = 0
-    for unit in sorted_units:
-        if not current:
-            current.append(unit)
-            current_chars = unit.text_length
-            continue
-        if current_chars + unit.text_length > safety_max_char_count:
-            windows.append(TranslationWindowPlan(units=tuple(current)))
-            current = [unit]
-            current_chars = unit.text_length
-            continue
-        current.append(unit)
-        current_chars += unit.text_length
-        if current_chars >= target_char_count:
-            windows.append(TranslationWindowPlan(units=tuple(current)))
-            current = []
-            current_chars = 0
-    if current:
-        windows.append(TranslationWindowPlan(units=tuple(current)))
-    return windows
+# Translation window planner is imported from translation_window_plan.
 
 
 # rationale_code written when a queued/retry_later/paused job is superseded
@@ -1837,16 +1819,21 @@ class EnhancementJobBootstrapService:
         # SHORT_BATCH and STRUCTURED_BATCH both execute via the
         # whole-article vocabulary batch job, but with distinct
         # operation_fingerprint / policy_version / input_json.article_route.
-        # GROUPED_WINDOWED splits into per-window batch jobs.
+        # GROUPED_WINDOWED creates one first-section vocabulary batch job.
         route = await _load_article_route(conn, state=state)
         if route is not ArticleRoute.GROUPED_WINDOWED:
             return await self._bootstrap_vocabulary_batch_job(
                 conn, state=state, route=route, trace_id=trace_id
             )
-        # Non-short grouped path: split unpublished units into
-        # consecutive windows and create one batch job per window.
-        return await self._bootstrap_vocabulary_grouped_jobs(
-            conn, state=state, route=route, trace_id=trace_id
+        section = await _plan_first_analysis_section(conn, state=state)
+        if section is None:
+            return []
+        return await self._bootstrap_vocabulary_batch_job(
+            conn,
+            state=state,
+            route=route,
+            trace_id=trace_id,
+            analysis_section=section,
         )
 
     async def _bootstrap_vocabulary_grouped_jobs(
@@ -2169,14 +2156,22 @@ class EnhancementJobBootstrapService:
                 trace_id=trace_id,
             )
             return results, False
-        # Route-aware split. GROUPED_WINDOWED keeps the grammar-window path;
-        # SHORT_BATCH / STRUCTURED_BATCH use the compact batch path.
+        # Route-aware split. GROUPED_WINDOWED uses one first-section
+        # compact grammar batch job. SHORT_BATCH / STRUCTURED_BATCH keep
+        # the whole-article compact batch path.
         route = await _load_article_route(conn, state=state)
         if route is ArticleRoute.GROUPED_WINDOWED:
-            # grammar-window path. GrammarWindowBootstrapService 在外层事务提交后被调用，
-            # 其内部幂等：plan 已存在时直接复用。
-            return [], True
-        # Compact grammar batch path for SHORT_BATCH / STRUCTURED_BATCH.
+            section = await _plan_first_analysis_section(conn, state=state)
+            if section is None:
+                return [], False
+            results = await self._bootstrap_grammar_batch_job(
+                conn,
+                state=state,
+                route=route,
+                trace_id=trace_id,
+                analysis_section=section,
+            )
+            return results, False
         results = await self._bootstrap_grammar_batch_job(
             conn,
             state=state,
@@ -2192,6 +2187,7 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         route: ArticleRoute,
         trace_id: UUID | None = None,
+        analysis_section: AnalysisSection | None = None,
     ) -> list[GrammarBootstrapResult]:
         """Compact grammar batch bootstrap for short/structured articles.
 
@@ -2216,7 +2212,11 @@ class EnhancementJobBootstrapService:
         """
         if trace_id is None:
             trace_id = uuid4()
-        if route is ArticleRoute.STRUCTURED_BATCH:
+        if analysis_section is not None:
+            fingerprint_base = GRAMMAR_ANALYSIS_SECTION_FINGERPRINT
+            policy_version = GRAMMAR_ANALYSIS_SECTION_POLICY_VERSION
+            route_suffix = f"analysis_section:{analysis_section.section_id}"
+        elif route is ArticleRoute.STRUCTURED_BATCH:
             fingerprint_base = GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT
             policy_version = GRAMMAR_STRUCTURED_BATCH_POLICY_VERSION
             route_suffix = "structured"
@@ -2256,9 +2256,21 @@ class EnhancementJobBootstrapService:
             record_id=str(state.record_id),
             generation=state.expected_generation,
         )
+        if analysis_section is not None:
+            allowed = _units_in_analysis_section(allowed, analysis_section)
         if not allowed:
             return []
         target_unit_ids = [str(row["unit_id"]) for row in allowed]
+        section_fields = (
+            _analysis_section_job_fields(analysis_section, article_route=route.value)
+            if analysis_section is not None
+            else {}
+        )
+        target_key = (
+            analysis_section.section_id
+            if analysis_section is not None
+            else str(state.record_id)
+        )
         semantic_fence = _semantic_fence_from_unit_maps(allowed)
         semantic_token = _semantic_fingerprint_token(semantic_fence)
         operation_fingerprint = _compose_operation_fingerprint(
@@ -2294,7 +2306,7 @@ class EnhancementJobBootstrapService:
             state.base_id,
             GRAMMAR_BATCH_JOB_TYPE,
             GRAMMAR_BATCH_TARGET_SCOPE,
-            str(state.record_id),
+            target_key,
             state.expected_generation,
             operation_fingerprint,
         )
@@ -2322,6 +2334,7 @@ class EnhancementJobBootstrapService:
                 "article_route": route.value,
                 "document_features": _route_document_features(state),
                 **_semantic_input_fields(semantic_fence, layer='grammar_note'),
+                **section_fields,
             },
             input_signature_suffix=(
                 f"{state.base_language}:grammar_bundle:{route_suffix}:batch"
@@ -2333,8 +2346,15 @@ class EnhancementJobBootstrapService:
                 "layer_types": ["grammar_note", "sentence_analysis"],
                 "article_route": route.value,
                 **_semantic_input_fields(semantic_fence, layer='grammar_note'),
+                **section_fields,
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[GRAMMAR_BATCH_JOB_TYPE],
+            target_key_override=target_key,
+            idempotency_key_suffix=(
+                f"analysis_section:{analysis_section.section_id}"
+                if analysis_section is not None
+                else "batch"
+            ),
         )
         return [
             GrammarBootstrapResult(
@@ -2809,6 +2829,7 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         route: ArticleRoute,
         trace_id: UUID | None = None,
+        analysis_section: AnalysisSection | None = None,
     ) -> list[VocabularyBootstrapResult]:
         """ whole-article vocabulary batch bootstrap.
 
@@ -2828,7 +2849,11 @@ class EnhancementJobBootstrapService:
         """
         if trace_id is None:
             trace_id = uuid4()
-        if route is ArticleRoute.STRUCTURED_BATCH:
+        if analysis_section is not None:
+            fingerprint_base = VOCABULARY_ANALYSIS_SECTION_FINGERPRINT
+            policy_version = VOCABULARY_ANALYSIS_SECTION_POLICY_VERSION
+            route_suffix = f"analysis_section:{analysis_section.section_id}"
+        elif route is ArticleRoute.STRUCTURED_BATCH:
             fingerprint_base = VOCABULARY_STRUCTURED_BATCH_OPERATION_FINGERPRINT
             policy_version = VOCABULARY_STRUCTURED_BATCH_POLICY_VERSION
             route_suffix = "structured"
@@ -2865,9 +2890,21 @@ class EnhancementJobBootstrapService:
             record_id=state.record_id,
             generation=state.expected_generation,
         )
+        if analysis_section is not None:
+            allowed = _units_in_analysis_section(allowed, analysis_section)
         if not allowed:
             return []
         target_unit_ids = [str(row["unit_id"]) for row in allowed]
+        section_fields = (
+            _analysis_section_job_fields(analysis_section, article_route=route.value)
+            if analysis_section is not None
+            else {}
+        )
+        target_key = (
+            analysis_section.section_id
+            if analysis_section is not None
+            else str(state.record_id)
+        )
         semantic_fence = _semantic_fence_from_unit_maps(allowed)
         semantic_token = _semantic_fingerprint_token(semantic_fence)
         operation_fingerprint = _compose_operation_fingerprint(
@@ -2903,7 +2940,7 @@ class EnhancementJobBootstrapService:
             state.base_id,
             VOCABULARY_BATCH_JOB_TYPE,
             VOCABULARY_BATCH_TARGET_SCOPE,
-            str(state.record_id),
+            target_key,
             state.expected_generation,
             operation_fingerprint,
         )
@@ -2932,6 +2969,7 @@ class EnhancementJobBootstrapService:
                 "trace_id": str(trace_id),
                 "article_route": route.value,
                 "document_features": _route_document_features(state),
+                **section_fields,
             },
             input_signature_suffix=(
                 f"{state.base_language}:vocabulary:{route_suffix}:batch"
@@ -2943,8 +2981,15 @@ class EnhancementJobBootstrapService:
                 "layer_type": "vocabulary",
                 "article_route": route.value,
                 **_semantic_input_fields(semantic_fence, layer='vocabulary'),
+                **section_fields,
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
+            target_key_override=target_key,
+            idempotency_key_suffix=(
+                f"analysis_section:{analysis_section.section_id}"
+                if analysis_section is not None
+                else "batch"
+            ),
         )
         return [
             VocabularyBootstrapResult(

@@ -1781,3 +1781,115 @@ class ReaderSectionTranslationResponse(BaseModel):
     outcome: ReaderSectionTranslationOutcome
     job_id: str | None = None
     detail: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Product analysis-section progress / request contracts (independent of snapshot)
+# ---------------------------------------------------------------------------
+
+ReaderAnalysisMode = Literal["automatic", "segmented_on_demand"]
+ReaderAnalysisOverallStatus = Literal[
+    "queued",
+    "processing",
+    "waiting_user",
+    "completed",
+    "partial",
+    "failed",
+    "paused_quota",
+]
+ReaderAnalysisActivePhase = Literal["translation", "analysis"]
+ReaderAnalysisCapabilityStatus = Literal[
+    "not_started",
+    "queued",
+    "processing",
+    "completed",
+    "partial",
+    "failed",
+    "paused_quota",
+]
+ReaderAnalysisSectionRequestScope = Literal["single", "remaining"]
+ReaderAnalysisSectionRequestOutcome = Literal[
+    "started",
+    "already_active",
+    "already_complete",
+    "paused_quota",
+    "rejected",
+]
+
+
+class ReaderAnalysisSectionProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: str = Field(min_length=1)
+    order_index: int = Field(ge=0)
+    label: str = Field(min_length=1)
+    excerpt: str
+    start_unit_id: str = Field(min_length=1)
+    end_unit_id: str = Field(min_length=1)
+    status: ReaderAnalysisCapabilityStatus
+    vocabulary_status: ReaderAnalysisCapabilityStatus
+    grammar_status: ReaderAnalysisCapabilityStatus
+    can_start: bool
+    updated_at: datetime | None = None
+    failure_code: str | None = None
+
+
+class ReaderAnalysisProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: ReaderAnalysisMode
+    plan_version: str = Field(min_length=1)
+    overall_status: ReaderAnalysisOverallStatus
+    active_phase: ReaderAnalysisActivePhase | None = None
+    translation_status: ReaderAnalysisCapabilityStatus
+    completed_section_count: int = Field(ge=0)
+    total_section_count: int = Field(ge=0)
+    active_section_id: str | None = None
+    needs_user_action: bool
+    last_progress_at: datetime | None = None
+    sections: list[ReaderAnalysisSectionProgress] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_section_progress(self) -> ReaderAnalysisProgress:
+        if self.completed_section_count > self.total_section_count:
+            raise ValueError("completed_section_count cannot exceed total_section_count")
+        if len(self.sections) != self.total_section_count:
+            raise ValueError("sections length must equal total_section_count")
+        section_ids = [section.section_id for section in self.sections]
+        if len(section_ids) != len(set(section_ids)):
+            raise ValueError("section_id values must be unique")
+        order_indexes = [section.order_index for section in self.sections]
+        if len(order_indexes) != len(set(order_indexes)):
+            raise ValueError("order_index values must be unique")
+        if order_indexes != sorted(order_indexes):
+            raise ValueError("sections must be ordered by order_index")
+        if (
+            self.active_section_id is not None
+            and self.active_section_id not in section_ids
+        ):
+            raise ValueError("active_section_id must exist in sections")
+        return self
+
+
+class ReaderAnalysisSectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: ReaderAnalysisSectionRequestScope
+    section_id: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> ReaderAnalysisSectionRequest:
+        if self.scope == "single" and not self.section_id:
+            raise ValueError("single scope requires section_id")
+        if self.scope == "remaining" and self.section_id:
+            raise ValueError("remaining scope rejects section_id")
+        return self
+
+
+class ReaderAnalysisSectionRequestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: ReaderAnalysisSectionRequestOutcome
+    accepted_section_ids: list[str] = Field(default_factory=list)
+    event_sequence: int | None = None
+    reason_code: str | None = None
