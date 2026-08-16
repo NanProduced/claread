@@ -336,9 +336,128 @@ async def test_reindex_in_flight_returns_in_progress_zero_writes(
 # ===========================================================================
 
 
-async def test_reindex_no_indexed_run(reindex_env: asyncpg.Pool) -> None:
-    """No active index run at all -> typed no_indexed_run, zero writes."""
+async def test_reindex_no_active_run_recovers_via_bootstrap(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """Wave 7.1 / P0: a record with a valid plan but NO active index run
+    (never indexed, or the last reindex's new run failed) must recover
+    by delegating straight to bootstrap — typed ``recovery_enqueued``,
+    NOT ``no_indexed_run``."""
     await _seed_ready_environment(reindex_env)
+    service = _make_service(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "recovery_enqueued"
+    assert result.superseded_index_run_id is None
+    assert result.new_index_run_id is not None
+    assert result.job_id is not None
+
+    async with reindex_env.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT status, metadata_json FROM reader_article_rag_index_runs
+            WHERE id = $1
+            """,
+            result.new_index_run_id,
+        )
+        assert row["status"] == "queued"
+        assert "embedding_contract_fingerprint" in row["metadata_json"]
+
+
+async def test_reindex_recovery_after_failed_rebuild(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """Wave 7.1 / P0 — the exact review scenario: old indexed ->
+    superseded; new run -> failed; re-run reindex must close the loop
+    via the recovery path (not dead-end on no_indexed_run)."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    service = _make_service(reindex_env)
+    first = None
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            first = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+    assert first.status == "reindex_enqueued"
+
+    # The rebuild fails (worker terminal path shape: index run failed,
+    # job failed_terminal, run failed_terminal).
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs SET status = 'failed' "
+            "WHERE id = $1",
+            first.new_index_run_id,
+        )
+        await conn.execute(
+            "UPDATE reader_jobs SET status = 'failed_terminal' "
+            "WHERE id = $1",
+            first.job_id,
+        )
+
+    second = None
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            second = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert second.status == "recovery_enqueued"
+    assert second.superseded_index_run_id is None
+    assert second.new_index_run_id is not None
+    assert second.new_index_run_id != first.new_index_run_id
+
+    async with reindex_env.acquire() as conn:
+        statuses = {
+            str(r["status"]): r["cnt"]
+            for r in await conn.fetch(
+                "SELECT status, COUNT(*) AS cnt "
+                "FROM reader_article_rag_index_runs GROUP BY status"
+            )
+        }
+        assert statuses == {"superseded": 1, "failed": 1, "queued": 1}
+        # The superseded original is untouched by the recovery pass.
+        original = await conn.fetchval(
+            "SELECT status FROM reader_article_rag_index_runs WHERE id = $1",
+            old_run_id,
+        )
+        assert original == "superseded"
+
+
+async def test_reindex_no_active_stable_document_returns_no_indexed_run(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """Genuinely unrecoverable via reindex: no ACTIVE stable document
+    (e.g. document freeze moved on) -> typed ``no_indexed_run``."""
+    from tests.test_article_rag_index_plan import (
+        _BASE_ID,
+        _seed_base,
+        _seed_record,
+        _seed_user,
+    )
+
+    await _seed_user(reindex_env)
+    # Seed record without a base first (FK), then attach the base.
+    await _seed_record(reindex_env, active_base_id=None)
+    await _seed_base(reindex_env)
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reading_records SET active_base_id = $2 WHERE id = $1",
+            _RECORD_ID,
+            _BASE_ID,
+        )
     service = _make_service(reindex_env)
 
     async with reindex_env.acquire() as conn:
@@ -486,3 +605,192 @@ async def test_concurrent_reindex_produces_single_candidate(
         )
         assert len(runs) == 1
         assert runs[0]["status"] == "queued"
+
+
+# ===========================================================================
+# Wave 7.1 / P1: linkage TRUST — a superseded row must keep a verifiable
+# audit chain.  Only job=succeeded + run=completed with matching
+# record/user/types/generation/envelope reverse identity may be
+# superseded; anything else -> bootstrap_inconsistent with ZERO writes.
+# ===========================================================================
+
+
+async def _assert_indexed_untouched_and_single(
+    pool: asyncpg.Pool,
+    *,
+    index_run_id: UUID,
+) -> None:
+    async with pool.acquire() as conn:
+        status = await conn.fetchval(
+            "SELECT status FROM reader_article_rag_index_runs WHERE id = $1",
+            index_run_id,
+        )
+        assert status == "indexed"
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM reader_article_rag_index_runs"
+        )
+        assert count == 1
+
+
+async def test_reindex_linkage_missing_job_row_is_inconsistent(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """The indexed run's job_id points at a non-existent job row —
+    the audit chain is unverifiable, refuse to supersede."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM reader_jobs WHERE id = "
+            "(SELECT job_id FROM reader_article_rag_index_runs "
+            " WHERE id = $1)",
+            old_run_id,
+        )
+
+    service = _make_service(reindex_env)
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "bootstrap_inconsistent"
+    await _assert_indexed_untouched_and_single(
+        reindex_env, index_run_id=old_run_id
+    )
+
+
+async def test_reindex_linkage_job_run_id_mismatch_is_inconsistent(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """The index run's reader_run_id disagrees with job.run_id — the
+    chain crosses rows it must not cross."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_article_rag_index_runs "
+            "SET reader_run_id = $2 WHERE id = $1",
+            old_run_id,
+            uuid4(),
+        )
+
+    service = _make_service(reindex_env)
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "bootstrap_inconsistent"
+    await _assert_indexed_untouched_and_single(
+        reindex_env, index_run_id=old_run_id
+    )
+
+
+async def test_reindex_linkage_job_not_succeeded_is_inconsistent(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """A non-succeeded job behind an indexed run means the row's
+    history cannot be trusted."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET status = 'queued' WHERE id = "
+            "(SELECT job_id FROM reader_article_rag_index_runs "
+            " WHERE id = $1)",
+            old_run_id,
+        )
+
+    service = _make_service(reindex_env)
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "bootstrap_inconsistent"
+    await _assert_indexed_untouched_and_single(
+        reindex_env, index_run_id=old_run_id
+    )
+
+
+async def test_reindex_linkage_run_not_completed_is_inconsistent(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """A non-completed reader run behind an indexed run is the same
+    trust break."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_runs SET status = 'failed_terminal' WHERE id = "
+            "(SELECT reader_run_id FROM reader_article_rag_index_runs "
+            " WHERE id = $1)",
+            old_run_id,
+        )
+
+    service = _make_service(reindex_env)
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "bootstrap_inconsistent"
+    await _assert_indexed_untouched_and_single(
+        reindex_env, index_run_id=old_run_id
+    )
+
+
+async def test_reindex_linkage_envelope_reverse_identity_mismatch(
+    reindex_env: asyncpg.Pool,
+) -> None:
+    """The bootstrap-minted reverse identity
+    (reader_runs.envelope_json.index_run_id) no longer points back at
+    this index run — the linkage may belong to another run."""
+    await _seed_ready_environment(reindex_env)
+    old_run_id = await _bootstrap_indexed_run(reindex_env)
+
+    async with reindex_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_runs
+            SET envelope_json = jsonb_set(
+                envelope_json, '{index_run_id}', $2::jsonb
+            )
+            WHERE id = (
+                SELECT reader_run_id FROM reader_article_rag_index_runs
+                WHERE id = $1
+            )
+            """,
+            old_run_id,
+            str(uuid4()),
+        )
+
+    service = _make_service(reindex_env)
+    async with reindex_env.acquire() as conn:
+        async with conn.transaction():
+            result = await service.reindex_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+            )
+
+    assert result.status == "bootstrap_inconsistent"
+    await _assert_indexed_untouched_and_single(
+        reindex_env, index_run_id=old_run_id
+    )

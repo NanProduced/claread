@@ -56,20 +56,28 @@ SUMMARY_KEYS = (
     "failed",
 )
 
-# Active (non-terminal) index-run statuses — mirrors the lifecycle
-# service's active set.
-_ACTIVE_RUN_STATUSES = ("planned", "queued", "indexing", "indexed")
-
+# Wave 7.1 / P2: the dry-run classification joins the reading record
+# (deleted_at IS NULL + lifecycle_status='active') so deleted/inactive
+# records are skipped, and classifies on the LATEST run of the active
+# stable document — indexed -> reindex-eligible; failed/superseded ->
+# recovery-eligible (Wave 7.1 / P0); in-flight -> in-progress.
 _DRY_RUN_STATUS_SQL = """
     SELECT ir.status
     FROM reader_article_rag_index_runs ir
     JOIN stable_reading_documents sd
       ON sd.id = ir.stable_document_id AND sd.status = 'active'
+    JOIN reading_records rr
+      ON rr.id = ir.reading_record_id
+     AND rr.deleted_at IS NULL
+     AND rr.lifecycle_status = 'active'
     WHERE ir.reading_record_id = $1
-      AND ir.status = ANY($2::text[])
+    ORDER BY ir.updated_at DESC
     LIMIT 1
 """
 
+# Wave 7.1 / P0: the --all candidate list includes records whose run
+# FAILED (recoverable via the service's recovery path), not only
+# currently-indexed ones.
 _ALL_CANDIDATES_SQL = """
     SELECT DISTINCT ir.reading_record_id, rr.user_id
     FROM reader_article_rag_index_runs ir
@@ -77,7 +85,7 @@ _ALL_CANDIDATES_SQL = """
       ON rr.id = ir.reading_record_id
      AND rr.deleted_at IS NULL
      AND rr.lifecycle_status = 'active'
-    WHERE ir.status = 'indexed'
+    WHERE ir.status IN ('indexed', 'failed')
     ORDER BY ir.reading_record_id
 """
 
@@ -94,8 +102,35 @@ _RECORD_OWNER_SQL = """
 # ---------------------------------------------------------------------------
 
 
+def _non_negative_float(value: str) -> float:
+    """argparse type: float >= 0 (0 disables rate limiting)."""
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return parsed
+
+
+def _positive_int(value: str) -> int:
+    """argparse type: int > 0."""
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return parsed
+
+
+class _ReindexArgumentParser(argparse.ArgumentParser):
+    """Parser with the cross-option guard argparse cannot express
+    natively: ``--limit`` only caps the ``--all`` candidate list."""
+
+    def parse_args(self, args=None, namespace=None):  # type: ignore[override]
+        parsed = super().parse_args(args, namespace)
+        if parsed.limit is not None and not parsed.all:
+            self.error("--limit is only valid with --all")
+        return parsed
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ReindexArgumentParser(
         prog="run_reader_article_rag_reindex",
         description=(
             "Operator-only explicit Article RAG reindex "
@@ -112,7 +147,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     target.add_argument(
         "--all",
         action="store_true",
-        help="Reindex every active record with an indexed Article RAG run.",
+        help=(
+            "Reindex every active record with an indexed or failed "
+            "Article RAG run (failed runs are recovery-eligible)."
+        ),
     )
     parser.add_argument(
         "--execute",
@@ -121,15 +159,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--rate-limit-per-second",
-        type=float,
+        type=_non_negative_float,
         default=DEFAULT_RATE_LIMIT_PER_SECOND,
         help="Minimum spacing between execute iterations (0 disables).",
     )
     parser.add_argument(
         "--limit",
-        type=int,
+        type=_positive_int,
         default=None,
-        help="Cap the --all candidate list.",
+        help="Cap the --all candidate list (only valid with --all).",
     )
     return parser
 
@@ -147,13 +185,22 @@ async def _classify_dry_run(
     pool: Any,
     record_id: UUID,
 ) -> str:
-    """Read-only classification: 'indexed' | 'in_progress' | 'skipped'."""
-    rows = await pool.fetch(_DRY_RUN_STATUS_SQL, record_id, list(_ACTIVE_RUN_STATUSES))
+    """Read-only classification of the latest run on the record's
+    ACTIVE stable document (inactive / deleted records and records
+    without an active stable document are skipped):
+
+    * ``indexed``             — reindex-eligible (supersede path)
+    * ``failed``/``superseded`` — recovery-eligible (no active run; the
+                                  service bootstraps fresh)
+    * ``planned``/``queued``/``indexing`` — in-progress
+    * no row                  — skipped
+    """
+    rows = await pool.fetch(_DRY_RUN_STATUS_SQL, record_id)
     if not rows:
         return "skipped"
     status = str(rows[0]["status"])
-    if status == "indexed":
-        return "indexed"
+    if status in ("indexed", "failed", "superseded"):
+        return "indexed" if status == "indexed" else "recovery"
     return "in_progress"
 
 
@@ -191,7 +238,10 @@ async def run_reindex(
 
         if not execute:
             classification = await _classify_dry_run(pool, record_id)
-            if classification == "indexed":
+            if classification in ("indexed", "recovery"):
+                # Both the supersede path (indexed) and the recovery
+                # path (terminal failed/superseded latest run) would
+                # act on this record in execute mode.
                 summary["eligible"] += 1
             elif classification == "in_progress":
                 summary["in_progress"] += 1
@@ -222,7 +272,8 @@ async def run_reindex(
             summary["failed"] += 1
         else:
             status = result.status
-            if status == "reindex_enqueued":
+            if status in ("reindex_enqueued", "recovery_enqueued"):
+                # Both paths produced a fresh queued build job.
                 summary["eligible"] += 1
                 summary["enqueued"] += 1
             elif status == "reindex_in_progress":

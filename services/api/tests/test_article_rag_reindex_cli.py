@@ -208,6 +208,37 @@ class TestArgParsing:
         assert args.rate_limit_per_second == 2.5
         assert args.limit == 10
 
+    def test_zero_rate_limit_is_allowed(self) -> None:
+        """0 explicitly disables rate limiting — a valid value."""
+        parser = build_arg_parser()
+        args = parser.parse_args(
+            ["--all", "--rate-limit-per-second", "0"]
+        )
+        assert args.rate_limit_per_second == 0.0
+
+    def test_negative_rate_limit_rejected(self) -> None:
+        parser = build_arg_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                ["--all", "--rate-limit-per-second", "-1"]
+            )
+
+    def test_non_positive_limit_rejected(self) -> None:
+        parser = build_arg_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--all", "--limit", "0"])
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--all", "--limit", "-3"])
+
+    def test_limit_requires_all_mode(self) -> None:
+        """--limit only caps the --all candidate list; combining it
+        with --record-id is an operator error."""
+        parser = build_arg_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                ["--record-id", str(_RECORD_A), "--limit", "5"]
+            )
+
 
 # ---------------------------------------------------------------------------
 # dry-run: zero writes
@@ -254,6 +285,29 @@ class TestDryRun:
         assert summary["scanned"] == 2
         assert summary["eligible"] == 1
         assert summary["in_progress"] == 1
+
+    async def test_dry_run_classifies_failed_run_as_recoverable(self) -> None:
+        """Wave 7.1 / P0: a terminal ``failed`` latest run means the
+        record is recovery-eligible — dry-run must report it as
+        eligible, not skipped (so batch planning sees it)."""
+        pool = _FakePool(
+            dry_run_rows=[
+                {"reading_record_id": _RECORD_A, "status": "failed"},
+            ]
+        )
+        service = _FakeService()
+        summary = await run_reindex(
+            pool=pool,
+            service=service,  # type: ignore[arg-type]
+            record_ids=[_RECORD_A],
+            all_records=False,
+            execute=False,
+            rate_limit_per_second=0.0,
+            limit=None,
+        )
+        assert service.calls == []
+        assert summary["eligible"] == 1
+        assert summary["skipped"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +396,36 @@ class TestExecute:
         assert service.calls == [_RECORD_A]
         assert summary["enqueued"] == 1
 
+    async def test_execute_counts_recovery_enqueued(self) -> None:
+        """Wave 7.1 / P0: the service's recovery path status must map
+        to the enqueued bucket, not skipped."""
+        service = _FakeService(
+            results={
+                _RECORD_A: _FakeReindexResult(
+                    reading_record_id=_RECORD_A,
+                    status="recovery_enqueued",
+                    new_index_run_id=uuid.uuid4(),
+                ),
+            }
+        )
+        pool = _FakePool(
+            owner_rows=[
+                {"reading_record_id": _RECORD_A, "user_id": uuid.uuid4()},
+            ]
+        )
+        summary = await run_reindex(
+            pool=pool,
+            service=service,  # type: ignore[arg-type]
+            record_ids=[_RECORD_A],
+            all_records=False,
+            execute=True,
+            rate_limit_per_second=0.0,
+            limit=None,
+        )
+        assert summary["enqueued"] == 1
+        assert summary["eligible"] == 1
+        assert summary["skipped"] == 0
+
 
 # ---------------------------------------------------------------------------
 # structural: no provider wiring
@@ -363,3 +447,31 @@ def test_cli_module_has_no_provider_imports() -> None:
         "upsert_chunks",
     ):
         assert forbidden not in source
+
+
+def test_dry_run_sql_filters_inactive_records() -> None:
+    """Wave 7.1 / P2: the dry-run classification query must join the
+    reading record with deleted_at IS NULL + lifecycle_status='active'
+    so deleted/inactive records are skipped, never reported eligible."""
+    import scripts.run_reader_article_rag_reindex as cli_mod
+
+    source = Path(cli_mod.__file__).read_text(encoding="utf-8")
+    dry_run_start = source.index("_DRY_RUN_STATUS_SQL")
+    dry_run_end = source.index('_ALL_CANDIDATES_SQL')
+    dry_run_sql = source[dry_run_start:dry_run_end]
+    assert "reading_records" in dry_run_sql
+    assert "deleted_at IS NULL" in dry_run_sql
+    assert "lifecycle_status = 'active'" in dry_run_sql
+
+
+def test_all_candidates_sql_includes_failed_runs() -> None:
+    """Wave 7.1 / P0: the --all candidate list must include records
+    whose latest run failed (recoverable), not only indexed ones."""
+    import scripts.run_reader_article_rag_reindex as cli_mod
+
+    source = Path(cli_mod.__file__).read_text(encoding="utf-8")
+    candidates_start = source.index("_ALL_CANDIDATES_SQL")
+    candidates_end = source.index("_RECORD_OWNER_SQL")
+    candidates_sql = source[candidates_start:candidates_end]
+    assert "'indexed'" in candidates_sql
+    assert "'failed'" in candidates_sql
