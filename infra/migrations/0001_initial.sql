@@ -42,6 +42,33 @@ END;
 
 $$;
 
+-- reading_records: pure reading-visibility stamps (last_opened_at,
+-- recent_hidden_at) are not content changes. updated_at only advances
+-- when some other column changes, so hide-from-recent and open stamps
+-- keep their "must not touch updated_at" contract.
+CREATE OR REPLACE FUNCTION reading_records_touch_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  new_rest record;
+  old_rest record;
+BEGIN
+  new_rest := NEW;
+  old_rest := OLD;
+  new_rest.last_opened_at := NULL;
+  new_rest.recent_hidden_at := NULL;
+  old_rest.last_opened_at := NULL;
+  old_rest.recent_hidden_at := NULL;
+  IF new_rest IS DISTINCT FROM old_rest OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
+    NEW.updated_at := NOW();
+  END IF;
+
+  RETURN NEW;
+
+END;
+
+$$;
+
 CREATE OR REPLACE FUNCTION utf16_code_unit_length(input_text text) RETURNS integer
     LANGUAGE plpgsql IMMUTABLE STRICT
     AS $$
@@ -1364,6 +1391,7 @@ CREATE TABLE reading_records (
     superseded_by_record_id uuid,
     deleted_at timestamp with time zone,
     last_opened_at timestamp with time zone,
+    recent_hidden_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     generated_title_zh text,
@@ -2315,6 +2343,8 @@ CREATE INDEX idx_reading_records_user_goal_updated_at ON reading_records USING b
 
 CREATE INDEX idx_reading_records_user_last_opened_at ON reading_records USING btree (user_id, last_opened_at DESC NULLS LAST, created_at DESC, id DESC) WHERE (deleted_at IS NULL);
 
+CREATE INDEX idx_reading_records_user_recent_visible ON reading_records USING btree (user_id, last_opened_at DESC, created_at DESC, id DESC) WHERE (deleted_at IS NULL AND recent_hidden_at IS NULL AND last_opened_at IS NOT NULL);
+
 CREATE INDEX idx_reading_records_user_product_state_updated_at ON reading_records USING btree (user_id, product_state, updated_at DESC);
 
 CREATE INDEX idx_reading_records_user_updated_at ON reading_records USING btree (user_id, updated_at DESC);
@@ -2426,7 +2456,7 @@ CREATE TRIGGER trg_reader_runs_set_updated_at BEFORE UPDATE ON reader_runs FOR E
 
 CREATE TRIGGER trg_reading_records_initialize_event_sequence AFTER INSERT ON reading_records FOR EACH ROW EXECUTE FUNCTION initialize_reader_event_sequence();
 
-CREATE TRIGGER trg_reading_records_set_updated_at BEFORE UPDATE ON reading_records FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_reading_records_set_updated_at BEFORE UPDATE ON reading_records FOR EACH ROW EXECUTE FUNCTION reading_records_touch_updated_at();
 
 CREATE TRIGGER trg_user_annotations_set_updated_at BEFORE UPDATE ON user_annotations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 

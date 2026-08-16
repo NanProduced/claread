@@ -14,6 +14,7 @@ from app.database import connection as db_connection
 from app.database.connection import init_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.job_bootstrap import TranslationJobBootstrapService
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL
 
 pytestmark = pytest.mark.anyio
@@ -137,6 +138,19 @@ async def _create_client(app: FastAPI) -> AsyncClient:
     )
 
 
+def _long_text(title: str) -> str:
+    body = (
+        "The morning train left the station before sunrise, and the "
+        "passengers watched the fields turn from grey to gold as the "
+        "light rose behind the hills. A young teacher graded essays "
+        "while the carriage swayed, and a farmer carried baskets of "
+        f"apples toward the market. Marker {uuid4().hex[:8]} settled "
+        "over the journey, and by noon the town square was full of "
+        "voices, bicycles, and the smell of fresh bread."
+    )
+    return f"# {title}\n\n{body}"
+
+
 def _find_progress_layer(
     snapshot: dict[str, object],
     *,
@@ -174,7 +188,7 @@ async def test_submit_reader_input_returns_article_ready_snapshot_and_snapshot_r
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# API Submit\n\nFirst sentence.\n\nSecond paragraph.",
+                    "text": _long_text("API Submit"),
                     "source_metadata": {"source_kind": "api_test"},
                     "client_record_id": "reader-api-1",
                 },
@@ -184,17 +198,24 @@ async def test_submit_reader_input_returns_article_ready_snapshot_and_snapshot_r
             submitted = submit_response.json()
             assert submitted["article_ready_sequence"] == 1
             assert submitted["snapshot"]["schema_kind"] == "reader_plate_snapshot"
-            assert submitted["snapshot"]["record_id"] == submitted["record_id"]
+            assert submitted["snapshot"]["record_id"] == submitted["reading_record_id"]
             assert submitted["snapshot"]["base"]["base_id"] == submitted["base_id"]
 
+            # 当前提交路由只落盘记录与 article_ready 事件；首个翻译任务由
+            # 编排层 bootstrap（等价旧路由内联的 orchestrator 链路）。
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=UUID(submitted["reading_record_id"]),
+                user_id=user_id,
+            )
+
             snapshot_response = await client.get(
-                f"/reader/records/{submitted['record_id']}/snapshot",
+                f"/reader/records/{submitted['reading_record_id']}/snapshot",
                 headers=AUTH_HEADERS,
             )
             assert snapshot_response.status_code == 200, snapshot_response.text
             snapshot = snapshot_response.json()
             assert snapshot["schema_kind"] == "reader_plate_snapshot"
-            assert snapshot["record_id"] == submitted["record_id"]
+            assert snapshot["record_id"] == submitted["reading_record_id"]
             assert snapshot["base"]["base_id"] == submitted["base_id"]
             assert snapshot["last_event_sequence"] == 1
             assert snapshot["record"]["product_state"] == "readable_enhancing"
@@ -239,12 +260,19 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Published\n\nPublish progress example.",
+                    "text": _long_text("Published"),
                 },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
-            record_id = UUID(submitted["record_id"])
+            record_id = UUID(submitted["reading_record_id"])
+
+            # 提交路由不再内联 enqueue 翻译任务；编排层 bootstrap 后才有
+            # queued translate_unit job 可断言。
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=record_id,
+                user_id=user_id,
+            )
 
             async with pool.acquire() as conn:
                 job_row = await conn.fetchrow(
@@ -318,7 +346,7 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
                 )
 
             snapshot_response = await client.get(
-                f"/reader/records/{submitted['record_id']}/snapshot",
+                f"/reader/records/{submitted['reading_record_id']}/snapshot",
                 headers=AUTH_HEADERS,
             )
             assert snapshot_response.status_code == 200, snapshot_response.text
@@ -350,12 +378,19 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Retry\n\nRetry progress example.",
+                    "text": _long_text("Retry"),
                 },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
-            record_id = UUID(submitted["record_id"])
+            record_id = UUID(submitted["reading_record_id"])
+
+            # 提交路由不再内联 enqueue 翻译任务；编排层 bootstrap 后才有
+            # queued translate_unit job 可断言。
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=record_id,
+                user_id=user_id,
+            )
 
             async with pool.acquire() as conn:
                 stale_job_row = await conn.fetchrow(
@@ -477,7 +512,7 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
                 )
 
             snapshot_response = await client.get(
-                f"/reader/records/{submitted['record_id']}/snapshot",
+                f"/reader/records/{submitted['reading_record_id']}/snapshot",
                 headers=AUTH_HEADERS,
             )
             assert snapshot_response.status_code == 200, snapshot_response.text
@@ -514,12 +549,19 @@ async def test_snapshot_progress_reflects_failed_terminal_without_overwriting_pr
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Failed Job\n\nFailure progress example.",
+                    "text": _long_text("Failed Job"),
                 },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
-            record_id = UUID(submitted["record_id"])
+            record_id = UUID(submitted["reading_record_id"])
+
+            # 提交路由不再内联 enqueue 翻译任务；编排层 bootstrap 后才有
+            # queued translate_unit job 可断言。
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=record_id,
+                user_id=user_id,
+            )
 
             async with pool.acquire() as conn:
                 job_id = await conn.fetchval(
@@ -547,7 +589,7 @@ async def test_snapshot_progress_reflects_failed_terminal_without_overwriting_pr
                 )
 
             snapshot_response = await client.get(
-                f"/reader/records/{submitted['record_id']}/snapshot",
+                f"/reader/records/{submitted['reading_record_id']}/snapshot",
                 headers=AUTH_HEADERS,
             )
             assert snapshot_response.status_code == 200
@@ -579,10 +621,10 @@ async def test_polling_returns_article_ready_event_and_empty_page_after_cursor(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Polling\n\nPolling event body.",
+                    "text": _long_text("Polling"),
                 },
             )
-            record_id = submit_response.json()["record_id"]
+            record_id = submit_response.json()["reading_record_id"]
 
             first_page = await client.get(
                 f"/reader/records/{record_id}/events?after_sequence=0&limit=10",
@@ -624,10 +666,10 @@ async def test_polling_limit_truncation_does_not_skip_cursor(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Cursor\n\nCursor truncation body.",
+                    "text": _long_text("Cursor"),
                 },
             )
-            record_id = UUID(submit_response.json()["record_id"])
+            record_id = UUID(submit_response.json()["reading_record_id"])
 
             runtime = ReaderEventRuntime(pool=pool)
             await runtime.publish_event(
@@ -682,10 +724,10 @@ async def test_other_user_cannot_read_snapshot_or_events(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Private\n\nPrivate reader record.",
+                    "text": _long_text("Private"),
                 },
             )
-            record_id = submit_response.json()["record_id"]
+            record_id = submit_response.json()["reading_record_id"]
 
     with _mock_auth(other_user_id):
         async with await _create_client(app) as client:
@@ -719,11 +761,18 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Owner\n\nOwner progress record.",
+                    "text": _long_text("Owner"),
                 },
             )
             assert owner_submit.status_code == 200
-            owner_record_id = owner_submit.json()["record_id"]
+            owner_record_id = owner_submit.json()["reading_record_id"]
+
+            # 提交路由不再内联 enqueue 翻译任务；编排层 bootstrap 后才有
+            # queued translate_unit job 可断言。
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=UUID(owner_record_id),
+                user_id=owner_id,
+            )
 
     with _mock_auth(other_user_id):
         async with await _create_client(app) as client:
@@ -732,11 +781,16 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Other\n\nOther progress record.",
+                    "text": _long_text("Other"),
                 },
             )
             assert other_submit.status_code == 200
-            other_record_id = UUID(other_submit.json()["record_id"])
+            other_record_id = UUID(other_submit.json()["reading_record_id"])
+
+            await TranslationJobBootstrapService(pool=pool).bootstrap_translation_run(
+                record_id=other_record_id,
+                user_id=other_user_id,
+            )
 
     async with pool.acquire() as conn:
         other_job_id = await conn.fetchval(
@@ -816,7 +870,7 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "Blank client record id first submit.",
+                    "text": _long_text("Blank Client Record First"),
                     "client_record_id": "   ",
                 },
             )
@@ -825,7 +879,7 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "Blank client record id second submit.",
+                    "text": _long_text("Blank Client Record Second"),
                     "client_record_id": "",
                 },
             )
@@ -833,8 +887,8 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
     assert first.status_code == 200
     assert second.status_code == 200
 
-    first_record_id = UUID(first.json()["record_id"])
-    second_record_id = UUID(second.json()["record_id"])
+    first_record_id = UUID(first.json()["reading_record_id"])
+    second_record_id = UUID(second.json()["reading_record_id"])
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -865,7 +919,7 @@ async def test_duplicate_client_record_id_returns_conflict(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "First idempotency-like submit.",
+                    "text": _long_text("Idempotency First Submit"),
                     "client_record_id": "dup-client-record-id",
                 },
             )
@@ -874,7 +928,7 @@ async def test_duplicate_client_record_id_returns_conflict(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "Second conflicting submit.",
+                    "text": _long_text("Idempotency Second Submit"),
                     "client_record_id": "dup-client-record-id",
                 },
             )
@@ -900,7 +954,7 @@ async def test_list_reader_records_returns_user_scoped_records(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# First Record\n\nFirst reading record body.",
+                    "text": _long_text("First Record"),
                     "source_metadata": {"source_kind": "list_test_first"},
                 },
             )
@@ -909,7 +963,7 @@ async def test_list_reader_records_returns_user_scoped_records(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Second Record\n\nSecond reading record body.",
+                    "text": _long_text("Second Record"),
                     "source_metadata": {"source_kind": "list_test_second"},
                 },
             )
@@ -974,7 +1028,7 @@ async def test_list_reader_records_isolates_by_user(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Other\n\nOther user record.",
+                    "text": _long_text("Other"),
                 },
             )
 
@@ -1006,7 +1060,7 @@ async def test_list_reader_records_respects_limit(
                     headers=AUTH_HEADERS,
                     json={
                         "source_type": "pasted_text",
-                        "text": f"# Record {index}\n\nRecord {index} body.",
+                        "text": _long_text(f"Record {index}"),
                     },
                 )
                 assert response.status_code == 200
@@ -1039,7 +1093,7 @@ async def test_list_reader_records_filters_by_query(
                     headers=AUTH_HEADERS,
                     json={
                         "source_type": "pasted_text",
-                        "text": f"# {title}\n\n{title} body.",
+                        "text": _long_text(title),
                     },
                 )
                 assert response.status_code == 200
@@ -1073,7 +1127,7 @@ async def test_list_reader_records_filters_by_product_state(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Failed Record\n\nFailed body.",
+                    "text": _long_text("Failed Record"),
                 },
             )
             ready_response = await client.post(
@@ -1081,13 +1135,13 @@ async def test_list_reader_records_filters_by_product_state(
                 headers=AUTH_HEADERS,
                 json={
                     "source_type": "pasted_text",
-                    "text": "# Ready Record\n\nReady body.",
+                    "text": _long_text("Ready Record"),
                 },
             )
             assert failed_response.status_code == 200
             assert ready_response.status_code == 200
 
-            failed_record_id = UUID(failed_response.json()["record_id"])
+            failed_record_id = UUID(failed_response.json()["reading_record_id"])
             await pool.execute(
                 """
                 UPDATE reading_records

@@ -1896,17 +1896,19 @@ class ReaderOrchestrationRepository:
         opened_at: datetime,
     ) -> datetime | None:
         """Stamp ``reading_records.last_opened_at`` for an active, owned
-        Reading Record. Must not touch ``updated_at`` and must not write
-        ``reader_events``. Returns the new timestamp on success, or
-        ``None`` when the record does not exist, is deleted, or belongs to
-        another user.
+        Reading Record and restore recent-list visibility in the same
+        UPDATE (``recent_hidden_at = NULL``). Must not touch
+        ``updated_at`` and must not write ``reader_events``. Returns the
+        new timestamp on success, or ``None`` when the record does not
+        exist, is deleted, or belongs to another user.
         """
         pool = self.get_pool()
         async with pool.acquire() as conn:
             new_value = await conn.fetchval(
                 """
                 UPDATE reading_records
-                SET last_opened_at = $3
+                SET last_opened_at = $3,
+                    recent_hidden_at = NULL
                 WHERE id = $1
                   AND user_id = $2
                   AND deleted_at IS NULL
@@ -1919,6 +1921,47 @@ class ReaderOrchestrationRepository:
             )
         return new_value
 
+    async def mark_record_recent_hidden(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        hidden_at: datetime,
+    ) -> tuple[datetime, bool] | None:
+        """Hide an active, owned Reading Record from the recent list.
+
+        First call writes ``recent_hidden_at``; repeated calls keep the
+        first timestamp (idempotent). Must not touch ``updated_at`` /
+        ``last_opened_at`` and must not write ``reader_events``.
+
+        Returns ``(recent_hidden_at, already_hidden)`` on success, or
+        ``None`` when the record does not exist, is deleted, is not
+        ``active``, or belongs to another user (callers surface all four
+        as a uniform 404).
+        """
+        pool = self.get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE reading_records
+                SET recent_hidden_at = COALESCE(recent_hidden_at, $3)
+                WHERE id = $1
+                  AND user_id = $2
+                  AND deleted_at IS NULL
+                  AND lifecycle_status = 'active'
+                RETURNING recent_hidden_at,
+                          (recent_hidden_at <> $3) AS already_hidden
+                """,
+                record_id,
+                user_id,
+                hidden_at,
+            )
+        if row is None:
+            return None
+        recent_hidden_at = row["recent_hidden_at"]
+        assert isinstance(recent_hidden_at, datetime)
+        return recent_hidden_at, bool(row["already_hidden"])
+
     async def list_user_records(
         self,
         *,
@@ -1926,8 +1969,15 @@ class ReaderOrchestrationRepository:
         limit: int = 20,
         query: str | None = None,
         product_states: tuple[str, ...] | None = None,
+        recent_only: bool = False,
     ) -> tuple[tuple[ReaderRecordSummary, ...], int]:
         """List the current user's reading records as a safe read model.
+
+        ``recent_only=True`` restricts items AND ``total`` to the
+        recent-reading list (``deleted_at IS NULL``,
+        ``recent_hidden_at IS NULL``, ``last_opened_at IS NOT NULL``);
+        the default keeps the full-list semantics (hidden records still
+        returned). Both branches always apply the same filter.
 
          (fix): ``display_title`` is computed in SQL via a CTE
         so that the search ``query`` can be filtered at the database
@@ -2081,6 +2131,9 @@ class ReaderOrchestrationRepository:
                       AND r.deleted_at IS NULL
                       AND ($2::text[] IS NULL
                            OR r.product_state::text = ANY($2::text[]))
+                      AND ($4::bool IS NOT TRUE
+                           OR (r.recent_hidden_at IS NULL
+                               AND r.last_opened_at IS NOT NULL))
                 )
             """
 
@@ -2111,6 +2164,7 @@ class ReaderOrchestrationRepository:
                     user_id,
                     normalized_product_states,
                     limit,
+                    recent_only,
                 )
                 total = await conn.fetchval(
                     """
@@ -2120,14 +2174,19 @@ class ReaderOrchestrationRepository:
                       AND deleted_at IS NULL
                       AND ($2::text[] IS NULL
                            OR product_state::text = ANY($2::text[]))
+                      AND ($3::bool IS NOT TRUE
+                           OR (recent_hidden_at IS NULL
+                               AND last_opened_at IS NOT NULL))
                     """,
                     user_id,
                     normalized_product_states,
+                    recent_only,
                 )
             else:
                 # Query non-empty — items SQL has filter + ORDER BY
                 # + LIMIT, NO COUNT(*) OVER(). total uses a separate CTE
                 # count query so display_title filtering is applied.
+                # Param order: $4 = recent_only (CTE), $5 = limit.
                 rows = await conn.fetch(
                     f"""
                     WITH {cte_sql}
@@ -2137,11 +2196,12 @@ class ReaderOrchestrationRepository:
                     ORDER BY last_opened_at DESC NULLS LAST,
                              created_at DESC,
                              id DESC
-                    LIMIT $4
+                    LIMIT $5
                     """,
                     user_id,
                     normalized_product_states,
                     normalized_query,
+                    recent_only,
                     limit,
                 )
                 total = await conn.fetchval(
@@ -2153,6 +2213,7 @@ class ReaderOrchestrationRepository:
                     user_id,
                     normalized_product_states,
                     normalized_query,
+                    recent_only,
                 )
 
         summaries = tuple(

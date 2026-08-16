@@ -132,10 +132,24 @@ async def _create_reader_input_record(
     title: str | None = None,
     source_metadata: dict[str, object] | None = None,
 ) -> str:
-    """POST the unified reader input route and return the record_id."""
-    text = f"Record body {uuid4().hex[:8]}."
+    """POST the unified reader input route and return the record_id.
+
+    The suitability gate requires >= 50 English words, so the body is a
+    long English paragraph regardless of the optional Markdown title.
+    """
+    body = (
+        "The public library stood at the edge of the market square, and "
+        "every morning its heavy wooden doors opened before the shops "
+        "around it had finished raising their shutters. Children climbed "
+        f"the stone steps with books under their arms, and a caretaker "
+        f"with a brass key walked slowly along the reading room, lighting "
+        f"the lamps one by one. Marker {uuid4().hex[:8]} settled quietly "
+        "over the shelves while readers turned pages and the town outside "
+        "went about its ordinary business."
+    )
+    text = body
     if title is not None:
-        text = f"# {title}\n\n{text}"
+        text = f"# {title}\n\n{body}"
     payload: dict[str, object] = {
         "source_type": "pasted_text",
         "text": text,
@@ -148,7 +162,9 @@ async def _create_reader_input_record(
         json=payload,
     )
     assert response.status_code == 200, response.text
-    return str(response.json()["record_id"])
+    # Unified input contract: both stable-ready and candidate outcomes
+    # expose ``reading_record_id`` (there is no top-level ``record_id``).
+    return str(response.json()["reading_record_id"])
 
 
 async def _set_generated_title(

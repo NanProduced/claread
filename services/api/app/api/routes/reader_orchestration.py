@@ -36,6 +36,7 @@ from app.schemas.reader_orchestration import (
     ReaderRecordListItem,
     ReaderRecordListResponse,
     ReaderRecordOpenedResponse,
+    ReaderRecordRecentRemovedResponse,
     ReaderSectionTranslationOutcome,
     ReaderSectionTranslationRequest,
     ReaderSectionTranslationResponse,
@@ -1239,6 +1240,7 @@ async def list_reader_records(
     limit: int = Query(default=20, ge=1, le=100),
     query: str | None = Query(default=None),
     product_state: str | None = Query(default=None),
+    recent_only: bool = Query(default=False),
 ) -> ReaderRecordListResponse:
     normalized_query = query.strip() if query and query.strip() else None
     normalized_product_states: tuple[str, ...] | None = None
@@ -1266,6 +1268,7 @@ async def list_reader_records(
         limit=limit,
         query=normalized_query,
         product_states=normalized_product_states,
+        recent_only=recent_only,
     )
     return ReaderRecordListResponse(
         items=[
@@ -1311,6 +1314,38 @@ async def mark_reader_record_opened(
     return ReaderRecordOpenedResponse(
         record_id=str(record_id),
         last_opened_at=new_value,
+    )
+
+
+@router.delete(
+    "/records/{record_id}/recent",
+    response_model=ReaderRecordRecentRemovedResponse,
+    summary="Remove a Reading Record from the recent-reading list (non-destructive)",
+)
+async def remove_reader_record_from_recent(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderRecordRecentRemovedResponse:
+    """Hide the record from ``recent_only`` lists; it stays in the full
+    list and all data / jobs / RAG state are untouched. Opening the
+    record again restores recent visibility. Idempotent: repeated calls
+    keep the first ``recent_hidden_at``.
+    """
+    repository = ReaderOrchestrationRepository()
+    result = await repository.mark_record_recent_hidden(
+        record_id=record_id,
+        user_id=UUID(current_user.user_id),
+        hidden_at=datetime.now(tz=UTC),
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="Reader record not found"
+        )
+    recent_hidden_at, already_hidden = result
+    return ReaderRecordRecentRemovedResponse(
+        record_id=str(record_id),
+        status="already_removed" if already_hidden else "removed_from_recent",
+        recent_hidden_at=recent_hidden_at,
     )
 
 

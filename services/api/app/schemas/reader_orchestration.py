@@ -1508,6 +1508,21 @@ class ReaderRecordOpenedResponse(BaseModel):
     last_opened_at: datetime
 
 
+class ReaderRecordRecentRemovedResponse(BaseModel):
+    """Response for ``DELETE /reader/records/{record_id}/recent``.
+
+    ``removed_from_recent`` — this call hid the record (first write).
+    ``already_removed`` — the record was already hidden; the first
+    ``recent_hidden_at`` timestamp is returned unchanged.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1)
+    status: Literal["removed_from_recent", "already_removed"]
+    recent_hidden_at: datetime
+
+
 class ReaderEventPollResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
