@@ -48,6 +48,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
     _build_vocabulary_output_from_candidates,
     _vocab_highlight_guard_reason_code,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 MIXED_SEGMENT_TEXT = (
     "The deadline for police protection was due to missed signals."
@@ -403,9 +404,9 @@ def test_snapshot_contains_no_illegal_multiword_vocabulary_highlight() -> None:
         },
         published_at=datetime(2026, 7, 20, 12, 0, tzinfo=UTC),
     )
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 7, 20, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 7, 20, 12, 0, tzinfo=UTC),
         last_event_sequence=9,
         enhancement_layers=[layer],
     )

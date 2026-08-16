@@ -44,6 +44,10 @@ from app.services.model_execution_journal.models import (
 from app.services.model_execution_journal.service import (
     ModelExecutionJournalService,
 )
+from app.services.reader_orchestration.analysis_section_jobs import (
+    ANALYSIS_SECTION_ORIGINS,
+    sql_blocked_by_active_translation,
+)
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
     current_span,
@@ -413,6 +417,7 @@ class ReaderJobRuntime:
                         FROM reader_jobs
                         WHERE status IN ('queued', 'retry_later')
                           AND available_at <= NOW()
+                          AND NOT {sql_blocked_by_active_translation(job_alias="reader_jobs")}
                           AND ($1::text IS NULL OR job_type = $1)
                           AND ($2::text IS NULL OR target_type = $2)
                           AND ($3::text IS NULL
@@ -1680,7 +1685,15 @@ class ReaderJobRuntime:
             f"UPDATE reader_jobs SET {', '.join(set_parts)} "
             f"WHERE id = $1 RETURNING *"
         )
-        return await conn.fetchrow(query, *params)
+        updated = await conn.fetchrow(query, *params)
+        if updated is not None:
+            await _publish_analysis_progress_event_if_needed(
+                conn,
+                previous=job_row,
+                updated=updated,
+                target_status=target_status,
+            )
+        return updated
 
     async def _insert_job_event(
         self,
@@ -1769,6 +1782,72 @@ def _job_snapshot_from_row(row: asyncpg.Record) -> JobSnapshot:
         available_at=row["available_at"],
         pause_owner=row["pause_owner"],
         rationale_code=row["rationale_code"],
+    )
+
+
+_PROGRESS_DISPOSITION_FIELDS = (
+    "pause_owner",
+    "rationale_code",
+    "failure_class",
+    "failure_code",
+)
+
+
+def _analysis_progress_event_needed(
+    *,
+    previous: asyncpg.Record,
+    updated: asyncpg.Record,
+    target_status: str,
+) -> bool:
+    if target_status not in {STATUS_PAUSED, STATUS_FAILED_TERMINAL}:
+        return False
+    previous_status = str(previous["status"])
+    if previous_status != target_status:
+        return True
+    if target_status != STATUS_PAUSED:
+        return False
+    return any(
+        previous[field] != updated[field] for field in _PROGRESS_DISPOSITION_FIELDS
+    )
+
+
+async def _publish_analysis_progress_event_if_needed(
+    conn: asyncpg.Connection,
+    *,
+    previous: asyncpg.Record,
+    updated: asyncpg.Record,
+    target_status: str,
+) -> None:
+    if not _analysis_progress_event_needed(
+        previous=previous,
+        updated=updated,
+        target_status=target_status,
+    ):
+        return
+    payload = updated["input_json"] if isinstance(updated["input_json"], dict) else {}
+    origin = payload.get("request_origin")
+    section_id = payload.get("analysis_section_id")
+    if origin not in ANALYSIS_SECTION_ORIGINS:
+        return
+    if not isinstance(section_id, str) or not section_id:
+        return
+    from app.services.reader_orchestration.analysis_section_jobs import (
+        ANALYSIS_PROGRESS_CHANGED_EVENT,
+    )
+    from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+
+    kind = "capability_paused" if target_status == STATUS_PAUSED else "capability_failed"
+    await ReaderEventRuntime().publish_event_in_transaction(
+        conn,
+        record_id=updated["reading_record_id"],
+        event_type=ANALYSIS_PROGRESS_CHANGED_EVENT,
+        payload_json={
+            "base_id": str(updated["base_id"]) if updated["base_id"] else None,
+            "generation": int(updated["expected_generation"]),
+            "accepted_section_ids": [section_id],
+            "mutation": kind,
+            "topic": "analysis_progress",
+        },
     )
 
 

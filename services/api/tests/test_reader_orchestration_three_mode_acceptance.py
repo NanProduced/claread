@@ -699,19 +699,18 @@ async def test_grouped_windowed_acceptance_through_worker_loop(
         f"expected at least one build_vocabulary_layer_article job, got {job_types}"
     )
 
-    # Grammar goes through grammar-window window jobs, NOT batch grammar_bundle.
     grammar_window_jobs = [
         j for j in jobs if j["job_type"] == "build_grammar_bundle_window"
     ]
-    assert len(grammar_window_jobs) >= 1, (
-        f"expected at least 1 build_grammar_bundle_window job, got {job_types}"
+    assert len(grammar_window_jobs) == 0, (
+        f"GROUPED_WINDOWED auto path must not create grammar windows, got {job_types}"
     )
     grammar_batch_jobs = [
         j for j in jobs
         if j["job_type"] == "build_grammar_bundle" and j["target_type"] == "unit_range"
     ]
-    assert len(grammar_batch_jobs) == 0, (
-        "GROUPED_WINDOWED must not create grammar batch jobs; "
+    assert len(grammar_batch_jobs) == 1, (
+        "GROUPED_WINDOWED must create one first-section grammar batch job; "
         f"found {len(grammar_batch_jobs)}"
     )
 
@@ -729,21 +728,12 @@ async def test_grouped_windowed_acceptance_through_worker_loop(
                 f"expected 'grouped_windowed'"
             )
 
-    # Grammar window usage events: operation_fingerprint == grammar_bundle_window_v1.
     usage_events = await _fetch_grammar_usage_events(pool, article.record_id)
-    window_events = [
-        e for e in usage_events
-        if e["operation_fingerprint"] == "grammar_bundle_window_v1"
-    ]
-    assert len(window_events) >= 1, (
-        f"expected at least 1 grammar_bundle_window_v1 usage event, "
-        f"got {len(window_events)}; all events: "
-        f"{[e['operation_fingerprint'] for e in usage_events]}"
+    assert usage_events, "expected grammar usage events for first-section batch"
+    assert all(
+        event["operation_fingerprint"] != "grammar_bundle_window_v1"
+        for event in usage_events
     )
-    for event in window_events:
-        assert event["status"] == "succeeded", (
-            f"window usage event status={event['status']!r}"
-        )
 
     # Layer counts: translation/vocabulary at least 1 per unit;
     # grammar_note and sentence_analysis may be budget-capped by the
