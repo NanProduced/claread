@@ -16,6 +16,7 @@ import {
   pollUpstreamReaderEvents,
   putUpstreamReaderConfirmedSource,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderAnalysisSectionRequest,
   submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
@@ -56,6 +57,8 @@ import type {
   ReaderEventPollResponseDto,
   ReaderInputAdapterSourceTypeDto,
   ReaderPlainTextSubmitResponseDto,
+  ReaderAnalysisSectionRequestDto,
+  ReaderAnalysisSectionRequestResponseDto,
   ReaderPlateSnapshotDto,
   ReaderSectionTranslationRequestDto,
   ReaderSectionTranslationResponseDto,
@@ -92,7 +95,8 @@ export type ReaderPlateBffError = {
     | "stale_source_revision"
     | "stale_candidate_revision"
     // Section-translation fence conflict (409 from upstream).
-    | "section_translation_conflict";
+    | "section_translation_conflict"
+    | "analysis_section_conflict";
   message: string;
   recordId?: string;
   /**
@@ -1444,4 +1448,132 @@ export async function submitReaderSectionTranslationFromWeb(
   }
 
   return { ok: true, ...upstreamResult.data };
+}
+
+export type ReaderAnalysisSectionRequestResult =
+  | ({ ok: true } & ReaderAnalysisSectionRequestResponseDto)
+  | ReaderPlateBffError;
+
+function analysisSectionUpstreamError(status: number): ReaderPlateBffError {
+  if (status === 0 || status >= 500) {
+    return {
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+      message: "透读服务暂时不可用，请稍后重试。",
+    };
+  }
+  if (status === 401) {
+    return {
+      ok: false,
+      status: 401,
+      code: "upstream_auth_failed",
+      message: "登录态已失效，请重新登录后再试。",
+    };
+  }
+  if (status === 404) {
+    return {
+      ok: false,
+      status: 404,
+      code: "record_not_found",
+      message: "没有找到这条阅读记录。",
+    };
+  }
+  if (status === 409) {
+    return {
+      ok: false,
+      status: 409,
+      code: "analysis_section_conflict",
+      message: "文章状态已更新，请刷新后重试。",
+    };
+  }
+  if (status === 422) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+      message: "请求参数不正确，请刷新后重试。",
+    };
+  }
+  return {
+    ok: false,
+    status,
+    code: "upstream_error",
+    message: "解析服务异常，请稍后重试。",
+  };
+}
+
+export async function submitReaderAnalysisSectionRequestFromWeb(
+  recordId: string,
+  input: {
+    scope?: unknown;
+    sectionId?: unknown;
+  },
+): Promise<ReaderAnalysisSectionRequestResult> {
+  const trimmedRecordId = typeof recordId === "string" ? recordId.trim() : "";
+  if (!trimmedRecordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const scope = input.scope;
+  if (scope !== "single" && scope !== "remaining") {
+    return invalidInput("scope 必须是 single 或 remaining。");
+  }
+
+  let sectionId: string | null = null;
+  if (input.sectionId !== undefined && input.sectionId !== null) {
+    if (typeof input.sectionId !== "string") {
+      return invalidInput("sectionId 不合法。");
+    }
+    const trimmed = input.sectionId.trim();
+    sectionId = trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (scope === "single") {
+    if (sectionId === null) {
+      return invalidInput("single 必须提供 sectionId。");
+    }
+  } else if (sectionId !== null) {
+    return invalidInput("remaining 不能携带 sectionId。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderAnalysisSectionRequestDto = {
+    scope,
+    section_id: sectionId,
+  };
+
+  const upstreamResult = await submitUpstreamReaderAnalysisSectionRequest(
+    trimmedRecordId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return analysisSectionUpstreamError(upstreamResult.status);
+  }
+
+  const data = upstreamResult.data;
+  const outcome = data.outcome;
+  if (
+    outcome !== "started" &&
+    outcome !== "already_active" &&
+    outcome !== "already_complete" &&
+    outcome !== "paused_quota" &&
+    outcome !== "rejected"
+  ) {
+    return analysisSectionUpstreamError(502);
+  }
+
+  return {
+    ok: true,
+    outcome,
+    accepted_section_ids: data.accepted_section_ids,
+    event_sequence: data.event_sequence,
+    reason_code: data.reason_code,
+  };
 }

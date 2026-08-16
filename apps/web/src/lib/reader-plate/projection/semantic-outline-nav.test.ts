@@ -17,6 +17,7 @@ import {
   type ReaderPlateSnapshotDto,
   type ReaderUnitType,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 type UnitIn = {
   unit_id: string;
@@ -142,6 +143,7 @@ function makeSnapshot(
     parsed_decisions: [],
     value: [],
     semantic_outline: outline,
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

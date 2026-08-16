@@ -516,6 +516,8 @@ export interface ReaderPlateSnapshotDto {
   stable_document_tree?: ReaderStableDocumentBlockNodeDto[];
   /** Optional; undefined | null = no trusted outline. Do not parse enhancement_layers for L2. */
   semantic_outline?: import("@/lib/reader-plate/projection/semantic-outline").ReaderSemanticOutlineProjectionDto | null;
+  /** Required production Snapshot field. Never invent a completed placeholder. */
+  analysis_progress: ReaderAnalysisProgressDto;
 }
 
 // ---------------------------------------------------------------------------
@@ -1751,4 +1753,81 @@ export interface ReaderSectionTranslationResponseDto {
   job_id: string | null;
   /** Stable reason code for diagnostics; never an exception message. */
   detail: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Progressive analysis Snapshot + explicit section command
+// Mirrors services/api/app/schemas/reader_orchestration.py
+// ---------------------------------------------------------------------------
+
+export type ReaderAnalysisMode = "automatic" | "segmented_on_demand";
+
+export type ReaderAnalysisOverallStatus =
+  | "queued"
+  | "processing"
+  | "waiting_user"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "paused_quota";
+
+export type ReaderAnalysisActivePhase = "translation" | "analysis";
+
+export type ReaderAnalysisCapabilityStatus =
+  | "not_started"
+  | "queued"
+  | "processing"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "paused_quota";
+
+export interface ReaderAnalysisSectionProgressDto {
+  section_id: string;
+  order_index: number;
+  label: string;
+  excerpt: string;
+  start_unit_id: string;
+  end_unit_id: string;
+  status: ReaderAnalysisCapabilityStatus;
+  vocabulary_status: ReaderAnalysisCapabilityStatus;
+  grammar_status: ReaderAnalysisCapabilityStatus;
+  can_start: boolean;
+  updated_at: string | null;
+  failure_code: string | null;
+}
+
+export interface ReaderAnalysisProgressDto {
+  mode: ReaderAnalysisMode;
+  plan_version: string;
+  overall_status: ReaderAnalysisOverallStatus;
+  active_phase: ReaderAnalysisActivePhase | null;
+  translation_status: ReaderAnalysisCapabilityStatus;
+  completed_section_count: number;
+  total_section_count: number;
+  active_section_id: string | null;
+  needs_user_action: boolean;
+  last_progress_at: string | null;
+  sections: ReaderAnalysisSectionProgressDto[];
+}
+
+export type ReaderAnalysisSectionRequestScope = "single" | "remaining";
+
+export type ReaderAnalysisSectionRequestOutcome =
+  | "started"
+  | "already_active"
+  | "already_complete"
+  | "paused_quota"
+  | "rejected";
+
+export interface ReaderAnalysisSectionRequestDto {
+  scope: ReaderAnalysisSectionRequestScope;
+  section_id: string | null;
+}
+
+export interface ReaderAnalysisSectionRequestResponseDto {
+  outcome: ReaderAnalysisSectionRequestOutcome;
+  accepted_section_ids: string[];
+  event_sequence: number | null;
+  reason_code: string | null;
 }

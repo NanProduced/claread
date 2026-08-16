@@ -12,6 +12,7 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   type ReaderPlateSnapshotDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 import type { ReaderRecordPlateDocument } from "@/lib/reader-plate/projection/reader-record-plate-document";
 
 // The rail computes its outline via projectReaderOutlineView. To exercise a
@@ -114,6 +115,7 @@ function snap(): ReaderPlateSnapshotDto {
     parsed_decisions: [],
     value: [],
     semantic_outline: null,
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

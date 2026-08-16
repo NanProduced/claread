@@ -250,6 +250,140 @@ describe("classifyReaderEvent — G2 projection_ops + ask_supplements", () => {
 // G3: record_state_changed + record_metadata + status_changed
 // ---------------------------------------------------------------------------
 
+describe("classifyReaderEvent — analysis_progress record_state_changed", () => {
+  function makeProgressPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      topic: "analysis_progress",
+      base_id: "base_1",
+      generation: 1,
+      accepted_section_ids: ["ras1_a"],
+      mutation: "enqueue_or_resume",
+      ...overrides,
+    };
+  }
+
+  it.each(["enqueue_or_resume", "capability_paused", "capability_failed"] as const)(
+    "reloads snapshot for mutation %s",
+    (mutation) => {
+      const result = classifyReaderEvent(
+        makeEvent({
+          event_type: "record_state_changed",
+          payload: makeProgressPayload({ mutation }),
+        }),
+        MATCHING_FENCE,
+      );
+      expect(result).toEqual({ kind: "reload_snapshot", reason: "analysis_progress" });
+    },
+  );
+
+  it("accepts multiple accepted_section_ids", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload({
+          accepted_section_ids: ["ras1_a", "ras1_b"],
+        }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result.kind).toBe("reload_snapshot");
+  });
+
+  it("reloads snapshot when fence is absent", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload(),
+      }),
+      null,
+    );
+    expect(result).toEqual({ kind: "reload_snapshot", reason: "analysis_progress" });
+  });
+
+  it("resets on generation mismatch", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload({ generation: 2 }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_or_reset",
+      reason: "analysis_progress_fence_mismatch",
+    });
+  });
+
+  it("resets on base mismatch", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload({ base_id: "base_other" }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result.kind).toBe("reload_or_reset");
+    expect(result.reason).toBe("analysis_progress_fence_mismatch");
+  });
+
+  it("resets on empty accepted_section_ids", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload({ accepted_section_ids: [] }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_or_reset",
+      reason: "analysis_progress_invalid_payload",
+    });
+  });
+
+  it("resets on illegal mutation", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeProgressPayload({ mutation: "heartbeat" }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result.reason).toBe("analysis_progress_invalid_payload");
+  });
+
+  it("resets when required fields are missing or mistyped", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: { topic: "analysis_progress", generation: "1" },
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_or_reset",
+      reason: "analysis_progress_invalid_payload",
+    });
+  });
+
+  it("does not intercept ordinary representation record_state_changed", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "record_state_changed",
+        payload: makeRepresentationPayload({
+          representation_section: "record_metadata",
+          operation: "status_changed",
+          target_keys: ["display_title_zh"],
+        }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_snapshot",
+      reason: "representation:record_metadata:status_changed",
+    });
+  });
+});
+
 describe("classifyReaderEvent — G3 record_state_changed + record_metadata", () => {
   it("reloads on valid G3 status_changed with matching fence", () => {
     const result = classifyReaderEvent(

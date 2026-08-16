@@ -19,6 +19,7 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   type ReaderPlateSnapshotDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 type UnitIn = {
   unit_id: string;
@@ -148,6 +149,7 @@ function makeSnapshot(
     parsed_decisions: [],
     value: [],
     semantic_outline: outline,
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

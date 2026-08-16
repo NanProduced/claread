@@ -25,6 +25,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   getUpstreamReaderArticleRagIndexStatus: vi.fn(),
   ensureUpstreamReaderArticleRagIndex: vi.fn(),
   submitUpstreamReaderSectionTranslation: vi.fn(),
+  submitUpstreamReaderAnalysisSectionRequest: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
@@ -41,6 +42,7 @@ import {
   pollUpstreamReaderEvents,
   putUpstreamReaderConfirmedSource,
   submitUpstreamReaderPlainText,
+  submitUpstreamReaderAnalysisSectionRequest,
   submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
@@ -57,6 +59,7 @@ import {
   initReaderSourceArtifactUploadFromWeb,
   pollReaderEventsFromWeb,
   submitReaderPlainTextFromWeb,
+  submitReaderAnalysisSectionRequestFromWeb,
   submitReaderSectionTranslationFromWeb,
   submitReaderSourceArtifactInputFromWeb,
   submitReaderUnifiedInputFromWeb,
@@ -64,19 +67,20 @@ import {
   updateReaderConfirmedSourceFromWeb,
 } from "./reader-plate";
 import { appReaderRoute } from "@/lib/routes";
-import type {
-  ReaderArticleRagIndexEnsureResponseDto,
-  ReaderArticleRagIndexStatusResponseDto,
-  ReaderArtifactPipelineStatusResponseDto,
-  ReaderCandidateDocumentConfirmResponseDto,
-  ReaderCandidateDocumentReadResponse,
-  ReaderPlateSnapshotDto,
-  ReaderSectionTranslationResponseDto,
-  ReaderSourceArtifactSubmitInputResponseDto,
-  ReaderSourceArtifactUploadCompleteResponseDto,
-  ReaderSourceArtifactUploadInitResponseDto,
-  ReaderStableDocumentResponseDto,
-  ReaderUnifiedInputSubmitResponseDto,
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
+import {
+  type ReaderArticleRagIndexEnsureResponseDto,
+  type ReaderArticleRagIndexStatusResponseDto,
+  type ReaderArtifactPipelineStatusResponseDto,
+  type ReaderCandidateDocumentConfirmResponseDto,
+  type ReaderCandidateDocumentReadResponse,
+  type ReaderPlateSnapshotDto,
+  type ReaderSectionTranslationResponseDto,
+  type ReaderSourceArtifactSubmitInputResponseDto,
+  type ReaderSourceArtifactUploadCompleteResponseDto,
+  type ReaderSourceArtifactUploadInitResponseDto,
+  type ReaderStableDocumentResponseDto,
+  type ReaderUnifiedInputSubmitResponseDto,
 } from "@/types/api/reader-plate";
 
 const mockSession = {
@@ -123,6 +127,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 
@@ -2171,4 +2176,152 @@ describe("reader-plate BFF section translation", () => {
       }
     },
   );
+});
+
+describe("submitReaderAnalysisSectionRequestFromWeb", () => {
+  const inputSingle = { scope: "single", sectionId: "ras1_a" };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("forwards single as snake_case section_id", async () => {
+    vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+      ok: true,
+      data: {
+        outcome: "started",
+        accepted_section_ids: ["ras1_a"],
+        event_sequence: 4,
+        reason_code: null,
+      },
+    });
+
+    const result = await submitReaderAnalysisSectionRequestFromWeb(" rec_1 ", inputSingle);
+
+    expect(submitUpstreamReaderAnalysisSectionRequest).toHaveBeenCalledWith(
+      "rec_1",
+      { scope: "single", section_id: "ras1_a" },
+      "session-token",
+    );
+    expect(result).toEqual({
+      ok: true,
+      outcome: "started",
+      accepted_section_ids: ["ras1_a"],
+      event_sequence: 4,
+      reason_code: null,
+    });
+  });
+
+  it("forwards remaining with section_id null", async () => {
+    vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+      ok: true,
+      data: {
+        outcome: "already_active",
+        accepted_section_ids: [],
+        event_sequence: null,
+        reason_code: null,
+      },
+    });
+
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", {
+      scope: "remaining",
+      sectionId: "   ",
+    });
+
+    expect(submitUpstreamReaderAnalysisSectionRequest).toHaveBeenCalledWith(
+      "rec_1",
+      { scope: "remaining", section_id: null },
+      "session-token",
+    );
+    expect(result).toMatchObject({ ok: true, outcome: "already_active" });
+  });
+
+  it.each(["started", "already_active", "already_complete", "paused_quota", "rejected"] as const)(
+    "treats HTTP 200 outcome %s as transport success",
+    async (outcome) => {
+      vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+        ok: true,
+        data: {
+          outcome,
+          accepted_section_ids: [],
+          event_sequence: outcome === "started" ? 2 : null,
+          reason_code: outcome === "rejected" ? "analysis_mode_not_segmented" : null,
+        },
+      });
+
+      const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", {
+        scope: "remaining",
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.outcome).toBe(outcome);
+        expect(result.reason_code ?? null).toBe(
+          outcome === "rejected" ? "analysis_mode_not_segmented" : null,
+        );
+      }
+    },
+  );
+
+  it("rejects empty recordId", async () => {
+    const result = await submitReaderAnalysisSectionRequestFromWeb("  ", inputSingle);
+    expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
+    expect(submitUpstreamReaderAnalysisSectionRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects remaining with non-empty sectionId", async () => {
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", {
+      scope: "remaining",
+      sectionId: "ras1_a",
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
+  });
+
+  it("rejects single without sectionId", async () => {
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", {
+      scope: "single",
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
+  });
+
+  it("maps 404 to record_not_found without leaking upstream message", async () => {
+    vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "SQL detail leaked",
+    });
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", inputSingle);
+    expect(result).toMatchObject({ ok: false, code: "record_not_found", status: 404 });
+    if (!result.ok) {
+      expect(result.message).not.toContain("SQL");
+    }
+  });
+
+  it("maps 409 to analysis_section_conflict", async () => {
+    vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "inconsistent_active_base",
+    });
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", inputSingle);
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: "analysis_section_conflict",
+      message: "文章状态已更新，请刷新后重试。",
+    });
+  });
+
+  it("maps 422 to invalid_input 400", async () => {
+    vi.mocked(submitUpstreamReaderAnalysisSectionRequest).mockResolvedValue({
+      ok: false,
+      status: 422,
+      message: "validation failed",
+    });
+    const result = await submitReaderAnalysisSectionRequestFromWeb("rec_1", inputSingle);
+    expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
+    if (!result.ok) {
+      expect(result.message).not.toContain("validation failed");
+    }
+  });
 });

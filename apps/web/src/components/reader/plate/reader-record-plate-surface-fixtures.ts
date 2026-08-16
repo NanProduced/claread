@@ -23,6 +23,7 @@ import {
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import type { WebDictResult } from "@/types/api/dict";
 
@@ -302,6 +303,7 @@ export function makeSnapshot(
     ],
     enhancement_layers: [],
     enhancement_progress: makeProgress(),
+    analysis_progress: makeAnalysisProgressDto(),
     ask_supplements: [],
     user_assets: userAssets,
     parsed_decisions: [],

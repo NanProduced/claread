@@ -18,12 +18,13 @@ import type { Descendant } from "platejs";
 import { describe, expect, it } from "vitest";
 
 import { mergeIncrementalProjection } from "@/lib/reader-plate-snapshot/incremental-projection-merger";
-import type {
-  ReaderEventResponseDto,
-  ReaderPlateSnapshotDto,
-  ReaderSnapshotAskSupplementDto,
-  ReaderSnapshotUserAssetDto,
+import {
+  type ReaderEventResponseDto,
+  type ReaderPlateSnapshotDto,
+  type ReaderSnapshotAskSupplementDto,
+  type ReaderSnapshotUserAssetDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -149,6 +150,7 @@ function makeSnapshot(options: {
     user_assets: options.userAssets ?? [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 
