@@ -237,6 +237,7 @@ def _indexed_run_row(
     status: str = "indexed",
     vector_collection: str | None = _DEFAULT_VECTOR_NAMESPACE,
     embedding_model: str | None = _DEFAULT_DOCUMENT_EMBEDDING_MODEL,
+    contract_fingerprint: Any = "default",
 ) -> dict[str, Any]:
     """Build the ``reader_article_rag_index_runs`` row that the
     retrieval service's ``_load_indexed_run`` queries.
@@ -246,11 +247,29 @@ def _indexed_run_row(
     failures are pinned to the one field under test rather than to
     a default-vs-contract drift in the fixture itself.  Tests that
     intentionally want a mismatch must override the relevant field.
+
+    ``contract_fingerprint``: ``"default"`` (sentinel) persists the
+    current frozen contract fingerprint into ``metadata_json``;
+    ``None`` omits the key entirely (legacy row); any other value is
+    written verbatim (mismatch scenarios).
     """
+    from app.contracts.article_rag_contract import (
+        ARTICLE_RAG_EMBEDDING_CONTRACT,
+        compute_embedding_contract_fingerprint,
+    )
     from app.services.reader_orchestration.article_rag_index_plan import (
         compute_plan_content_sha256,
     )
     sha = plan_content_sha256 or compute_plan_content_sha256(plan)
+    if contract_fingerprint == "default":
+        fingerprint_value: Any = compute_embedding_contract_fingerprint(
+            ARTICLE_RAG_EMBEDDING_CONTRACT
+        )
+    else:
+        fingerprint_value = contract_fingerprint
+    metadata_json: dict[str, Any] = {}
+    if fingerprint_value is not None:
+        metadata_json["embedding_contract_fingerprint"] = fingerprint_value
     return {
         "id": uuid.uuid4(),
         "stable_document_id": plan.stable_document_id,
@@ -262,6 +281,7 @@ def _indexed_run_row(
         "updated_at": None,
         "vector_collection": vector_collection,
         "embedding_model": embedding_model,
+        "metadata_json": metadata_json,
     }
 
 
@@ -2260,3 +2280,126 @@ async def test_no_pool_configured_uses_dedicated_failure_code() -> None:
     message = str(exc_info.value)
     assert "hello" not in message
     assert "token" not in message.lower()
+
+
+# ---------------------------------------------------------------------------
+# Wave 7 (F1c / A4): the indexed run's persisted embedding contract
+# fingerprint gates retrieval.  Missing / mismatched fingerprints fail
+# closed BEFORE any embedding or vector search call.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_retrieval_fingerprint_missing_fails_closed() -> None:
+    """A4: a legacy indexed run without a persisted
+    ``embedding_contract_fingerprint`` must fail closed with the typed
+    ``retrieval_contract_identity_missing`` code — never fall through to
+    embedding / vector I/O."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(
+            plan,
+            contract_fingerprint=None,
+        ),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code == "retrieval_contract_identity_missing"
+    )
+    assert exc_info.value.retryable is False
+    # Fail-closed BEFORE embedding / vector I/O.
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
+    # Fixed safe message: no model / collection / metadata echo.
+    message = str(exc_info.value)
+    assert "text-embedding" not in message
+    assert "article_rag_chunks" not in message
+
+
+@pytest.mark.anyio
+async def test_retrieval_fingerprint_malformed_fails_closed() -> None:
+    """A4: a malformed fingerprint value (not a 64-char hex string) is
+    an unusable identity — same typed fail-closed path as missing."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(
+            plan,
+            contract_fingerprint="not-a-fingerprint",
+        ),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code == "retrieval_contract_identity_missing"
+    )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
+
+
+@pytest.mark.anyio
+async def test_retrieval_fingerprint_mismatch_fails_closed() -> None:
+    """A4: a well-formed fingerprint that differs from the current
+    frozen contract means the index lives in another embedding space —
+    reuse the existing contract-mismatch failure code (defence in depth:
+    the model/collection guards remain as a second layer)."""
+    plan = _make_plan()
+    provider = FakeArticleRagEmbeddingProvider(
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+    )
+    searcher = FakeArticleRagVectorSearcher(hits=[])
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(
+            plan,
+            contract_fingerprint="b" * 64,
+        ),
+        searcher=searcher,
+        embedding_provider=provider,
+    )
+
+    with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+        await service.retrieve_for_record(
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            query_text="hello",
+        )
+
+    assert (
+        exc_info.value.failure_code
+        == FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH
+    )
+    assert provider.call_count == 0
+    assert searcher.search_calls == []
+    # Fixed safe message: no raw fingerprint / metadata echo.
+    message = str(exc_info.value)
+    assert "b" * 64 not in message

@@ -59,7 +59,11 @@ from uuid import UUID
 
 import asyncpg
 
-from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
+from app.contracts.article_rag_contract import (
+    ARTICLE_RAG_EMBEDDING_CONTRACT,
+    EMBEDDING_CONTRACT_FINGERPRINT_METADATA_KEY,
+    compute_embedding_contract_fingerprint,
+)
 
 from .article_rag_index_plan import (
     ArticleRagIndexChunk,
@@ -122,6 +126,12 @@ FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH = (
 FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH = (
     "retrieval_embedding_contract_mismatch"
 )
+# Wave 7 (F1c / A4): the indexed run carries no usable persisted
+# contract fingerprint (legacy row or malformed value).  The run's
+# embedding-space identity is unverifiable — fail closed.
+FAILURE_CODE_RETRIEVAL_CONTRACT_IDENTITY_MISSING = (
+    "retrieval_contract_identity_missing"
+)
 # Missing asyncpg pool is a configuration error, not an embedding
 # failure — keep it attribution-distinct from embedding failures.
 FAILURE_CODE_RETRIEVAL_POOL_UNCONFIGURED = "retrieval_pool_unconfigured"
@@ -131,6 +141,10 @@ FAILURE_CODE_RETRIEVAL_POOL_UNCONFIGURED = "retrieval_pool_unconfigured"
 # is never echoed in ``str``, ``repr``, ``args``, or traceback.
 _MSG_INDEXED_RUN_CONTRACT_MISMATCH = (
     "Article RAG index run identity does not match the frozen contract"
+)
+_MSG_INDEXED_RUN_CONTRACT_IDENTITY_MISSING = (
+    "Article RAG indexed run has no persisted embedding contract "
+    "fingerprint; an explicit operator reindex is required"
 )
 _MSG_INDEX_RUN_PLAN_MISMATCH = (
     "Article RAG indexed run does not match the current plan"
@@ -305,6 +319,11 @@ class _IndexedRunSnapshot:
     status: str
     vector_collection: str | None = None
     embedding_model: str | None = None
+    # Wave 7 (F1c / A4): the persisted embedding contract fingerprint
+    # from ``metadata_json``.  ``None`` means the row carries no usable
+    # fingerprint (legacy rows / malformed value) — retrieval fails
+    # closed on that shape instead of serving unidentifiable vectors.
+    embedding_contract_fingerprint: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +499,33 @@ class ArticleRagRetrievalService:
             # structural equality against the frozen contract; any
             # mismatch raises a fixed safe message that does NOT echo
             # the offending value.
+            #
+            # Wave 7 (F1c / A4) — contract identity comes FIRST: the
+            # persisted ``metadata_json`` fingerprint must exist and
+            # match the current frozen contract.  Legacy rows without
+            # a fingerprint and rows built under another contract both
+            # fail closed here, BEFORE any embedding / vector I/O.
+            # The model/collection guards below remain as defence in
+            # depth (they also catch rows whose columns drift).
+            if indexed.embedding_contract_fingerprint is None:
+                raise ArticleRagRetrievalServiceError(
+                    _MSG_INDEXED_RUN_CONTRACT_IDENTITY_MISSING,
+                    retryable=False,
+                    failure_code=(
+                        FAILURE_CODE_RETRIEVAL_CONTRACT_IDENTITY_MISSING
+                    ),
+                )
+            if (
+                indexed.embedding_contract_fingerprint
+                != compute_embedding_contract_fingerprint(
+                    ARTICLE_RAG_EMBEDDING_CONTRACT
+                )
+            ):
+                raise ArticleRagRetrievalServiceError(
+                    _MSG_INDEXED_RUN_CONTRACT_MISMATCH,
+                    retryable=False,
+                    failure_code=FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH,
+                )
             if (
                 indexed.embedding_model
                 != contract.document_embedding_model
@@ -689,7 +735,7 @@ class ArticleRagRetrievalService:
             """
             SELECT id, stable_document_id, base_id, record_generation,
                    plan_content_sha256, chunk_count, status, updated_at,
-                   vector_collection, embedding_model
+                   vector_collection, embedding_model, metadata_json
             FROM reader_article_rag_index_runs
             WHERE stable_document_id = $1
               AND status = ANY($2::text[])
@@ -701,6 +747,21 @@ class ArticleRagRetrievalService:
         )
         if row is None:
             return None
+        # Wave 7 (F1c / A4): surface the persisted contract fingerprint
+        # from ``metadata_json``.  Only a well-formed 64-char lowercase
+        # hex string counts as usable identity; anything else (legacy
+        # rows, malformed values) stays ``None`` and fails closed at
+        # the Phase C identity guard.
+        fingerprint: str | None = None
+        metadata = row["metadata_json"]
+        if isinstance(metadata, dict):
+            raw_fp = metadata.get(EMBEDDING_CONTRACT_FINGERPRINT_METADATA_KEY)
+            if (
+                isinstance(raw_fp, str)
+                and len(raw_fp) == 64
+                and all(c in "0123456789abcdef" for c in raw_fp)
+            ):
+                fingerprint = raw_fp
         return _IndexedRunSnapshot(
             index_run_id=row["id"],
             stable_document_id=row["stable_document_id"],
@@ -719,6 +780,7 @@ class ArticleRagRetrievalService:
                 if row["embedding_model"] is not None
                 else None
             ),
+            embedding_contract_fingerprint=fingerprint,
         )
 
     def _join_hits(

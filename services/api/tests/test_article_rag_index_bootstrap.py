@@ -36,6 +36,10 @@ import asyncpg
 import pytest
 
 from app.contracts.annotation import utf16_code_unit_length
+from app.contracts.article_rag_contract import (
+    ARTICLE_RAG_EMBEDDING_CONTRACT,
+    compute_embedding_contract_fingerprint,
+)
 from app.database.connection import init_connection
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ArticleRagIndexBootstrapError,
@@ -1202,3 +1206,182 @@ async def test_bootstrap_has_no_embedding_or_vector_provider_attributes(
         assert not hasattr(service, attr), (
             f"bootstrap service must not carry attribute {attr!r}"
         )
+
+
+# ===================================================================
+# Wave 7 (F1c): embedding contract fingerprint persistence + the
+# idempotent no-op must require contract identity consistency.
+# ===================================================================
+
+
+async def test_happy_path_persists_embedding_contract_fingerprint(
+    index_env: asyncpg.Pool,
+) -> None:
+    """A2: every freshly bootstrapped index run carries the frozen
+    contract fingerprint in ``metadata_json.embedding_contract_fingerprint``."""
+    await _seed_paragraph_environment(index_env)
+    service = _build_service(index_env)
+
+    result = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    assert result.idempotent_noop is False
+
+    async with index_env.acquire() as conn:
+        row = await _fetch_index_run(conn, index_run_id=result.index_run_id)
+    metadata = row["metadata_json"]
+    assert isinstance(metadata, dict)
+    assert metadata.get("embedding_contract_fingerprint") == (
+        compute_embedding_contract_fingerprint(ARTICLE_RAG_EMBEDDING_CONTRACT)
+    )
+
+
+async def test_idempotent_noop_with_matching_fingerprint(
+    index_env: asyncpg.Pool,
+) -> None:
+    """A3 regression: same plan + persisted matching fingerprint → the
+    idempotent no-op still holds."""
+    await _seed_paragraph_environment(index_env)
+    service = _build_service(index_env)
+
+    first = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    second = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    assert second.idempotent_noop is True
+    assert second.index_run_id == first.index_run_id
+
+    async with index_env.acquire() as conn:
+        assert await _count_index_runs(conn) == 1
+
+
+async def _corrupt_fingerprint(
+    pool: asyncpg.Pool,
+    *,
+    index_run_id: UUID,
+    value: object,
+) -> None:
+    """Rewrite the index run's metadata_json fingerprint for tests."""
+    async with pool.acquire() as conn:
+        if value is None:
+            # Remove the key entirely (legacy row shape).
+            await conn.execute(
+                "UPDATE reader_article_rag_index_runs "
+                "SET metadata_json = metadata_json - "
+                "'embedding_contract_fingerprint' WHERE id = $1",
+                index_run_id,
+            )
+        else:
+            # The pool's jsonb codec (json.dumps) encodes the Python
+            # value — pass the raw value, NOT a pre-encoded string.
+            await conn.execute(
+                "UPDATE reader_article_rag_index_runs "
+                "SET metadata_json = jsonb_set(metadata_json, "
+                "'{embedding_contract_fingerprint}', $2::jsonb) "
+                "WHERE id = $1",
+                index_run_id,
+                value,
+            )
+
+
+async def test_idempotent_fingerprint_missing_fails_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """A3: an existing active run WITHOUT a persisted fingerprint is a
+    legacy row — the bootstrap must fail closed with
+    ``embedding_contract_identity_missing`` instead of a no-op."""
+    await _seed_paragraph_environment(index_env)
+    service = _build_service(index_env)
+
+    first = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    await _corrupt_fingerprint(
+        index_env, index_run_id=first.index_run_id, value=None
+    )
+
+    async with index_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(ArticleRagIndexBootstrapError) as exc_info:
+                await service.bootstrap_article_rag_index_in_transaction(
+                    conn,
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                )
+            assert (
+                exc_info.value.reason_code
+                == "embedding_contract_identity_missing"
+            )
+
+    async with index_env.acquire() as conn:
+        assert await _count_index_runs(conn) == 1
+
+
+async def test_idempotent_fingerprint_malformed_fails_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """A3: a non-string / malformed fingerprint value is treated as a
+    missing identity — the row's contract identity is unusable, so the
+    bootstrap must fail closed with ``embedding_contract_identity_missing``."""
+    await _seed_paragraph_environment(index_env)
+    service = _build_service(index_env)
+
+    first = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    # Malformed: not a 64-char hex string.
+    await _corrupt_fingerprint(
+        index_env, index_run_id=first.index_run_id, value="not-a-fingerprint"
+    )
+
+    async with index_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(ArticleRagIndexBootstrapError) as exc_info:
+                await service.bootstrap_article_rag_index_in_transaction(
+                    conn,
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                )
+            assert (
+                exc_info.value.reason_code
+                == "embedding_contract_identity_missing"
+            )
+
+
+async def test_idempotent_fingerprint_mismatch_fails_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """A3: a well-formed fingerprint that differs from the current
+    frozen contract means the run was built under another contract —
+    fail closed with ``embedding_contract_mismatch`` (never a no-op)."""
+    await _seed_paragraph_environment(index_env)
+    service = _build_service(index_env)
+
+    first = await service.bootstrap_article_rag_index(
+        reading_record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+    # Well-formed 64-hex but NOT the current contract's fingerprint.
+    await _corrupt_fingerprint(
+        index_env, index_run_id=first.index_run_id, value="b" * 64
+    )
+
+    async with index_env.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(ArticleRagIndexBootstrapError) as exc_info:
+                await service.bootstrap_article_rag_index_in_transaction(
+                    conn,
+                    reading_record_id=_RECORD_ID,
+                    user_id=_USER_ID,
+                )
+            assert exc_info.value.reason_code == "embedding_contract_mismatch"
+
+    async with index_env.acquire() as conn:
+        assert await _count_index_runs(conn) == 1

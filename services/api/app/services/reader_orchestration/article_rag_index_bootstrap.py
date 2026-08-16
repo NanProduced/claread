@@ -36,7 +36,9 @@ import asyncpg
 
 from app.contracts.article_rag_contract import (  # noqa: F401
     ARTICLE_RAG_EMBEDDING_CONTRACT,
+    EMBEDDING_CONTRACT_FINGERPRINT_METADATA_KEY,
     ArticleRagEmbeddingContract,
+    compute_embedding_contract_fingerprint,
 )
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.article_rag_index_plan import (
@@ -292,7 +294,7 @@ class ArticleRagIndexBootstrapService:
         existing = await conn.fetchrow(
             """
             SELECT id, plan_content_sha256, chunk_count,
-                   job_id, reader_run_id, status
+                   job_id, reader_run_id, status, metadata_json
             FROM reader_article_rag_index_runs
             WHERE stable_document_id = $1
               AND status IN ('planned', 'queued', 'indexing', 'indexed')
@@ -308,6 +310,55 @@ class ArticleRagIndexBootstrapService:
                 existing_plan_sha == plan_content_sha256
                 and existing_chunk_count == chunk_count
             ):
+                # Wave 7 (F1c / A3): the idempotent no-op additionally
+                # requires the existing run to carry a persisted
+                # embedding contract fingerprint that matches the
+                # current frozen contract.  Without this gate a run
+                # built under another contract (same plan hash, new
+                # model/dimension/collection) would be reported as a
+                # healthy no-op while retrieval already refuses it.
+                existing_metadata = existing["metadata_json"]
+                existing_fingerprint_raw: object = None
+                if isinstance(existing_metadata, dict):
+                    existing_fingerprint_raw = existing_metadata.get(
+                        EMBEDDING_CONTRACT_FINGERPRINT_METADATA_KEY
+                    )
+                existing_fingerprint: str | None = None
+                if (
+                    isinstance(existing_fingerprint_raw, str)
+                    and len(existing_fingerprint_raw) == 64
+                    and all(
+                        c in "0123456789abcdef"
+                        for c in existing_fingerprint_raw
+                    )
+                ):
+                    existing_fingerprint = existing_fingerprint_raw
+                current_fingerprint = compute_embedding_contract_fingerprint(
+                    ARTICLE_RAG_EMBEDDING_CONTRACT
+                )
+                if existing_fingerprint is None:
+                    # Missing / non-string / malformed fingerprint —
+                    # the row's contract identity is unusable (legacy
+                    # row shape).  Never a no-op.
+                    raise ArticleRagIndexBootstrapError(
+                        f"Existing active index run {existing['id']} for "
+                        f"stable_document_id={plan.stable_document_id} "
+                        "has no usable persisted embedding contract "
+                        "fingerprint (missing or malformed). Refusing "
+                        "to return an idempotent no-op; an explicit "
+                        "operator reindex is required.",
+                        reason_code="embedding_contract_identity_missing",
+                    )
+                if existing_fingerprint != current_fingerprint:
+                    raise ArticleRagIndexBootstrapError(
+                        f"Existing active index run {existing['id']} for "
+                        f"stable_document_id={plan.stable_document_id} "
+                        "was built under a different embedding contract "
+                        "(persisted fingerprint mismatch). Refusing to "
+                        "return an idempotent no-op; an explicit "
+                        "operator reindex is required.",
+                        reason_code="embedding_contract_mismatch",
+                    )
                 # Same plan content + chunk count. Before declaring an
                 # idempotent no-op, verify the existing run has a valid,
                 # actionable job. A null job_id / reader_run_id, missing
@@ -442,7 +493,10 @@ class ArticleRagIndexBootstrapService:
         # 4. Insert index state row (status='queued').
         #    embedding_model / vector_store_provider / vector_collection
         #    are left NULL — bootstrap does not call embedding / vector
-        #    stores.
+        #    stores.  The frozen contract identity IS persisted now
+        #    (Wave 7 / A2) as a metadata fingerprint so the idempotent
+        #    no-op gate and retrieval can verify contract consistency
+        #    without new columns.
         index_run_id = await conn.fetchval(
             """
             INSERT INTO reader_article_rag_index_runs (
@@ -450,11 +504,11 @@ class ArticleRagIndexBootstrapService:
                 record_generation,
                 stable_document_content_sha256, canonical_text_sha256,
                 plan_content_sha256, chunk_count,
-                status,
+                status, metadata_json,
                 created_at, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-                    'queued', $9, $9)
+                    'queued', $9::jsonb, $10, $10)
             RETURNING id
             """,
             reading_record_id,
@@ -465,6 +519,15 @@ class ArticleRagIndexBootstrapService:
             plan.canonical_text_sha256,
             plan_content_sha256,
             chunk_count,
+            jsonb_param(
+                {
+                    EMBEDDING_CONTRACT_FINGERPRINT_METADATA_KEY: (
+                        compute_embedding_contract_fingerprint(
+                            ARTICLE_RAG_EMBEDDING_CONTRACT
+                        )
+                    )
+                }
+            ),
             now,
         )
 

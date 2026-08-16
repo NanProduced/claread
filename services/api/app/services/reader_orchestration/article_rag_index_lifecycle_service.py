@@ -99,6 +99,13 @@ ENSURE_STATUS_GENERATION_MISMATCH = "generation_mismatch"
 ENSURE_STATUS_RECORD_NOT_FOUND = "record_not_found"
 ENSURE_STATUS_PLAN_HASH_MISMATCH = "plan_hash_mismatch"
 ENSURE_STATUS_BOOTSTRAP_INCONSISTENT = "bootstrap_inconsistent"
+# Wave 7 (F1c / A3): the existing active run was built under another
+# embedding contract, or is a legacy row without a persisted contract
+# fingerprint.  Neither may be reported as an idempotent no-op.
+ENSURE_STATUS_EMBEDDING_CONTRACT_IDENTITY_MISSING = (
+    "embedding_contract_identity_missing"
+)
+ENSURE_STATUS_EMBEDDING_CONTRACT_MISMATCH = "embedding_contract_mismatch"
 ENSURE_STATUS_ERROR = "error"
 
 
@@ -589,6 +596,10 @@ class ArticleRagIndexLifecycleService:
             status = ENSURE_STATUS_PLAN_HASH_MISMATCH
         elif reason_code == "idempotent_run_inconsistent":
             status = ENSURE_STATUS_BOOTSTRAP_INCONSISTENT
+        elif reason_code == "embedding_contract_identity_missing":
+            status = ENSURE_STATUS_EMBEDDING_CONTRACT_IDENTITY_MISSING
+        elif reason_code == "embedding_contract_mismatch":
+            status = ENSURE_STATUS_EMBEDDING_CONTRACT_MISMATCH
         elif reason_code == "caller_transaction_required":
             status = ENSURE_STATUS_ERROR
         else:
@@ -608,6 +619,8 @@ __all__ = [
     "ArticleRagIndexLifecycleStatus",
     # ensure status constants
     "ENSURE_STATUS_BOOTSTRAP_INCONSISTENT",
+    "ENSURE_STATUS_EMBEDDING_CONTRACT_IDENTITY_MISSING",
+    "ENSURE_STATUS_EMBEDDING_CONTRACT_MISMATCH",
     "ENSURE_STATUS_ENQUEUED",
     "ENSURE_STATUS_ERROR",
     "ENSURE_STATUS_GENERATION_MISMATCH",

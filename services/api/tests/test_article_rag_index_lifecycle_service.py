@@ -40,7 +40,12 @@ from app.services.reader_orchestration.article_rag_index_lifecycle_service impor
     ArticleRagIndexLifecycleStatus,
 )
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -457,6 +462,53 @@ class TestEnsureBootstrapError:
 
         assert result.status == ENSURE_STATUS_BOOTSTRAP_INCONSISTENT
         assert result.reason_code == "idempotent_run_inconsistent"
+
+    async def test_embedding_contract_identity_missing_translated(self) -> None:
+        """Wave 7 / A3: a legacy run without a persisted contract
+        fingerprint must surface as its own typed status + reason code
+        (never an idempotent no-op, never a generic error)."""
+        bootstrap = _FakeBootstrapService(
+            error=ArticleRagIndexBootstrapError(
+                "legacy run without contract fingerprint",
+                reason_code="embedding_contract_identity_missing",
+            ),
+        )
+        service = _make_service(bootstrap=bootstrap)
+        conn = _FakeConn(record_row=_make_record_row())
+
+        result = await service.ensure_article_rag_index_job_in_transaction(
+            conn,
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            expected_generation=_GENERATION,
+        )
+
+        assert result.status == "embedding_contract_identity_missing"
+        assert result.reason_code == "embedding_contract_identity_missing"
+        assert result.idempotent_noop is False
+
+    async def test_embedding_contract_mismatch_translated(self) -> None:
+        """Wave 7 / A3: a run persisted under a different contract must
+        surface as its own typed status + reason code."""
+        bootstrap = _FakeBootstrapService(
+            error=ArticleRagIndexBootstrapError(
+                "run built under another contract",
+                reason_code="embedding_contract_mismatch",
+            ),
+        )
+        service = _make_service(bootstrap=bootstrap)
+        conn = _FakeConn(record_row=_make_record_row())
+
+        result = await service.ensure_article_rag_index_job_in_transaction(
+            conn,
+            reading_record_id=_RECORD_ID,
+            user_id=_USER_ID,
+            expected_generation=_GENERATION,
+        )
+
+        assert result.status == "embedding_contract_mismatch"
+        assert result.reason_code == "embedding_contract_mismatch"
+        assert result.idempotent_noop is False
 
     async def test_generic_bootstrap_error_translated(self) -> None:
         bootstrap = _FakeBootstrapService(
