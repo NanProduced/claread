@@ -57,6 +57,12 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerResult,
     ArticleRagIndexWorkerService,
 )
+from app.services.reader_orchestration.article_rag_vector_deleter import (
+    build_default_article_rag_vector_deleter,
+)
+from app.services.reader_orchestration.article_rag_vector_gc_service import (
+    ArticleRagVectorGcService,
+)
 from app.services.reader_orchestration.article_rag_vector_store import (
     build_default_article_rag_vector_writer,
 )
@@ -99,6 +105,24 @@ def build_worker_service(
         embedding_provider=embedding_provider,
         vector_writer=vector_writer,
         default_vector_collection=settings.reader_article_rag_zilliz_collection,
+    )
+
+
+def build_gc_service(
+    *,
+    settings: Settings,
+    pool: Any,
+) -> ArticleRagVectorGcService:
+    """Construct the vector-GC service with the default (fail-closed) deleter.
+
+    The deleter factory returns ``UnconfiguredArticleRagVectorDeleter``
+    when Zilliz config is missing — the GC service then schedules retry
+    events and never touches the network.
+    """
+    deleter = build_default_article_rag_vector_deleter(settings)
+    return ArticleRagVectorGcService(
+        pool=pool,
+        deleter=deleter,
     )
 
 
@@ -200,18 +224,30 @@ def _build_result_payload(result: ArticleRagIndexWorkerResult) -> dict[str, Any]
 async def _run_drain_cycle(
     *,
     service: ArticleRagIndexWorkerService,
+    gc_service: ArticleRagVectorGcService | None = None,
     lease_owner: str,
     lease_duration: timedelta,
     max_ticks: int,
     recover_batch_size: int = DEFAULT_RECOVER_BATCH_SIZE,
 ) -> list[ArticleRagIndexWorkerResult]:
-    """Run one drain cycle: stale-lease recovery then claim/process.
+    """Run one drain cycle: recovery, reconcile, GC, then claim/process.
+
+    Per-cycle order (fixed):
+
+      1. ``recover_stale_leases`` — job-level lease recovery.
+      2. ``reconcile_orphaned_index_runs`` — index-run convergence.
+      3. at most one due vector-GC intent (Wave 9).
+      4. ``process_next`` claims until idle or ``max_ticks``.
 
     Recovery uses an independent batch size so a backlog of crashed jobs is
     not throttled by the per-cycle ``max_ticks`` budget.
 
     If recovery fails, the exception is logged and re-raised — we MUST NOT
     silently swallow the failure, otherwise stale leases would never recover.
+    The same holds for the GC step: an unexpected GC control-plane / DB
+    exception terminates this drain cycle (typed provider/vector failures
+    are converted to retry events INSIDE the GC service and never reach
+    this boundary), so a broken GC pass can never mask index-job failures.
     """
     try:
         recovered = await ReaderJobRuntime().recover_stale_leases(
@@ -252,6 +288,28 @@ async def _run_drain_cycle(
                 "article RAG index worker: reconciled orphaned index runs",
                 extra={"reconciled": reconciled},
             )
+
+    # At most one due vector-GC intent per cycle. Unexpected control-plane
+    # / DB exceptions terminate the cycle (re-raised after logging) so a
+    # broken GC pass cannot mask index-job health.
+    if gc_service is not None:
+        try:
+            gc_result = await gc_service.process_next_due_intent()
+        except Exception:
+            logger.exception(
+                "article RAG index worker: vector-GC pass failed; "
+                "aborting drain cycle"
+            )
+            raise
+        if gc_result is not None:
+            logger.info(
+                "article RAG index worker: vector-GC processed intent",
+                extra={
+                    "gc_status": gc_result.status,
+                    "gc_failure_code": gc_result.failure_code,
+                },
+            )
+
     results: list[ArticleRagIndexWorkerResult] = []
     for _ in range(max_ticks):
         result = await service.process_next(
@@ -302,6 +360,7 @@ async def _run_worker(
             raise RuntimeError("Database pool not initialized after init_db")
 
         service = build_worker_service(settings=settings, pool=pool)
+        gc_service = build_gc_service(settings=settings, pool=pool)
 
         lease_owner = args.lease_owner_prefix
         lease_duration = timedelta(seconds=args.lease_duration_seconds)
@@ -309,6 +368,7 @@ async def _run_worker(
         if args.once:
             results = await _run_drain_cycle(
                 service=service,
+                gc_service=gc_service,
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
                 max_ticks=args.max_ticks,
@@ -353,6 +413,7 @@ async def _run_worker(
         while not shutdown_event.is_set():
             results = await _run_drain_cycle(
                 service=service,
+                gc_service=gc_service,
                 lease_owner=lease_owner,
                 lease_duration=lease_duration,
                 max_ticks=args.max_ticks,

@@ -48,6 +48,11 @@ from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 
+from .advisory_lock import (
+    LOCK_NAMESPACE_VECTOR_MUTATION,
+    SessionAdvisoryLock,
+    advisory_lock_key,
+)
 from .article_rag_index_bootstrap import (
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
     ARTICLE_RAG_INDEX_BUILD_RUN_TYPE,
@@ -892,61 +897,79 @@ class ArticleRagIndexWorkerService:
             # The embedding call can be slow; if generation/base drifted while
             # it was running, do not upsert stale vectors and then discover the
             # drift only after the external write.
-            await self._validate_before_vector_write(
-                claim=claim,
-                context=context,
-                index_run_snapshot=index_run_snapshot,
+            #
+            # The fence re-validation and the vector upsert run UNDER the
+            # stable-document mutation advisory lock shared with the
+            # vector-GC service (Wave 9): a record deletion racing this
+            # write either waits for our upsert (GC then deletes our rows)
+            # or holds the lock first (we re-validate, see the deleted
+            # record / superseded run / cancelled job, and do zero upserts).
+            # The lock connection stays checked out during the external
+            # vector I/O, but no DB transaction is held open on it.
+            mutation_key = advisory_lock_key(
+                LOCK_NAMESPACE_VECTOR_MUTATION, context.stable_document_id
             )
+            async with self.get_pool().acquire() as lock_conn:
+                mutation_lock = SessionAdvisoryLock(lock_conn, mutation_key)
+                try:
+                    await mutation_lock.acquire()
+                    await self._validate_before_vector_write(
+                        claim=claim,
+                        context=context,
+                        index_run_snapshot=index_run_snapshot,
+                    )
 
-            # Write vectors outside the DB transaction.
-            # Collection is sourced from the contract vector_collection,
-            # not from the worker's default_vector_collection (which has
-            # already been validated to equal it above).
-            vector_chunks = self._build_vector_chunks(plan, embeddings)
-            write_metadata = ArticleRagVectorWriteMetadata(
-                collection=context.vector_namespace,
-                reading_record_id=context.reading_record_id,
-                stable_document_id=context.stable_document_id,
-                base_id=context.base_id,
-                record_generation=context.record_generation,
-                plan_content_sha256=index_run_snapshot["plan_content_sha256"],
-                chunk_count=len(plan.chunks),
-                # Frozen contract fields.
-                embedding_model=context.document_embedding_model,
-                embedding_dimension=context.document_embedding_dimension,
-                embedding_text_type=context.document_embedding_text_type,
-            )
-            write_result = await self._vector_writer.upsert_chunks(
-                collection=context.vector_namespace,
-                chunks_with_embeddings=vector_chunks,
-                metadata=write_metadata,
-            )
-            if write_result.upserted_count != len(vector_chunks):
-                raise ArticleRagIndexWorkerError(
-                    "article RAG vector writer upserted "
-                    f"{write_result.upserted_count} chunks for "
-                    f"{len(vector_chunks)} planned chunks",
-                    retryable=True,
-                    failure_class="vector_write",
-                    failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
-                )
+                    # Write vectors outside the DB transaction.
+                    # Collection is sourced from the contract vector_collection,
+                    # not from the worker's default_vector_collection (which has
+                    # already been validated to equal it above).
+                    vector_chunks = self._build_vector_chunks(plan, embeddings)
+                    write_metadata = ArticleRagVectorWriteMetadata(
+                        collection=context.vector_namespace,
+                        reading_record_id=context.reading_record_id,
+                        stable_document_id=context.stable_document_id,
+                        base_id=context.base_id,
+                        record_generation=context.record_generation,
+                        plan_content_sha256=index_run_snapshot["plan_content_sha256"],
+                        chunk_count=len(plan.chunks),
+                        # Frozen contract fields.
+                        embedding_model=context.document_embedding_model,
+                        embedding_dimension=context.document_embedding_dimension,
+                        embedding_text_type=context.document_embedding_text_type,
+                    )
+                    write_result = await self._vector_writer.upsert_chunks(
+                        collection=context.vector_namespace,
+                        chunks_with_embeddings=vector_chunks,
+                        metadata=write_metadata,
+                    )
+                    if write_result.upserted_count != len(vector_chunks):
+                        raise ArticleRagIndexWorkerError(
+                            "article RAG vector writer upserted "
+                            f"{write_result.upserted_count} chunks for "
+                            f"{len(vector_chunks)} planned chunks",
+                            retryable=True,
+                            failure_class="vector_write",
+                            failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
+                        )
 
-            # write_result.collection must precisely equal the contract
-            # vector_collection.  A writer that returns a different
-            # collection (e.g. SDK-routed, alias-resolved, or malicious)
-            # cannot be trusted — refuse to mark indexed.
-            if write_result.collection != context.vector_namespace:
-                raise ArticleRagIndexWorkerError(
-                    _MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH,
-                    retryable=False,
-                    failure_class="vector_write_result_collection_mismatch",
-                    failure_code=(
-                        FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
-                    ),
-                    rationale_code=(
-                        FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
-                    ),
-                )
+                    # write_result.collection must precisely equal the contract
+                    # vector_collection.  A writer that returns a different
+                    # collection (e.g. SDK-routed, alias-resolved, or malicious)
+                    # cannot be trusted — refuse to mark indexed.
+                    if write_result.collection != context.vector_namespace:
+                        raise ArticleRagIndexWorkerError(
+                            _MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH,
+                            retryable=False,
+                            failure_class="vector_write_result_collection_mismatch",
+                            failure_code=(
+                                FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
+                            ),
+                            rationale_code=(
+                                FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
+                            ),
+                        )
+                finally:
+                    await mutation_lock.unlock()
 
             # Mark indexed + transition job succeeded in one transaction.
             # Persist contract-derived embedding_model and
@@ -1463,6 +1486,24 @@ class ArticleRagIndexWorkerService:
         """
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
+                # Deletion fence: the record must still exist and be
+                # undeleted.  Wave 8 soft-deletes atomically supersede the
+                # index run, so this is defence-in-depth on top of the run
+                # status check below — but it MUST run here, under the
+                # mutation lock, so a late writer racing a deletion can
+                # never upsert vectors for a deleted record.
+                record_row = await conn.fetchrow(
+                    """
+                    SELECT deleted_at
+                    FROM reading_records
+                    WHERE id = $1
+                    """,
+                    context.reading_record_id,
+                )
+                if record_row is None or record_row["deleted_at"] is not None:
+                    raise FenceViolationError(
+                        "reading record deleted before vector write"
+                    )
                 index_row = await conn.fetchrow(
                     """
                     SELECT id, status, job_id, base_id, stable_document_id,

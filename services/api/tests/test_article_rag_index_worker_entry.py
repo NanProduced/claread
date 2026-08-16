@@ -190,6 +190,10 @@ def _stub_infra(
 
     Stale-lease recovery is stubbed at the module level by an autouse fixture
     so this helper does NOT need to repeat that work.
+
+    ``build_gc_service`` is stubbed with an idle fake so the vector-GC
+    drain step never touches a real DB in these unit tests (the GC drain
+    step itself is covered by tests/test_article_rag_vector_gc_entry.py).
     """
     monkeypatch.setattr(
         "scripts.run_reader_article_rag_index_worker.init_db", _noop_init_db
@@ -204,7 +208,18 @@ def _stub_infra(
         "scripts.run_reader_article_rag_index_worker.build_worker_service",
         lambda **kwargs: service,
     )
+    monkeypatch.setattr(
+        "scripts.run_reader_article_rag_index_worker.build_gc_service",
+        lambda **kwargs: _FakeGcService(),
+    )
     return service
+
+
+class _FakeGcService:
+    """Idle GC service fake: never returns an intent, never touches DB."""
+
+    async def process_next_due_intent(self) -> None:
+        return None
 
 
 # ===========================================================================
@@ -667,6 +682,10 @@ class TestNoRealBackendCalls:
         monkeypatch.setattr(
             "scripts.run_reader_article_rag_index_worker.build_worker_service",
             lambda **kwargs: fake_service,
+        )
+        monkeypatch.setattr(
+            "scripts.run_reader_article_rag_index_worker.build_gc_service",
+            lambda **kwargs: _FakeGcService(),
         )
 
         args = Namespace(

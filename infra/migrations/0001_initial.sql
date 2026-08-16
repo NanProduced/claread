@@ -2323,6 +2323,10 @@ CREATE INDEX idx_reader_events_record_sequence ON reader_events USING btree (rea
 
 CREATE INDEX idx_reader_events_source_job ON reader_events USING btree (source_job_id) WHERE (source_job_id IS NOT NULL);
 
+CREATE INDEX idx_reader_events_gc_intent_scan ON reader_events USING btree (created_at, id) WHERE ((event_type = 'record_state_changed'::text) AND ((payload_json ->> 'event_schema'::text) = 'reading_record_deleted_v1'::text) AND ((payload_json ->> 'article_rag_vector_gc_requested'::text) = 'true'::text));
+
+CREATE INDEX idx_reader_events_gc_outcome_intent ON reader_events USING btree (((payload_json ->> 'intent_event_id'::text)), created_at) WHERE ((event_type = 'record_state_changed'::text) AND ((payload_json ->> 'event_schema'::text) = ANY (ARRAY['article_rag_vector_gc_completed_v1'::text, 'article_rag_vector_gc_retry_scheduled_v1'::text, 'article_rag_vector_gc_failed_terminal_v1'::text])));
+
 CREATE INDEX idx_reader_job_events_job_created ON reader_job_events USING btree (job_id, created_at DESC);
 
 CREATE INDEX idx_reader_job_events_record_created ON reader_job_events USING btree (reading_record_id, created_at DESC);

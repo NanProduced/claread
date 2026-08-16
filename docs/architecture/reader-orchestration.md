@@ -211,6 +211,22 @@ PostgreSQL 拥有 durable business state；LLM framework 只是执行工具。
 | Run / Job State | claim、heartbeat、retry、cancel、execution failure | 用户产品语义 |
 | Event / Projection State | polling、snapshot、刷新恢复 | 业务事实源 |
 
+## Article RAG Vector GC（Wave 9）
+
+`reading_record_deleted_v1` intent 由现有 Article RAG index worker 的 drain cycle 消费（不新建进程/route/scheduler/daemon）。`reader_events` 同时是 intent、retry 与 outcome 的唯一持久化事实源——无新表、无 outbox、无迁移式 job framework。
+
+- Drain 顺序固定：`recover_stale_leases` → `reconcile_orphaned_index_runs` → 至多一条到期 vector-GC intent → Article RAG index jobs。GC 控制面/数据库意外异常终止本轮并记安全日志（re-raise）；已分类的 provider/vector 异常在 service 内写 retry event，不静默丢失 intent。
+- 删除/写入竞态闭环：新增最小共享 PostgreSQL session advisory-lock helper（stdlib 对 namespace + UUID 生成确定性 signed bigint key；acquire/try-acquire/unlock；unlock 必须在 finally；连接异常退出由 PG 自动释放 session lock）。两把锁：
+  - intent lock（按 deletion event id）：多 GC worker 互斥处理同一 intent；
+  - vector mutation lock（按 `stable_document_id`）：index writer 与 GC 共用。
+- Index worker：vector upsert 前取 stable-document mutation lock；持锁时在短事务中重跑 claim/index-run/vector-write fence（含 record `deleted_at` 检查）；提交短事务；继续持锁在事务外执行 vector upsert；finally 释放。外部 vector I/O 期间可持有连接/session lock，但不持有数据库事务。
+- GC 资格校验（intent lock 后重新读取并验证）：record 必须存在且 `deleted_at` 非空；无 active index run（planned/queued/indexing/indexed）；无未终结 `article_rag_index_build` job；未静止则零 vector I/O 并写 `retry_scheduled`。
+- Identity 收集：从保留的 index-run 审计数据收集不同 `(stable_document_id, vector_store_provider, vector_collection)`。单路径合同下 NULL provider/collection 推断为当前配置（worker 每次 upsert 都校验冻结 contract collection，遗留行只可能存在于配置 collection；ponytail 注释标明第二 collection 出现时必须改 fail-closed）。显式 identity 与配置不一致（`unsupported_provider` / `collection_mismatch`）或 malformed 时，在任何 vector I/O 前写 `failed_terminal`。
+- 精确删除：`MilvusClient.query_iterator` 全量枚举（filter 只用 `stable_document_id`，只取 `chunk_id`）→ 校验 chunk_id（固定长度小写 hex，16 位——plan 的确定性 chunk id 是 SHA-256 前 16 字符；固定安全上限 10,000）→ 按固定确定性批次 `delete(ids=[精确 chunk_id 主键])` → flush → 持锁复验零残留。collection 不存在或查询为空 = 幂等成功 `no_vectors`（delete 调用 0 次）。禁止宽泛 filter 删除、drop/recreate、compact、真实 provider smoke；删除路径绝不创建 collection。
+- 事件（全部 `event_type='record_state_changed'`）：`article_rag_vector_gc_completed_v1`（intent_event_id / outcome: deleted|no_vectors / stable_document_count / discovered_chunk_count / deleted_chunk_count / completed_at）、`article_rag_vector_gc_retry_scheduled_v1`（intent_event_id / attempt_number / failure_code / available_at，确定性指数退避 30s×2^n 封顶 1h，无重试上限——provider/config 暂时不可用不因小上限变 terminal）、`article_rag_vector_gc_failed_terminal_v1`（intent_event_id / failure_code / failed_at；仅 malformed_identity / unsupported_provider / collection_mismatch / unsafe_chunk_id / discovery_limit_exceeded）。事件/日志/异常 DTO 只含固定 failure_code、exception_type、安全计数与 intent event id——无用户内容、chunk_id、stable_document_id、collection 名、URI/token、SDK 原始文本。
+- `reader_events` 新增两个索引：`idx_reader_events_gc_intent_scan`（created_at,id；WHERE intent schema + gc_requested）与 `idx_reader_events_gc_outcome_intent`（表达式 `payload_json->>'intent_event_id'`,created_at；WHERE 三类 outcome schema）。
+- retry 事件长期增长的已知上限：只有实际运维数据证明事件增长成为问题时，才升级为 delivery ledger（见 GC service 实现处 ponytail 注释）。
+
 ## 里程碑
 
 | 里程碑 | 最小合同 |
