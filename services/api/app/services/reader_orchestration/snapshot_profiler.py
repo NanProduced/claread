@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.reader_orchestration import (
+    ReaderAnalysisProgress,
     ReaderEnhancementProgress,
     ReaderEnhancementProgressLayer,
     ReaderPlateSnapshot,
@@ -491,6 +492,16 @@ def build_deterministic_profiling_fixture() -> ReaderPlateSnapshot:
         user_assets=user_assets,
         parsed_decisions=parsed_decisions,
         value=value,
+        analysis_progress=ReaderAnalysisProgress(
+            mode="automatic",
+            plan_version="reader_analysis_sections_v1",
+            overall_status="queued",
+            translation_status="queued",
+            completed_section_count=0,
+            total_section_count=0,
+            needs_user_action=False,
+            sections=[],
+        ),
     )
 
 

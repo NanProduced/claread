@@ -18,6 +18,7 @@ from app.services.reader_orchestration.analysis_section_jobs import (
     GRAMMAR_ANALYSIS_SECTION_POLICY_VERSION,
     VOCABULARY_ANALYSIS_SECTION_FINGERPRINT,
     VOCABULARY_ANALYSIS_SECTION_POLICY_VERSION,
+    is_resumable_user_paused_analysis_job,
 )
 from app.services.reader_orchestration.analysis_section_plan import (
     ANALYSIS_SECTION_PLAN_VERSION,
@@ -343,9 +344,10 @@ def _analysis_section_job_fields(
     section: AnalysisSection,
     *,
     article_route: str,
+    request_origin: str = ANALYSIS_SECTION_REQUEST_ORIGIN,
 ) -> dict[str, Any]:
     return {
-        "request_origin": ANALYSIS_SECTION_REQUEST_ORIGIN,
+        "request_origin": request_origin,
         "analysis_section_id": section.section_id,
         "analysis_section_plan_version": ANALYSIS_SECTION_PLAN_VERSION,
         "analysis_section_order_index": section.order_index,
@@ -353,6 +355,37 @@ def _analysis_section_job_fields(
         "requires_translation_terminal": True,
         "article_route": article_route,
     }
+
+
+async def _resume_paused_analysis_section_job(
+    conn: asyncpg.Connection,
+    existing: asyncpg.Record,
+) -> bool:
+    payload = existing["input_json"] if isinstance(existing["input_json"], dict) else {}
+    if not is_resumable_user_paused_analysis_job(
+        job_type=str(existing["job_type"]),
+        operation_fingerprint=str(existing["operation_fingerprint"] or ""),
+        request_origin=payload.get("request_origin"),
+        plan_version=payload.get("analysis_section_plan_version"),
+        status=existing["status"],
+        pause_owner=existing["pause_owner"],
+        rationale_code=existing["rationale_code"],
+        failure_class=existing["failure_class"],
+        failure_code=existing["failure_code"],
+    ):
+        return False
+    from app.services.reader_orchestration.job_runtime import (
+        STATUS_QUEUED,
+        ReaderJobRuntime,
+    )
+
+    await ReaderJobRuntime().transition_in_transaction(
+        conn,
+        job_id=existing["id"],
+        target_status=STATUS_QUEUED,
+        rationale_code="user_explicit_resume",
+    )
+    return True
 
 
 def _filter_units_for_layer(
@@ -663,8 +696,9 @@ async def _supersede_stale_fingerprint_jobs(
     job_type: str,
     target_scope: str,
     current_fingerprint: str,
+    target_key: str | None = None,
 ) -> int:
-    """Mark active stale-fingerprint **ordinary-lane** jobs as superseded.
+    """Mark active stale-fingerprint jobs as superseded.
 
     Before bootstrapping jobs with the current strategy fingerprint, any
     pre-existing ``queued`` / ``retry_later`` / ``paused`` job of the same
@@ -673,9 +707,12 @@ async def _supersede_stale_fingerprint_jobs(
     ``superseded`` with rationale_code
     ``strategy_fingerprint_superseded``.
 
+    When ``target_key`` is set (analysis-section vocabulary/grammar),
+    rotation is confined to that section. Ordinary callers omit it and
+    keep the previous record-wide behavior.
+
     Only the **ordinary** translation lane is superseded
-    (``request_origin IS DISTINCT FROM 'section_v1'``). Section jobs must
-    never be cancelled by ordinary bootstrap fingerprint rotation.
+    (``request_origin IS DISTINCT FROM 'section_v1'``).
 
     ``claimed`` and ``succeeded`` jobs are intentionally left untouched:
     a claimed job is being actively processed by a worker, and a succeeded
@@ -684,8 +721,21 @@ async def _supersede_stale_fingerprint_jobs(
 
     Returns the number of rows superseded.
     """
+    params: list[object] = [
+        record_id,
+        base_id,
+        expected_generation,
+        job_type,
+        target_scope,
+        current_fingerprint,
+        _STRATEGY_FINGERPRINT_SUPERSEDED_RATIONALE,
+    ]
+    target_clause = ""
+    if target_key is not None:
+        params.append(target_key)
+        target_clause = f"AND target_key = ${len(params)}"
     result = await conn.execute(
-        """
+        f"""
         UPDATE reader_jobs
         SET status = 'superseded',
             rationale_code = $7,
@@ -701,14 +751,9 @@ async def _supersede_stale_fingerprint_jobs(
           AND operation_fingerprint <> $6
           AND status IN ('queued', 'retry_later', 'paused')
           AND (input_json->>'request_origin') IS DISTINCT FROM 'section_v1'
+          {target_clause}
         """,
-        record_id,
-        base_id,
-        expected_generation,
-        job_type,
-        target_scope,
-        current_fingerprint,
-        _STRATEGY_FINGERPRINT_SUPERSEDED_RATIONALE,
+        *params,
     )
     # asyncpg execute returns "UPDATE N" where N is the row count.
     count_str = result.split()[-1] if result else "0"
@@ -1656,6 +1701,44 @@ class EnhancementJobBootstrapService:
             raise RuntimeError("Database pool not initialized")
         return pool
 
+    async def enqueue_analysis_section_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        section: AnalysisSection,
+        request_origin: str,
+        include_vocabulary: bool,
+        include_grammar: bool,
+        resume_user_paused: bool = False,
+    ) -> list[str]:
+        """Create or resume missing V/G section jobs. Returns mutated capabilities."""
+        route = await _load_article_route(conn, state=state)
+        created: list[str] = []
+        if include_vocabulary:
+            vocab = await self._bootstrap_vocabulary_batch_job(
+                conn,
+                state=state,
+                route=route,
+                analysis_section=section,
+                request_origin=request_origin,
+                resume_user_paused=resume_user_paused,
+            )
+            if vocab:
+                created.append("vocabulary")
+        if include_grammar:
+            grammar = await self._bootstrap_grammar_batch_job(
+                conn,
+                state=state,
+                route=route,
+                analysis_section=section,
+                request_origin=request_origin,
+                resume_user_paused=resume_user_paused,
+            )
+            if grammar:
+                created.append("grammar")
+        return created
+
     async def bootstrap_missing_jobs(
         self,
         *,
@@ -2188,6 +2271,8 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
         analysis_section: AnalysisSection | None = None,
+        request_origin: str = ANALYSIS_SECTION_REQUEST_ORIGIN,
+        resume_user_paused: bool = False,
     ) -> list[GrammarBootstrapResult]:
         """Compact grammar batch bootstrap for short/structured articles.
 
@@ -2262,7 +2347,11 @@ class EnhancementJobBootstrapService:
             return []
         target_unit_ids = [str(row["unit_id"]) for row in allowed]
         section_fields = (
-            _analysis_section_job_fields(analysis_section, article_route=route.value)
+            _analysis_section_job_fields(
+                analysis_section,
+                article_route=route.value,
+                request_origin=request_origin,
+            )
             if analysis_section is not None
             else {}
         )
@@ -2286,11 +2375,12 @@ class EnhancementJobBootstrapService:
             job_type=GRAMMAR_BATCH_JOB_TYPE,
             target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
             current_fingerprint=operation_fingerprint,
+            target_key=target_key if analysis_section is not None else None,
         )
 
         existing_job = await conn.fetchrow(
             """
-            SELECT id, run_id
+            SELECT *
             FROM reader_jobs
             WHERE reading_record_id = $1
               AND base_id = $2
@@ -2311,7 +2401,20 @@ class EnhancementJobBootstrapService:
             operation_fingerprint,
         )
         if existing_job is not None:
-            # Idempotent: batch job already exists.
+            if resume_user_paused and await _resume_paused_analysis_section_job(
+                conn, existing_job
+            ):
+                return [
+                    GrammarBootstrapResult(
+                        run_id=existing_job["run_id"],
+                        job_id=existing_job["id"],
+                        reading_record_id=state.record_id,
+                        base_id=state.base_id,
+                        unit_id=target_unit_ids[0],
+                        expected_generation=state.expected_generation,
+                        operation_fingerprint=operation_fingerprint,
+                    )
+                ]
             return []
 
         run_id, job_id = await _insert_unit_range_job(
@@ -2830,6 +2933,8 @@ class EnhancementJobBootstrapService:
         route: ArticleRoute,
         trace_id: UUID | None = None,
         analysis_section: AnalysisSection | None = None,
+        request_origin: str = ANALYSIS_SECTION_REQUEST_ORIGIN,
+        resume_user_paused: bool = False,
     ) -> list[VocabularyBootstrapResult]:
         """ whole-article vocabulary batch bootstrap.
 
@@ -2896,7 +3001,11 @@ class EnhancementJobBootstrapService:
             return []
         target_unit_ids = [str(row["unit_id"]) for row in allowed]
         section_fields = (
-            _analysis_section_job_fields(analysis_section, article_route=route.value)
+            _analysis_section_job_fields(
+                analysis_section,
+                article_route=route.value,
+                request_origin=request_origin,
+            )
             if analysis_section is not None
             else {}
         )
@@ -2920,11 +3029,12 @@ class EnhancementJobBootstrapService:
             job_type=VOCABULARY_BATCH_JOB_TYPE,
             target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
             current_fingerprint=operation_fingerprint,
+            target_key=target_key if analysis_section is not None else None,
         )
 
         existing_job = await conn.fetchrow(
             """
-            SELECT id, run_id
+            SELECT *
             FROM reader_jobs
             WHERE reading_record_id = $1
               AND base_id = $2
@@ -2945,8 +3055,20 @@ class EnhancementJobBootstrapService:
             operation_fingerprint,
         )
         if existing_job is not None:
-            # Idempotent: batch job already exists. Return empty list to
-            # match per-unit bootstrap semantics.
+            if resume_user_paused and await _resume_paused_analysis_section_job(
+                conn, existing_job
+            ):
+                return [
+                    VocabularyBootstrapResult(
+                        run_id=existing_job["run_id"],
+                        job_id=existing_job["id"],
+                        reading_record_id=state.record_id,
+                        base_id=state.base_id,
+                        unit_id=target_unit_ids[0],
+                        expected_generation=state.expected_generation,
+                        operation_fingerprint=operation_fingerprint,
+                    )
+                ]
             return []
 
         run_id, job_id = await _insert_unit_range_job(

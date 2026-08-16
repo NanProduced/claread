@@ -25,6 +25,7 @@ from app.services.reader_orchestration.candidate_document_confirm_application_se
     CandidateDocumentConfirmApplicationError,
     CandidateDocumentConfirmApplicationResult,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 pytestmark = [
     pytest.mark.chain_reader_parse,
@@ -117,9 +118,9 @@ def _build_snapshot(
         product_state="readable_enhancing",
         readiness_state="article_ready",
     )
-    return build_reader_plate_snapshot(
-        build_result,
-        snapshot_taken_at=NOW,
+    return build_reader_plate_snapshot(build_result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=NOW,
         last_event_sequence=ARTICLE_READY_SEQUENCE,
         record=record,
         snapshot_id="snapshot-route-test",

@@ -11,6 +11,8 @@ from starlette.responses import JSONResponse
 
 from app.schemas.reader_input_adapter import InputSuitabilityRequest
 from app.schemas.reader_orchestration import (
+    ReaderAnalysisSectionRequest,
+    ReaderAnalysisSectionRequestResponse,
     ReaderArticleRagIndexEnsureRequest,
     ReaderArticleRagIndexEnsureResponse,
     ReaderArticleRagIndexStatusResponse,
@@ -60,6 +62,12 @@ from app.schemas.reader_orchestration import (
     ReadingRecordProductState,
 )
 from app.services.auth.dependencies import AuthUserDep
+from app.services.reader_orchestration.analysis_progress_projection import (
+    AnalysisProgressProjectionError,
+)
+from app.services.reader_orchestration.analysis_section_request_service import (
+    AnalysisSectionRequestService,
+)
 from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
     ENSURE_STATUS_RECORD_NOT_FOUND,
     STATUS_UNAVAILABLE,
@@ -1169,8 +1177,35 @@ async def get_reader_snapshot(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Reader record not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AnalysisProgressProjectionError:
+        raise HTTPException(status_code=409, detail="inconsistent_active_base") from None
+    except ValueError:
+        raise HTTPException(status_code=409, detail="snapshot_conflict") from None
+
+
+@router.post(
+    "/records/{record_id}/analysis-sections/requests",
+    response_model=ReaderAnalysisSectionRequestResponse,
+    summary="Start or resume progressive analysis sections",
+)
+async def request_analysis_sections(
+    record_id: UUID,
+    body: ReaderAnalysisSectionRequest,
+    current_user: AuthUserDep,
+) -> ReaderAnalysisSectionRequestResponse:
+    service = AnalysisSectionRequestService()
+    try:
+        return await service.request_sections(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+            body=body,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Reader record not found") from None
+    except AnalysisProgressProjectionError:
+        raise HTTPException(status_code=409, detail="inconsistent_active_base") from None
+    except ValueError:
+        raise HTTPException(status_code=409, detail="analysis_section_fence_conflict") from None
 
 
 @router.get(

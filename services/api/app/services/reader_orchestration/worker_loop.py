@@ -13,7 +13,10 @@ import asyncpg
 from app.database import connection as db_connection
 from app.services.model_execution_journal.service import ModelExecutionJournalService
 
-from .analysis_section_jobs import sql_blocked_by_active_translation
+from .analysis_section_jobs import (
+    sql_blocked_by_active_translation,
+    sql_trusted_explicit_analysis_runnable,
+)
 from .completion_finalizer import (
     CompletionFinalizationResult,
     CompletionFinalizer,
@@ -231,7 +234,45 @@ class ReaderEnhancementWorkerLoopService:
                     WHERE record.deleted_at IS NULL
                       AND record.lifecycle_status = 'active'
                       AND record.product_state = ANY($1::text[])
-                      AND record.readiness_state = ANY($2::text[])
+                      AND (
+                        record.readiness_state = ANY($2::text[])
+                        OR (
+                          record.readiness_state = 'coverage_complete'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM reader_jobs explicit_job
+                            WHERE explicit_job.reading_record_id = record.id
+                              AND explicit_job.base_id = record.active_base_id
+                              AND explicit_job.expected_generation = record.generation
+                              AND {sql_trusted_explicit_analysis_runnable(job_alias="explicit_job")}
+                              AND (
+                                explicit_job.status = 'queued'
+                                OR (
+                                  explicit_job.status = 'retry_later'
+                                  AND explicit_job.available_at <= NOW()
+                                )
+                                OR (
+                                  explicit_job.status = 'paused'
+                                  AND explicit_job.pause_owner = 'system'
+                                  AND explicit_job.rationale_code =
+                                      'model_execution_captured_resume_required'
+                                  AND explicit_job.failure_class = 'model_execution'
+                                  AND explicit_job.failure_code =
+                                      'post_provider_resume_required'
+                                  AND EXISTS (
+                                      SELECT 1
+                                      FROM ai_model_execution_journal journal
+                                      WHERE journal.reader_job_id = explicit_job.id
+                                        AND journal.attempt_ordinal =
+                                            explicit_job.attempt_count
+                                        AND journal.capture_state = 'captured'
+                                  )
+                                )
+                              )
+                              AND NOT {sql_blocked_by_active_translation(job_alias="explicit_job")}
+                          )
+                        )
+                      )
                       AND record.active_base_id IS NOT NULL
                       AND base.status = 'active'
                       AND base.record_generation = record.generation

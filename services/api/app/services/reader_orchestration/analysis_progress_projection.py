@@ -175,7 +175,18 @@ class ReaderAnalysisProgressProjection:
     ) -> ReaderAnalysisProgress:
         async with self.get_pool().acquire() as conn:
             async with conn.transaction(isolation="repeatable_read", readonly=True):
-                return await _load_progress(conn, record_id=record_id, user_id=user_id)
+                return await self.load_progress_on_connection(
+                    conn, record_id=record_id, user_id=user_id
+                )
+
+    async def load_progress_on_connection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+    ) -> ReaderAnalysisProgress:
+        return await _load_progress(conn, record_id=record_id, user_id=user_id)
 
 
 async def _load_progress(

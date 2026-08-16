@@ -27,7 +27,10 @@ from app.services.reader_orchestration import (
     result_length_utf16,
     validate_reading_base_build_result,
 )
-from tests.reader_orchestration_test_support import long_plain_text_fixture
+from tests.reader_orchestration_test_support import (
+    fixture_analysis_progress,
+    long_plain_text_fixture,
+)
 
 API_ROOT = Path(__file__).resolve().parents[1]
 
@@ -608,9 +611,9 @@ def test_builder_preserves_markdown_markers_as_text_and_only_infers_unit_types()
 
 def test_reader_plate_snapshot_source_leaves_rebuild_stable_base_slices() -> None:
     result = _build_result("First sentence. Second sentence!\n\nAnother paragraph.")
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=7,
     )
 
@@ -631,9 +634,9 @@ def test_reader_plate_snapshot_source_leaves_rebuild_stable_base_slices() -> Non
 
 def test_reader_plate_snapshot_uses_schema_kind_and_last_event_sequence() -> None:
     result = _build_result("One sentence only.")
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=11,
     )
     payload = snapshot.model_dump(mode="json")
@@ -646,9 +649,9 @@ def test_reader_plate_snapshot_uses_schema_kind_and_last_event_sequence() -> Non
 def test_reader_plate_snapshot_exposes_record_navigation_and_anchor_contract() -> None:
     result = _build_result("First sentence. Second sentence!")
     snapshot_taken_at = datetime(2026, 6, 22, 12, 0, tzinfo=UTC)
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=snapshot_taken_at,
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=5,
     )
 
@@ -672,14 +675,14 @@ def test_reader_plate_snapshot_rebuild_is_stable_for_same_domain_facts() -> None
     result = _build_result("Sentence one. Sentence two!\n\nAnother block for stability.")
     snapshot_taken_at = datetime(2026, 6, 19, 12, 0, tzinfo=UTC)
 
-    snapshot_a = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=snapshot_taken_at,
+    snapshot_a = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=13,
     )
-    snapshot_b = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=snapshot_taken_at,
+    snapshot_b = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=13,
     )
 
@@ -694,9 +697,9 @@ def test_reader_plate_snapshot_projects_translation_layer_in_top_level_and_value
         target_key=result.units[0].unit_id,
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=17,
         enhancement_layers=[layer],
     )
@@ -760,9 +763,9 @@ def test_reader_plate_snapshot_projects_multiple_translation_groups_in_stable_or
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=18,
         enhancement_layers=[layer],
     )
@@ -792,9 +795,9 @@ def test_reader_plate_snapshot_skips_invalid_translation_output_without_crashing
         output={"translated_text": "旧输出"},
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=19,
         enhancement_layers=[layer],
     )
@@ -819,9 +822,9 @@ def test_reader_plate_snapshot_drops_translation_group_with_unknown_anchor_id() 
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=20,
         enhancement_layers=[layer],
     )
@@ -848,9 +851,9 @@ def test_reader_plate_snapshot_drops_non_contiguous_translation_group() -> None:
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=21,
         enhancement_layers=[layer],
     )
@@ -888,9 +891,9 @@ def test_reader_plate_snapshot_drops_overlapping_translation_group_and_keeps_pri
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=22,
         enhancement_layers=[layer],
     )
@@ -917,9 +920,9 @@ def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_spa
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=23,
         enhancement_layers=[layer],
     )
@@ -944,9 +947,9 @@ def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_bla
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=24,
         enhancement_layers=[layer],
     )
@@ -968,9 +971,9 @@ def test_reader_plate_snapshot_drops_translation_group_with_empty_translated_tex
         ],
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=25,
         enhancement_layers=[layer],
     )
@@ -1003,9 +1006,9 @@ def test_reader_plate_snapshot_projects_vocabulary_marks_into_source_leaves() ->
         ),
     ]
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=17,
         enhancement_layers=layers,
     )
@@ -1057,9 +1060,9 @@ def test_reader_plate_snapshot_projects_phrase_gloss_learning_note_when_present(
         learning_note=note,
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=18,
         enhancement_layers=[layer],
     )
@@ -1090,9 +1093,9 @@ def test_reader_plate_snapshot_phrase_gloss_without_learning_note_does_not_error
         learning_note=None,
     )
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
         last_event_sequence=19,
         enhancement_layers=[layer],
     )
@@ -1130,9 +1133,9 @@ def test_reader_plate_snapshot_projects_grammar_note_marks_and_sentence_analysis
         ),
     ]
 
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
         last_event_sequence=23,
         enhancement_layers=layers,
     )
@@ -1188,9 +1191,9 @@ def test_reader_plate_snapshot_rejects_wrong_base_translation_layer() -> None:
     )
 
     with pytest.raises(ValueError, match="base_id must match current base"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1205,9 +1208,9 @@ def test_reader_plate_snapshot_rejects_wrong_base_grammar_note_layer() -> None:
     )
 
     with pytest.raises(ValueError, match="base_id must match current base"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1222,9 +1225,9 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_for_wrong_target_unit() 
     )
 
     with pytest.raises(ValueError, match="anchor unit_id .* does not match target unit"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1239,9 +1242,9 @@ def test_reader_plate_snapshot_rejects_grammar_note_layer_for_wrong_target_unit(
     )
 
     with pytest.raises(ValueError, match="anchor unit_id .* does not match target unit"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1256,9 +1259,9 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_with_wrong_anchor_segmen
     )
 
     with pytest.raises(ValueError, match="anchor_segment_id missing-anchor does not exist"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1273,9 +1276,9 @@ def test_reader_plate_snapshot_rejects_sentence_analysis_layer_with_wrong_anchor
     )
 
     with pytest.raises(ValueError, match="anchor_segment_id missing-anchor does not exist"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1291,9 +1294,9 @@ def test_reader_plate_snapshot_rejects_grammar_note_layer_targeted_to_anchor_seg
     )
 
     with pytest.raises(ValueError, match="grammar_note snapshot layer .* must target a unit"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1309,9 +1312,9 @@ def test_reader_plate_snapshot_rejects_vocabulary_layer_targeted_to_anchor_segme
     )
 
     with pytest.raises(ValueError, match="vocabulary snapshot layer .* must target a unit"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             enhancement_layers=[layer],
         )
@@ -1356,9 +1359,9 @@ def test_reader_plate_snapshot_rejects_wrong_base_anchor_inputs(owner_kind: str)
         ]
 
     with pytest.raises(ValueError, match="anchor base_id must match current base"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             **kwargs,
         )
@@ -1373,9 +1376,9 @@ def test_reader_plate_snapshot_rejects_parsed_decision_for_unknown_unit() -> Non
     )
 
     with pytest.raises(ValueError, match="parsed decision unit_id"):
-        build_reader_plate_snapshot(
-            result,
-            snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+        build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
             last_event_sequence=17,
             parsed_decisions=[parsed_decision],
         )

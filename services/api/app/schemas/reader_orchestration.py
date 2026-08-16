@@ -799,6 +799,7 @@ class ReaderPlateSnapshot(BaseModel):
     )
     # Optional trusted published ready|partial only; else None → JSON null.
     semantic_outline: ReaderSemanticOutlineProjection | None = None
+    analysis_progress: ReaderAnalysisProgress
 
 
 class ReaderStableReadyInputSubmitRequest(BaseModel):
