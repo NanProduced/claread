@@ -57,3 +57,21 @@ export interface ReaderRecordOpenedResponseDto {
   record_id: string;
   last_opened_at: string;
 }
+
+export interface ReaderRecordRecentRemovedResponseDto {
+  record_id: string;
+  status: "removed_from_recent" | "already_removed";
+  recent_hidden_at: string;
+}
+
+/**
+ * Delete response — parsed faithfully from the upstream DTO.  The
+ * ``vector_gc_intent_recorded`` field is a backend/GC detail and must
+ * never surface in user-facing copy.
+ */
+export interface ReaderRecordDeletedResponseDto {
+  record_id: string;
+  status: "deleted" | "already_deleted";
+  deleted_at: string;
+  vector_gc_intent_recorded: boolean;
+}

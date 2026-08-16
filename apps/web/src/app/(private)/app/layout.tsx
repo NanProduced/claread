@@ -12,7 +12,8 @@ export default async function AppShellLayout({
 }) {
   const [session, recentResult] = await Promise.all([
     getProjectedWebSession(),
-    getReadingRecordListFromWeb({ limit: 10 }),
+    // Sidebar recent list: hidden records stay out (recent_only=true).
+    getReadingRecordListFromWeb({ limit: 10, recentOnly: true }),
   ]);
   const recentRecords = recentResult.ok ? recentResult.items : [];
   const userContact = session.phone;

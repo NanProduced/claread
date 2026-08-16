@@ -6,6 +6,7 @@ import type { ReadingRecordListItemVm } from '@/services/bff/reading-records';
 interface RecentReadingContextValue {
   items: ReadingRecordListItemVm[];
   refetch: () => Promise<void>;
+  removeLocal: (recordId: string) => void;
 }
 
 const RecentReadingContext = createContext<RecentReadingContextValue | null>(null);
@@ -21,7 +22,7 @@ export function RecentReadingProvider({
 
   const refetch = useCallback(async () => {
     try {
-      const res = await fetch('/api/web/reader/records?limit=10', { cache: 'no-store' });
+      const res = await fetch('/api/web/reader/records?limit=10&recentOnly=true', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       if (data && data.ok === true && Array.isArray(data.items)) {
@@ -32,8 +33,12 @@ export function RecentReadingProvider({
     }
   }, []);
 
+  const removeLocal = useCallback((recordId: string) => {
+    setItems((current) => current.filter((item) => item.readingRecordId !== recordId));
+  }, []);
+
   return (
-    <RecentReadingContext.Provider value={{ items, refetch }}>
+    <RecentReadingContext.Provider value={{ items, refetch, removeLocal }}>
       {children}
     </RecentReadingContext.Provider>
   );
@@ -48,6 +53,9 @@ const noopRefetch = async (): Promise<void> => {
 const fallbackContext: RecentReadingContextValue = {
   items: [],
   refetch: noopRefetch,
+  removeLocal: () => {
+    // best-effort no-op outside a provider.
+  },
 };
 
 export function useRecentReading(): RecentReadingContextValue {

@@ -44,6 +44,7 @@ import { cn } from "@/lib/cn";
 import { readingRecordStatusKey, readingRecordStatusLabel, shouldShowStatusLine } from "@/lib/reader-record-status";
 import type { AppShellVariant, AppSidebarMode } from "../app-shell/app-shell-context";
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
+import { ReadingRecordActionsMenu } from "@/components/reading-records/ReadingRecordActionsMenu";
 
 const newReadItem = { href: appReadRoute, label: "新解读", icon: Plus } as const;
 
@@ -99,6 +100,7 @@ export function SidebarRail({
 }: SidebarRailProps) {
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [recordActionMenuOpen, setRecordActionMenuOpen] = useState(false);
   const [sidebarPointerInside, setSidebarPointerInside] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const togglePalette = useCommandPalette((s) => s.toggle);
@@ -203,14 +205,23 @@ export function SidebarRail({
 
   function handleSidebarMouseLeave() {
     setSidebarPointerInside(false);
-    if (!sidebarLocked && !userMenuOpen) {
+    // A portalled row-action menu keeps the overlay open: the pointer
+    // may legitimately leave the rail while interacting with the menu.
+    if (!sidebarLocked && !userMenuOpen && !recordActionMenuOpen) {
       onSidebarOverlayClose?.();
     }
   }
 
   function handleUserMenuOpenChange(open: boolean) {
     setUserMenuOpen(open);
-    if (!open && !sidebarLocked && !sidebarPointerInside) {
+    if (!open && !sidebarLocked && !sidebarPointerInside && !recordActionMenuOpen) {
+      onSidebarOverlayClose?.();
+    }
+  }
+
+  function handleRecordActionMenuOpenChange(open: boolean) {
+    setRecordActionMenuOpen(open);
+    if (!open && !sidebarLocked && !sidebarPointerInside && !userMenuOpen) {
       onSidebarOverlayClose?.();
     }
   }
@@ -344,14 +355,14 @@ export function SidebarRail({
                     const status = shouldShowStatusLine(statusKey) ? readingRecordStatusLabel(statusKey) : null;
                     const needsConfirmation = record.productState === 'needs_confirmation';
                     return (
-                      <li key={record.readingRecordId}>
+                      <li key={record.readingRecordId} className="group relative">
                         <Link
                           href={
                             needsConfirmation
                               ? appReadResumeCandidateRoute(record.readingRecordId)
                               : (record.readerUrl as Route)
                           }
-                          className={cn(navItemClassName(isCurrent), "items-start py-1.5")}
+                          className={cn(navItemClassName(isCurrent), "items-start py-1.5 pr-9")}
                           aria-current={isCurrent ? "page" : undefined}
                         >
                           <FileText
@@ -368,6 +379,19 @@ export function SidebarRail({
                             ) : null}
                           </span>
                         </Link>
+                        <ReadingRecordActionsMenu
+                          recordId={record.readingRecordId}
+                          title={record.title}
+                          showRemoveFromRecent
+                          isCurrentRecord={isCurrent}
+                          onOpenChange={handleRecordActionMenuOpenChange}
+                          className={cn(
+                            "absolute right-1 top-1/2 -translate-y-1/2",
+                            recordActionMenuOpen
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                          )}
+                        />
                       </li>
                     );
                   })}

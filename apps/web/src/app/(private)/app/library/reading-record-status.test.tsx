@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   readingRecordStatusKey,
@@ -13,6 +13,19 @@ import {
   NEEDS_ATTENTION_PRODUCT_STATES,
   ReadingRecordSection,
 } from "./ReadingRecordSection";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+vi.mock("@/components/layout/recent-reading-context", () => ({
+  useRecentReading: () => ({ items: [], refetch: vi.fn(), removeLocal: vi.fn() }),
+}));
+
+vi.mock("@/components/primitives/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+  ClareadToaster: () => null,
+}));
 
 function record(
   productState: ReadingRecordListItemVm["productState"],

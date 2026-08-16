@@ -64,7 +64,7 @@ describe('RecentReadingProvider', () => {
     await waitFor(() => expect(screen.queryByText('R-a')).toBeNull());
     expect(screen.getByText('R-x')).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/web/reader/records?limit=10',
+      '/api/web/reader/records?limit=10&recentOnly=true',
       expect.objectContaining({ cache: 'no-store' }),
     );
   });
@@ -130,5 +130,72 @@ describe('RecentReadingProvider', () => {
       screen.getByRole('button', { name: 'Refetch' }).click();
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('RecentReadingProvider removeLocal + reopen', () => {
+  it('removeLocal() removes exactly the given record', () => {
+    function RemoveProbe() {
+      const { items, removeLocal } = useRecentReading();
+      return (
+        <>
+          <ul data-testid="list">
+            {items.map((i) => (<li key={i.readingRecordId}>{i.title}</li>))}
+          </ul>
+          <button type="button" onClick={() => removeLocal('a')}>Remove A</button>
+        </>
+      );
+    }
+
+    render(
+      <RecentReadingProvider initialItems={[makeItem('a'), makeItem('b'), makeItem('c')]}>
+        <RemoveProbe />
+      </RecentReadingProvider>,
+    );
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+
+    act(() => {
+      screen.getByRole('button', { name: 'Remove A' }).click();
+    });
+
+    expect(screen.queryByText('R-a')).toBeNull();
+    expect(screen.getByText('R-b')).toBeTruthy();
+    expect(screen.getByText('R-c')).toBeTruthy();
+  });
+
+  it('refetch() after an opened beacon can re-add a previously hidden record', async () => {
+    // Simulates: hide -> record disappears -> user reopens the record ->
+    // ReaderOpenedBeacon calls refetch -> the record comes back because
+    // the opened endpoint cleared recent_hidden_at upstream.
+    let fetchCall = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCall += 1;
+      const items = fetchCall === 1 ? [] : [makeItem('a')];
+      return new Response(
+        JSON.stringify({ ok: true, items, total: items.length, limit: 10 }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <RecentReadingProvider initialItems={[makeItem('a')]}>
+        <Probe />
+      </RecentReadingProvider>,
+    );
+    expect(screen.getByText('R-a')).toBeTruthy();
+
+    // First refetch: upstream no longer lists it (hidden).
+    await act(async () => {
+      screen.getByRole('button', { name: 'Refetch' }).click();
+    });
+    await waitFor(() => expect(screen.queryByText('R-a')).toBeNull());
+
+    // Second refetch: reopened upstream lists it again.
+    await act(async () => {
+      screen.getByRole('button', { name: 'Refetch' }).click();
+    });
+    await waitFor(() => expect(screen.getByText('R-a')).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

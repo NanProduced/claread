@@ -3,10 +3,23 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
 import { ReadingRecordSection } from "./ReadingRecordSection";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+vi.mock("@/components/layout/recent-reading-context", () => ({
+  useRecentReading: () => ({ items: [], refetch: vi.fn(), removeLocal: vi.fn() }),
+}));
+
+vi.mock("@/components/primitives/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+  ClareadToaster: () => null,
+}));
 
 function makeReadingRecord(
   overrides: Partial<ReadingRecordListItemVm> = {},
@@ -366,5 +379,33 @@ describe("ReadingRecordSection", () => {
     const newDate = new Date("2026-06-22T00:00:00Z").toLocaleDateString("zh-CN");
     expect(screen.getByText(`上次阅读 ${openedDate}`)).toBeTruthy();
     expect(screen.getByText(`导入于 ${newDate}`)).toBeTruthy();
+  });
+});
+
+describe("ReadingRecordSection row menu", () => {
+  it("renders the menu trigger as a Link sibling, not nested", () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[makeReadingRecord({ title: "菜单行" })]}
+        status="ready"
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“菜单行”的操作菜单' });
+    const link = screen.getByText("菜单行").closest("a");
+    expect(link?.contains(trigger)).toBe(false);
+  });
+
+  it("does not offer 从最近阅读中移除 in the Library menu", async () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[makeReadingRecord({ title: "库行" })]}
+        status="ready"
+      />,
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.click(screen.getByRole("button", { name: '打开“库行”的操作菜单' }));
+    await screen.findByRole("menu");
+    expect(screen.queryByText("从最近阅读中移除")).toBeNull();
+    expect(screen.getByText("删除阅读记录")).toBeTruthy();
   });
 });

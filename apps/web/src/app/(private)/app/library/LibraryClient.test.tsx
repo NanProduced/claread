@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
@@ -254,5 +255,110 @@ describe("LibraryClient", () => {
     expect(screen.queryByText("删除")).toBeNull();
     expect(screen.queryByText("按阅读目标浏览")).toBeNull();
     expect(screen.queryByText("最近重读")).toBeNull();
+  });
+});
+
+describe("LibraryClient delete lifecycle", () => {
+  function fetchOk(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }),
+      ),
+    );
+  }
+
+  it("removes the deleted record from the list and count immediately", async () => {
+    fetchOk();
+    render(
+      <LibraryClient
+        readingRecords={[
+          makeReadingRecord({ title: "Alpha" }),
+          makeReadingRecord({ readingRecordId: "reading_record_2", title: "Beta" }),
+        ]}
+        readingRecordsStatus="ready"
+      />,
+    );
+    expect(screen.getByText("Alpha")).toBeTruthy();
+    expect(screen.getByText("共 2 篇记录")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: '打开“Alpha”的操作菜单' }));
+    await screen.findByRole("menu");
+    await userEvent.click(screen.getByText("删除阅读记录"));
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "删除记录" }));
+
+    await waitFor(() => expect(screen.queryByText("Alpha")).toBeNull());
+    expect(screen.getByText("Beta")).toBeTruthy();
+    expect(screen.getByText("共 1 篇记录")).toBeTruthy();
+  });
+
+  it("removes only the matching result while searching", async () => {
+    fetchOk();
+    render(
+      <LibraryClient
+        readingRecords={[
+          makeReadingRecord({ title: "Alpha" }),
+          makeReadingRecord({ readingRecordId: "reading_record_2", title: "Beta" }),
+        ]}
+        readingRecordsStatus="ready"
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索阅读记录标题" }), {
+      target: { value: "Beta" },
+    });
+    expect(screen.queryByText("Alpha")).toBeNull();
+    expect(screen.getByText("Beta")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: '打开“Beta”的操作菜单' }));
+    await screen.findByRole("menu");
+    await userEvent.click(screen.getByText("删除阅读记录"));
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "删除记录" }));
+
+    await waitFor(() => expect(screen.queryByText("Beta")).toBeNull());
+    expect(screen.getByText("找到 0 篇记录")).toBeTruthy();
+  });
+
+  it("shows the empty state after deleting the last record", async () => {
+    fetchOk();
+    render(
+      <LibraryClient
+        readingRecords={[makeReadingRecord({ title: "Solo" })]}
+        readingRecordsStatus="ready"
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: '打开“Solo”的操作菜单' }));
+    await screen.findByRole("menu");
+    await userEvent.click(screen.getByText("删除阅读记录"));
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "删除记录" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("还没有阅读记录。提交一篇新解读后会在这里显示。")).toBeTruthy(),
+    );
+  });
+
+  it("keeps the record when the delete request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: false, status: 503 }), { status: 503, headers: { "content-type": "application/json" } }),
+      ),
+    );
+    render(
+      <LibraryClient
+        readingRecords={[makeReadingRecord({ title: "Sticky" })]}
+        readingRecordsStatus="ready"
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: '打开“Sticky”的操作菜单' }));
+    await screen.findByRole("menu");
+    await userEvent.click(screen.getByText("删除阅读记录"));
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "删除记录" }));
+
+    await waitFor(() => expect(screen.getByRole("alertdialog")).toBeTruthy());
+    expect(screen.getByText("Sticky")).toBeTruthy();
   });
 });

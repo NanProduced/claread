@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarRail } from "./index";
@@ -303,5 +304,86 @@ describe("SidebarRail 最近阅读", () => {
     // Date / time labels must NOT appear in the sidebar
     expect(screen.queryByText(/上次阅读/)).toBeNull();
     expect(screen.queryByText(/导入于/)).toBeNull();
+  });
+});
+
+describe("SidebarRail 最近阅读行菜单", () => {
+  it("renders an accessible action trigger per row, as a Link sibling", () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[makeRecord({ title: "菜单文章" })]}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“菜单文章”的操作菜单' });
+    expect(trigger.tagName).toBe("BUTTON");
+    const link = screen.getByRole("link", { name: /菜单文章/ });
+    // Sibling, not nested: the trigger must not be inside the link.
+    expect(link.contains(trigger)).toBe(false);
+    expect(link.parentElement?.contains(trigger)).toBe(true);
+  });
+
+  it("hides the trigger by default and reveals it on row hover/focus", () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[makeRecord({ title: "可见性文章" })]}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“可见性文章”的操作菜单' });
+    expect(trigger.className).toContain("opacity-0");
+    expect(trigger.className).toContain("group-hover:opacity-100");
+    expect(trigger.className).toContain("group-focus-within:opacity-100");
+    // Tab-focusable: must never be display:none.
+    expect(trigger.className).not.toContain("hidden");
+  });
+
+  it("keeps the sidebar overlay open while a row menu is open (portalled)", async () => {
+    const onSidebarOverlayClose = vi.fn();
+    const { container } = render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[makeRecord({ title: "菜单打开" })]}
+        onSidebarOverlayClose={onSidebarOverlayClose}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“菜单打开”的操作菜单' });
+    await userEvent.click(trigger);
+    await screen.findByRole("menu");
+    // Pointer leaves the rail while the portalled menu is open.
+    fireEvent.mouseLeave(container.querySelector("aside") as HTMLElement);
+    expect(onSidebarOverlayClose).not.toHaveBeenCalled();
+  });
+
+  it("restores auto-collapse after the menu closes with pointer outside", async () => {
+    const onSidebarOverlayClose = vi.fn();
+    const { container } = render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[makeRecord({ title: "菜单关闭" })]}
+        onSidebarOverlayClose={onSidebarOverlayClose}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“菜单关闭”的操作菜单' });
+    await userEvent.click(trigger);
+    await screen.findByRole("menu");
+    fireEvent.mouseLeave(container.querySelector("aside") as HTMLElement);
+    expect(onSidebarOverlayClose).not.toHaveBeenCalled();
+
+    // Close the menu with Escape.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(onSidebarOverlayClose).toHaveBeenCalled();
+  });
+
+  it("keeps aria-current on the current record row", () => {
+    render(
+      <SidebarRail
+        pathname={appReaderRoute("rr_1")}
+        recentRecords={[makeRecord()]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /Untitled 1/ });
+    expect(link.getAttribute("aria-current")).toBe("page");
   });
 });

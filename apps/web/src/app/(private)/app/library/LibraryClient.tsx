@@ -46,6 +46,17 @@ export function LibraryClient({
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = useState(() => queryFromParams(searchParams));
   const deferredQuery = useDeferredValue(query);
+  const [records, setRecords] = useState(readingRecords);
+
+  // Sync local records when the server component refreshes its props
+  // (e.g. after a delete elsewhere triggers router.refresh()).  Adjusted
+  // during render (React's canonical state-during-render pattern) so the
+  // server refresh never fights a local optimistic removal.
+  const [prevRecords, setPrevRecords] = useState(readingRecords);
+  if (readingRecords !== prevRecords) {
+    setPrevRecords(readingRecords);
+    setRecords(readingRecords);
+  }
 
   const normalizedQuery = normalizeLibraryQuery(deferredQuery);
   const currentSearch = searchParams.toString();
@@ -121,13 +132,17 @@ export function LibraryClient({
 
   const filteredReadingRecords = useMemo(() => {
     if (!normalizedQuery) {
-      return readingRecords;
+      return records;
     }
 
-    return readingRecords.filter((record) =>
+    return records.filter((record) =>
       record.title.toLowerCase().includes(normalizedQuery),
     );
-  }, [normalizedQuery, readingRecords]);
+  }, [normalizedQuery, records]);
+
+  const handleRecordDeleted = useCallback((recordId: string) => {
+    setRecords((current) => current.filter((record) => record.readingRecordId !== recordId));
+  }, []);
 
   const hasQuery = normalizedQuery.length > 0;
 
@@ -193,6 +208,7 @@ export function LibraryClient({
             message={readingRecordsMessage}
             hasQuery={hasQuery}
             onResetQuery={hasQuery ? resetQuery : undefined}
+            onRecordDeleted={handleRecordDeleted}
           />
         </ScrollAreaPrimitive.Viewport>
         <ScrollBar />

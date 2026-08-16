@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const limitParam = url.searchParams.get("limit");
   const queryParam = url.searchParams.get("query");
   const productStateParam = url.searchParams.get("productState");
+  const recentOnlyParam = url.searchParams.get("recentOnly");
   const parsedLimit = limitParam ? Number(limitParam) : NaN;
   const productStates = productStateParam
     ? productStateParam
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
     ...(productStates && productStates.length > 0
       ? { productStates }
       : {}),
+    ...(recentOnlyParam !== null ? { recentOnly: recentOnlyParam === "true" } : {}),
   };
 
   const result = await getReadingRecordListFromWeb(options);

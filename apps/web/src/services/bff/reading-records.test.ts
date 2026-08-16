@@ -11,11 +11,21 @@ vi.mock("@/services/bff/session", () => ({
 
 vi.mock("@/services/api/reading-records", () => ({
   listUpstreamReadingRecords: vi.fn(),
+  hideReaderRecordFromRecent: vi.fn(),
+  deleteReaderRecord: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
-import { listUpstreamReadingRecords } from "@/services/api/reading-records";
-import { getReadingRecordListFromWeb } from "./reading-records";
+import {
+  deleteReaderRecord,
+  hideReaderRecordFromRecent,
+  listUpstreamReadingRecords,
+} from "@/services/api/reading-records";
+import {
+  deleteReaderRecordFromWeb,
+  getReadingRecordListFromWeb,
+  hideReaderRecordFromRecentFromWeb,
+} from "./reading-records";
 import { appReaderRoute } from "@/lib/routes";
 import type { ReadingRecordListResponseDto } from "@/types/api/reading-records";
 
@@ -284,5 +294,165 @@ describe("reading-records BFF list", () => {
     if (result.ok) {
       expect(result.items[0].lastOpenedAt).toBeNull();
     }
+  });
+});
+
+describe("reading-records BFF recentOnly passthrough", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("passes recentOnly=true through to the upstream client", async () => {
+    vi.mocked(listUpstreamReadingRecords).mockResolvedValue({
+      ok: true,
+      data: makeListResponse(),
+    });
+
+    await getReadingRecordListFromWeb({ limit: 10, recentOnly: true });
+
+    expect(vi.mocked(listUpstreamReadingRecords).mock.calls[0]).toEqual([
+      "session-token",
+      { limit: 10, query: undefined, productStates: undefined, recentOnly: true },
+    ]);
+  });
+});
+
+describe("reading-records BFF hide from recent", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects anonymous sessions without calling upstream", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await hideReaderRecordFromRecentFromWeb("rec-1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(hideReaderRecordFromRecent).not.toHaveBeenCalled();
+  });
+
+  it("maps upstream 500 to upstream_unavailable (503)", async () => {
+    vi.mocked(hideReaderRecordFromRecent).mockResolvedValue({
+      ok: false,
+      status: 500,
+      message: "internal error",
+    });
+
+    const result = await hideReaderRecordFromRecentFromWeb("rec-1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("returns ok with the upstream payload for removed_from_recent", async () => {
+    vi.mocked(hideReaderRecordFromRecent).mockResolvedValue({
+      ok: true,
+      data: {
+        record_id: "rec-1",
+        status: "removed_from_recent",
+        recent_hidden_at: "2026-08-16T00:00:00Z",
+      },
+    });
+
+    const result = await hideReaderRecordFromRecentFromWeb("rec-1");
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        record_id: "rec-1",
+        status: "removed_from_recent",
+        recent_hidden_at: "2026-08-16T00:00:00Z",
+      },
+    });
+    expect(vi.mocked(hideReaderRecordFromRecent).mock.calls[0]).toEqual([
+      "session-token",
+      "rec-1",
+    ]);
+  });
+
+  it("does not leak the upstream raw message in the 4xx error mapping", async () => {
+    vi.mocked(hideReaderRecordFromRecent).mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "raw upstream detail with secrets",
+    });
+
+    const result = await hideReaderRecordFromRecentFromWeb("rec-1");
+
+    expect(result).toMatchObject({ ok: false, status: 404, code: "upstream_error" });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("raw upstream detail with secrets");
+  });
+});
+
+describe("reading-records BFF delete", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects mock_phone sessions without calling upstream", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "mock_phone",
+      source: "mock",
+      phone: "13800138000",
+    });
+
+    const result = await deleteReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
+    expect(deleteReaderRecord).not.toHaveBeenCalled();
+  });
+
+  it("returns ok with the full delete DTO", async () => {
+    vi.mocked(deleteReaderRecord).mockResolvedValue({
+      ok: true,
+      data: {
+        record_id: "rec-1",
+        status: "deleted",
+        deleted_at: "2026-08-16T00:00:00Z",
+        vector_gc_intent_recorded: true,
+      },
+    });
+
+    const result = await deleteReaderRecordFromWeb("rec-1");
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        record_id: "rec-1",
+        status: "deleted",
+        deleted_at: "2026-08-16T00:00:00Z",
+        vector_gc_intent_recorded: true,
+      },
+    });
+    expect(vi.mocked(deleteReaderRecord).mock.calls[0]).toEqual([
+      "session-token",
+      "rec-1",
+    ]);
+  });
+
+  it("maps upstream 401 to upstream_auth_failed", async () => {
+    vi.mocked(deleteReaderRecord).mockResolvedValue({
+      ok: false,
+      status: 401,
+      message: "token expired",
+    });
+
+    const result = await deleteReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 401,
+      code: "upstream_auth_failed",
+    });
   });
 });

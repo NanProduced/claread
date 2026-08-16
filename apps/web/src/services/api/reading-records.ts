@@ -2,7 +2,9 @@ import "server-only";
 
 import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
+  ReaderRecordDeletedResponseDto,
   ReaderRecordOpenedResponseDto,
+  ReaderRecordRecentRemovedResponseDto,
   ReadingRecordListResponseDto,
 } from "@/types/api/reading-records";
 
@@ -20,6 +22,7 @@ export interface ListReadingRecordsParams {
   limit?: number;
   query?: string;
   productStates?: string[];
+  recentOnly?: boolean;
 }
 
 export function listUpstreamReadingRecords(
@@ -41,6 +44,10 @@ export function listUpstreamReadingRecords(
     searchParams.set("product_state", params.productStates.join(","));
   }
 
+  if (params.recentOnly === true) {
+    searchParams.set("recent_only", "true");
+  }
+
   const query = searchParams.toString();
 
   return fastApiFetch<ReadingRecordListResponseDto>(
@@ -56,5 +63,25 @@ export function markReaderRecordOpened(
   return fastApiFetch<ReaderRecordOpenedResponseDto>(
     `/reader/records/${encodeURIComponent(recordId)}/opened`,
     { sessionToken, method: "POST" },
+  );
+}
+
+export function hideReaderRecordFromRecent(
+  sessionToken: string,
+  recordId: string,
+): Promise<UpstreamResult<ReaderRecordRecentRemovedResponseDto>> {
+  return fastApiFetch<ReaderRecordRecentRemovedResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/recent`,
+    { sessionToken, method: "DELETE" },
+  );
+}
+
+export function deleteReaderRecord(
+  sessionToken: string,
+  recordId: string,
+): Promise<UpstreamResult<ReaderRecordDeletedResponseDto>> {
+  return fastApiFetch<ReaderRecordDeletedResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}`,
+    { sessionToken, method: "DELETE" },
   );
 }

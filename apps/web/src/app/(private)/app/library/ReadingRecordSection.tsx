@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, Calendar, LogIn, Plus } from "lucide-react";
+import { AlertTriangle, Calendar, LogIn, Plus } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/primitives/button";
 import { appReadResumeCandidateRoute } from "@/lib/routes";
@@ -10,6 +10,7 @@ import {
 } from "@/lib/reader-record-status";
 import { appReadRoute, loginRouteBase } from "@/lib/routes";
 import { looksLikeSafeUserCopy } from "@/lib/user-facing-error";
+import { ReadingRecordActionsMenu } from "@/components/reading-records/ReadingRecordActionsMenu";
 import type {
   ReadingRecordListItemVm,
   ReadingRecordsBffError,
@@ -69,12 +70,14 @@ export function ReadingRecordSection({
   message,
   hasQuery = false,
   onResetQuery,
+  onRecordDeleted,
 }: {
   readingRecords: ReadingRecordListItemVm[];
   status: "ready" | ReadingRecordsBffError["code"];
   message?: string;
   hasQuery?: boolean;
   onResetQuery?: () => void;
+  onRecordDeleted?: (recordId: string) => void;
 }) {
   if (status === "auth_required" || status === "upstream_auth_failed") {
     const copy =
@@ -163,52 +166,48 @@ export function ReadingRecordSection({
   const { priorityTop, fullListItems } = splitForRender(readingRecords);
 
   const renderRow = (item: ReadingRecordListItemVm) => {
+    // CTA labels ("继续确认" / "去处理" / "查看详情") stay as plain
+    // user-facing status text — no pill CTA, no trailing arrow.  The
+    // whole row's only explicit action affordance is the low-noise
+    // Ellipsis menu.
     const ctaLabel = recordCtaLabel(item);
-    const titleClass =
-      "truncate font-headline text-[1.08rem] font-semibold text-ink transition-colors group-hover:text-lens-blue";
-
-    const trailing = ctaLabel ? (
-      <span className="inline-flex items-center gap-1.5 rounded-pill bg-lens-blue/10 px-3 py-1.5 text-[0.72rem] font-semibold tracking-[0.06em] text-lens-blue transition-all duration-200 group-hover:bg-lens-blue/15 group-hover:translate-x-[2px]">
-        {ctaLabel}
-        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-      </span>
-    ) : (
-      <ArrowRight
-        className="h-4 w-4 shrink-0 text-muted-foreground transition-all duration-200 group-hover:translate-x-1 group-hover:text-ink"
-        aria-hidden="true"
-      />
-    );
-
-    const inner = (
-      <div className="group flex items-center justify-between gap-4 py-5 rounded-md px-2">
-        <div className="min-w-0 flex-1">
-          <p className={titleClass}>{item.title}</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted-foreground">
-            <span>{item.sourceLabel}</span>
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3 opacity-60" />
-              {timeLabelFor(item)}
-            </span>
-            <span>{statusLabelFor(item)}</span>
-          </div>
-          {item.productState === "needs_confirmation" ? (
-            <p className="mt-1 text-[0.72rem] leading-snug text-muted-foreground">
-              请确认已准备好的内容后开始阅读
-            </p>
-          ) : null}
-        </div>
-        {trailing}
-      </div>
-    );
 
     return (
-      <li key={item.readingRecordId}>
+      <li key={item.readingRecordId} className="group relative">
         <Link
           href={recordHrefFor(item)}
-          className="transition-colors hover:bg-black/[0.02]"
+          className="block rounded-md transition-colors hover:bg-black/[0.02]"
         >
-          {inner}
+          <div className="flex items-center justify-between gap-4 py-3 pl-2 pr-10">
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-headline text-[1rem] font-semibold text-ink transition-colors group-hover:text-lens-blue">
+                {item.title}
+              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted-foreground">
+                <span>{item.sourceLabel}</span>
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3 w-3 opacity-60" />
+                  {timeLabelFor(item)}
+                </span>
+                <span>{statusLabelFor(item)}</span>
+                {ctaLabel ? (
+                  <span className="font-medium text-lens-blue">{ctaLabel}</span>
+                ) : null}
+              </div>
+              {item.productState === "needs_confirmation" ? (
+                <p className="mt-1 text-[0.72rem] leading-snug text-muted-foreground">
+                  请确认已准备好的内容后开始阅读
+                </p>
+              ) : null}
+            </div>
+          </div>
         </Link>
+        <ReadingRecordActionsMenu
+          recordId={item.readingRecordId}
+          title={item.title}
+          onDeleted={onRecordDeleted}
+          className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        />
       </li>
     );
   };
