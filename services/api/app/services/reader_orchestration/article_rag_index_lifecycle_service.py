@@ -47,10 +47,11 @@ closed otherwise.  ``load_*`` is read-only and safe under autocommit.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
     ArticleRagIndexBootstrapError,
@@ -171,6 +172,54 @@ class ArticleRagIndexLifecycleStatus:
     plan_content_sha256: str | None = None
     chunk_count: int | None = None
     reason_code: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Reindex (Wave 7 / F1c phase B — operator-only explicit reindex)
+# ---------------------------------------------------------------------------
+
+# ``reindex`` result status values:
+#   reindex_enqueued     — old indexed run superseded + new queued run
+#                          created in ONE transaction
+#   reindex_in_progress  — an active run is planned/queued/indexing;
+#                          NEVER superseded in-flight work (zero writes)
+#   record_not_found     — wrong user / deleted / inactive record
+#   not_ready            — record not article_ready
+#   no_active_base       — active_base_id is NULL
+#   no_indexed_run       — no active index run for the stable document
+#   bootstrap_inconsistent — the indexed run's job/run linkage is broken
+#   error                — unexpected failure (transaction rolled back
+#                          by the caller)
+
+REINDEX_STATUS_ENQUEUED = "reindex_enqueued"
+REINDEX_STATUS_IN_PROGRESS = "reindex_in_progress"
+REINDEX_STATUS_RECORD_NOT_FOUND = "record_not_found"
+REINDEX_STATUS_NOT_READY = "not_ready"
+REINDEX_STATUS_NO_ACTIVE_BASE = "no_active_base"
+REINDEX_STATUS_NO_INDEXED_RUN = "no_indexed_run"
+REINDEX_STATUS_BOOTSTRAP_INCONSISTENT = "bootstrap_inconsistent"
+REINDEX_STATUS_ERROR = "error"
+
+# Audit metadata written onto the superseded index run (merged into
+# ``metadata_json``; the persisted contract fingerprint is preserved).
+REINDEX_SUPERSEDE_TRIGGER_KIND = "operator_reindex"
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagIndexReindexResult:
+    """Typed result of :meth:`reindex_article_rag_index_in_transaction`.
+
+    ``superseded_index_run_id`` / ``new_index_run_id`` / ``job_id`` /
+    ``stable_document_id`` are populated only on ``reindex_enqueued``.
+    """
+
+    reading_record_id: UUID
+    status: str
+    reason_code: str
+    superseded_index_run_id: UUID | None = None
+    new_index_run_id: UUID | None = None
+    job_id: UUID | None = None
+    stable_document_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +378,204 @@ class ArticleRagIndexLifecycleService:
             record_generation=bootstrap_result.record_generation,
             index_run_id=bootstrap_result.index_run_id,
             job_id=bootstrap_result.job_id,
+        )
+
+    # -----------------------------------------------------------------
+    # reindex (Wave 7 / F1c phase B — operator-only explicit reindex)
+    # -----------------------------------------------------------------
+
+    async def reindex_article_rag_index_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        reading_record_id: UUID,
+        user_id: UUID,
+        now: datetime | None = None,
+    ) -> ArticleRagIndexReindexResult:
+        """Explicit operator reindex: supersede the current ``indexed``
+        run and enqueue a fresh build in ONE caller-owned transaction.
+
+        Contract (Wave 7 / F1c):
+
+          * Only an ``indexed`` active run may be superseded.  An
+            in-flight run (planned / queued / indexing) returns
+            ``reindex_in_progress`` with ZERO writes — the worker has
+            exactly one fence check before its external vector upsert,
+            so unconditionally superseding in-flight work would let a
+            late external write overwrite the new index's vectors.
+          * The supersede + new-run bootstrap are atomic: any failure
+            propagates so the caller's transaction rolls back and the
+            old run stays ``indexed``.
+          * The old run's succeeded job / completed reader run are
+            NEVER rewritten — supersession applies to the index run
+            row only.
+          * Concurrency is serialised by the same ``reading_records``
+            ``FOR UPDATE`` row lock the bootstrap uses; a concurrent
+            reindex sees the new queued run and returns
+            ``reindex_in_progress``.  The partial unique index on
+            active runs is a backstop, not the primary control.
+
+        Operator-only: no HTTP route, no scheduler, no automatic
+        contract-drift trigger.  Recovery from a failed new build is
+        re-running the reindex (idempotent), not an automatic
+        ``superseded -> indexed`` rollback.
+        """
+        # 1. Transaction guard.
+        if not conn.is_in_transaction():
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_ERROR,
+                reason_code="caller_transaction_required",
+            )
+
+        # 2. Lock + ownership check on the reading record (same
+        #    serialisation point the bootstrap uses).
+        record_row = await conn.fetchrow(
+            """
+            SELECT generation, active_base_id, readiness_state
+            FROM reading_records
+            WHERE id = $1
+              AND user_id = $2
+              AND deleted_at IS NULL
+              AND lifecycle_status = 'active'
+            FOR UPDATE
+            """,
+            reading_record_id,
+            user_id,
+        )
+        if record_row is None:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_RECORD_NOT_FOUND,
+                reason_code="record_not_found",
+            )
+
+        # 3. Readiness check.
+        if str(record_row["readiness_state"]) not in _READY_READINESS_STATES:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_NOT_READY,
+                reason_code="record_not_article_ready",
+            )
+
+        # 4. Active base check.
+        if record_row["active_base_id"] is None:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_NO_ACTIVE_BASE,
+                reason_code="active_base_id_is_null",
+            )
+
+        # 5. Resolve the ACTIVE stable document (the plan truth the
+        #    bootstrap will rebuild against).  Without one there can be
+        #    no active index run to reindex.
+        stable_doc_id = await conn.fetchval(
+            """
+            SELECT id FROM stable_reading_documents
+            WHERE reading_record_id = $1 AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            reading_record_id,
+        )
+        if stable_doc_id is None:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_NO_INDEXED_RUN,
+                reason_code="no_active_stable_document",
+            )
+
+        # 6. Lock the active index run for this stable document.
+        active_run = await conn.fetchrow(
+            """
+            SELECT id, status, job_id, reader_run_id, plan_content_sha256
+            FROM reader_article_rag_index_runs
+            WHERE stable_document_id = $1
+              AND status IN ('planned', 'queued', 'indexing', 'indexed')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            stable_doc_id,
+        )
+        if active_run is None:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_NO_INDEXED_RUN,
+                reason_code="no_active_index_run",
+            )
+
+        # 7. In-flight runs are NEVER superseded (single fence check in
+        #    the worker — see docstring).  Zero writes on this path.
+        if str(active_run["status"]) != "indexed":
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_IN_PROGRESS,
+                reason_code=f"index_run_{active_run['status']}",
+            )
+
+        # 8. Linkage pre-check: a superseded row must keep a
+        #    traceable job/run audit chain.  A broken linkage means the
+        #    run is already inconsistent — refuse to supersede.
+        if active_run["job_id"] is None or active_run["reader_run_id"] is None:
+            return ArticleRagIndexReindexResult(
+                reading_record_id=reading_record_id,
+                status=REINDEX_STATUS_BOOTSTRAP_INCONSISTENT,
+                reason_code="indexed_run_linkage_broken",
+            )
+
+        # 9. Supersede the old indexed run (index run row ONLY — the
+        #    succeeded job / completed reader run keep their statuses).
+        #    Audit metadata merges into ``metadata_json``; the persisted
+        #    contract fingerprint is preserved by the merge.
+        superseded_at = now or datetime.now(UTC)
+        await conn.execute(
+            """
+            UPDATE reader_article_rag_index_runs
+            SET status = 'superseded',
+                metadata_json = metadata_json || $2::jsonb,
+                completed_at = COALESCE(completed_at, $3),
+                updated_at = $3
+            WHERE id = $1
+            """,
+            active_run["id"],
+            jsonb_param(
+                {
+                    "supersede_reason": REINDEX_SUPERSEDE_TRIGGER_KIND,
+                    "trigger_kind": REINDEX_SUPERSEDE_TRIGGER_KIND,
+                    "superseded_at": superseded_at.isoformat(),
+                    "previous_plan_content_sha256": str(
+                        active_run["plan_content_sha256"]
+                    ),
+                }
+            ),
+            superseded_at,
+        )
+
+        # 10. Bootstrap the new run in the SAME transaction.  The
+        #     bootstrap re-locks the record (re-entrant FOR UPDATE),
+        #     rebuilds + validates the plan, and — now that the old run
+        #     is superseded — takes the fresh-insert path with the
+        #     CURRENT contract fingerprint.  Any raise here propagates
+        #     so the caller's transaction rolls back entirely (the old
+        #     run stays indexed).
+        bootstrap_result = (
+            await self._bootstrap_service.bootstrap_article_rag_index_in_transaction(
+                conn,
+                reading_record_id=reading_record_id,
+                user_id=user_id,
+                now=now,
+            )
+        )
+
+        return ArticleRagIndexReindexResult(
+            reading_record_id=reading_record_id,
+            status=REINDEX_STATUS_ENQUEUED,
+            reason_code="reindex_enqueued",
+            superseded_index_run_id=active_run["id"],
+            new_index_run_id=bootstrap_result.index_run_id,
+            job_id=bootstrap_result.job_id,
+            stable_document_id=stable_doc_id,
         )
 
     # -----------------------------------------------------------------
@@ -617,6 +864,17 @@ __all__ = [
     "ArticleRagIndexEnsureResult",
     "ArticleRagIndexLifecycleService",
     "ArticleRagIndexLifecycleStatus",
+    "ArticleRagIndexReindexResult",
+    "REINDEX_SUPERSEDE_TRIGGER_KIND",
+    # reindex status constants
+    "REINDEX_STATUS_BOOTSTRAP_INCONSISTENT",
+    "REINDEX_STATUS_ENQUEUED",
+    "REINDEX_STATUS_ERROR",
+    "REINDEX_STATUS_IN_PROGRESS",
+    "REINDEX_STATUS_NO_ACTIVE_BASE",
+    "REINDEX_STATUS_NO_INDEXED_RUN",
+    "REINDEX_STATUS_NOT_READY",
+    "REINDEX_STATUS_RECORD_NOT_FOUND",
     # ensure status constants
     "ENSURE_STATUS_BOOTSTRAP_INCONSISTENT",
     "ENSURE_STATUS_EMBEDDING_CONTRACT_IDENTITY_MISSING",
