@@ -49,7 +49,7 @@ function reviewErrorState(
   return {
     state: "error",
       status,
-      message,
+      message: "复习队列读取失败，请稍后重试。",
   };
 }
 

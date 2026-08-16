@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Heart } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import { readerCommandControl } from "@/components/reader/interaction";
 
 type FavoriteState = "loading" | "ready" | "saving" | "error";
@@ -95,7 +96,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
       }
 
       setState("error");
-      setMessage(error instanceof Error ? error.message : "收藏状态读取失败。");
+      setMessage(userFacingErrorMessage(error, "收藏状态读取失败。"));
     });
 
     return () => {
@@ -138,7 +139,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
     } catch (error) {
       setFavorited(previousFavorited);
       setState("error");
-      setMessage(error instanceof Error ? error.message : "收藏操作失败。");
+      setMessage(userFacingErrorMessage(error, "收藏操作失败。"));
     }
   }
 

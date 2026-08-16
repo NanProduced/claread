@@ -315,7 +315,7 @@ function normalizeCreateBody(body: unknown): VocabularyCreateRequestDto | AddVoc
       ok: false,
       status: 400,
       code: "bad_request",
-      message: "Invalid vocabulary request body.",
+      message: "生词请求格式不正确。",
     };
   }
 
@@ -334,8 +334,7 @@ function normalizeCreateBody(body: unknown): VocabularyCreateRequestDto | AddVoc
       ok: false,
       status: 400,
       code: "bad_request",
-      message:
-        "Missing required vocabulary fields: lemma, display_word, short_meaning, source_sentence, source_provider.",
+      message: "生词信息不完整，请从词典词条重新保存。",
     };
   }
 
@@ -344,7 +343,7 @@ function normalizeCreateBody(body: unknown): VocabularyCreateRequestDto | AddVoc
       ok: false,
       status: 400,
       code: "bad_request",
-      message: "Invalid dict_entry_id. Use a positive integer from a dictionary entry.",
+      message: "缺少有效的词典词条，请从词典词条重新保存。",
     };
   }
 
@@ -416,7 +415,7 @@ export async function getVocabularyList(
         message:
           upstreamResult.status === 0 || upstreamResult.status >= 500
             ? "生词本服务暂时不可用，请稍后重试。"
-            : upstreamResult.message,
+            : "生词本读取失败，请稍后重试。",
       }
     }
 

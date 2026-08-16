@@ -223,7 +223,7 @@ function upstreamError(query: string, status: number, message: string): WebDictE
     code: status === 0 || status >= 500 ? "upstream_unavailable" : "upstream_error",
     message:
       status === 0 || status >= 500
-        ? "Dictionary upstream is unavailable. No mock dictionary fallback was used."
+        ? "词典服务暂时不可用，请稍后重试。"
         : message,
   };
 }

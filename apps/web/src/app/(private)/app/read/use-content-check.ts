@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { userFacingErrorCopy } from "@/lib/user-facing-error";
 import type {
   ReaderAdaptationRecordDto,
   ReaderConfirmedSourceCandidateSummaryDto,
@@ -276,8 +277,7 @@ export function useContentCheck({
       .catch((error: unknown) => {
         patchState({
           phase: "error",
-          errorMessage:
-            error instanceof Error ? error.message : "加载草稿失败，请稍后重试。",
+          errorMessage: userFacingErrorCopy(error, "加载草稿失败，请稍后重试。"),
         });
       });
   }, [loadLatest, patchState]);
@@ -296,8 +296,7 @@ export function useContentCheck({
         if (cancelled) return;
         patchState({
           phase: "error",
-          errorMessage:
-            error instanceof Error ? error.message : "加载草稿失败，请稍后重试。",
+          errorMessage: userFacingErrorCopy(error, "加载草稿失败，请稍后重试。"),
         });
       });
     return () => {
@@ -556,8 +555,7 @@ export function useContentCheck({
     } catch (error: unknown) {
       patchState({
         phase: "conflict",
-        errorMessage:
-          error instanceof Error ? error.message : "加载最新草稿失败。",
+        errorMessage: userFacingErrorCopy(error, "加载最新草稿失败。"),
       });
       return null;
     }

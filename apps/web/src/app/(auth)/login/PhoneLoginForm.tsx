@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { appReadRoute, isAllowedIntent, isAllowedNextPath } from "@/lib/routes";
+import { userFacingErrorCopy } from "@/lib/user-facing-error";
 
 type AuthStatus =
   | { tone: "idle"; message: "" }
@@ -72,11 +73,9 @@ async function readErrorMessage(response: Response, fallback: string) {
 }
 
 function getRequestErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message !== "Failed to fetch") {
-    return error.message;
-  }
-
-  return fallback;
+  // 用户可读闸口：BFF 写好的中文错误文案（如"验证码错误"）放行，
+  // 网络/英文技术串折叠为固定文案。
+  return userFacingErrorCopy(error, fallback);
 }
 
 async function postJson(url: string, body: Record<string, string>, fallback: string) {

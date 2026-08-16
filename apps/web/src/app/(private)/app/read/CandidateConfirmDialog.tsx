@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, FileText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/primitives/button";
+import { userFacingErrorCopy } from "@/lib/user-facing-error";
 import {
   Dialog,
   DialogContent,
@@ -190,7 +191,7 @@ export function CandidateConfirmDialog({
     } catch (error: unknown) {
       setConfirmState({
         kind: "error",
-        message: error instanceof Error ? error.message : "确认失败，请稍后重试。",
+        message: userFacingErrorCopy(error, "确认失败，请稍后重试。"),
       });
     }
   }

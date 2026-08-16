@@ -9,11 +9,17 @@ import {
   readingRecordStatusLabel,
 } from "@/lib/reader-record-status";
 import { appReadRoute, loginRouteBase } from "@/lib/routes";
+import { looksLikeSafeUserCopy } from "@/lib/user-facing-error";
 import type {
   ReadingRecordListItemVm,
   ReadingRecordsBffError,
 } from "@/services/bff/reading-records";
 import type { ReadingRecordProductState } from "@/types/api/reading-records";
+
+function safeMessage(message: string | undefined, fallback: string): string {
+  // 只放行 BFF 写好的中文文案；上游英文 detail 不透传。
+  return message && looksLikeSafeUserCopy(message) ? message : fallback;
+}
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN");
@@ -80,7 +86,7 @@ export function ReadingRecordSection({
         <div className="flex items-start gap-3 text-[0.85rem] text-rose-800/90">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p>{message || copy}</p>
+            <p>{safeMessage(message, copy)}</p>
             <div className="mt-4">
               <Button asChild variant="primary" className="gap-2">
                 <Link href={loginRouteBase}>
@@ -101,7 +107,7 @@ export function ReadingRecordSection({
         <div className="flex items-start gap-3 text-[0.85rem] text-amber-800/90">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            {message || "调试登录态无法访问阅读记录，请使用完整登录会话后再试。"}
+            {safeMessage(message, "调试登录态无法访问阅读记录，请使用完整登录会话后再试。")}
           </p>
         </div>
       </section>
@@ -113,7 +119,7 @@ export function ReadingRecordSection({
       <section className="px-1 py-10">
         <div className="flex items-start gap-3 text-[0.85rem] text-rose-800/90">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>{message || "无法加载阅读记录，请稍后重试。"}</p>
+          <p>{safeMessage(message, "无法加载阅读记录，请稍后重试。")}</p>
         </div>
       </section>
     );

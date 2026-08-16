@@ -9,6 +9,7 @@ import { ReadingPlanFields } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { cn } from "@/lib/cn";
+import { userFacingErrorCopy } from "@/lib/user-facing-error";
 import {
   isArtifactPipelineWorkerStalled,
   type ReaderArtifactPipelineStatusSafeDto,
@@ -1180,7 +1181,7 @@ export function AnalyzeSubmitForm({
     } catch (error: unknown) {
       setState({
         kind: "error",
-        message: error instanceof Error ? error.message : "文件处理失败，请稍后重试。",
+        message: userFacingErrorCopy(error, "文件处理失败，请稍后重试。"),
       });
     }
   }
@@ -1418,7 +1419,7 @@ export function AnalyzeSubmitForm({
     } catch (error: unknown) {
       setState({
         kind: "error",
-        message: error instanceof Error ? error.message : "提交失败，请稍后重试。",
+        message: userFacingErrorCopy(error, "提交失败，请稍后重试。"),
       });
     }
   }

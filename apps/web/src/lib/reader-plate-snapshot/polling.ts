@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { userFacingErrorMessage } from "@/lib/user-facing-error";
 import {
   classifyReaderEvent,
   type ReaderEventClassification,
@@ -406,7 +407,7 @@ export function useReaderPlatePolling(
         setCursorBoth(decision.cursor);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "批注更新发生未知错误。");
+          setError(userFacingErrorMessage(err, "批注更新暂时不可用，请稍后重试。"));
         }
       } finally {
         if (!cancelled) {
