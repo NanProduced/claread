@@ -905,7 +905,10 @@ class ArticleRagIndexWorkerService:
             # or holds the lock first (we re-validate, see the deleted
             # record / superseded run / cancelled job, and do zero upserts).
             # The lock connection stays checked out during the external
-            # vector I/O, but no DB transaction is held open on it.
+            # vector I/O, but no DB transaction is held open on it.  The
+            # fence re-validation runs as a short transaction ON THE SAME
+            # lock connection (R3: no nested pool acquire — the pool may
+            # be sized as low as max_size=1).
             mutation_key = advisory_lock_key(
                 LOCK_NAMESPACE_VECTOR_MUTATION, context.stable_document_id
             )
@@ -917,6 +920,7 @@ class ArticleRagIndexWorkerService:
                         claim=claim,
                         context=context,
                         index_run_snapshot=index_run_snapshot,
+                        conn=lock_conn,
                     )
 
                     # Write vectors outside the DB transaction.
@@ -1476,6 +1480,7 @@ class ArticleRagIndexWorkerService:
         claim: ClaimResult,
         context: _JobContext,
         index_run_snapshot: dict[str, Any],
+        conn: asyncpg.Connection,
     ) -> None:
         """Re-lock job/index_run and validate fence before vector upsert.
 
@@ -1483,90 +1488,93 @@ class ArticleRagIndexWorkerService:
         by the public ``validate_claim_in_transaction`` seam — this method
         does NOT duplicate that logic. Only Article RAG-owned state
         (index_run row) is checked separately here.
-        """
-        async with self.get_pool().acquire() as conn:
-            async with conn.transaction():
-                # Deletion fence: the record must still exist and be
-                # undeleted.  Wave 8 soft-deletes atomically supersede the
-                # index run, so this is defence-in-depth on top of the run
-                # status check below — but it MUST run here, under the
-                # mutation lock, so a late writer racing a deletion can
-                # never upsert vectors for a deleted record.
-                record_row = await conn.fetchrow(
-                    """
-                    SELECT deleted_at
-                    FROM reading_records
-                    WHERE id = $1
-                    """,
-                    context.reading_record_id,
-                )
-                if record_row is None or record_row["deleted_at"] is not None:
-                    raise FenceViolationError(
-                        "reading record deleted before vector write"
-                    )
-                index_row = await conn.fetchrow(
-                    """
-                    SELECT id, status, job_id, base_id, stable_document_id,
-                           record_generation,
-                           plan_content_sha256, chunk_count
-                    FROM reader_article_rag_index_runs
-                    WHERE id = $1
-                    FOR UPDATE
-                    """,
-                    context.index_run_id,
-                )
-                if index_row is None:
-                    raise ArticleRagIndexWorkerError(
-                        f"index run {context.index_run_id} disappeared "
-                        f"before vector write",
-                        retryable=False,
-                        failure_class="index_run_state",
-                        failure_code=FAILURE_CODE_INDEX_RUN_MISSING,
-                    )
-                if str(index_row["status"]) != "indexing":
-                    raise ArticleRagIndexWorkerError(
-                        f"index run {context.index_run_id} status is "
-                        f"'{index_row['status']}' (expected indexing) "
-                        f"before vector write",
-                        retryable=False,
-                        failure_class="index_run_state",
-                        failure_code=FAILURE_CODE_INDEX_RUN_WRONG_STATUS,
-                    )
-                if index_row["job_id"] != claim.job_id:
-                    raise ArticleRagIndexWorkerError(
-                        f"index run {context.index_run_id} job_id mismatch "
-                        f"before vector write",
-                        retryable=False,
-                        failure_class="index_run_state",
-                        failure_code=FAILURE_CODE_INDEX_RUN_WRONG_JOB_ID,
-                    )
-                self._validate_index_run_fields(index_row, claim, context)
-                if (
-                    str(index_row["plan_content_sha256"])
-                    != index_run_snapshot["plan_content_sha256"]
-                    or int(index_row["chunk_count"])
-                    != int(index_run_snapshot["chunk_count"])
-                ):
-                    raise ArticleRagIndexWorkerError(
-                        f"index run {context.index_run_id} plan snapshot "
-                        f"changed before vector write",
-                        retryable=False,
-                        failure_class="plan_hash_mismatch",
-                        failure_code=FAILURE_CODE_PLAN_HASH_MISMATCH,
-                        rationale_code=FAILURE_CODE_PLAN_HASH_MISMATCH,
-                    )
 
-                # Single source of truth for job status / lease / expiry /
-                # fence validation. Locks reader_jobs FOR UPDATE, validates
-                # status='claimed' + lease token + lease expiry + publish
-                # fence. Raises LeaseTokenMismatchError / LeaseExpiredError /
-                # IllegalTransitionError / FenceViolationError on failure;
-                # no partial mutation or event is written.
-                await self._job_runtime.validate_claim_in_transaction(
-                    conn,
-                    job_id=claim.job_id,
-                    lease_token=claim.lease_token,
+        ``conn`` is the caller's stable-document mutation-lock connection
+        (R3): the short validation transaction runs on it so a
+        ``max_size=1`` pool cannot deadlock on a nested acquire.
+        """
+        async with conn.transaction():
+            # Deletion fence: the record must still exist and be
+            # undeleted.  Wave 8 soft-deletes atomically supersede the
+            # index run, so this is defence-in-depth on top of the run
+            # status check below — but it MUST run here, under the
+            # mutation lock, so a late writer racing a deletion can
+            # never upsert vectors for a deleted record.
+            record_row = await conn.fetchrow(
+                """
+                SELECT deleted_at
+                FROM reading_records
+                WHERE id = $1
+                """,
+                context.reading_record_id,
+            )
+            if record_row is None or record_row["deleted_at"] is not None:
+                raise FenceViolationError(
+                    "reading record deleted before vector write"
                 )
+            index_row = await conn.fetchrow(
+                """
+                SELECT id, status, job_id, base_id, stable_document_id,
+                       record_generation,
+                       plan_content_sha256, chunk_count
+                FROM reader_article_rag_index_runs
+                WHERE id = $1
+                FOR UPDATE
+                """,
+                context.index_run_id,
+            )
+            if index_row is None:
+                raise ArticleRagIndexWorkerError(
+                    f"index run {context.index_run_id} disappeared "
+                    f"before vector write",
+                    retryable=False,
+                    failure_class="index_run_state",
+                    failure_code=FAILURE_CODE_INDEX_RUN_MISSING,
+                )
+            if str(index_row["status"]) != "indexing":
+                raise ArticleRagIndexWorkerError(
+                    f"index run {context.index_run_id} status is "
+                    f"'{index_row['status']}' (expected indexing) "
+                    f"before vector write",
+                    retryable=False,
+                    failure_class="index_run_state",
+                    failure_code=FAILURE_CODE_INDEX_RUN_WRONG_STATUS,
+                )
+            if index_row["job_id"] != claim.job_id:
+                raise ArticleRagIndexWorkerError(
+                    f"index run {context.index_run_id} job_id mismatch "
+                    f"before vector write",
+                    retryable=False,
+                    failure_class="index_run_state",
+                    failure_code=FAILURE_CODE_INDEX_RUN_WRONG_JOB_ID,
+                )
+            self._validate_index_run_fields(index_row, claim, context)
+            if (
+                str(index_row["plan_content_sha256"])
+                != index_run_snapshot["plan_content_sha256"]
+                or int(index_row["chunk_count"])
+                != int(index_run_snapshot["chunk_count"])
+            ):
+                raise ArticleRagIndexWorkerError(
+                    f"index run {context.index_run_id} plan snapshot "
+                    f"changed before vector write",
+                    retryable=False,
+                    failure_class="plan_hash_mismatch",
+                    failure_code=FAILURE_CODE_PLAN_HASH_MISMATCH,
+                    rationale_code=FAILURE_CODE_PLAN_HASH_MISMATCH,
+                )
+
+            # Single source of truth for job status / lease / expiry /
+            # fence validation. Locks reader_jobs FOR UPDATE, validates
+            # status='claimed' + lease token + lease expiry + publish
+            # fence. Raises LeaseTokenMismatchError / LeaseExpiredError /
+            # IllegalTransitionError / FenceViolationError on failure;
+            # no partial mutation or event is written.
+            await self._job_runtime.validate_claim_in_transaction(
+                conn,
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+            )
 
     # ------------------------------------------------------------------
     # Mark indexed + transition job succeeded

@@ -18,13 +18,19 @@ Pure-unit tests for the exact-id Article RAG vector deletion adapter:
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
+import traceback
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
+from app.config.settings import Settings
 from app.services.reader_orchestration.article_rag_vector_deleter import (
     ArticleRagVectorDeletionError,
     ZillizArticleRagVectorDeleter,
+    build_default_article_rag_vector_deleter,
 )
 
 pytestmark = [
@@ -41,11 +47,23 @@ pytestmark = [
 
 
 class _FakeQueryIterator:
-    def __init__(self, pages: list[list[dict]]) -> None:
+    def __init__(
+        self,
+        pages: list[list[dict]],
+        *,
+        close_fail: Exception | None = None,
+    ) -> None:
         self._pages = list(pages)
+        self._close_fail = close_fail
+        self.close_call_count = 0
 
     def next(self) -> list[dict]:
         return self._pages.pop(0) if self._pages else []
+
+    def close(self) -> None:
+        self.close_call_count += 1
+        if self._close_fail is not None:
+            raise self._close_fail
 
 
 class _FakeMilvusClient:
@@ -64,19 +82,26 @@ class _FakeMilvusClient:
         query_fail: Exception | None = None,
         flush_fail: Exception | None = None,
         delete_fail: Exception | None = None,
+        close_fail: Exception | None = None,
     ) -> None:
         self.exists = exists
         self.page_size = page_size
         self.query_fail = query_fail
         self.flush_fail = flush_fail
         self.delete_fail = delete_fail
+        self.close_fail = close_fail
         self.rows: dict[str, dict] = {}
         self.flush_calls: list[str] = []
         self.delete_calls: list[list[str]] = []
         self.query_calls: list[str] = []
+        self.iterators: list[_FakeQueryIterator] = []
         self.create_calls = 0
         self.drop_calls = 0
         self.compact_calls = 0
+
+    @property
+    def close_call_count(self) -> int:
+        return sum(i.close_call_count for i in self.iterators)
 
     def add_row(self, *, chunk_id: str, stable_document_id: UUID) -> None:
         self.rows[chunk_id] = {
@@ -115,7 +140,9 @@ class _FakeMilvusClient:
             matches[i:i + self.page_size]
             for i in range(0, len(matches), self.page_size)
         ]
-        return _FakeQueryIterator(pages)
+        iterator = _FakeQueryIterator(pages, close_fail=self.close_fail)
+        self.iterators.append(iterator)
+        return iterator
 
     def delete(self, *, collection_name: str, ids: list[str]) -> dict:
         del collection_name
@@ -375,7 +402,8 @@ class TestSdkErrorMapping:
         assert exc.retryable is True
         assert exc.failure_code == "vector_deletion_query_failed"
         assert "raw sdk query text 42" not in str(exc)
-        assert exc_info.value.__cause__ is not None
+        # R1: the raw SDK cause chain is suppressed (from None).
+        assert exc.__cause__ is None
         assert client.delete_calls == []
 
     async def test_flush_failure_maps_to_fixed_safe_error(self) -> None:
@@ -489,3 +517,295 @@ class TestAsyncBoundary:
 
         assert result.outcome == "deleted"
         assert result.deleted_chunk_count == 4
+
+# ===========================================================================
+# R1: log + exception-chain safety (Wave 9.1)
+# ===========================================================================
+
+
+_URI_SENTINEL = "https://sentinel-uri-9f3a.invalid/path?token=sentinel-qry-1b"
+_TOKEN_SENTINEL = "sentinel-token-7c2e"
+_COLLECTION_SENTINEL = "sentinel_collection_b1a9"
+_SDK_SENTINEL = "sentinel-sdk-raw-message-4f8d"
+_PROVIDER_SENTINEL = "sentinel-provider-name-8e2f"
+
+
+class _SentinelConstructionClient:
+    """MilvusClient stand-in that raises a sentinel on construction."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise RuntimeError(_SDK_SENTINEL)
+
+
+class _RealBranchFakeClient(_FakeMilvusClient):
+    """MilvusClient stand-in constructible with positional uri/token."""
+
+    def __init__(self, uri: str = "", token: str = "") -> None:
+        del uri, token
+        super().__init__(exists=False)
+
+
+class TestLogSafety:
+    async def test_ensure_client_real_branch_never_logs_sentinels(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Real client construction must not log URI/token/collection."""
+        monkeypatch.setitem(
+            sys.modules,
+            "pymilvus",
+            SimpleNamespace(MilvusClient=_RealBranchFakeClient),
+        )
+        deleter = ZillizArticleRagVectorDeleter(
+            uri=_URI_SENTINEL,
+            token=_TOKEN_SENTINEL,
+            collection=_COLLECTION_SENTINEL,
+        )
+        with caplog.at_level(logging.DEBUG):
+            result = await deleter.delete_for_stable_document(
+                collection=_COLLECTION_SENTINEL,
+                stable_document_id=_stable_id(30),
+            )
+        assert result.outcome == "no_vectors"
+        for record in caplog.records:
+            message = record.getMessage()
+            dict_repr = str(record.__dict__)
+            for sentinel in (_URI_SENTINEL, _TOKEN_SENTINEL, _COLLECTION_SENTINEL):
+                assert sentinel not in message, (
+                    f"log message leaked {sentinel!r}: {message!r}"
+                )
+                assert sentinel not in dict_repr, (
+                    f"log record leaked {sentinel!r}: {dict_repr!r}"
+                )
+
+    async def test_factory_debug_log_does_not_echo_provider_value(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The factory must not interpolate the raw provider config value."""
+        settings = Settings(
+            reader_article_rag_vector_provider=_PROVIDER_SENTINEL,
+        )
+        with caplog.at_level(logging.DEBUG):
+            deleter = build_default_article_rag_vector_deleter(settings)
+        assert deleter is not None
+        for record in caplog.records:
+            message = record.getMessage()
+            assert _PROVIDER_SENTINEL not in message, (
+                f"log message leaked provider config: {message!r}"
+            )
+
+    async def test_sdk_failures_suppress_raw_cause_chain(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """str(), traceback.format_exception(), and logs never leak SDK text."""
+        scenarios = {
+            "query_construction": _FakeMilvusClient(
+                query_fail=RuntimeError(_SDK_SENTINEL)
+            ),
+            "flush": _FakeMilvusClient(flush_fail=RuntimeError(_SDK_SENTINEL)),
+            "delete": _FakeMilvusClient(delete_fail=RuntimeError(_SDK_SENTINEL)),
+        }
+        for name, client in scenarios.items():
+            stable_id = _stable_id(31)
+            client.add_row(chunk_id=_sha(0), stable_document_id=stable_id)
+            deleter = _make_deleter(client)
+            with caplog.at_level(logging.DEBUG):
+                with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+                    await deleter.delete_for_stable_document(
+                        collection="article_rag_chunks",
+                        stable_document_id=stable_id,
+                    )
+            safe_exc = exc_info.value
+            assert safe_exc.retryable is True, name
+            assert _SDK_SENTINEL not in str(safe_exc), name
+            rendered = "".join(traceback.format_exception(safe_exc))
+            assert _SDK_SENTINEL not in rendered, name
+            for record in caplog.records:
+                assert _SDK_SENTINEL not in record.getMessage(), name
+                assert _SDK_SENTINEL not in str(record.__dict__), name
+
+    async def test_client_construction_failure_is_safe(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """MilvusClient construction failure never leaks the SDK message."""
+        monkeypatch.setitem(
+            sys.modules,
+            "pymilvus",
+            SimpleNamespace(MilvusClient=_SentinelConstructionClient),
+        )
+        deleter = ZillizArticleRagVectorDeleter(
+            uri="https://zilliz.invalid",
+            token="test-token",
+            collection="article_rag_chunks",
+        )
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+                await deleter.delete_for_stable_document(
+                    collection="article_rag_chunks",
+                    stable_document_id=_stable_id(32),
+                )
+        safe_exc = exc_info.value
+        assert _SDK_SENTINEL not in str(safe_exc)
+        rendered = "".join(traceback.format_exception(safe_exc))
+        assert _SDK_SENTINEL not in rendered
+        for record in caplog.records:
+            assert _SDK_SENTINEL not in record.getMessage()
+            assert _SDK_SENTINEL not in str(record.__dict__)
+
+
+# ===========================================================================
+# R2: QueryIterator release (Wave 9.1)
+# ===========================================================================
+
+
+class TestIteratorClose:
+    async def test_normal_flow_closes_both_iterators(self) -> None:
+        """Discovery + re-verify iterators each close exactly once."""
+        client = _FakeMilvusClient(page_size=1)
+        stable_id = _stable_id(40)
+        for i in range(3):
+            client.add_row(chunk_id=_sha(i), stable_document_id=stable_id)
+        deleter = _make_deleter(client)
+
+        result = await deleter.delete_for_stable_document(
+            collection="article_rag_chunks",
+            stable_document_id=stable_id,
+        )
+
+        assert result.outcome == "deleted"
+        assert len(client.iterators) == 2
+        assert client.close_call_count == 2
+        assert all(i.close_call_count == 1 for i in client.iterators)
+
+    async def test_empty_result_still_closes(self) -> None:
+        client = _FakeMilvusClient(exists=True)
+        deleter = _make_deleter(client)
+
+        result = await deleter.delete_for_stable_document(
+            collection="article_rag_chunks",
+            stable_document_id=_stable_id(41),
+        )
+
+        assert result.outcome == "no_vectors"
+        assert len(client.iterators) == 1
+        assert client.close_call_count == 1
+
+    async def test_collection_missing_never_creates_iterator(self) -> None:
+        client = _FakeMilvusClient(exists=False)
+        deleter = _make_deleter(client)
+
+        result = await deleter.delete_for_stable_document(
+            collection="article_rag_chunks",
+            stable_document_id=_stable_id(42),
+        )
+
+        assert result.outcome == "no_vectors"
+        assert client.iterators == []
+        assert client.close_call_count == 0
+
+    async def test_unsafe_chunk_id_failure_still_closes(self) -> None:
+        client = _FakeMilvusClient(page_size=1)
+        stable_id = _stable_id(43)
+        client.add_row(chunk_id=_sha(0), stable_document_id=stable_id)
+        client.rows["malformed!"] = {
+            "chunk_id": "malformed!",
+            "stable_document_id": str(stable_id),
+        }
+        deleter = _make_deleter(client)
+
+        with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+            await deleter.delete_for_stable_document(
+                collection="article_rag_chunks",
+                stable_document_id=stable_id,
+            )
+
+        assert exc_info.value.failure_code == "unsafe_chunk_id"
+        assert len(client.iterators) == 1
+        assert client.close_call_count == 1
+        assert client.delete_calls == []
+
+    async def test_discovery_limit_failure_still_closes(self) -> None:
+        client = _FakeMilvusClient(page_size=5000)
+        stable_id = _stable_id(44)
+        for i in range(10_001):
+            client.add_row(chunk_id=_sha(i), stable_document_id=stable_id)
+        deleter = _make_deleter(client)
+
+        with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+            await deleter.delete_for_stable_document(
+                collection="article_rag_chunks",
+                stable_document_id=stable_id,
+            )
+
+        assert exc_info.value.failure_code == "discovery_limit_exceeded"
+        assert len(client.iterators) == 1
+        assert client.close_call_count == 1
+
+    async def test_construction_failure_never_calls_close(self) -> None:
+        client = _FakeMilvusClient(query_fail=RuntimeError(_SDK_SENTINEL))
+        deleter = _make_deleter(client)
+
+        with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+            await deleter.delete_for_stable_document(
+                collection="article_rag_chunks",
+                stable_document_id=_stable_id(45),
+            )
+
+        assert exc_info.value.failure_code == "vector_deletion_query_failed"
+        assert client.iterators == []
+        assert client.close_call_count == 0
+
+    async def test_close_failure_maps_to_fixed_safe_retryable(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = _FakeMilvusClient(
+            page_size=1,
+            close_fail=RuntimeError(_SDK_SENTINEL),
+        )
+        stable_id = _stable_id(46)
+        client.add_row(chunk_id=_sha(0), stable_document_id=stable_id)
+        deleter = _make_deleter(client)
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+                await deleter.delete_for_stable_document(
+                    collection="article_rag_chunks",
+                    stable_document_id=stable_id,
+                )
+
+        exc = exc_info.value
+        assert exc.retryable is True
+        assert exc.failure_code == "vector_deletion_close_failed"
+        assert _SDK_SENTINEL not in str(exc)
+        rendered = "".join(traceback.format_exception(exc))
+        assert _SDK_SENTINEL not in rendered
+        for record in caplog.records:
+            assert _SDK_SENTINEL not in record.getMessage()
+
+    async def test_close_failure_does_not_override_unsafe_validation(self) -> None:
+        client = _FakeMilvusClient(
+            page_size=1,
+            close_fail=RuntimeError(_SDK_SENTINEL),
+        )
+        stable_id = _stable_id(47)
+        client.add_row(chunk_id=_sha(0), stable_document_id=stable_id)
+        client.rows["bad-id!"] = {
+            "chunk_id": "bad-id!",
+            "stable_document_id": str(stable_id),
+        }
+        deleter = _make_deleter(client)
+
+        with pytest.raises(ArticleRagVectorDeletionError) as exc_info:
+            await deleter.delete_for_stable_document(
+                collection="article_rag_chunks",
+                stable_document_id=stable_id,
+            )
+
+        assert exc_info.value.retryable is False
+        assert exc_info.value.failure_code == "unsafe_chunk_id"

@@ -1,4 +1,4 @@
-"""PostgreSQL session advisory-lock helper (Wave 9).
+"""PostgreSQL session advisory-lock helper (Wave 9, hardened 9.1).
 
 Minimal shared helper so the Article RAG index writer and the vector-GC
 service can serialize vector mutations per ``stable_document_id`` (and
@@ -9,15 +9,24 @@ Contract
 --------
 
 * Keys are deterministic signed bigint derived from a namespace + UUID
-  via stdlib hashing only (stable across processes/restarts).
+  via stdlib hashing only (stable across processes/restarts).  The
+  64-bit key space means two distinct inputs CAN theoretically collide;
+  the only consequence is extra serialization between two lock users.
 * ``SessionAdvisoryLock`` is bound to ONE checked-out connection.
   ``pg_advisory_lock`` / ``pg_try_advisory_lock`` / ``pg_advisory_unlock``
   are session-scoped: PostgreSQL auto-releases them when the connection
   exits abnormally, so a crashed holder never deadlocks the world.
 * Callers MUST ``unlock()`` in ``finally``.
-* Session locks may be held during external vector I/O, but callers must
-  NOT hold a database transaction on the same connection while the lock
-  is held (the lock conn is reserved for the lock lifecycle).
+* Session-lock lifecycle vs. transactions:
+  - SHORT validation / event transactions on the lock connection ARE
+    allowed while the lock is held (the writer's fence re-check, the
+    GC's quiescence check and outcome-event writes all do this).
+  - No database transaction may span external vector I/O: the lock
+    connection must be transaction-free while the deleter / writer
+    performs vector calls, then the lock is released in ``finally``.
+* The lock connection is a single checked-out pool connection; callers
+  MUST NOT nested-acquire another connection from the same pool while
+  holding it (pools may be sized as low as ``max_size=1``).
 """
 
 from __future__ import annotations
@@ -28,8 +37,9 @@ from uuid import UUID
 
 import asyncpg
 
-# Lock namespaces — the namespace participates in the key derivation, so
-# two different namespaces can never collide on the same int64 key.
+# Lock namespaces — the namespace participates in the key derivation.
+# A theoretical int64 key collision between namespaces is possible; the
+# consequence is only extra serialization, never corruption.
 LOCK_NAMESPACE_VECTOR_GC_INTENT = "claread.article_rag.vector_gc.intent"
 LOCK_NAMESPACE_VECTOR_MUTATION = "claread.article_rag.vector_mutation"
 
@@ -46,8 +56,8 @@ def advisory_lock_key(namespace: str, identity: UUID) -> int:
 class SessionAdvisoryLock:
     """A session advisory lock bound to one connection.
 
-    ``held`` tracks ownership so ``unlock()`` is idempotent and safe in
-    ``finally`` blocks.
+    ``held`` tracks ownership so ``unlock()`` is idempotent under normal
+    operation and safe in ``finally`` blocks.
     """
 
     conn: asyncpg.Connection
@@ -72,7 +82,13 @@ class SessionAdvisoryLock:
         return self.held
 
     async def unlock(self) -> bool:
-        """Release the lock if held. Idempotent; never raises."""
+        """Release the lock if held. Idempotent when not held.
+
+        Note: the underlying ``pg_advisory_unlock`` round-trip can raise
+        on connection / database failure — callers must not assume this
+        method never raises, and the lock connection is auto-released by
+        PostgreSQL if the session dies before ``unlock()`` succeeds.
+        """
         if not self.held:
             return True
         released = await self.conn.fetchval(

@@ -89,6 +89,39 @@ async def gc_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         await admin_conn.close()
 
 
+@pytest.fixture
+async def gc_env_small(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Real pool with ``max_size=1`` to expose nested-acquire deadlocks."""
+    from app.database import connection as db_connection
+
+    schema_name = f"test_rag_gc_small_{uuid4().hex}"
+
+    async def _setup_conn(conn: asyncpg.Connection) -> None:
+        await conn.execute(f'SET search_path TO "{schema_name}", public')
+
+    admin_conn = await asyncpg.connect(DATABASE_URL)
+    pool: asyncpg.Pool | None = None
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=1,
+            timeout=5,
+            init=init_connection,
+            setup=_setup_conn,
+        )
+        monkeypatch.setattr(db_connection, "DB_POOL", pool)
+        yield {"pool": pool}
+    finally:
+        if pool is not None:
+            await pool.close()
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Data helpers
 # ---------------------------------------------------------------------------
@@ -918,3 +951,106 @@ class TestPayloadHygiene:
                 assert set(payload.keys()) == allowed_retry
             elif schema == "article_rag_vector_gc_failed_terminal_v1":
                 assert set(payload.keys()) == allowed_terminal
+
+# ===========================================================================
+# R3: single-connection pool must not deadlock (Wave 9.1)
+# ===========================================================================
+
+
+class TestSmallPool:
+    async def test_no_vectors_completes_with_single_connection(
+        self, gc_env_small: dict
+    ) -> None:
+        pool = gc_env_small["pool"]  # type: ignore[assignment]
+        user_id = await _insert_user(pool)
+        record_id = await _insert_record(pool, user_id)
+        await _delete_record(pool, record_id, user_id)
+        intent_id = await _latest_intent_id(pool, record_id)
+        service = _build_service(pool, deleter=_FakeDeleter())
+
+        result = await asyncio.wait_for(
+            service.process_next_due_intent(), timeout=60
+        )
+
+        assert result is not None
+        assert result.status == "completed"
+        assert result.outcome == "no_vectors"
+        events = await _events_for_intent(pool, record_id, intent_id)
+        completed = _with_schema(events, "article_rag_vector_gc_completed_v1")
+        assert len(completed) == 1
+
+    async def test_active_run_retries_with_single_connection(
+        self, gc_env_small: dict
+    ) -> None:
+        pool, user_id, record_id, _, intent_id = await _full_deleted_env(gc_env_small)
+        await _insert_index_run(
+            pool,
+            record_id,
+            await _insert_base(
+                pool, record_id, base_version=2, record_generation=2,
+                status="superseded",
+            ),
+            await _insert_stable_document(
+                pool, record_id, record_generation=2, status="superseded"
+            ),
+            record_generation=2,
+            status="indexing",
+        )
+        service = _build_service(pool, deleter=_FakeDeleter())
+
+        result = await asyncio.wait_for(
+            service.process_next_due_intent(), timeout=60
+        )
+
+        assert result is not None
+        assert result.status == "retry_scheduled"
+        assert result.failure_code == "active_index_run_present"
+        events = await _events_for_intent(pool, record_id, intent_id)
+        retries = _with_schema(events, "article_rag_vector_gc_retry_scheduled_v1")
+        assert len(retries) == 1
+
+    async def test_deleter_retryable_writes_retry_with_single_connection(
+        self, gc_env_small: dict
+    ) -> None:
+        pool, user_id, record_id, _, intent_id = await _full_deleted_env(gc_env_small)
+        deleter = _FakeDeleter()
+        deleter.raise_error = ArticleRagVectorDeletionError(
+            "fixed safe delete failure",
+            retryable=True,
+            failure_code="vector_deletion_delete_failed",
+        )
+        service = _build_service(pool, deleter=deleter)
+
+        result = await asyncio.wait_for(
+            service.process_next_due_intent(), timeout=60
+        )
+
+        assert result is not None
+        assert result.status == "retry_scheduled"
+        assert result.failure_code == "vector_deletion_delete_failed"
+        events = await _events_for_intent(pool, record_id, intent_id)
+        retries = _with_schema(events, "article_rag_vector_gc_retry_scheduled_v1")
+        assert len(retries) == 1
+
+    async def test_deleter_terminal_writes_failed_with_single_connection(
+        self, gc_env_small: dict
+    ) -> None:
+        pool, user_id, record_id, _, intent_id = await _full_deleted_env(gc_env_small)
+        deleter = _FakeDeleter()
+        deleter.raise_error = ArticleRagVectorDeletionError(
+            "fixed safe delete failure",
+            retryable=False,
+            failure_code="unsafe_chunk_id",
+        )
+        service = _build_service(pool, deleter=deleter)
+
+        result = await asyncio.wait_for(
+            service.process_next_due_intent(), timeout=60
+        )
+
+        assert result is not None
+        assert result.status == "failed_terminal"
+        assert result.failure_code == "unsafe_chunk_id"
+        events = await _events_for_intent(pool, record_id, intent_id)
+        terminal = _with_schema(events, "article_rag_vector_gc_failed_terminal_v1")
+        assert len(terminal) == 1

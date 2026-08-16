@@ -52,6 +52,7 @@ from .article_rag_vector_deleter import (
     READER_ARTICLE_RAG_VECTOR_PROVIDER_ZILLIZ,
     ArticleRagVectorDeleter,
     ArticleRagVectorDeletionError,
+    ArticleRagVectorDeletionResult,
     UnconfiguredArticleRagVectorDeleter,
 )
 from .event_runtime import ReaderEventRuntime
@@ -184,12 +185,18 @@ class ArticleRagVectorGcService:
         record_id = UUID(str(row["reading_record_id"]))
         intent_key = advisory_lock_key(LOCK_NAMESPACE_VECTOR_GC_INTENT, intent_event_id)
 
-        async with pool.acquire() as intent_conn:
-            intent_lock = SessionAdvisoryLock(intent_conn, intent_key)
+        # The intent lock connection is the SINGLE connection used for the
+        # whole intent pass (R3): re-validation, quiescence checks,
+        # identity collection, the per-identity mutation lock, and the
+        # outcome events all run on it — no nested pool acquire, so a
+        # pool sized as low as max_size=1 cannot deadlock.
+        async with pool.acquire() as conn:
+            intent_lock = SessionAdvisoryLock(conn, intent_key)
             if not await intent_lock.try_acquire():
                 return None
             try:
                 return await self._process_locked_intent(
+                    conn=conn,
                     record_id=record_id,
                     intent_event_id=intent_event_id,
                 )
@@ -203,34 +210,36 @@ class ArticleRagVectorGcService:
     async def _process_locked_intent(
         self,
         *,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
     ) -> ArticleRagVectorGcResult | None:
         # Re-read and re-validate the intent AFTER taking the intent lock:
         # another worker may have completed or terminalized it meanwhile,
         # or its retry window may no longer be due.
-        if not await self._intent_still_pending(record_id, intent_event_id):
+        if not await self._intent_still_pending(conn, record_id, intent_event_id):
             return None
 
-        violation = await self._quiescence_violation(record_id)
+        violation = await self._quiescence_violation(conn, record_id)
         if violation is not None:
             return await self._write_retry(
-                record_id, intent_event_id, violation
+                conn, record_id, intent_event_id, violation
             )
 
         try:
-            identities = await self._collect_identities(record_id)
+            identities = await self._collect_identities(conn, record_id)
         except ArticleRagVectorDeletionError as exc:
             if exc.retryable:
                 return await self._write_retry(
-                    record_id, intent_event_id, exc.failure_code
+                    conn, record_id, intent_event_id, exc.failure_code
                 )
             return await self._write_terminal(
-                record_id, intent_event_id, exc.failure_code
+                conn, record_id, intent_event_id, exc.failure_code
             )
         if not identities:
             # No committed index runs ever wrote vectors for this record.
             return await self._write_completed(
+                conn=conn,
                 record_id=record_id,
                 intent_event_id=intent_event_id,
                 outcome="no_vectors",
@@ -243,50 +252,59 @@ class ArticleRagVectorGcService:
         for _, provider, collection in identities:
             if provider != self._configured_provider:
                 return await self._write_terminal(
-                    record_id, intent_event_id, "unsupported_provider"
+                    conn, record_id, intent_event_id, "unsupported_provider"
                 )
             if collection != self._configured_collection:
                 return await self._write_terminal(
-                    record_id, intent_event_id, "collection_mismatch"
+                    conn, record_id, intent_event_id, "collection_mismatch"
                 )
 
-        # Delete each identity one by one under its mutation lock.
-        pool = self.get_pool()
+        # Delete each identity one by one under its mutation lock.  The
+        # mutation lock lives on the SAME session connection as the intent
+        # lock (R3).  Outcome events are written only AFTER the mutation
+        # lock is released, in a short transaction on the same connection.
         discovered_total = 0
         deleted_total = 0
         for stable_document_id, _, collection in identities:
             mutation_key = advisory_lock_key(
                 LOCK_NAMESPACE_VECTOR_MUTATION, stable_document_id
             )
-            async with pool.acquire() as mut_conn:
-                mutation_lock = SessionAdvisoryLock(mut_conn, mutation_key)
-                try:
-                    await mutation_lock.acquire()
-                    # Re-verify quiescence while holding the mutation lock:
-                    # a writer that crossed the fence before us must not be
-                    # racing anymore.
-                    recheck = await self._quiescence_violation(
-                        record_id, conn=mut_conn
-                    )
-                    if recheck is not None:
-                        return await self._write_retry(
-                            record_id, intent_event_id, recheck
-                        )
+            mutation_lock = SessionAdvisoryLock(conn, mutation_key)
+            violation_code: str | None = None
+            outcome_error: ArticleRagVectorDeletionError | None = None
+            result: ArticleRagVectorDeletionResult | None = None
+            try:
+                await mutation_lock.acquire()
+                # Re-verify quiescence while holding the mutation lock:
+                # a writer that crossed the fence before us must not be
+                # racing anymore.
+                violation_code = await self._quiescence_violation(
+                    conn, record_id
+                )
+                if violation_code is None:
                     try:
                         result = await self._deleter.delete_for_stable_document(
                             collection=collection,
                             stable_document_id=stable_document_id,
                         )
                     except ArticleRagVectorDeletionError as exc:
-                        if exc.retryable:
-                            return await self._write_retry(
-                                record_id, intent_event_id, exc.failure_code
-                            )
-                        return await self._write_terminal(
-                            record_id, intent_event_id, exc.failure_code
-                        )
-                finally:
-                    await mutation_lock.unlock()
+                        outcome_error = exc
+            finally:
+                await mutation_lock.unlock()
+
+            if violation_code is not None:
+                return await self._write_retry(
+                    conn, record_id, intent_event_id, violation_code
+                )
+            if outcome_error is not None:
+                if outcome_error.retryable:
+                    return await self._write_retry(
+                        conn, record_id, intent_event_id, outcome_error.failure_code
+                    )
+                return await self._write_terminal(
+                    conn, record_id, intent_event_id, outcome_error.failure_code
+                )
+            assert result is not None
             discovered_total += result.discovered_chunk_count
             deleted_total += result.deleted_chunk_count
 
@@ -294,6 +312,7 @@ class ArticleRagVectorGcService:
             "deleted" if deleted_total > 0 else "no_vectors"
         )
         return await self._write_completed(
+            conn=conn,
             record_id=record_id,
             intent_event_id=intent_event_id,
             outcome=outcome,
@@ -308,58 +327,53 @@ class ArticleRagVectorGcService:
 
     async def _intent_still_pending(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
     ) -> bool:
-        pool = self.get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT 1
-                FROM reader_events
-                WHERE id = $1
-                  AND reading_record_id = $2
-                  AND event_type = 'record_state_changed'
-                  AND payload_json ->> 'event_schema' = $3
-                  AND payload_json ->> 'article_rag_vector_gc_requested' = 'true'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM reader_events o
-                      WHERE o.event_type = 'record_state_changed'
-                        AND o.payload_json ->> 'intent_event_id' = $1::text
-                        AND o.payload_json ->> 'event_schema' = ANY($4::text[])
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM reader_events r
-                      WHERE r.event_type = 'record_state_changed'
-                        AND r.payload_json ->> 'intent_event_id' = $1::text
-                        AND r.payload_json ->> 'event_schema' = $5
-                        AND (r.payload_json ->> 'available_at')::timestamptz > NOW()
-                  )
-                """,
-                intent_event_id,
-                record_id,
-                GC_INTENT_SCHEMA,
-                list(_TERMINAL_OUTCOME_SCHEMAS),
-                GC_RETRY_SCHEMA,
-            )
-            return row is not None
+        row = await conn.fetchrow(
+            """
+            SELECT 1
+            FROM reader_events
+            WHERE id = $1
+              AND reading_record_id = $2
+              AND event_type = 'record_state_changed'
+              AND payload_json ->> 'event_schema' = $3
+              AND payload_json ->> 'article_rag_vector_gc_requested' = 'true'
+              AND NOT EXISTS (
+                  SELECT 1 FROM reader_events o
+                  WHERE o.event_type = 'record_state_changed'
+                    AND o.payload_json ->> 'intent_event_id' = $1::text
+                    AND o.payload_json ->> 'event_schema' = ANY($4::text[])
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM reader_events r
+                  WHERE r.event_type = 'record_state_changed'
+                    AND r.payload_json ->> 'intent_event_id' = $1::text
+                    AND r.payload_json ->> 'event_schema' = $5
+                    AND (r.payload_json ->> 'available_at')::timestamptz > NOW()
+              )
+            """,
+            intent_event_id,
+            record_id,
+            GC_INTENT_SCHEMA,
+            list(_TERMINAL_OUTCOME_SCHEMAS),
+            GC_RETRY_SCHEMA,
+        )
+        return row is not None
 
     async def _quiescence_violation(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
-        *,
-        conn: asyncpg.Connection | None = None,
     ) -> str | None:
         """Return the first blocking condition, or None when quiescent.
 
-        When ``conn`` is supplied the checks run inside a short read-only
-        transaction on that connection (used under the mutation lock);
-        otherwise a fresh connection is used.
+        Runs inside a short read-only transaction on the caller's lock
+        connection (R3 — never nested-acquire a fresh pool connection).
         """
-        pool = self.get_pool()
-
-        async def _check(c: asyncpg.Connection) -> str | None:
-            record = await c.fetchrow(
+        async with conn.transaction(readonly=True):
+            record = await conn.fetchrow(
                 """
                 SELECT deleted_at
                 FROM reading_records
@@ -369,7 +383,7 @@ class ArticleRagVectorGcService:
             )
             if record is None or record["deleted_at"] is None:
                 return FAILURE_CODE_RECORD_NOT_DELETED
-            active_run = await c.fetchval(
+            active_run = await conn.fetchval(
                 """
                 SELECT 1
                 FROM reader_article_rag_index_runs
@@ -382,7 +396,7 @@ class ArticleRagVectorGcService:
             )
             if active_run:
                 return FAILURE_CODE_ACTIVE_INDEX_RUN_PRESENT
-            active_job = await c.fetchval(
+            active_job = await conn.fetchval(
                 """
                 SELECT 1
                 FROM reader_jobs
@@ -398,15 +412,9 @@ class ArticleRagVectorGcService:
                 return FAILURE_CODE_ACTIVE_BUILD_JOB_PRESENT
             return None
 
-        if conn is not None:
-            async with conn.transaction(readonly=True):
-                return await _check(conn)
-        async with pool.acquire() as fresh_conn:
-            async with fresh_conn.transaction(readonly=True):
-                return await _check(fresh_conn)
-
     async def _collect_identities(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
     ) -> list[tuple[UUID, str, str]]:
         """Distinct ``(stable_document_id, provider, collection)`` targets.
@@ -423,18 +431,16 @@ class ArticleRagVectorGcService:
         collection.  If a second collection ever ships, identity-less
         runs must fail closed instead of inferring.
         """
-        pool = self.get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT stable_document_id,
-                       vector_store_provider, vector_collection
-                FROM reader_article_rag_index_runs
-                WHERE reading_record_id = $1
-                ORDER BY stable_document_id
-                """,
-                record_id,
-            )
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT stable_document_id,
+                   vector_store_provider, vector_collection
+            FROM reader_article_rag_index_runs
+            WHERE reading_record_id = $1
+            ORDER BY stable_document_id
+            """,
+            record_id,
+        )
         identities: list[tuple[UUID, str, str]] = []
         for row in rows:
             stable_value = row["stable_document_id"]
@@ -446,7 +452,6 @@ class ArticleRagVectorGcService:
                     "document identity",
                     retryable=False,
                     failure_code="malformed_identity",
-                    failure_class="malformed_identity",
                 )
             provider = row["vector_store_provider"] or self._configured_provider
             collection = row["vector_collection"] or self._configured_collection
@@ -459,49 +464,53 @@ class ArticleRagVectorGcService:
 
     async def _retry_attempt_number(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
     ) -> int:
-        pool = self.get_pool()
-        async with pool.acquire() as conn:
-            count = await conn.fetchval(
-                """
-                SELECT COUNT(*)
-                FROM reader_events
-                WHERE reading_record_id = $1
-                  AND event_type = 'record_state_changed'
-                  AND payload_json ->> 'event_schema' = $2
-                  AND payload_json ->> 'intent_event_id' = $3
-                """,
-                record_id,
-                GC_RETRY_SCHEMA,
-                str(intent_event_id),
-            )
+        count = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM reader_events
+            WHERE reading_record_id = $1
+              AND event_type = 'record_state_changed'
+              AND payload_json ->> 'event_schema' = $2
+              AND payload_json ->> 'intent_event_id' = $3
+            """,
+            record_id,
+            GC_RETRY_SCHEMA,
+            str(intent_event_id),
+        )
         return int(count or 0) + 1
 
     async def _write_retry(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
         failure_code: str,
     ) -> ArticleRagVectorGcResult:
-        attempt_number = await self._retry_attempt_number(record_id, intent_event_id)
+        attempt_number = await self._retry_attempt_number(
+            conn, record_id, intent_event_id
+        )
         delay = min(
             self._backoff_base * (2 ** (attempt_number - 1)),
             self._backoff_max,
         )
         available_at = self._clock() + delay
-        await self._event_runtime.publish_event(
-            record_id=record_id,
-            event_type="record_state_changed",
-            payload_json={
-                "event_schema": GC_RETRY_SCHEMA,
-                "intent_event_id": str(intent_event_id),
-                "attempt_number": attempt_number,
-                "failure_code": failure_code,
-                "available_at": available_at.isoformat(),
-            },
-        )
+        async with conn.transaction():
+            await self._event_runtime.publish_event_in_transaction(
+                conn,
+                record_id=record_id,
+                event_type="record_state_changed",
+                payload_json={
+                    "event_schema": GC_RETRY_SCHEMA,
+                    "intent_event_id": str(intent_event_id),
+                    "attempt_number": attempt_number,
+                    "failure_code": failure_code,
+                    "available_at": available_at.isoformat(),
+                },
+            )
         logger.warning(
             "article RAG vector GC scheduled retry",
             extra={
@@ -519,20 +528,23 @@ class ArticleRagVectorGcService:
 
     async def _write_terminal(
         self,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
         failure_code: str,
     ) -> ArticleRagVectorGcResult:
-        await self._event_runtime.publish_event(
-            record_id=record_id,
-            event_type="record_state_changed",
-            payload_json={
-                "event_schema": GC_FAILED_TERMINAL_SCHEMA,
-                "intent_event_id": str(intent_event_id),
-                "failure_code": failure_code,
-                "failed_at": self._clock().isoformat(),
-            },
-        )
+        async with conn.transaction():
+            await self._event_runtime.publish_event_in_transaction(
+                conn,
+                record_id=record_id,
+                event_type="record_state_changed",
+                payload_json={
+                    "event_schema": GC_FAILED_TERMINAL_SCHEMA,
+                    "intent_event_id": str(intent_event_id),
+                    "failure_code": failure_code,
+                    "failed_at": self._clock().isoformat(),
+                },
+            )
         logger.error(
             "article RAG vector GC failed terminal",
             extra={
@@ -549,6 +561,7 @@ class ArticleRagVectorGcService:
     async def _write_completed(
         self,
         *,
+        conn: asyncpg.Connection,
         record_id: UUID,
         intent_event_id: UUID,
         outcome: Literal["deleted", "no_vectors"],
@@ -556,19 +569,21 @@ class ArticleRagVectorGcService:
         discovered_chunk_count: int,
         deleted_chunk_count: int,
     ) -> ArticleRagVectorGcResult:
-        await self._event_runtime.publish_event(
-            record_id=record_id,
-            event_type="record_state_changed",
-            payload_json={
-                "event_schema": GC_COMPLETED_SCHEMA,
-                "intent_event_id": str(intent_event_id),
-                "outcome": outcome,
-                "stable_document_count": stable_document_count,
-                "discovered_chunk_count": discovered_chunk_count,
-                "deleted_chunk_count": deleted_chunk_count,
-                "completed_at": self._clock().isoformat(),
-            },
-        )
+        async with conn.transaction():
+            await self._event_runtime.publish_event_in_transaction(
+                conn,
+                record_id=record_id,
+                event_type="record_state_changed",
+                payload_json={
+                    "event_schema": GC_COMPLETED_SCHEMA,
+                    "intent_event_id": str(intent_event_id),
+                    "outcome": outcome,
+                    "stable_document_count": stable_document_count,
+                    "discovered_chunk_count": discovered_chunk_count,
+                    "deleted_chunk_count": deleted_chunk_count,
+                    "completed_at": self._clock().isoformat(),
+                },
+            )
         logger.info(
             "article RAG vector GC completed",
             extra={

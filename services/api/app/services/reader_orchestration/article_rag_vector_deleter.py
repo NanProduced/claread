@@ -1,4 +1,4 @@
-"""Article RAG exact-id vector deletion adapter (Wave 9).
+"""Article RAG exact-id vector deletion adapter (Wave 9, hardened 9.1).
 
 Minimal production vector-delete seam for the Article RAG single path:
 enumerate by ``stable_document_id`` (discovery only) and delete by exact
@@ -12,16 +12,21 @@ Invariants
 * The delete path NEVER creates, drops, or compacts a collection.
 * The delete filter NEVER uses ``stable_document_id`` — only exact
   ``chunk_id`` primary keys discovered by enumeration.
-* Every discovered ``chunk_id`` must be a 64-char lowercase SHA-256 hex
-  string; any malformed id fails closed BEFORE any delete call.
+* Every discovered ``chunk_id`` must be a 16-char lowercase hex string
+  (derived from the SHA-256 chunk-id digest); any malformed id fails
+  closed BEFORE any delete call.
 * Discovery is capped at a fixed limit; exceeding it fails closed with
   zero delete calls.
 * Collection missing or empty enumeration is an idempotent success with
   ``outcome="no_vectors"`` and zero delete calls.
 * After deletion a full re-enumeration must confirm zero rows; leftover
   rows are a retryable failure (the next attempt converges them).
-* SDK exceptions map to fixed safe errors: no collection name, no ids,
-  no stable document id, no URI/token, no raw SDK text.
+* SDK exceptions map to fixed safe errors with the raw cause chain
+  suppressed: no collection name, no ids, no stable document id, no
+  URI/token, no raw SDK text in messages, rendered tracebacks, or logs.
+* Every successfully created ``QueryIterator`` is closed exactly once in
+  a ``finally``; a close failure maps to a fixed safe retryable error
+  unless a non-retryable validation failure was already determined.
 """
 
 from __future__ import annotations
@@ -35,8 +40,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from app.config.settings import Settings
-
-from .article_rag_index_worker import ArticleRagIndexWorkerError
 
 if TYPE_CHECKING:
     from pymilvus import MilvusClient
@@ -72,6 +75,7 @@ FAILURE_CODE_FLUSH_FAILED = "vector_deletion_flush_failed"
 FAILURE_CODE_QUERY_FAILED = "vector_deletion_query_failed"
 FAILURE_CODE_DELETE_FAILED = "vector_deletion_delete_failed"
 FAILURE_CODE_VERIFY_FAILED = "vector_deletion_verify_failed"
+FAILURE_CODE_CLOSE_FAILED = "vector_deletion_close_failed"
 FAILURE_CODE_SDK_ERROR = "vector_deletion_sdk_error"
 
 # Fixed safe messages — MUST NOT echo collection names, chunk ids,
@@ -101,6 +105,9 @@ _MSG_DELETE_FAILED = (
 _MSG_VERIFY_FAILED = (
     "Article RAG vector post-delete verification found leftover rows"
 )
+_MSG_CLOSE_FAILED = (
+    "Article RAG vector discovery iterator failed to close"
+)
 _MSG_SDK_ERROR = (
     "Article RAG vector deletion failed via the vector SDK"
 )
@@ -120,11 +127,14 @@ class ArticleRagVectorDeletionResult:
     delete_call_count: int
 
 
-class ArticleRagVectorDeletionError(ArticleRagIndexWorkerError):
-    """Typed deletion failure with fixed safe diagnostics.
+class ArticleRagVectorDeletionError(RuntimeError):
+    """Local typed deletion failure with fixed safe diagnostics.
 
-    ``retryable=True`` → the GC service schedules a retry event.
-    ``retryable=False`` → the GC service writes failed_terminal.
+    Deliberately NOT coupled to the index-worker error type: the GC
+    service only needs ``retryable`` (retry event vs. failed_terminal)
+    and ``failure_code`` (fixed safe label).  ``retryable=True`` →
+    the GC service schedules a retry event; ``retryable=False`` → the
+    GC service writes failed_terminal.
     """
 
     def __init__(
@@ -133,14 +143,10 @@ class ArticleRagVectorDeletionError(ArticleRagIndexWorkerError):
         *,
         retryable: bool,
         failure_code: str,
-        failure_class: str = "vector_deletion",
     ) -> None:
-        super().__init__(
-            message,
-            retryable=retryable,
-            failure_class=failure_class,
-            failure_code=failure_code,
-        )
+        super().__init__(message)
+        self.retryable = retryable
+        self.failure_code = failure_code
 
 
 class ArticleRagVectorDeleter:
@@ -171,7 +177,6 @@ class UnconfiguredArticleRagVectorDeleter:
             _MSG_UNCONFIGURED,
             retryable=True,
             failure_code=FAILURE_CODE_UNCONFIGURED,
-            failure_class="configuration",
         )
 
 
@@ -196,21 +201,18 @@ class ZillizArticleRagVectorDeleter:
                 "Article RAG vector deleter constructed without a URI",
                 retryable=False,
                 failure_code=FAILURE_CODE_UNCONFIGURED,
-                failure_class="configuration",
             )
         if not token or not token.strip():
             raise ArticleRagVectorDeletionError(
                 "Article RAG vector deleter constructed without a token",
                 retryable=False,
                 failure_code=FAILURE_CODE_UNCONFIGURED,
-                failure_class="configuration",
             )
         if not collection or not collection.strip():
             raise ArticleRagVectorDeletionError(
                 "Article RAG vector deleter constructed without a collection name",
                 retryable=False,
                 failure_code=FAILURE_CODE_UNCONFIGURED,
-                failure_class="configuration",
             )
         self._uri = uri.strip()
         self._token = token  # held only for SDK construction; never logged.
@@ -230,20 +232,13 @@ class ZillizArticleRagVectorDeleter:
             return self._client
         try:
             from pymilvus import MilvusClient  # type: ignore[import-untyped]
-        except ImportError as exc:
+        except ImportError:  # noqa: BLE001
             raise ArticleRagVectorDeletionError(
                 "pymilvus SDK is not installed; cannot construct Zilliz "
                 "vector deleter",
                 retryable=False,
                 failure_code="vector_deleter_sdk_missing",
-                failure_class="sdk_unavailable",
-            ) from exc
-        logger.debug(
-            "Constructing pymilvus MilvusClient for article RAG vector deleter "
-            "(uri=%s, collection=%s)",
-            self._uri,
-            self._collection,
-        )
+            ) from None
         self._client = MilvusClient(uri=self._uri, token=self._token)
         return self._client
 
@@ -258,14 +253,12 @@ class ZillizArticleRagVectorDeleter:
                 _MSG_COLLECTION_MISMATCH,
                 retryable=False,
                 failure_code=FAILURE_CODE_COLLECTION_MISMATCH,
-                failure_class="vector_collection_mismatch",
             )
         if not isinstance(stable_document_id, UUID):
             raise ArticleRagVectorDeletionError(
                 _MSG_MALFORMED_IDENTITY,
                 retryable=False,
                 failure_code=FAILURE_CODE_MALFORMED_IDENTITY,
-                failure_class="malformed_identity",
             )
 
         def _sync() -> ArticleRagVectorDeletionResult:
@@ -279,11 +272,11 @@ class ZillizArticleRagVectorDeleter:
                 )
             try:
                 client.flush(collection_name=collection)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 raise self._safe_error(
                     _MSG_FLUSH_FAILED,
                     FAILURE_CODE_FLUSH_FAILED,
-                ) from exc
+                ) from None
 
             chunk_ids = self._enumerate_chunk_ids(client, collection, stable_document_id)
             if not chunk_ids:
@@ -299,21 +292,21 @@ class ZillizArticleRagVectorDeleter:
             for batch in self._stable_batches(chunk_ids):
                 try:
                     client.delete(collection_name=collection, ids=batch)
-                except Exception as exc:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     raise self._safe_error(
                         _MSG_DELETE_FAILED,
                         FAILURE_CODE_DELETE_FAILED,
-                    ) from exc
+                    ) from None
                 deleted_total += len(batch)
                 delete_call_count += 1
 
             try:
                 client.flush(collection_name=collection)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 raise self._safe_error(
                     _MSG_FLUSH_FAILED,
                     FAILURE_CODE_FLUSH_FAILED,
-                ) from exc
+                ) from None
 
             remaining = self._enumerate_chunk_ids(client, collection, stable_document_id)
             if remaining:
@@ -334,11 +327,11 @@ class ZillizArticleRagVectorDeleter:
             return await asyncio.to_thread(_sync)
         except ArticleRagVectorDeletionError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             raise self._safe_error(
                 _MSG_SDK_ERROR,
                 FAILURE_CODE_SDK_ERROR,
-            ) from exc
+            ) from None
 
     def _enumerate_chunk_ids(
         self,
@@ -346,49 +339,72 @@ class ZillizArticleRagVectorDeleter:
         collection: str,
         stable_document_id: UUID,
     ) -> list[str]:
-        """Fully enumerate chunk ids for one stable document with validation."""
-        try:
-            iterator = client.query_iterator(
-                collection_name=collection,
-                filter=f'stable_document_id == "{stable_document_id}"',
-                output_fields=["chunk_id"],
-                batch_size=GC_DELETE_BATCH_SIZE,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise self._safe_error(
-                _MSG_QUERY_FAILED,
-                FAILURE_CODE_QUERY_FAILED,
-            ) from exc
+        """Fully enumerate chunk ids for one stable document with validation.
 
-        chunk_ids: list[str] = []
-        while True:
+        Every successfully created ``QueryIterator`` is closed exactly
+        once in ``finally``.  A close failure surfaces as a fixed safe
+        retryable error ONLY when no non-retryable validation failure
+        (unsafe chunk id / discovery limit) was already determined — the
+        validation verdict always wins.
+        """
+        iterator: Any = None
+        unsafe_determined = False
+        try:
             try:
-                page = iterator.next()
-            except StopIteration:
-                break
-            except Exception as exc:  # noqa: BLE001
+                iterator = client.query_iterator(
+                    collection_name=collection,
+                    filter=f'stable_document_id == "{stable_document_id}"',
+                    output_fields=["chunk_id"],
+                    batch_size=GC_DELETE_BATCH_SIZE,
+                )
+            except Exception:  # noqa: BLE001
+                # No iterator was created — nothing to close.
                 raise self._safe_error(
                     _MSG_QUERY_FAILED,
                     FAILURE_CODE_QUERY_FAILED,
-                ) from exc
-            if not page:
-                break
-            for row in page:
-                raw = row.get("chunk_id") if isinstance(row, dict) else None
-                if not isinstance(raw, str) or _CHUNK_ID_PATTERN.fullmatch(raw) is None:
-                    raise ArticleRagVectorDeletionError(
-                        _MSG_UNSAFE_CHUNK_ID,
-                        retryable=False,
-                        failure_code=FAILURE_CODE_UNSAFE_CHUNK_ID,
-                    )
-                chunk_ids.append(raw)
-                if len(chunk_ids) > GC_DISCOVERY_LIMIT:
-                    raise ArticleRagVectorDeletionError(
-                        _MSG_DISCOVERY_LIMIT_EXCEEDED,
-                        retryable=False,
-                        failure_code=FAILURE_CODE_DISCOVERY_LIMIT_EXCEEDED,
-                    )
-        return chunk_ids
+                ) from None
+
+            chunk_ids: list[str] = []
+            while True:
+                try:
+                    page = iterator.next()
+                except StopIteration:
+                    break
+                except Exception:  # noqa: BLE001
+                    raise self._safe_error(
+                        _MSG_QUERY_FAILED,
+                        FAILURE_CODE_QUERY_FAILED,
+                    ) from None
+                if not page:
+                    break
+                for row in page:
+                    raw = row.get("chunk_id") if isinstance(row, dict) else None
+                    if not isinstance(raw, str) or _CHUNK_ID_PATTERN.fullmatch(raw) is None:
+                        unsafe_determined = True
+                        raise ArticleRagVectorDeletionError(
+                            _MSG_UNSAFE_CHUNK_ID,
+                            retryable=False,
+                            failure_code=FAILURE_CODE_UNSAFE_CHUNK_ID,
+                        )
+                    chunk_ids.append(raw)
+                    if len(chunk_ids) > GC_DISCOVERY_LIMIT:
+                        unsafe_determined = True
+                        raise ArticleRagVectorDeletionError(
+                            _MSG_DISCOVERY_LIMIT_EXCEEDED,
+                            retryable=False,
+                            failure_code=FAILURE_CODE_DISCOVERY_LIMIT_EXCEEDED,
+                        )
+            return chunk_ids
+        finally:
+            if iterator is not None:
+                try:
+                    iterator.close()
+                except Exception:  # noqa: BLE001
+                    if not unsafe_determined:
+                        raise self._safe_error(
+                            _MSG_CLOSE_FAILED,
+                            FAILURE_CODE_CLOSE_FAILED,
+                        ) from None
 
     @staticmethod
     def _stable_batches(chunk_ids: list[str]) -> list[list[str]]:
@@ -427,10 +443,8 @@ def build_default_article_rag_vector_deleter(
     ).strip().lower()
     if provider_name != READER_ARTICLE_RAG_VECTOR_PROVIDER_ZILLIZ:
         logger.debug(
-            "Article RAG vector provider not configured for deletion "
-            "(reader_article_rag_vector_provider=%r); using "
-            "UnconfiguredArticleRagVectorDeleter",
-            provider_name,
+            "Article RAG vector provider not configured for deletion; using "
+            "UnconfiguredArticleRagVectorDeleter"
         )
         return UnconfiguredArticleRagVectorDeleter()
 

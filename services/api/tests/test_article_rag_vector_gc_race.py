@@ -90,6 +90,32 @@ async def race_env() -> asyncpg.Pool:
         await admin_conn.close()
 
 
+@pytest.fixture
+async def race_env_small() -> asyncpg.Pool:
+    """Real pool with ``max_size=1`` to expose nested-acquire deadlocks."""
+    schema_name = f"test_rag_gc_race_small_{uuid4().hex}"
+    admin_conn = await asyncpg.connect(DATABASE_URL)
+    pool: asyncpg.Pool | None = None
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=1,
+            timeout=5,
+            init=init_connection,
+            setup=lambda conn: conn.execute(f'SET search_path TO "{schema_name}", public'),
+        )
+        yield pool
+    finally:
+        if pool is not None:
+            await pool.close()
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Shared in-memory vector store + fakes
 # ---------------------------------------------------------------------------
@@ -147,6 +173,9 @@ class _FakeMilvusClient:
                 page = self._rows[:2]
                 self._rows = self._rows[2:]
                 return page
+
+            def close(self) -> None:
+                pass
 
         return _Iterator(matches)
 
@@ -482,3 +511,63 @@ class TestGcFirst:
         completed = await _completed_events(race_env)
         assert len(completed) == 1
         assert completed[0]["payload_json"]["outcome"] == "deleted"
+
+# ===========================================================================
+# R3: single-connection pool must not deadlock (Wave 9.1)
+# ===========================================================================
+
+
+class _RecordingVectorWriter:
+    """Records upsert calls and returns a normal write result."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.upserts: list = []
+
+    async def upsert_chunks(
+        self,
+        *,
+        collection: str,
+        chunks_with_embeddings: list,
+        metadata: object,
+    ) -> ArticleRagVectorWriteResult:
+        self.call_count += 1
+        self.upserts.append((collection, list(chunks_with_embeddings), metadata))
+        return ArticleRagVectorWriteResult(
+            collection=collection,
+            upserted_count=len(chunks_with_embeddings),
+            provider_metadata={"provider": "fake-in-memory"},
+        )
+
+
+# ===========================================================================
+# R3: single-connection pool must not deadlock (Wave 9.1)
+# ===========================================================================
+
+
+class TestSmallPool:
+    async def test_worker_completes_with_single_connection_pool(
+        self, race_env_small: asyncpg.Pool
+    ) -> None:
+        """Index worker must not nested-acquire while holding the lock conn."""
+        await _seed_and_bootstrap(race_env_small)
+        embedding = FakeArticleRagEmbeddingProvider()
+        writer = _RecordingVectorWriter()
+        service = _build_worker_service(
+            race_env_small,
+            embedding_provider=embedding,
+            vector_writer=writer,
+        )
+
+        result = await asyncio.wait_for(
+            service.process_next(
+                lease_owner=_LEASE_OWNER,
+                lease_duration=_LEASE_DURATION,
+                retry_delay=_RETRY_DELAY,
+            ),
+            timeout=60,
+        )
+
+        assert result is not None
+        assert result.status == "succeeded"
+        assert writer.call_count == 1
