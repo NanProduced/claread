@@ -3841,8 +3841,15 @@ export function ReaderRecordPlateSurface({
   }, [dictionaryOpen, isWorkspaceShell, sidebarMode]);
 
   const quickPeekAnchorRef = useRef<ReaderQuickPeekAnchor>(null);
+  const quickPeekPositionKey =
+    inspectState !== null
+      ? `inspect:${inspectState.markId}:${inspectState.anchorOffsets?.startOffset ?? ""}:${inspectState.anchorOffsets?.endOffset ?? ""}`
+      : lookupState.kind !== "idle"
+        ? `lookup:${lookupState.query}:${lookupState.context.sentenceId}:${lookupState.context.anchorText}:${lookupState.context.anchorOffsets?.startOffset ?? ""}:${lookupState.context.anchorOffsets?.endOffset ?? ""}:${lookupState.context.occurrence ?? ""}:${quickPeekAnchorBlockId ?? ""}`
+        : "closed";
   const quickPeekFloating = useReaderFloatingLayer({
     open: quickPeekOpen,
+    positionKey: quickPeekPositionKey,
     placement: "bottom-start",
     offsetPx: 8,
     collisionPadding: 12,
@@ -6368,7 +6375,7 @@ export function ReaderRecordPlateSurface({
                         floatingRef={selectionToolbarFloating.refs.setFloating}
                         style={readerFloatingStyles(selectionToolbarFloating)}
                         chrome="selection-toolbar"
-                        className="reader-record-floating-toolbar p-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
+                        className="reader-record-floating-toolbar p-1 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
                         data-reader-record-floating-toolbar="selection-actions"
                       >
                         <TooltipProvider delayDuration={200}>
@@ -6389,7 +6396,6 @@ export function ReaderRecordPlateSurface({
                         role="dialog"
                         aria-label="Ask Claread 快捷提问"
                         data-reader-record-ask-quick-menu="open"
-                        className="motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150"
                       >
                         <ReaderAskQuickMenu
                           onSubmit={handleAskQuickMenuSubmit}

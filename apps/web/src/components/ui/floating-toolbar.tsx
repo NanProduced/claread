@@ -88,7 +88,7 @@ export function FloatingToolbar({
         {...rootProps}
         ref={composeRefs<HTMLDivElement>(props.ref, floatingRef)}
         className={cn(
-          "absolute z-50 max-w-[80vw] animate-in fade-in-0 zoom-in-95 duration-150 overflow-x-auto whitespace-nowrap rounded-[7px] border border-border/75 bg-background/95 p-0.5 opacity-100 shadow-[0_10px_30px_rgba(15,23,42,0.14),0_1px_2px_rgba(15,23,42,0.08)] backdrop-blur-md print:hidden",
+          "absolute z-50 max-w-[80vw] overflow-x-auto whitespace-nowrap rounded-[7px] border border-border/75 bg-background/95 p-0.5 opacity-100 shadow-[0_10px_30px_rgba(15,23,42,0.14),0_1px_2px_rgba(15,23,42,0.08)] backdrop-blur-md print:hidden",
           className,
         )}
       >
