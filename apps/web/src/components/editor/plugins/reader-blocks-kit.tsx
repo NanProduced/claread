@@ -91,6 +91,11 @@ export interface ReaderGrammarInteractionValue {
   activeGrammarItemId: string | null;
   expandGrammarItemRequest: { itemId: string; requestId: number } | null;
   setActiveGrammarItemId: (itemId: string | null) => void;
+  /**
+   * Hover-intent 版联动（进入 ~120ms / 退出 ~180ms 延迟）：鼠标扫过卡片
+   * 不再瞬开瞬关。键盘 focus/click 仍走 setActiveGrammarItemId 即时通道。
+   */
+  hoverGrammarItemId: (itemId: string | null) => void;
   pulseGrammarItemId: (itemId: string) => void;
   requestExpandGrammarItem: (itemId: string) => void;
 }
@@ -100,6 +105,7 @@ export const ReaderGrammarInteractionContext =
     activeGrammarItemId: null,
     expandGrammarItemRequest: null,
     setActiveGrammarItemId: () => {},
+    hoverGrammarItemId: () => {},
     pulseGrammarItemId: () => {},
     requestExpandGrammarItem: () => {},
   });
@@ -633,6 +639,7 @@ function ReaderCalloutComponent({
     activeGrammarItemId,
     expandGrammarItemRequest,
     setActiveGrammarItemId,
+    hoverGrammarItemId,
     pulseGrammarItemId,
   } = useReaderGrammarInteraction();
   const groupContext = useContext(ReaderGrammarCalloutGroupContext);
@@ -768,12 +775,12 @@ function ReaderCalloutComponent({
       tabIndex={isGrammar ? -1 : undefined}
       onMouseEnter={() => {
         if (grammarItemId) {
-          setActiveGrammarItemId(grammarItemId);
+          hoverGrammarItemId(grammarItemId);
         }
       }}
       onMouseLeave={() => {
         if (grammarItemId) {
-          setActiveGrammarItemId(null);
+          hoverGrammarItemId(null);
         }
       }}
       onFocus={() => {

@@ -478,7 +478,7 @@ function SelectionContextChip({
 }) {
   const attachmentKey = askAttachmentKey(attachment);
   const preferredText = attachment.selectedText?.trim() || askAttachmentLabel(attachment);
-  const displayLabel = truncateAtWordBoundary(preferredText, 36);
+  const displayLabel = truncateAtWordBoundary(preferredText, 24);
   const slotLabel = slot === "auto" ? "自动选区" : "固定选区";
 
   return (
@@ -1238,6 +1238,7 @@ export function AiWorkspacePanel({
   } | null>(null);
   const pendingCitationNavigationRef = useRef(false);
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
+  const panelRootRef = useRef<HTMLElement>(null);
   const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
 
   // Article-citation source navigation. The panel submits only record id +
@@ -1512,6 +1513,31 @@ export function AiWorkspacePanel({
     );
     panelHeadingRef.current?.focus();
   }, [surface]);
+
+  // Focus the composer when the panel opens with question context present
+  // (selection pinned via the toolbar Ask entry / Ctrl+J), so the user can
+  // type immediately. Plain opens (reading history) do not steal focus.
+  const wasOpenRef = useRef(open);
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!open || wasOpen) {
+      return;
+    }
+    const hasContext =
+      autoSelectionAttachment !== null ||
+      manualSelectionAttachments.length > 0 ||
+      attachments.length > 0;
+    if (!hasContext) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      panelRootRef.current
+        ?.querySelector<HTMLTextAreaElement>("[data-ask-composer-textarea]")
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, autoSelectionAttachment, manualSelectionAttachments, attachments]);
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
@@ -2814,6 +2840,7 @@ export function AiWorkspacePanel({
 
   return (
     <aside
+      ref={panelRootRef}
       aria-labelledby="ask-claread-panel-heading"
       className={cn(
         "ai-workspace-panel",

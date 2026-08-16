@@ -256,7 +256,7 @@ export function InlineCommentPanel(props: InlineCommentPanelProps) {
     <ReaderFloatingSurface
       floatingRef={props.floatingRef}
       style={props.floatingStyles}
-      className="w-[26rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/75 bg-background/98 text-foreground shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-md"
+      className="w-[24rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/60 bg-popover/98 text-popover-foreground shadow-lg shadow-black/5 backdrop-blur-md supports-[backdrop-filter]:bg-popover/95 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150"
       data-testid="reader-record-inline-comment-panel"
       data-reader-record-floating-toolbar="note-menu"
       data-reader-record-comment-mode={isDraft ? "draft" : "view"}

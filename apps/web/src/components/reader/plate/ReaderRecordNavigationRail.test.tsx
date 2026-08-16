@@ -1806,12 +1806,13 @@ describe("ReaderRecordNavigationRail", () => {
     expect(childB.style.paddingLeft).toBe("20px");
     // Only navigable rows are buttons (the group is excluded).
     expect(panel.querySelectorAll("button")).toHaveLength(2);
-    // The group root is the single depth-1 tick (the top-level theme).
+    // 单根大纲的刻度回退到根的直属子节点：两个章节各一个 tick，
+    // 而不是孤零零的根 tick。
     expect(
       screen
         .getByTestId("reader-record-mini-rail")
         .querySelectorAll("span[data-navigation-tick-key]"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
 
     // The two children scroll to DIFFERENT targets; no fetch.
     vi.mocked(window.scrollTo).mockClear();

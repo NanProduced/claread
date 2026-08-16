@@ -100,7 +100,7 @@ function AskComposerSurface({
         // vertical scroll owner is created. Chips are shrink-0; overflow
         // scrolls sideways.
         <PromptInputHeader
-          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto border-b border-border/40 px-3 py-2 [scrollbar-width:thin]"
+          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto border-b border-border/40 px-3 py-2 [scrollbar-width:none]"
           data-ask-context-strip="true"
         >
           {contextStrip}

@@ -2,6 +2,10 @@
 
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  userFacingErrorMessage,
+  userFacingPayloadMessage,
+} from "@/lib/user-facing-error";
 import { ReaderRecordPlateSurface } from "@/components/reader/plate";
 import { useRecentReading } from "@/components/layout/recent-reading-context";
 import { notify } from "@/components/primitives/notification-center";
@@ -76,7 +80,12 @@ async function loadSnapshotForRecord(
     return {
       ok: false,
       code: payload.ok === false ? payload.code : "upstream_error",
-      message: payload.ok === false ? payload.message : fallbackMessage,
+      // 用户可读闸口：干净中文的 BFF message 放行，其余按 code/status
+      // 映射为固定文案；原始上游 detail / 英文串不透传。
+      message: userFacingPayloadMessage(
+        payload.ok === false ? payload : { status: response.status },
+        fallbackMessage,
+      ),
     };
   }
 
@@ -394,7 +403,7 @@ export default function ReadingRecordPage({
         return true;
       } catch (err) {
         setReloadError(
-          err instanceof Error ? err.message : "阅读内容刷新发生未知错误。",
+          userFacingErrorMessage(err, "阅读内容刷新失败，请稍后重试。"),
         );
         return false;
       } finally {
@@ -481,7 +490,8 @@ export default function ReadingRecordPage({
         setSnapshotState({
           kind: "error",
           recordId,
-          message: err instanceof Error ? err.message : "阅读内容加载发生未知错误。",
+          // 闸口：SyntaxError（打到 HTML 错误页）/网络失败映射为固定文案。
+          message: userFacingErrorMessage(err, "阅读内容加载失败，请稍后重试。"),
         });
       }
     }
@@ -570,6 +580,13 @@ export default function ReadingRecordPage({
           <section className="rounded-note border border-danger/30 bg-danger/5 p-6 shadow-surface-quiet">
             <p className="text-sm font-medium text-danger">加载失败</p>
             <p className="mt-2 text-sm text-danger/90">{snapshotState.message}</p>
+            <button
+              type="button"
+              className="mt-4 rounded-md border border-danger/30 bg-surface px-3 py-2 text-sm font-medium text-ink hover:bg-danger/10"
+              onClick={() => setInitialLoadAttempt((attempt) => attempt + 1)}
+            >
+              重新加载
+            </button>
           </section>
         ) : null}
 

@@ -61,12 +61,9 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderPlateSnapshotDto,
-  type ReaderSectionTranslationOutcomeDto,
   type ReaderSnapshotUserAssetDto,
 } from "@/types/api/reader-plate";
-import type {
-  ReaderAskEntryActionDto,
-} from "@/types/api/reader-ask";
+import type { ReaderAskEntryActionDto } from "@/types/api/reader-ask";
 import type { ThemePreference } from "@/lib/appearance";
 import { useAppearance } from "@/components/providers/appearance-provider";
 import { createArticleLocationNavigator } from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
@@ -115,19 +112,30 @@ import { cn } from "@/lib/cn";
 
 import {
   ReaderFloatingToolbarButtons,
+  ReaderAskQuickMenu,
   ReaderToolbarActionsProvider,
   type ReaderToolbarActions,
 } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
 import {
   ReaderFloatingSurface,
+  readerFloatingStyles,
   useReaderFloatingLayer,
 } from "../ReaderFloatingLayer";
 import { ReaderQuickPeek } from "../dictionary/ReaderQuickPeek";
 import { ReaderDictionaryRail } from "../dictionary/ReaderDictionaryRail";
 import type { DictionaryLookupSnapshot, SaveState } from "../dictionary/contracts";
 import { firstMeaning, meaningsJson } from "../dictionary/contracts";
-import { dictionaryLookupHistoryKey } from "../dictionary/shared";
-import type { DictionaryAIViewState } from "@/types/api/dict-ai";
+import {
+  dictionaryAIRequestForLookup,
+  dictionaryAIRequestKey,
+  dictionaryLookupHistoryKey,
+} from "../dictionary/shared";
+import type {
+  DictionaryAIViewState,
+  WebDictAIErrorResult,
+  WebDictAIRequest,
+  WebDictAIResult,
+} from "@/types/api/dict-ai";
 import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { Toolbar } from "@/components/ui/toolbar";
@@ -198,63 +206,6 @@ type ReaderRecordLookupState =
   | { kind: "loading"; query: string; context: ReaderRecordLookupContext }
   | { kind: "ready"; query: string; context: ReaderRecordLookupContext; result: WebDictResult }
   | { kind: "error"; query: string; context: ReaderRecordLookupContext; message: string };
-
-type ReaderRecordTranslationState =
-  | { kind: "idle" }
-  | { kind: "submitting" }
-  | {
-      kind: "submitted";
-      outcome: ReaderSectionTranslationOutcomeDto;
-      detail: string | null;
-    }
-  | { kind: "error"; message: string };
-
-const READER_SECTION_TRANSLATION_OUTCOMES: readonly ReaderSectionTranslationOutcomeDto[] = [
-  "succeeded",
-  "retry_later",
-  "already_covered_or_inflight",
-  "budget_exhausted",
-  "rejected",
-  "superseded",
-];
-
-function isReaderSectionTranslationOutcome(
-  value: unknown,
-): value is ReaderSectionTranslationOutcomeDto {
-  return (
-    typeof value === "string" &&
-    READER_SECTION_TRANSLATION_OUTCOMES.includes(
-      value as ReaderSectionTranslationOutcomeDto,
-    )
-  );
-}
-
-function readerSectionTranslationStatusMessage(
-  state: ReaderRecordTranslationState,
-): string {
-  if (state.kind === "submitting") {
-    return "正在提交翻译";
-  }
-  if (state.kind === "error") {
-    return state.message;
-  }
-  if (state.kind === "submitted") {
-    switch (state.outcome) {
-      case "succeeded":
-        return "翻译已提交";
-      case "already_covered_or_inflight":
-        return "该段已有译文或正在翻译";
-      case "budget_exhausted":
-        return "翻译额度已用尽";
-      case "retry_later":
-        return "翻译暂时排队中，请稍后刷新";
-      case "rejected":
-      case "superseded":
-        return "翻译请求未通过校验，请刷新后重试";
-    }
-  }
-  return "";
-}
 
 interface ReaderRecordLookupContext {
   contextSentence: string;
@@ -433,10 +384,53 @@ const HIGHLIGHT_COLOR_OPTIONS: Array<{
   label: string;
   swatchClassName: string;
 }> = [
-  { value: "warm_yellow", label: "黄色", swatchClassName: "bg-vocab-amber/75 ring-vocab-amber/25" },
-  { value: "soft_mint", label: "绿色", swatchClassName: "bg-emerald-200/80 ring-emerald-300/50" },
-  { value: "soft_rose", label: "粉色", swatchClassName: "bg-rose-200/80 ring-rose-300/50" },
+  { value: "warm_yellow", label: "暖黄", swatchClassName: "reader-highlight-swatch--warm-yellow" },
+  { value: "soft_mint", label: "薄荷绿", swatchClassName: "reader-highlight-swatch--soft-mint" },
+  { value: "soft_rose", label: "雾粉", swatchClassName: "reader-highlight-swatch--soft-rose" },
 ];
+
+const HIGHLIGHT_MARK_COLOR_CLASSES = [
+  "reader-record-mark-stack--highlight-yellow",
+  "reader-record-mark-stack--highlight-mint",
+  "reader-record-mark-stack--highlight-rose",
+] as const;
+
+function highlightMarkColorClass(color: string): string {
+  return `reader-record-mark-stack--highlight-${color.replace(/^(warm|soft)_/, "")}`;
+}
+
+/**
+ * 高亮改色/删除的即时视觉补丁：乐观状态更新后，整文档重投影 + setValue
+ * 需要几百毫秒到秒级（dev 下更慢），在此之前先把命中 mark 的类换掉，
+ * 让用户操作看起来是即时的；投影收敛后视觉一致。失败回滚由调用方负责。
+ */
+function patchHighlightColorInDom(
+  root: HTMLElement | null,
+  assetId: string,
+  color: string,
+) {
+  root
+    ?.querySelectorAll<HTMLElement>(
+      `[data-reader-record-user-highlight-asset-id="${assetId}"]`,
+    )
+    .forEach((span) => {
+      span.classList.remove(...HIGHLIGHT_MARK_COLOR_CLASSES);
+      span.classList.add(highlightMarkColorClass(color));
+    });
+}
+
+function removeHighlightInDom(root: HTMLElement | null, assetId: string) {
+  root
+    ?.querySelectorAll<HTMLElement>(
+      `[data-reader-record-user-highlight-asset-id="${assetId}"]`,
+    )
+    .forEach((span) => {
+      span.classList.remove(
+        "reader-record-mark-stack--user-highlight",
+        ...HIGHLIGHT_MARK_COLOR_CLASSES,
+      );
+    });
+}
 
 const ARTICLE_STATUS_DESCRIPTION_BY_KEY: Record<ReadingRecordStatusKey, string> = {
   processing: "正在为你准备阅读内容，完成后即可开始阅读。",
@@ -584,21 +578,6 @@ function sourceOnlyDisabledReason(
     return action === "lookup"
       ? "跨句选区暂不支持查词"
       : "跨句选区暂不支持高亮/笔记";
-  }
-  return "暂不支持跨段或非稳定原文选区";
-}
-
-function translationDisabledReason(
-  selection: ReaderRecordSelectionAnchorBridgeResult | null,
-): string | undefined {
-  if (!selection) {
-    return "请选择稳定原文后再翻译";
-  }
-  if (selection.surfaceKind !== "source") {
-    return "当前仅支持原文翻译";
-  }
-  if (hasSourceMultiTextSelection(selection)) {
-    return "跨句选区暂不支持翻译";
   }
   return "暂不支持跨段或非稳定原文选区";
 }
@@ -2477,12 +2456,10 @@ function ReaderRecordMoreMenu({
 function SelectionActionState({
   copyStatus,
   selection,
-  translationState,
   writeState,
 }: {
   copyStatus: ReaderRecordCopyStatus;
   selection: ReaderRecordSelectionAnchorBridgeResult | null;
-  translationState: ReaderRecordTranslationState;
   writeState: ReaderRecordWriteState;
 }) {
   const draft = singleRangeDraft(selection);
@@ -2536,11 +2513,6 @@ function SelectionActionState({
       {copyStatus !== "idle" ? (
         <span data-testid="reader-record-plate-copy-status">
           {copyStatus === "copied" ? "已复制" : "复制失败"}
-        </span>
-      ) : null}
-      {translationState.kind !== "idle" ? (
-        <span data-testid="reader-record-plate-translation-status-hidden">
-          {readerSectionTranslationStatusMessage(translationState)}
         </span>
       ) : null}
       {writeStatus ? (
@@ -2635,11 +2607,25 @@ export function ReaderRecordPlateSurface({
   const activeSelectionRef =
     useRef<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
-  const [translationState, setTranslationState] =
-    useState<ReaderRecordTranslationState>({ kind: "idle" });
   const [writeState, setWriteState] = useState<ReaderRecordWriteState>({
     kind: "idle",
   });
+  /**
+   * Ask 快捷框状态。Surface 托管（比选区工具栏活得久）：打开时把当前选区
+   * 的 attachment 与 rect 冻结进来，之后焦点进入输入框导致原生选区塌陷、
+   * 工具栏卸载都不会拆掉菜单。
+   */
+  const [askQuickMenu, setAskQuickMenu] = useState<{
+    attachment: ReaderAskAttachment;
+    rect: DOMRect;
+    range: Range;
+  } | null>(null);
+  /**
+   * 双击查词手势抑制：浏览器在第二次 mouseup 才形成词选区，dblclick
+   * 事件更晚——没有它时 toolbar 会先闪现一帧才被 quick peek 接管。
+   */
+  const [suppressDblClickToolbar, setSuppressDblClickToolbar] = useState(false);
+  const dblClickSuppressTimerRef = useRef<number | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteAnchorDraft, setNoteAnchorDraft] =
     useState<ReaderRecordAnchorDraft | null>(null);
@@ -3614,15 +3600,13 @@ export function ReaderRecordPlateSurface({
       const hoverProps: HTMLAttributes<HTMLSpanElement> = {};
       if (grammarItemId) {
         hoverProps.onMouseEnter = () => {
-          setActiveGrammarItemId(grammarItemId);
+          hoverGrammarItemId(grammarItemId);
         };
         hoverProps.onMouseLeave = (event) => {
           if (relatedTargetInsideGrammarItem(event.relatedTarget, grammarItemId)) {
             return;
           }
-          setActiveGrammarItemId((current) =>
-            current === grammarItemId ? null : current,
-          );
+          hoverGrammarItemId(null);
         };
         hoverProps.onFocus = () => {
           setActiveGrammarItemId(grammarItemId);
@@ -3827,6 +3811,7 @@ export function ReaderRecordPlateSurface({
     setHoverNoteAssetId(null);
     setNoteMenu(null);
     setHighlightMenu(null);
+    setAskQuickMenu(null);
     setNoteAnchorDraft(null);
     setNoteDraft("");
     setNoteDuplicateAcknowledged(false);
@@ -3884,18 +3869,14 @@ export function ReaderRecordPlateSurface({
       } else {
         quickPeekFloatingRefs.setPositionReference?.({
           getBoundingClientRect: anchor.getRect,
+          // range 锚点也要给 autoUpdate 一个真实元素来接滚动祖先链。
+          contextElement: anchor.contextElement ?? surfaceRef.current ?? undefined,
         });
       }
       quickPeekFloatingUpdate?.();
     }
 
     updateReference();
-    window.addEventListener("resize", updateReference);
-    window.addEventListener("scroll", updateReference, true);
-    return () => {
-      window.removeEventListener("resize", updateReference);
-      window.removeEventListener("scroll", updateReference, true);
-    };
   }, [quickPeekFloatingRefs, quickPeekFloatingUpdate, quickPeekOpen]);
 
   const [dictionaryLookup, setDictionaryLookup] =
@@ -3975,6 +3956,9 @@ export function ReaderRecordPlateSurface({
     offsetPx: 8,
     collisionPadding: 10,
     strategy: "fixed",
+    // 笔记面板刻意不跟随滚动：锚定一次后保持原位，用户可以滚动查看
+    // 上下文而面板不追逐、不遮挡选区下方文本。
+    follow: false,
   });
 
   // --- Selection-actions floating toolbar ---
@@ -3986,6 +3970,8 @@ export function ReaderRecordPlateSurface({
     activeSelection.selectedText.trim().length > 0 &&
     activeSelection.rect !== null &&
     !quickPeekOpen &&
+    askQuickMenu === null &&
+    !suppressDblClickToolbar &&
     highlightMenu === null &&
     noteMenu === null &&
     noteAnchorDraft === null &&
@@ -3998,9 +3984,101 @@ export function ReaderRecordPlateSurface({
     strategy: "fixed",
   });
 
-  // 定位 effect：activeSelection.rect 作为初始定位真相；滚动/缩放时重读
-  // 原生 selection 的 live rect（activeSelection.rect 的底层来源）以保持
-  // 工具栏跟随选区。flip/shift middleware 保证工具栏在视口内不遮挡选区。
+  // 浮层 reference 共享助手：闭包实时重读原生选区 rect；contextElement
+  // 让 autoUpdate 接对滚动祖先链。reference 必须在浮层 mount 前就位
+  //（选区成形的事件回调里同步设置），否则首帧按默认 rect 定位、下一帧
+  // 跳变——用户感知为"飞入"。
+  const getLiveSelectionRect = useCallback((): DOMRect | null => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      return null;
+    }
+    return sel.getRangeAt(0).getBoundingClientRect();
+  }, []);
+
+  const getSelectionContextElement = useCallback((): Element | undefined => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) {
+      return undefined;
+    }
+    const node = sel.getRangeAt(0).commonAncestorContainer;
+    return (node instanceof Element ? node : node.parentElement) ?? undefined;
+  }, []);
+
+  const setSelectionToolbarReference = useCallback(
+    (fallbackRect: DOMRect) => {
+      selectionToolbarFloating.refs.setPositionReference?.({
+        getBoundingClientRect: () => getLiveSelectionRect() ?? fallbackRect,
+        contextElement: getSelectionContextElement(),
+      });
+      selectionToolbarFloating.update?.();
+    },
+    [
+      getLiveSelectionRect,
+      getSelectionContextElement,
+      selectionToolbarFloating.refs,
+      selectionToolbarFloating.update,
+    ],
+  );
+
+  // --- Ask 快捷框（Surface 托管浮层，锚定选区下方）---
+  // Plate AI Editor 同款模式：菜单状态活在 Surface 层，toolbar 按钮只是
+  // 触发器。焦点进入输入框清空原生选区、toolbar 卸载都不影响菜单存活。
+  const askMenuFloating = useReaderFloatingLayer({
+    open: askQuickMenu !== null,
+    placement: "bottom-start",
+    offsetPx: 8,
+    collisionPadding: 12,
+    strategy: "fixed",
+  });
+
+  // 兜底 effect：reference 的主路径是 handleToggleAskQuickMenu 打开前的
+  // 同步设置；这里在重开/状态恢复时重设一次。
+  useEffect(() => {
+    if (!askQuickMenu) {
+      return;
+    }
+    const frozenRect = askQuickMenu.rect;
+    askMenuFloating.refs.setPositionReference?.({
+      getBoundingClientRect: () => getLiveSelectionRect() ?? frozenRect,
+      contextElement: getSelectionContextElement(),
+    });
+    askMenuFloating.update?.();
+  }, [
+    askQuickMenu,
+    askMenuFloating.refs,
+    askMenuFloating.update,
+    getLiveSelectionRect,
+    getSelectionContextElement,
+  ]);
+
+  // 快捷框 dismiss：外部 pointerdown / Escape。
+  useEffect(() => {
+    if (!askQuickMenu) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const floating = askMenuFloating.refs.floating.current;
+      if (floating?.contains(event.target as Node)) {
+        return;
+      }
+      setAskQuickMenu(null);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAskQuickMenu(null);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [askQuickMenu, askMenuFloating.refs]);
+
+  // 定位 effect（兜底/重开时重设）：reference 的主路径是
+  // handleSelectionChange 里的同步设置（mount 前完成）。
   useEffect(() => {
     if (!showSelectionToolbar) {
       return;
@@ -4009,39 +4087,11 @@ export function ReaderRecordPlateSurface({
     if (!initialRect) {
       return;
     }
-
-    function getLiveSelectionRect(): DOMRect | null {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-        return null;
-      }
-      return sel.getRangeAt(0).getBoundingClientRect();
-    }
-
-    function updateSelectionToolbarReference() {
-      const liveRect = getLiveSelectionRect();
-      const rect = liveRect ?? initialRect;
-      if (!rect) {
-        return;
-      }
-      selectionToolbarFloating.refs.setPositionReference?.({
-        getBoundingClientRect: () => rect,
-      });
-      selectionToolbarFloating.update?.();
-    }
-
-    updateSelectionToolbarReference();
-    window.addEventListener("resize", updateSelectionToolbarReference);
-    window.addEventListener("scroll", updateSelectionToolbarReference, true);
-    return () => {
-      window.removeEventListener("resize", updateSelectionToolbarReference);
-      window.removeEventListener("scroll", updateSelectionToolbarReference, true);
-    };
+    setSelectionToolbarReference(initialRect);
   }, [
     showSelectionToolbar,
     activeSelection,
-    selectionToolbarFloating.refs,
-    selectionToolbarFloating.update,
+    setSelectionToolbarReference,
   ]);
 
   // 选区或激活笔记变化时，更新浮动层的 reference 元素
@@ -4090,12 +4140,6 @@ export function ReaderRecordPlateSurface({
     }
 
     updateCommentReference();
-    window.addEventListener("resize", updateCommentReference);
-    window.addEventListener("scroll", updateCommentReference, true);
-    return () => {
-      window.removeEventListener("resize", updateCommentReference);
-      window.removeEventListener("scroll", updateCommentReference, true);
-    };
   }, [
     commentPanelOpen,
     noteAnchorDraft,
@@ -4113,7 +4157,11 @@ export function ReaderRecordPlateSurface({
       activeSelectionRef.current = nextSelection;
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
-      setTranslationState({ kind: "idle" });
+      // 选区成形即同步设置 toolbar 的 position reference（浮层 mount 前
+      // 完成），避免首帧按默认 rect 定位后再跳变的"飞入"感。
+      if (nextSelection?.rect) {
+        setSelectionToolbarReference(nextSelection.rect);
+      }
       if (nextSelection?.selectedText.trim()) {
         setHighlightMenu(null);
         setNoteMenu(null);
@@ -4121,7 +4169,7 @@ export function ReaderRecordPlateSurface({
       }
       setWriteState((current) => (current.kind === "saving" ? current : { kind: "idle" }));
     },
-    [],
+    [setSelectionToolbarReference],
   );
 
   useEffect(() => {
@@ -4372,70 +4420,6 @@ export function ReaderRecordPlateSurface({
     }
   }, [activeSelection]);
 
-  const handleTranslate = useCallback(async () => {
-    const selection = activeSelection;
-    const draft = singleRangeDraft(selection);
-    if (!selection || !draft) {
-      setTranslationState({
-        kind: "error",
-        message: translationDisabledReason(selection) ?? "请选择稳定原文后再翻译",
-      });
-      return;
-    }
-
-    setTranslationState({ kind: "submitting" });
-    try {
-      const response = await fetch(
-        `/api/web/reader/records/${encodeURIComponent(
-          snapshot.record_id,
-        )}/section-translation`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            startUnitId: draft.unit_id,
-            endUnitId: draft.unit_id,
-            startAnchorSegmentId: draft.anchor_segment_id,
-            endAnchorSegmentId: draft.anchor_segment_id,
-            nodeId: selection.blockId,
-            outlineRevision: null,
-          }),
-        },
-      );
-      const payload = (await response.json().catch(() => null)) as unknown;
-      const payloadRecord =
-        payload && typeof payload === "object"
-          ? (payload as Record<string, unknown>)
-          : null;
-      const outcome = payloadRecord?.outcome;
-      if (
-        !response.ok ||
-        payloadRecord?.ok === false ||
-        !isReaderSectionTranslationOutcome(outcome)
-      ) {
-        const message =
-          typeof payloadRecord?.message === "string"
-            ? payloadRecord.message
-            : "翻译请求失败，请稍后重试。";
-        setTranslationState({ kind: "error", message });
-        return;
-      }
-
-      const detail =
-        typeof payloadRecord?.detail === "string" ? payloadRecord.detail : null;
-      setTranslationState({ kind: "submitted", outcome, detail });
-      if (outcome === "succeeded") {
-        await onRequestSnapshotReload?.();
-      }
-    } catch {
-      setTranslationState({
-        kind: "error",
-        message: "翻译请求失败，请稍后重试。",
-      });
-    }
-  }, [activeSelection, onRequestSnapshotReload, snapshot.record_id]);
-
   const handleDocumentCopyCapture = useCallback(
     (event: ReactClipboardEvent<HTMLElement>) => {
       const payload = sanitizedSelectionClipboardPayload(event.currentTarget);
@@ -4604,6 +4588,13 @@ export function ReaderRecordPlateSurface({
     }
 
     window.setTimeout(() => {
+      // dblclick 处理开始：释放手势抑制（若进入查词，quick peek 的
+      // loading/open 态会无缝接管 toolbar 抑制）。
+      if (dblClickSuppressTimerRef.current !== null) {
+        window.clearTimeout(dblClickSuppressTimerRef.current);
+        dblClickSuppressTimerRef.current = null;
+      }
+      setSuppressDblClickToolbar(false);
       const runNativeFallback = () => {
         void runLookupFromNativeDoubleClickSelection(sourceLeaf);
       };
@@ -4636,6 +4627,41 @@ export function ReaderRecordPlateSurface({
       handleDocumentDoubleClickTarget(event.target);
     },
     [handleDocumentDoubleClickTarget],
+  );
+
+  /**
+   * 双击查词手势的第二次 mousedown（detail >= 2）早于选区成形：此时若
+   * 目标叶子可触发查词，就提前抑制 toolbar，消除"toolbar 闪一下再弹出
+   * quick peek"的抢跑。抑制在 dblclick 处理时解除（quick peek 的
+   * loading 态无缝接管抑制），兜底 900ms 自释放。
+   */
+  const handleSurfaceMouseDownCapture = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (event.detail < 2) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const sourceLeaf = target?.closest<HTMLElement>(
+        '[data-reader-record-leaf="segment_text"]',
+      );
+      if (
+        !sourceLeaf ||
+        markStackBlocksDoubleClickLookup(
+          sourceLeaf.dataset.readerRecordMarkStackKinds,
+        )
+      ) {
+        return;
+      }
+      setSuppressDblClickToolbar(true);
+      if (dblClickSuppressTimerRef.current !== null) {
+        window.clearTimeout(dblClickSuppressTimerRef.current);
+      }
+      dblClickSuppressTimerRef.current = window.setTimeout(() => {
+        setSuppressDblClickToolbar(false);
+        dblClickSuppressTimerRef.current = null;
+      }, 900);
+    },
+    [],
   );
 
   const activeLookupSnapshot = useMemo(
@@ -4780,34 +4806,6 @@ export function ReaderRecordPlateSurface({
     );
   }, [askPageIdentity, inspectState, openAskPanel]);
 
-  const handleAskFromSelection = useCallback(() => {
-    if (!currentAskSelectionAttachment) {
-      return;
-    }
-    openAskPanel(currentAskSelectionAttachment, null);
-  }, [currentAskSelectionAttachment, openAskPanel]);
-
-  const handleAskPromptFromSelection = useCallback(
-    (request: {
-      content: string;
-      entryAction?: ReaderAskEntryActionDto;
-      submissionMode?: "chat" | "quick_action";
-    }) => {
-      const content = request.content.trim();
-      if (!content || !currentAskSelectionAttachment) {
-        return;
-      }
-      const pendingRequest: PendingReaderRecordAskRequest = {
-        content,
-        entryAction: request.entryAction ?? "ask_about_this",
-        attachments: [currentAskSelectionAttachment],
-        submissionMode: request.submissionMode ?? "chat",
-      };
-      openAskPanel(currentAskSelectionAttachment, pendingRequest);
-    },
-    [currentAskSelectionAttachment, openAskPanel],
-  );
-
   const handleAskFromNote = useCallback(() => {
     const activeMenu = noteMenu;
     if (!activeMenu) {
@@ -4839,20 +4837,188 @@ export function ReaderRecordPlateSurface({
     }, null);
   }, [askPageIdentity, noteMenu, openAskPanel, snapshot.record.generation, snapshot.record_id]);
 
-  const handleRequestAI = useCallback(() => {
-    openAskPanel(currentAskSelectionAttachment, null);
-  }, [currentAskSelectionAttachment, openAskPanel]);
+  /**
+   * /api/web/dict/ai 的统一调用入口（context_explain / missing_fallback）。
+   * 这是 /dict/ai 在 Web reader 的第一条真实接线——此前前端没有任何
+   * 调用方。结果写入 dictionaryAI view state，由词典面板的 AI 区展示。
+   */
+  const runDictionaryAIRequest = useCallback(
+    async (
+      lookup: DictionaryLookupSnapshot | null,
+      mode: WebDictAIRequest["mode"],
+    ) => {
+      const request = dictionaryAIRequestForLookup(lookup, mode);
+      if (!request) {
+        return;
+      }
+      const requestKey = dictionaryAIRequestKey(request);
+      setDictionaryAI({ kind: "loading", mode, requestKey });
+      setDictionaryAIPanelOpen(true);
+      try {
+        const response = await fetch("/api/web/dict/ai", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        });
+        const result = (await response.json().catch(() => null)) as
+          | WebDictAIResult
+          | WebDictAIErrorResult
+          | null;
+        if (!response.ok || !result || result.kind === "error") {
+          setDictionaryAI({
+            kind: "error",
+            mode,
+            requestKey,
+            error:
+              result && result.kind === "error"
+                ? result
+                : {
+                    kind: "error",
+                    query: request.query,
+                    mode,
+                    status: response.ok ? 0 : response.status,
+                    code: "upstream_unavailable",
+                    message: "AI 补充暂时不可用，请稍后重试。",
+                  },
+          });
+          return;
+        }
+        setDictionaryAI({ kind: "ready", mode, requestKey, result });
+      } catch {
+        setDictionaryAI({
+          kind: "error",
+          mode,
+          requestKey,
+          error: {
+            kind: "error",
+            query: request.query,
+            mode,
+            status: 0,
+            code: "upstream_unavailable",
+            message: "AI 补充暂时不可用，请稍后重试。",
+          },
+        });
+      }
+    },
+    [],
+  );
 
   /**
-   * "加入 Ask Claread": pin via the Ask composer context (slot policy
-   * lives there), then open the panel.
+   * Quick peek "AI 补充词义"：词典未收录时把 lookup 移交词典侧栏，
+   * 再请求 AI 兜底（missing_fallback）。
    */
-  const handlePinSelectionToAsk = useCallback(() => {
-    askComposer.pinSelection();
-    openAskPanel(undefined, null);
-  }, [askComposer, openAskPanel]);
+  const handleQuickPeekRequestAI = useCallback(
+    (mode: WebDictAIRequest["mode"]) => {
+      const lookup = activeLookupSnapshot;
+      if (!lookup) {
+        return;
+      }
+      openDictionaryRail();
+      void runDictionaryAIRequest(lookup, mode);
+    },
+    [activeLookupSnapshot, openDictionaryRail, runDictionaryAIRequest],
+  );
 
-  const pinSelectionState = askComposer.pinSelectionState;
+  /** 词典侧栏的 AI 按钮（语境解读 / 补充词义）走同一入口。 */
+  const handleRailRequestAI = useCallback(
+    (mode: WebDictAIRequest["mode"]) => {
+      void runDictionaryAIRequest(dictionaryPanelLookup, mode);
+    },
+    [dictionaryPanelLookup, runDictionaryAIRequest],
+  );
+
+  /**
+   * Ask 快捷框开关（toolbar 主按钮 + Ctrl/Cmd+J 共用一个入口）。
+   * 打开时冻结当前选区的 attachment 与 rect；选区同时经 composer
+   * auto-slot 流入 Ask 面板 chips（Notion 式：划选即加入、取消划选
+   * 不消失、× 手动移除、新选区覆盖）。
+   */
+  const handleToggleAskQuickMenu = useCallback(() => {
+    if (askQuickMenu) {
+      setAskQuickMenu(null);
+      return;
+    }
+    const nativeSelection = window.getSelection();
+    const range =
+      nativeSelection && nativeSelection.rangeCount > 0 && !nativeSelection.isCollapsed
+        ? nativeSelection.getRangeAt(0).cloneRange()
+        : null;
+    if (!currentAskSelectionAttachment || !activeSelection?.rect || !range) {
+      return;
+    }
+    // 打开前同步设置 position reference（mount 前完成），避免首帧按默认
+    // rect 定位后再跳变。
+    const frozenRect = activeSelection.rect;
+    askMenuFloating.refs.setPositionReference?.({
+      getBoundingClientRect: () => getLiveSelectionRect() ?? frozenRect,
+      contextElement: getSelectionContextElement(),
+    });
+    askMenuFloating.update?.();
+    setAskQuickMenu({
+      attachment: currentAskSelectionAttachment,
+      rect: frozenRect,
+      range,
+    });
+  }, [
+    activeSelection,
+    askMenuFloating.refs,
+    askMenuFloating.update,
+    askQuickMenu,
+    currentAskSelectionAttachment,
+    getLiveSelectionRect,
+    getSelectionContextElement,
+  ]);
+
+  // 快捷框输入框 autofocus 会清空原生选区高亮。输入框 mount 提交后把冻结
+  // 的 Range 重新写回——程序化 addRange 不会抢走输入框焦点，选区高亮
+  // 与输入焦点因此可以共存（Notion/Plate AI 菜单的同款观感）。
+  useEffect(() => {
+    if (!askQuickMenu) {
+      return;
+    }
+    const range = askQuickMenu.range;
+    const frame = requestAnimationFrame(() => {
+      const sel = window.getSelection();
+      if (!sel) {
+        return;
+      }
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [askQuickMenu]);
+
+  const closeAskQuickMenu = useCallback(() => {
+    setAskQuickMenu(null);
+  }, []);
+
+  /**
+   * 快捷框提交（自由输入 Enter 或快捷指令）：选区 attachment 随
+   * pendingRequest 一起交给 Ask 面板，面板消费后立即发送。
+   */
+  const handleAskQuickMenuSubmit = useCallback(
+    (request: {
+      content: string;
+      entryAction?: ReaderAskEntryActionDto;
+      submissionMode?: "chat" | "quick_action";
+    }) => {
+      const menu = askQuickMenu;
+      const content = request.content.trim();
+      if (!menu || !content) {
+        return;
+      }
+      const pendingRequest: PendingReaderRecordAskRequest = {
+        content,
+        entryAction: request.entryAction ?? "ask_about_this",
+        attachments: [menu.attachment],
+        submissionMode: request.submissionMode ?? "chat",
+      };
+      openAskPanel(menu.attachment, pendingRequest);
+      setAskQuickMenu(null);
+    },
+    [askQuickMenu, openAskPanel],
+  );
 
   const handleDictionarySearch = useCallback(
     async (query: string) => {
@@ -5154,11 +5320,12 @@ export function ReaderRecordPlateSurface({
       color: string,
       options: { closeMenu?: boolean } = {},
     ) => {
-      if (writeState.kind === "saving") {
-        return;
-      }
-
+      // 改色是幂等 PATCH，允许在上一次写入进行中连续改色——不再因
+      // writeState "saving" 静默丢弃点击（此前表现为卡顿/无响应）。
       const previousAssets = localUserAssets;
+      const previousColor =
+        localUserAssets.find((asset) => asset.asset_id === targetAssetId)?.color ??
+        null;
       if (options.closeMenu) {
         setHighlightMenu(null);
       }
@@ -5169,6 +5336,8 @@ export function ReaderRecordPlateSurface({
             : asset,
         ),
       );
+      // 即时视觉补丁：不等待重投影。
+      patchHighlightColorInDom(surfaceRef.current, targetAssetId, color);
       setWriteState({ kind: "saving", action: "highlight" });
 
       try {
@@ -5201,6 +5370,9 @@ export function ReaderRecordPlateSurface({
       } catch (error) {
         console.warn("[ReaderRecordPlateSurface] highlight update failed", error);
         setLocalUserAssets(previousAssets);
+        if (previousColor) {
+          patchHighlightColorInDom(surfaceRef.current, targetAssetId, previousColor);
+        }
         setWriteState({
           kind: "error",
           action: "highlight",
@@ -5208,7 +5380,7 @@ export function ReaderRecordPlateSurface({
         });
       }
     },
-    [localUserAssets, onRequestSnapshotReload, snapshot, writeState.kind],
+    [localUserAssets, onRequestSnapshotReload, snapshot],
   );
 
   const handleHighlight = useCallback(async (color: string = "warm_yellow") => {
@@ -5407,11 +5579,14 @@ export function ReaderRecordPlateSurface({
     }
 
     const deletedAssetId = activeMenu.mark.assetId;
+    const deletedColor = activeMenu.mark.color;
     const previousAssets = localUserAssets;
     setHighlightMenu(null);
     setLocalUserAssets((current) =>
       current.filter((asset) => asset.asset_id !== deletedAssetId),
     );
+    // 即时视觉移除：不等待整文档重投影。
+    removeHighlightInDom(surfaceRef.current, deletedAssetId);
     setWriteState({ kind: "saving", action: "highlight" });
 
     try {
@@ -5430,22 +5605,33 @@ export function ReaderRecordPlateSurface({
         action: "highlight",
         message: "高亮已删除",
       });
-      await onRequestSnapshotReload?.();
+      // 本地已乐观移除；不再整页 reload 快照（那是 1-2s 卡顿的来源）。
     } catch (error) {
       console.warn("[ReaderRecordPlateSurface] highlight delete failed", error);
       setLocalUserAssets(previousAssets);
+      // 回滚即时视觉移除。
+      surfaceRef.current
+        ?.querySelectorAll<HTMLElement>(
+          `[data-reader-record-user-highlight-asset-id="${deletedAssetId}"]`,
+        )
+        .forEach((span) => {
+          span.classList.add(
+            "reader-record-mark-stack--user-highlight",
+            highlightMarkColorClass(deletedColor ?? "warm_yellow"),
+          );
+        });
       setWriteState({
         kind: "error",
         action: "highlight",
         message: "高亮删除失败，请稍后重试。",
       });
     }
-  }, [highlightMenu, localUserAssets, onRequestSnapshotReload, writeState.kind]);
+  }, [highlightMenu, localUserAssets, writeState.kind]);
 
   const handleUpdateHighlightColor = useCallback(
     async (color: string) => {
       const activeMenu = highlightMenu;
-      if (!activeMenu || writeState.kind === "saving") {
+      if (!activeMenu) {
         return;
       }
 
@@ -5453,7 +5639,7 @@ export function ReaderRecordPlateSurface({
         closeMenu: true,
       });
     },
-    [highlightMenu, saveHighlightColorById, writeState.kind],
+    [highlightMenu, saveHighlightColorById],
   );
 
   useEffect(() => {
@@ -5483,12 +5669,8 @@ export function ReaderRecordPlateSurface({
       setHighlightMenu(null);
     }
     updateHighlightReference();
-    window.addEventListener("resize", updateHighlightReference);
-    window.addEventListener("scroll", updateHighlightReference, true);
     window.document.addEventListener("pointerdown", handlePointerDown);
     return () => {
-      window.removeEventListener("resize", updateHighlightReference);
-      window.removeEventListener("scroll", updateHighlightReference, true);
       window.document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [highlightMenu, highlightMenuFloating.refs, highlightMenuFloating.update]);
@@ -5624,17 +5806,46 @@ export function ReaderRecordPlateSurface({
     [activeSentenceChunkId],
   );
 
+  /**
+   * Grammar 联动的 hover-intent 通道：进入延迟 ~120ms（掠过不误触），
+   * 退出延迟 ~180ms（指针在卡片与原文之间移动时不闪断）。点击/键盘
+   * focus 仍走 setActiveGrammarItemId 即时通道。
+   */
+  const grammarHoverTimersRef = useRef<{ enter?: number; leave?: number }>({});
+  const hoverGrammarItemId = useCallback((itemId: string | null) => {
+    const timers = grammarHoverTimersRef.current;
+    if (timers.enter !== undefined) {
+      window.clearTimeout(timers.enter);
+      timers.enter = undefined;
+    }
+    if (timers.leave !== undefined) {
+      window.clearTimeout(timers.leave);
+      timers.leave = undefined;
+    }
+    if (itemId !== null) {
+      timers.enter = window.setTimeout(() => {
+        setActiveGrammarItemId(itemId);
+      }, 120);
+    } else {
+      timers.leave = window.setTimeout(() => {
+        setActiveGrammarItemId(null);
+      }, 180);
+    }
+  }, []);
+
   const grammarInteraction = useMemo(
     () => ({
       activeGrammarItemId,
       expandGrammarItemRequest: grammarExpandRequest,
       setActiveGrammarItemId,
+      hoverGrammarItemId,
       pulseGrammarItemId,
       requestExpandGrammarItem,
     }),
     [
       activeGrammarItemId,
       grammarExpandRequest,
+      hoverGrammarItemId,
       pulseGrammarItemId,
       requestExpandGrammarItem,
     ],
@@ -5688,13 +5899,6 @@ export function ReaderRecordPlateSurface({
         disabled: !copyReady,
         reason: copyReason,
       },
-      translate: {
-        disabled: !sourceSingleRangeReady || translationState.kind === "submitting",
-        reason:
-          translationState.kind === "submitting"
-            ? "正在提交翻译"
-            : translationDisabledReason(activeSelection),
-      },
       ask: {
         disabled: !askReady,
         reason: askReason,
@@ -5725,19 +5929,14 @@ export function ReaderRecordPlateSurface({
     currentAskSelectionAttachment,
     lookupState.kind,
     noteAnchorDraft,
-    translationState,
     writeState,
   ]);
 
   // 把选区工具栏回调打包为 Context value，供 ReaderFloatingToolbarButtons 消费。
   const toolbarActions = useMemo<ReaderToolbarActions>(
     () => ({
-      onAsk: () => handleAskFromSelection(),
-      onPinSelectionToAsk: () => handlePinSelectionToAsk(),
-      pinSelectionState,
-      onAskSubmit: (request) => handleAskPromptFromSelection(request),
+      onAsk: () => handleToggleAskQuickMenu(),
       onCopy: () => handleCopy(),
-      onTranslate: () => handleTranslate(),
       onHighlight: () => handleHighlight(),
       onNote: () => handleOpenNoteComposer(),
       onLookup: () => handleLookup(),
@@ -5745,12 +5944,8 @@ export function ReaderRecordPlateSurface({
       state: toolbarActionState,
     }),
     [
-      handleAskFromSelection,
-      handlePinSelectionToAsk,
-      pinSelectionState,
-      handleAskPromptFromSelection,
+      handleToggleAskQuickMenu,
       handleCopy,
-      handleTranslate,
       handleHighlight,
       handleOpenNoteComposer,
       handleLookup,
@@ -5758,6 +5953,36 @@ export function ReaderRecordPlateSurface({
       toolbarActionState,
     ],
   );
+
+  // Ctrl/Cmd+J：选区在场时开关 Ask 快捷框。监听器挂在 Surface 层，
+  // 不依赖工具栏按钮是否挂载（按钮生命周期绑在选区上，焦点转移即卸载）。
+  useEffect(() => {
+    function handleAskShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) {
+        return;
+      }
+      if (event.key.toLowerCase() !== "j") {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest("input, textarea, [contenteditable='true']")
+      ) {
+        return;
+      }
+      if (toolbarActionState.ask.disabled) {
+        return;
+      }
+      event.preventDefault();
+      handleToggleAskQuickMenu();
+    }
+
+    window.addEventListener("keydown", handleAskShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleAskShortcut);
+    };
+  }, [handleToggleAskQuickMenu, toolbarActionState.ask.disabled]);
 
   const handleStartEditNote = useCallback(() => {
     setNoteMenu((current) =>
@@ -5919,6 +6144,7 @@ export function ReaderRecordPlateSurface({
     <div
       data-testid="reader-record-plate-surface"
       data-reader-record-surface="plate-readonly-reading"
+      onMouseDownCapture={handleSurfaceMouseDownCapture}
       onDoubleClickCapture={handleSurfaceDoubleClickCapture}
     >
       <div
@@ -5970,19 +6196,18 @@ export function ReaderRecordPlateSurface({
           <SelectionActionState
             copyStatus={copyStatus}
             selection={activeSelection}
-            translationState={translationState}
             writeState={writeState}
           />
           {highlightMenu ? (
             <ReaderFloatingSurface
               floatingRef={highlightMenuFloating.refs.setFloating}
-              style={highlightMenuFloating.floatingStyles as CSSProperties}
+              style={readerFloatingStyles(highlightMenuFloating)}
               chrome="bare"
               data-reader-record-floating-toolbar="highlight-menu"
             >
               <TooltipProvider delayDuration={200}>
-                <div className="flex h-10 items-center gap-1 rounded-[7px] border border-border/75 bg-background/95 p-1 shadow-[var(--app-panel-shadow-quiet)] backdrop-blur-md">
-                  <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground">
+                <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-popover/98 p-1.5 shadow-lg shadow-black/5 backdrop-blur-md supports-[backdrop-filter]:bg-popover/95 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150">
+                  <span className="inline-flex h-8 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground">
                     <Palette className="h-3.5 w-3.5" aria-hidden="true" />
                     改色
                   </span>
@@ -5996,12 +6221,12 @@ export function ReaderRecordPlateSurface({
                             aria-label={`切换为${option.label}`}
                             data-reader-record-highlight-color={option.value}
                             onClick={() => handleUpdateHighlightColor(option.value)}
-                            className="focus-ring group grid h-8 w-8 place-items-center rounded-md transition-transform hover:bg-transparent active:scale-[0.96]"
+                            className="focus-ring group grid h-8 w-8 place-items-center rounded-md transition-colors hover:bg-ink/[0.05]"
                           >
                             <span
                               className={cn(
-                                "h-4 w-4 rounded-[4px] ring-1 ring-inset ring-border/70 transition-[box-shadow,transform] group-hover:ring-foreground/30",
-                                isActive && "ring-2 ring-foreground/60",
+                                "reader-highlight-swatch h-[18px] w-[18px] rounded-[5px] transition-transform duration-150 group-hover:scale-110",
+                                isActive && "scale-110 outline-2 outline-offset-2 outline-ink/50",
                                 option.swatchClassName,
                               )}
                             />
@@ -6022,7 +6247,7 @@ export function ReaderRecordPlateSurface({
                         aria-label="删除高亮"
                         data-reader-record-highlight-action="delete"
                         onClick={handleDeleteHighlight}
-                        className="focus-ring grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform] hover:bg-transparent hover:text-rose-600 active:scale-[0.96] focus-visible:text-rose-600"
+                        className="focus-ring grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-[color,transform,background-color] hover:bg-ink/[0.05] hover:text-rose-600 active:scale-[0.96] focus-visible:text-rose-600"
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         <span className="sr-only">删除</span>
@@ -6049,7 +6274,7 @@ export function ReaderRecordPlateSurface({
                   node.setAttribute("data-testid", "reader-record-plate-lookup-panel");
                 }
               }}
-              style={quickPeekFloating.floatingStyles as CSSProperties}
+              style={readerFloatingStyles(quickPeekFloating)}
               onDismiss={() => {
                 setLookupState({ kind: "idle" });
                 setInspectState(null);
@@ -6059,12 +6284,14 @@ export function ReaderRecordPlateSurface({
               onSelectCandidate={activeLookupSnapshot ? handleSelectCandidate : undefined}
               onAttachToAsk={inspectState ? handleAttachInspectToAsk : undefined}
               onFeedback={inspectState ? handleInspectFeedback : undefined}
+              onRequestAI={handleQuickPeekRequestAI}
+              dictionaryAI={dictionaryAI}
             />
           ) : null}
           {feedbackTarget ? (
             <ReaderFloatingSurface
               floatingRef={feedbackFloating.refs.setFloating}
-              style={feedbackFloating.floatingStyles as CSSProperties}
+              style={readerFloatingStyles(feedbackFloating)}
               className="w-44 rounded-lg border border-border bg-popover p-1 shadow-lg"
               role="dialog"
               aria-label="反馈选项"
@@ -6133,15 +6360,15 @@ export function ReaderRecordPlateSurface({
                         statusMessage={commentStatusMessage}
                         onClose={handleCloseCommentPanel}
                         floatingRef={commentFloating.refs.setFloating}
-                        floatingStyles={commentFloating.floatingStyles as CSSProperties}
+                        floatingStyles={readerFloatingStyles(commentFloating)}
                       />
                     </Plate>
                     {showSelectionToolbar ? (
                       <ReaderFloatingSurface
                         floatingRef={selectionToolbarFloating.refs.setFloating}
-                        style={selectionToolbarFloating.floatingStyles as CSSProperties}
+                        style={readerFloatingStyles(selectionToolbarFloating)}
                         chrome="selection-toolbar"
-                        className="reader-record-floating-toolbar p-1 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
+                        className="reader-record-floating-toolbar p-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
                         data-reader-record-floating-toolbar="selection-actions"
                       >
                         <TooltipProvider delayDuration={200}>
@@ -6154,25 +6381,23 @@ export function ReaderRecordPlateSurface({
                         </TooltipProvider>
                       </ReaderFloatingSurface>
                     ) : null}
+                    {askQuickMenu ? (
+                      <ReaderFloatingSurface
+                        floatingRef={askMenuFloating.refs.setFloating}
+                        style={readerFloatingStyles(askMenuFloating)}
+                        chrome="selection-toolbar"
+                        role="dialog"
+                        aria-label="Ask Claread 快捷提问"
+                        data-reader-record-ask-quick-menu="open"
+                        className="motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150"
+                      >
+                        <ReaderAskQuickMenu
+                          onSubmit={handleAskQuickMenuSubmit}
+                          onClose={closeAskQuickMenu}
+                        />
+                      </ReaderFloatingSurface>
+                    ) : null}
                   </ReaderToolbarActionsProvider>
-                  {translationState.kind !== "idle" ? (
-                    <div
-                      data-testid="reader-record-plate-translation-status"
-                      data-reader-record-translation-status={translationState.kind}
-                      className={`mt-3 text-sm ${
-                        translationState.kind === "error"
-                          ? "text-rose-700"
-                          : translationState.kind === "submitted" &&
-                              translationState.outcome === "succeeded"
-                            ? "text-emerald-700"
-                            : "text-muted-foreground"
-                      }`}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      {readerSectionTranslationStatusMessage(translationState)}
-                    </div>
-                  ) : null}
                 </ReaderSentenceAnalysisInteractionContext.Provider>
               </ReaderCalloutActionContext.Provider>
             </ReaderGrammarExpansionProvider>
@@ -6249,7 +6474,7 @@ export function ReaderRecordPlateSurface({
               searchQuery={dictionarySearchQuery}
               searchExpanded={dictionarySearchExpanded}
               onSave={handleSaveVocabulary}
-              onRequestAI={handleRequestAI}
+              onRequestAI={handleRailRequestAI}
               onCreateAINote={() => undefined}
               onSelectAISuggestedQuery={() => undefined}
               onSearchQueryChange={setDictionarySearchQuery}
@@ -6285,7 +6510,7 @@ export function ReaderRecordPlateSurface({
               searchQuery={dictionarySearchQuery}
               searchExpanded={dictionarySearchExpanded}
               onSave={handleSaveVocabulary}
-              onRequestAI={handleRequestAI}
+              onRequestAI={handleRailRequestAI}
               onCreateAINote={() => undefined}
               onSelectAISuggestedQuery={() => undefined}
               onSearchQueryChange={setDictionarySearchQuery}

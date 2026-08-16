@@ -104,7 +104,7 @@ function ReaderQuickPeekShell({
   return (
     <ReaderFloatingSurface
       floatingRef={floatingRef}
-      className={`reader-lookup-preview ${className ?? ""}`.trim()}
+      className={`reader-lookup-preview motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 ${className ?? ""}`.trim()}
       role="dialog"
       aria-modal="false"
       aria-labelledby={titleId}

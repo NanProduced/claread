@@ -28,7 +28,6 @@ import {
   ReaderHighlightToolbarButton,
   ReaderLookupToolbarButton,
   ReaderNoteToolbarButton,
-  ReaderTranslateToolbarButton,
   ReaderToolbarActionsProvider,
   type ReaderToolbarActions,
   type ReaderToolbarActionId,
@@ -501,10 +500,12 @@ function selectAcrossElements(
 
 async function openAskPanelFromToolbar(askButton: HTMLButtonElement) {
   expect(askButton.isConnected).toBe(true);
-  const attachContext = await screen.findByRole("button", {
-    name: "加入 Ask Claread",
-  });
-  fireEvent.click(attachContext);
+  // 新交互：toolbar Ask 打开 Surface 托管的快捷框；面板本身经启动器打开，
+  // 选区由 composer auto-slot 自动成为 chip（Notion 式）。
+  fireEvent.click(askButton);
+  await screen.findByPlaceholderText("Ask Claread anything...");
+  fireEvent.keyDown(window, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "打开 Ask Claread" }));
 }
 
 async function submitAskPromptFromToolbar(
@@ -524,14 +525,12 @@ function makeToolbarActions(
   return {
     onAsk: vi.fn(),
     onCopy: vi.fn(),
-    onTranslate: vi.fn(),
     onHighlight: vi.fn(),
     onNote: vi.fn(),
     onLookup: vi.fn(),
     state: {
       lookup: enabled,
       copy: enabled,
-      translate: enabled,
       ask: enabled,
       highlight: enabled,
       note: enabled,
@@ -3351,7 +3350,7 @@ describe("ReaderRecordPlateSurface", () => {
     const toolbarButtons = container.querySelectorAll<HTMLButtonElement>(
       "[data-reader-record-toolbar-action]",
     );
-    expect(toolbarButtons).toHaveLength(6);
+    expect(toolbarButtons).toHaveLength(5);
     expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
     for (const button of toolbarButtons) {
       expect(button.getAttribute("title")).toBeNull();
@@ -3381,14 +3380,6 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.onLookup).not.toHaveBeenCalled();
   });
 
-  it("exposes an explicit translation action in the selection toolbar", () => {
-    const { container } = renderToolbarHarness();
-
-    expect(
-      container.querySelector('[data-reader-record-toolbar-action="translate"]'),
-    ).not.toBeNull();
-  });
-
   it("keeps each reader toolbar button as a Plate-style primitive with disabled reason and click forwarding", () => {
     const cases: Array<{
       action: ReaderToolbarActionId;
@@ -3396,16 +3387,10 @@ describe("ReaderRecordPlateSurface", () => {
       handler: keyof Pick<
         ReaderToolbarActions,
         "onLookup" | "onCopy" | "onAsk" | "onHighlight" | "onNote"
-          | "onTranslate"
       >;
     }> = [
       { action: "lookup", component: <ReaderLookupToolbarButton />, handler: "onLookup" },
       { action: "copy", component: <ReaderCopyToolbarButton />, handler: "onCopy" },
-      {
-        action: "translate",
-        component: <ReaderTranslateToolbarButton />,
-        handler: "onTranslate",
-      },
       { action: "ask", component: <ReaderAskToolbarButton />, handler: "onAsk" },
       {
         action: "highlight",
@@ -3431,12 +3416,7 @@ describe("ReaderRecordPlateSurface", () => {
         throw new Error(`Expected enabled toolbar button: ${item.action}`);
       }
       fireEvent.click(enabledButton);
-      if (item.action === "ask") {
-        expect(document.querySelector('[data-reader-record-ask-menu="open"]')).not.toBeNull();
-        expect(enabledActions.onAsk).not.toHaveBeenCalled();
-      } else {
-        expect(enabledActions[item.handler]).toHaveBeenCalledTimes(1);
-      }
+      expect(enabledActions[item.handler]).toHaveBeenCalledTimes(1);
       enabledHarness.unmount();
 
       const disabledActions = makeToolbarActions({
@@ -3467,15 +3447,22 @@ describe("ReaderRecordPlateSurface", () => {
     }
   });
 
-  it("opens the Ask menu with the Plate AI shortcut while keeping native title tooltips out", () => {
-    const { container } = renderToolbarHarness();
-    const askButton = container.querySelector<HTMLButtonElement>(
-      '[data-reader-record-toolbar-action="ask"]',
+  it("opens the Surface-owned Ask quick menu via the Plate AI shortcut", async () => {
+    installReaderAskFetchMock();
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
     );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
 
-    expect(askButton).not.toBeNull();
-    expect(askButton?.getAttribute("title")).toBeNull();
-    expect(document.querySelector('[data-reader-record-ask-menu="open"]')).toBeNull();
+    selectTextInElement(memoryMark, 0, "memory".length);
+    await waitForSelectionAction("ask");
+    expect(
+      document.querySelector('[data-reader-record-ask-quick-menu="open"]'),
+    ).toBeNull();
 
     fireEvent.keyDown(window, {
       code: "KeyJ",
@@ -3483,7 +3470,18 @@ describe("ReaderRecordPlateSurface", () => {
       key: "j",
     });
 
-    expect(document.querySelector('[data-reader-record-ask-menu="open"]')).not.toBeNull();
+    // 快捷框由 Surface 托管：选区/toolbar 卸载后菜单仍存活。
+    const input = await screen.findByPlaceholderText("Ask Claread anything...");
+    expect(
+      document.querySelector('[data-reader-record-ask-quick-menu="open"]'),
+    ).not.toBeNull();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-reader-record-ask-quick-menu="open"]'),
+      ).toBeNull();
+    });
   });
 
   it("maps a stable source selection to an anchor draft with unit-local UTF-16 offsets", async () => {
@@ -4298,6 +4296,107 @@ describe("ReaderRecordPlateSurface", () => {
     expect(screen.queryByText("先从正文点一个词")).toBeNull();
   });
 
+  it("wires the quick peek AI fallback to /api/web/dict/ai and shows the result in the rail", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/api/web/dict/ai")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              kind: "ai_entry",
+              mode: "missing_fallback",
+              resultKind: "ai_entry",
+              query: "memory",
+              classification: "valid_word",
+              summary: "AI 生成的补充释义",
+              confidence: "medium",
+              verified: false,
+              source: "ai_generated",
+              suggestedQuery: [],
+              entry: {
+                word: "memory",
+                base_word: null,
+                phonetic: null,
+                meanings: [
+                  {
+                    part_of_speech: "n.",
+                    definitions: [
+                      {
+                        meaning: "AI 语境下的释义",
+                        example: null,
+                        example_translation: null,
+                      },
+                    ],
+                  },
+                ],
+                examples: [],
+                phrases: [],
+                entry_kind: "entry",
+                exchange: [],
+                tags: [],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            kind: "not_found",
+            query: "memory",
+            provider: "tecd3",
+            cached: false,
+            reason: "not_in_dictionary",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const lookupButton = await waitForSelectionAction("lookup");
+    fireEvent.click(lookupButton);
+
+    const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    const aiButton = await within(quickPeek).findByRole("button", {
+      name: /词典未收录，试试 AI|AI 补充词义/,
+    });
+    fireEvent.click(aiButton);
+
+    await waitFor(() => {
+      const aiCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input).includes("/api/web/dict/ai") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(aiCall).toBeTruthy();
+      const body = JSON.parse(String(aiCall?.[1]?.body)) as {
+        mode: string;
+        query: string;
+      };
+      expect(body).toMatchObject({ mode: "missing_fallback", query: "memory" });
+    });
+
+    // Quick peek 移交词典侧栏，AI 面板展示加载态/结果。
+    await waitFor(() => {
+      const rail = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!rail) {
+        throw new Error("Expected dictionary rail");
+      }
+      expect(rail.textContent).toContain("AI");
+    });
+  });
+
   it("routes structured vocabulary clicks into the open dictionary rail", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (typeof url === "string" && url.includes("/favorite")) {
@@ -4597,7 +4696,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     fireEvent.click(highlight);
-    fireEvent.click(await screen.findByLabelText("切换为粉色"));
+    fireEvent.click(await screen.findByLabelText("切换为雾粉"));
 
     await waitFor(() => {
       const patchCall = fetchMock.mock.calls.find(
@@ -6164,18 +6263,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(buttons.map((button) => button.dataset.readerRecordToolbarAction)).toEqual([
       "ask",
       "lookup",
-      "copy",
-      "translate",
       "highlight",
+      "copy",
       "note",
     ]);
     for (const button of buttons) {
       expect(button.className).toContain("rounded-[8px]");
-      expect(button.className).not.toContain("hover:bg-ink");
-      const isAsk = button.dataset.readerRecordToolbarAction === "ask";
-      expect(button.className).toContain(
-        isAsk ? "hover:bg-lens-blue-soft/50" : "hover:bg-lens-blue-soft/35",
-      );
+      // 统一中性 hover（墨色灰阶），Ask 与其他按钮共享同一套。
+      expect(button.className).toContain("hover:bg-ink/[0.06]");
     }
     expect(document.querySelector("[data-reader-record-test-action]")).toBeNull();
 
@@ -6260,9 +6355,9 @@ describe("ReaderRecordPlateSurface", () => {
         menu.querySelectorAll<HTMLElement>("[data-reader-record-highlight-color]"),
       ).map((option) => option.dataset.readerRecordHighlightColor),
     ).toEqual(["warm_yellow", "soft_mint", "soft_rose"]);
-    expect(screen.getByLabelText("切换为黄色")).toBeTruthy();
-    expect(screen.getByLabelText("切换为绿色")).toBeTruthy();
-    expect(screen.getByLabelText("切换为粉色")).toBeTruthy();
+    expect(screen.getByLabelText("切换为暖黄")).toBeTruthy();
+    expect(screen.getByLabelText("切换为薄荷绿")).toBeTruthy();
+    expect(screen.getByLabelText("切换为雾粉")).toBeTruthy();
 
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
