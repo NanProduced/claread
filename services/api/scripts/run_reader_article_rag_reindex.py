@@ -12,8 +12,13 @@ Behaviour (O3 — explicit operator trigger only):
   OWN transaction; a single failure never aborts the batch.
 - ``--record-id`` and ``--all`` are mutually exclusive; one is
   required.
-- ``--all`` only selects active records that currently hold an
-  ``indexed`` Article RAG run.
+- ``--all`` only selects active records whose latest attempt — the
+  newest Article RAG run on the record's ACTIVE stable document,
+  ordered by ``created_at`` DESC then ``id`` DESC (later
+  ``updated_at`` churn never changes the latest-attempt identity) —
+  is ``indexed`` (reindex candidate) or ``failed``/``superseded``
+  (recovery candidate).  A latest ``planned``/``queued``/``indexing``
+  run is already in progress and never enters ``--all``.
 - ``--rate-limit-per-second`` spaces execute iterations (default 1.0;
   ``0`` disables).
 - ``--limit`` caps the ``--all`` candidate list.
