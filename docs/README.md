@@ -42,7 +42,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力差异 |
 | `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab 控制面契约 |
-| `docs/architecture/reader-rag.md` | Grammar few-shot RAG 当前运行时契约：output_fragment、retrieval_text、grammar_tags 归一化、Zilliz schema 与联动更新清单 |
+| `docs/architecture/reader-rag.md` | Reader RAG 总契约：per-record Article RAG 与 Grammar few-shot RAG 的独立边界，以及 Grammar 的 output_fragment、retrieval_text、grammar_tags 归一化、Zilliz schema 与联动更新清单 |
 | `docs/architecture/dictionary.md` | 词典架构：数据来源、查询链路与增强方向 |
 | `docs/architecture/ai-usage-audit-and-billing.md` | AI 使用审计与积分结算底座 |
 

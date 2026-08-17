@@ -193,14 +193,14 @@ PostgreSQL 拥有 durable business state；LLM framework 只是执行工具。
 - 外部 MQ / Temporal / DBOS / Prefect 不作为默认依赖。
 - `reader_events` 承担简化 outbox；不新增独立 outbox / DLQ 表。
 
-## Reading Record 删除生命周期（Wave 8）
+## Reading Record 删除生命周期
 
 `DELETE /reader/records/{record_id}` 是产品层不可恢复删除，PostgreSQL 侧为软删除（`deleted_at` / `lifecycle_status='deleted'` / `product_state='deleted'`），幂等且同 owner 重复删除返回首次 `deleted_at`；非 owner 与不存在统一 404。
 
 - 删除事务内收敛执行状态：`reader_jobs` 非终态 → `cancelled`（`rationale_code='reading_record_deleted'`，撤销 lease/pause 字段，每个变化 job 恰一条 `job_cancelled` 事件）；`reader_runs` 非终态 → `cancelled`；`reader_article_rag_index_runs` planned/queued/indexing/indexed → `superseded`（`error_json` 合并 `failure_code='reading_record_deleted'` / `rationale_code='user_deleted_record'`，不覆盖既有诊断）。终态行不改写。
 - 数据保留：不物理删除解析数据、原始输入、Stable Document、Reading Base、Reading Units、Anchor Segments、Enhancement Layers、Ask 历史、批注或审计行；只新增 `reader_job_events` / `reader_events` 审计记录。
 - Vector GC intent：删除事务内以 `record_state_changed` 事件写入固定 payload discriminator `event_schema='reading_record_deleted_v1'`（含 `actor_user_id`、`deleted_at`、`record_generation`、`article_rag_vector_gc_requested=true`、`transition_counts`），每个 record 至多一条；`reader_events` 即 GC intent outbox。历史软删但缺 intent 的行在再次删除时于锁内补写。
-- 实际 Zilliz/Milvus 向量删除是异步、幂等的 Wave 9 能力：由 GC worker 消费该事件执行，本轮后端不调用任何 vector delete。
+- 实际 Zilliz/Milvus 向量删除是异步、幂等的：由 GC worker 消费该事件执行，删除事务本身不调用 vector delete。
 - 删除后用户入口 fail closed：list（full/recent）、opened、recent hide、snapshot、events polling、stable document、Article RAG status/ensure、Ask（threads list / default thread / thread detail）全部不可访问；后台 bootstrap/worker 不为 deleted record 创建或成功发布新 job/output（现有 publish fence 把 `deleted_at` 非空视为 missing_record）。
 
 状态分层（禁止用一个 task status 表达所有状态）：
@@ -211,7 +211,7 @@ PostgreSQL 拥有 durable business state；LLM framework 只是执行工具。
 | Run / Job State | claim、heartbeat、retry、cancel、execution failure | 用户产品语义 |
 | Event / Projection State | polling、snapshot、刷新恢复 | 业务事实源 |
 
-## Article RAG Vector GC（Wave 9）
+## Article RAG Vector GC
 
 `reading_record_deleted_v1` intent 由现有 Article RAG index worker 的 drain cycle 消费（不新建进程/route/scheduler/daemon）。`reader_events` 同时是 intent、retry 与 outcome 的唯一持久化事实源——无新表、无 outbox、无迁移式 job framework。
 

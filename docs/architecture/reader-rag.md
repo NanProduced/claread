@@ -1,8 +1,31 @@
-# Reader RAG（Grammar few-shot RAG）运行时契约
+# Reader RAG 运行时契约
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-08（旧 eval-center 集成图相关运行时已按当前代码重核：API 侧 `eval_adapter` 已删除，校验与派生字段生成收口到 Directus hook、seed 脚本与审计脚本）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-17（Article RAG 与 Grammar few-shot RAG 作为两条独立链路写入本文；Grammar 细节仍按当前代码重核：API 侧 `eval_adapter` 已删除，校验与派生字段生成收口到 Directus hook、seed 脚本与审计脚本）
 
-本文记录 Reader 主链 grammar few-shot RAG 的当前运行时契约：运行时材料来源、检索结果进入 prompt 的 payload 结构、检索文本与标签归一化，以及改动契约时必须联动更新的位置。Example Lab 的 Directus authoring 控制面定位见 `docs/architecture/directus-console.md`。
+本文是 Reader RAG 的总契约。Claread 当前有两条独立 RAG 链路：
+
+- **Article RAG**：按 Reading Record 构建、检索当前文章证据。
+- **Grammar few-shot RAG**：为 grammar 层注入 few-shot examples。
+
+两者不共享 Zilliz collection、durable 控制面或检索入口。运维细节见 `docs/operations/reader-runtime.md`；Reading Record 删除与 vector GC 状态机见 `docs/architecture/reader-orchestration.md`；Ask 工具合同见 `docs/architecture/ask-claread.md`。
+
+## Article RAG
+
+Article RAG 是 per-record 文章证据链路，不是 Grammar few-shot RAG 的扩展。
+
+输入事实源固定为：Reading Record → 当前 active Stable Document → deterministic index plan。durable 控制面是 `reader_article_rag_index_runs` 加上现有 reader job/run，不另建 scheduler 或 public route。
+
+索引身份由 embedding contract fingerprint 与 plan hash 共同锁定。worker 调用 DashScope embedding，写入 Article RAG 专用 Zilliz collection；不得复用 Grammar few-shot collection。
+
+retrieval 对 plan、contract、generation 与 document identity fail-closed。Ask 工具 `search_current_article` 只消费当前 record 的合格证据，不跨记录、不回退到 Grammar 检索。
+
+显式 reindex 入口是运维 CLI，默认 dry-run，无 public route、无 scheduler、无 auto rollback。Reading Record 删除后 PostgreSQL 侧软删除，写入 GC intent，再由异步精确 vector delete 清理向量；删除事务本身不调用 vector delete。
+
+默认 feature flag `READER_ARTICLE_RAG_ENABLED=false`。真实 provider acceptance 仍为 **NOT RUN**，须 Owner 授权后才能执行；offline 测试不是 production acceptance。
+
+## Grammar few-shot RAG
+
+Grammar few-shot RAG 为 Reader 主链 grammar 层提供 example retrieval：运行时材料来源、检索结果进入 prompt 的 payload 结构、检索文本与标签归一化，以及改动契约时必须联动更新的位置见以下各节。Example Lab 的 Directus authoring 控制面定位见 `docs/architecture/directus-console.md`。
 
 ## 数据流
 
