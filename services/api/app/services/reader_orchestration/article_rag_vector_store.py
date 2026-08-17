@@ -71,13 +71,13 @@ from typing import TYPE_CHECKING, Any
 from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
 
 from .article_rag_index_worker import (
+    FAILURE_CODE_VECTOR_WRITE_FAILED,
+    FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
     ArticleRagIndexWorkerError,
     ArticleRagVectorChunk,
     ArticleRagVectorWriteMetadata,
-    ArticleRagVectorWriteResult,
     ArticleRagVectorWriter,
-    FAILURE_CODE_VECTOR_WRITE_FAILED,
-    FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
+    ArticleRagVectorWriteResult,
     UnconfiguredArticleRagVectorWriter,
 )
 
@@ -129,8 +129,9 @@ FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH = (
 )
 
 if TYPE_CHECKING:
-    from app.config.settings import Settings
     from pymilvus import MilvusClient
+
+    from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -559,26 +560,59 @@ def _build_article_rag_collection_schema(dim: int) -> dict[str, Any]:
     return {
         "primary_key": "chunk_id",
         "fields": [
-            {"name": "chunk_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_CHUNK_ID_MAX_LEN, "is_primary": True},
+            {
+                "name": "chunk_id",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_CHUNK_ID_MAX_LEN,
+                "is_primary": True,
+            },
             {"name": "content_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
-            {"name": "embedding_text_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
-            {"name": "embedding_model", "type": "VARCHAR", "max_length": _ARTICLE_RAG_MODEL_MAX_LEN},
+            {
+                "name": "embedding_text_sha256",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_HASH_MAX_LEN,
+            },
+            {
+                "name": "embedding_model",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_MODEL_MAX_LEN,
+            },
             {
                 "name": _ARTICLE_RAG_VECTOR_FIELD_NAME,
                 "type": "FLOAT_VECTOR",
                 "dim": int(dim),
             },
-            {"name": "reading_record_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
-            {"name": "stable_document_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
+            {
+                "name": "reading_record_id",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_UUID_MAX_LEN,
+            },
+            {
+                "name": "stable_document_id",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_UUID_MAX_LEN,
+            },
             {"name": "base_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
             {"name": "record_generation", "type": "INT64"},
-            {"name": "plan_content_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
+            {
+                "name": "plan_content_sha256",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_HASH_MAX_LEN,
+            },
             {"name": "block_ids", "type": "VARCHAR", "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN},
             {"name": "unit_ids", "type": "VARCHAR", "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN},
-            {"name": "anchor_segment_ids", "type": "VARCHAR", "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN},
+            {
+                "name": "anchor_segment_ids",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN,
+            },
             {"name": "canonical_start_utf16", "type": "INT64"},
             {"name": "canonical_end_utf16", "type": "INT64"},
-            {"name": "citation_metadata_json", "type": "VARCHAR", "max_length": _ARTICLE_RAG_JSON_MAX_LEN},
+            {
+                "name": "citation_metadata_json",
+                "type": "VARCHAR",
+                "max_length": _ARTICLE_RAG_JSON_MAX_LEN,
+            },
             {"name": "metadata_json", "type": "VARCHAR", "max_length": _ARTICLE_RAG_JSON_MAX_LEN},
         ],
     }
@@ -839,7 +873,7 @@ class ZillizArticleRagVectorWriter:
         self._dim = int(dim)
         # Collection name and embedding identity are enforced by the
         # frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
-        self._client: "MilvusClient | None" = None
+        self._client: MilvusClient | None = None
 
     @property
     def provider_name(self) -> str:
@@ -849,7 +883,7 @@ class ZillizArticleRagVectorWriter:
     def collection(self) -> str:
         return self._collection
 
-    def _ensure_client(self) -> "MilvusClient":
+    def _ensure_client(self) -> MilvusClient:
         """Lazily construct the pymilvus client (idempotent)."""
         if self._client is not None:
             return self._client
