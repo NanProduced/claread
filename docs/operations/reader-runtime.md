@@ -1,6 +1,6 @@
 # Reader 运行时操作
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-14
+> **状态**: `CURRENT` | **最后验证**: 2026-08-17
 >
 > 符号与代码路径优先；过期行号不是当前 authority。
 >
@@ -338,6 +338,17 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/reader/records/$recor
 - GET status 取值：`indexed` / `indexing` / `queued` / `failed` / `superseded_or_stale` / `not_indexed` / `not_ready` / `unavailable`。`indexed` 时 Ask 可用 RAG 上下文；`not_ready` / `not_indexed` / `superseded_or_stale` / `unavailable` 时隐藏 RAG affordance，不阻塞阅读。
 - POST ensure 取值：`enqueued` / `idempotent_noop` / `record_not_found` / `generation_mismatch` / `not_ready` / `no_active_base` / `plan_hash_mismatch` / `bootstrap_inconsistent` / `error`。body 不能带 `user_id` / `chunker_version` / provider / vector 配置（`extra="forbid"`，未知字段 422）。
 - 失败码速查：`embedding_provider_unconfigured` / `vector_writer_unconfigured`（配置缺失，配好后重 POST ensure）；`retry_later`（可重试，尊重 `available_at`）；`superseded_or_stale`（重 POST ensure）；`retrieval_no_indexed_run`（POST ensure 等 worker）；其余 `failed_terminal` / `bootstrap_inconsistent` 报 ops。
+
+### Reindex（运维显式入口）
+
+`run_reader_article_rag_reindex.py` 是唯一的 reindex 入口：**默认 dry-run**（只读分类、零写入、零服务调用），写操作必须显式 `--execute`。
+
+- `--record-id <uuid>` 与 `--all` 互斥且必选其一；`--all` 只处理「当前 active stable document 的**最新** Article RAG run」为 `indexed` / `failed` / `superseded` 的 active 记录（old indexed run 被新 queued/superseded run 取代时不入选；dry-run 与 execute 使用同一 latest-run 候选集合）。
+- `--limit N` 只允许与 `--all` 组合，在稳定排序后截断候选。
+- `--rate-limit-per-second`（默认 1.0，`0` 关闭）只作用于 execute 迭代间隔。
+- execute 每个 record 独立事务：单条失败不中断批次，summary 稳定输出 `scanned / eligible / enqueued / in_progress / skipped / failed`；恢复路径（最新 run 为 failed/superseded）计入 `eligible` 并产出 `recovery_enqueued`（服务返回 `recovery_enqueued` 状态，summary 计入 `enqueued`）。
+- **无自动 rollback**：reindex 只翻转 PostgreSQL 状态（supersede + 重新 bootstrap）；新 build 失败后的恢复方式是**重跑 reindex**。
+- 不提供 public route / scheduler / 自动触发；worker 不消费 reindex 意图。
 
 ## Ask 上下文压缩（Compaction）运行
 

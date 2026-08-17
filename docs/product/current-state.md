@@ -1,6 +1,6 @@
 # 当前状态
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-14
+> **状态**: `CURRENT` | **最后验证**: 2026-08-17
 
 本文给新会话 agent 提供 Claread 当前事实。它不是迁移日志。
 
@@ -19,10 +19,12 @@
 
 - Reader 标注体系的数据层已收口为"文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用"；数据库基线为单一 `0001_initial.sql`。当前验证入口见 `docs/operations/testing.md`。
 - Web 已接入手机号登录、Reader 提交、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验；公共区已覆盖首页、每日精读、示例文章和分享页；command palette 已实现。旧"分析任务"流程已物理删除。
+- Reading Record 生命周期：最近阅读支持"从最近阅读中移除"（只隐藏最近阅读入口，全部阅读记录中仍存在；用户再次打开记录后 `recent_hidden_at` 被清除并重新进入最近阅读）；用户删除记录为产品层不可恢复操作——PostgreSQL 软删除（`deleted_at` / `lifecycle_status='deleted'` / `product_state='deleted'`），解析数据、原始输入、Stable Document、Base、Units、Anchors、Enhancement Layers、Ask 历史、批注与审计行全部保留，不物理删除 PostgreSQL 数据；删除后所有用户入口 fail closed；同事务收敛任务/运行并写入 Vector GC intent，向量由后台异步精确删除。Web 提供行级操作菜单（Sidebar 最近阅读与 Library 全部记录共享同一菜单组件）与删除前危险操作确认。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 通过 `@claread/contracts` 常量对齐，后端按 UTF-16 offset、`fnv1a32-utf16` hash、Anchor Segment / Reading Unit 切片和 unit/segment 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 当前以 `reader_record_ask` agentic v2 为唯一 Ask 执行链（article-bound、可回源、turn run 持久化、统一 SSE 事件合同）；旧 Analysis Ask 和 Ask legacy lane 已物理删除。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn run 持久化、citation 回源导航、客户端提交幂等 reconcile、thread memory compaction、learner reasoning 投影和文章 RAG / Web search 受控工具。
 - Reader 当前生产链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件已删除）、`analysis_results.render_scene_json` 事实源、旧 `/reader/records/{id}/scene` 和旧 Web Reader 产品页实现（`ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface`）已物理删除。后端代码对旧 `analysis_*` 业务表的引用已全部迁移到 Reading Record 事实，旧表已不在 baseline migration 中；`analysis_windows` 与 `layer_analysis_plans` 是新链在用表，残留本地库旧表清理尚未完成。Academic workflow 尚未实现，后续按新 contract 单独评估；Daily Reader 保持固定 workflow。Reader orchestration 当前架构权威上下文在 `docs/architecture/reader-orchestration.md`。
+- Article RAG：`READER_ARTICLE_RAG_ENABLED` 默认 `false`，开启时由 index worker 构建单路径索引并通过 Ask 受控工具消费；真实 provider 的 acceptance 尚未作为本轮验证执行（本地与 CI 均为 offline 测试，offline 测试不是 production acceptance 的证据）；运维 reindex 入口为显式 CLI（默认 dry-run，`--execute` 才写入）。
 - Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现（Collection 仍保留）；旧 Eval Center module、Node Lab、Workflow Lab、Run History、Render Scene Inspector、Parse Run Observability 已物理删除，Console / Eval 治理化控制面尚未实现。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
 - Web Reader 产品页实现为 `apps/web/src/app/(private)/app/reader/[recordId]/plate-page.tsx` + `ReaderRecordPlateSurface`，基于 Plate.js projection；旧 `ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface` 已物理删除。后续 Reader UI 迭代应沿 Plate.js projection 边界推进。
 - Docker Compose project 使用 `claread`。
