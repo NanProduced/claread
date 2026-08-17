@@ -580,22 +580,21 @@ class ArticleRagRetrievalService:
             )
         except ArticleRagIndexWorkerError as exc:
             # Surface the worker-base failure as a retrieval failure so
-            # dashboards see ``retrieval_embedding_failed``.
+            # dashboards see ``retrieval_embedding_failed``.  Do not
+            # chain the provider exception — its cause may carry URI,
+            # token, query, or SDK text.
             raise ArticleRagRetrievalServiceError(
                 f"embedding provider raised {type(exc).__name__} "
-                f"(failure_code={exc.failure_code}); see __cause__ for "
-                "upstream diagnostic",
+                f"(failure_code={exc.failure_code})",
                 retryable=exc.retryable,
                 failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
-            ) from exc
+            ) from None
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             raise ArticleRagRetrievalServiceError(
-                "embedding provider raised "
-                f"{type(exc).__name__}; see __cause__ for upstream "
-                "diagnostic",
+                f"embedding provider raised {type(exc).__name__}",
                 retryable=False,
                 failure_code=FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
-            ) from exc
+            ) from None
 
         if not query_embeddings:
             raise ArticleRagRetrievalServiceError(
@@ -667,19 +666,16 @@ class ArticleRagRetrievalService:
         except ArticleRagVectorSearcherError as exc:
             raise ArticleRagRetrievalServiceError(
                 f"vector searcher raised {type(exc).__name__} "
-                f"(failure_code={exc.failure_code}); see __cause__ for "
-                "upstream diagnostic",
+                f"(failure_code={exc.failure_code})",
                 retryable=exc.retryable,
                 failure_code=FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
-            ) from exc
+            ) from None
         except Exception as exc:  # noqa: BLE001 — defensive catch-all
             raise ArticleRagRetrievalServiceError(
-                "vector searcher raised "
-                f"{type(exc).__name__}; see __cause__ for upstream "
-                "diagnostic",
+                f"vector searcher raised {type(exc).__name__}",
                 retryable=False,
                 failure_code=FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
-            ) from exc
+            ) from None
 
         # Phase F: join hits against the current plan on chunk_id.
         hits = self._join_hits(

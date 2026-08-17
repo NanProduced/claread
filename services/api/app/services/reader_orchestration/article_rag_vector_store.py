@@ -614,14 +614,14 @@ def _build_pymilvus_collection_schema(dim: int) -> Any:
             DataType,
             FieldSchema,
         )
-    except ImportError as exc:
+    except ImportError:
         raise ZillizArticleRagVectorWriterError(
             "pymilvus SDK is not installed; cannot build the real "
             "CollectionSchema for the article RAG vector writer",
             retryable=False,
             failure_class="sdk_unavailable",
             failure_code="vector_writer_sdk_missing",
-        ) from exc
+        ) from None
 
     fields = [
         FieldSchema(
@@ -855,21 +855,14 @@ class ZillizArticleRagVectorWriter:
             return self._client
         try:
             from pymilvus import MilvusClient  # type: ignore[import-untyped]
-        except ImportError as exc:
+        except ImportError:
             raise ZillizArticleRagVectorWriterError(
                 "pymilvus SDK is not installed; cannot construct Zilliz "
                 "vector writer",
                 retryable=False,
                 failure_class="sdk_unavailable",
                 failure_code="vector_writer_sdk_missing",
-            ) from exc
-        logger.debug(
-            "Constructing pymilvus MilvusClient for article RAG vector writer "
-            "(uri=%s, collection=%s, dim=%d)",
-            self._uri,
-            self._collection,
-            self._dim,
-        )
+            ) from None
         self._client = MilvusClient(uri=self._uri, token=self._token)
         return self._client
 
@@ -1057,19 +1050,18 @@ class ZillizArticleRagVectorWriter:
             # Already typed — propagate verbatim.
             raise
         except Exception as exc:  # noqa: BLE001
-            # Per Fix 5: never forward the original SDK message — it may
-            # echo chunk text in a future regression.  Surface a fixed
-            # diagnostic naming the SDK, the row count, and the SDK
-            # exception class.  ``__cause__`` preserves the original.
+            # Never forward the original SDK message — it may echo chunk
+            # text, URI, token, or collection.  Surface a fixed
+            # diagnostic naming only the wrapper, the row count, and the
+            # SDK exception class.  ``from None`` drops the raw cause.
             raise ZillizArticleRagVectorWriterError(
                 "Zilliz upsert failed via pymilvus "
                 f"(input_count={len(rows)}, "
-                f"wrapper_exc={type(exc).__name__}); see __cause__ for "
-                "upstream diagnostic",
+                f"wrapper_exc={type(exc).__name__})",
                 retryable=True,
                 failure_class="vector_write",
                 failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
-            ) from exc
+            ) from None
 
         # Forward verbatim.  Never silently coerce.  pymilvus 2.6.x
         # returns ``upsert_count``; keep the legacy ``upserted_count``
@@ -1120,10 +1112,8 @@ def build_default_article_rag_vector_writer(
     ).strip().lower()
     if provider_name != READER_ARTICLE_RAG_VECTOR_PROVIDER_ZILLIZ:
         logger.debug(
-            "Article RAG vector provider not configured "
-            "(reader_article_rag_vector_provider=%r); using "
-            "UnconfiguredArticleRagVectorWriter",
-            provider_name,
+            "Article RAG vector provider not configured; using "
+            "UnconfiguredArticleRagVectorWriter"
         )
         return UnconfiguredArticleRagVectorWriter()
 
@@ -1156,13 +1146,7 @@ def build_default_article_rag_vector_writer(
     if not uri or not token or not collection or dim <= 0:
         logger.debug(
             "Article RAG vector provider='zilliz' but configuration is "
-            "incomplete (uri/empty=%s, token/empty=%s, "
-            "collection/empty=%s, dim=%s); using "
-            "UnconfiguredArticleRagVectorWriter",
-            not uri,
-            not token,
-            not collection,
-            dim,
+            "incomplete; using UnconfiguredArticleRagVectorWriter"
         )
         return UnconfiguredArticleRagVectorWriter()
 

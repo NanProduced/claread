@@ -453,18 +453,13 @@ class ZillizArticleRagVectorSearcher:
             return self._client
         try:
             from pymilvus import MilvusClient  # type: ignore[import-untyped]
-        except ImportError as exc:
+        except ImportError:
             raise ArticleRagVectorSearcherError(
                 "pymilvus SDK is not installed; cannot construct "
                 "ZillizArticleRagVectorSearcher",
                 retryable=False,
                 failure_code="vector_searcher_sdk_missing",
-            ) from exc
-        logger.debug(
-            "Constructing pymilvus MilvusClient for article RAG vector "
-            "searcher (collection=%s, uri=set)",
-            self._collection,
-        )
+            ) from None
         self._client = MilvusClient(uri=self._uri, token=self._token)
         return self._client
 
@@ -548,17 +543,16 @@ class ZillizArticleRagVectorSearcher:
         except ArticleRagVectorSearcherError:
             raise
         except Exception as exc:  # noqa: BLE001 — SDK-level catch-all
-            # Per Fix 5 precedent: never forward the original SDK
-            # message — it may echo query text or token.  Surface a
-            # fixed diagnostic naming the wrapper, the limit, and the
-            # SDK exception class only.
+            # Never forward the original SDK message — it may echo
+            # query text, URI, token, or collection.  Surface a fixed
+            # diagnostic naming only the wrapper, the limit, and the
+            # SDK exception class.  ``from None`` drops the raw cause.
             raise ArticleRagVectorSearcherError(
                 "Zilliz search failed via pymilvus "
-                f"(limit={limit}, wrapper_exc={type(exc).__name__}); "
-                "see __cause__ for upstream diagnostic",
+                f"(limit={limit}, wrapper_exc={type(exc).__name__})",
                 retryable=True,
                 failure_code="vector_search_backend_failed",
-            ) from exc
+            ) from None
 
         hits: list[ArticleRagVectorSearchHit] = []
         for entry in raw_hits:
@@ -652,10 +646,8 @@ def build_default_article_rag_vector_searcher(
     ).strip().lower()
     if provider_name != READER_ARTICLE_RAG_VECTOR_SEARCHER_ZILLIZ:
         logger.debug(
-            "Article RAG vector searcher not configured "
-            "(reader_article_rag_vector_provider=%r); using "
-            "UnconfiguredArticleRagVectorSearcher",
-            provider_name,
+            "Article RAG vector searcher not configured; using "
+            "UnconfiguredArticleRagVectorSearcher"
         )
         return UnconfiguredArticleRagVectorSearcher()
 
@@ -683,12 +675,7 @@ def build_default_article_rag_vector_searcher(
     if not uri or not token or not collection:
         logger.debug(
             "Article RAG vector searcher='zilliz' but configuration is "
-            "incomplete (uri/empty=%s, token/empty=%s, "
-            "collection/empty=%s); using "
-            "UnconfiguredArticleRagVectorSearcher",
-            not uri,
-            not token,
-            not collection,
+            "incomplete; using UnconfiguredArticleRagVectorSearcher"
         )
         return UnconfiguredArticleRagVectorSearcher()
 

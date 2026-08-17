@@ -31,7 +31,9 @@ is monkeypatched so the test does not depend on real ``reading_records``
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import traceback
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -974,10 +976,8 @@ async def test_embedding_provider_error_surfaces_as_retrieval_failure() -> None:
         == FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED
     )
     assert exc_info.value.retryable is True
-    # Underlying error preserved.
-    assert isinstance(
-        exc_info.value.__cause__, ArticleRagIndexWorkerError
-    )
+    # Provider cause is suppressed so traceback cannot echo sentinels.
+    assert exc_info.value.__cause__ is None
 
 
 # ---------------------------------------------------------------------------
@@ -1125,8 +1125,8 @@ async def test_embedding_provider_uncaught_exception_wrapped() -> None:
         exc_info.value.failure_code
         == FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED
     )
-    # Underlying RuntimeError preserved as __cause__.
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    # Untyped provider exception is suppressed, not chained.
+    assert exc_info.value.__cause__ is None
 
 
 # ---------------------------------------------------------------------------
@@ -2403,3 +2403,209 @@ async def test_retrieval_fingerprint_mismatch_fails_closed() -> None:
     # Fixed safe message: no raw fingerprint / metadata echo.
     message = str(exc_info.value)
     assert "b" * 64 not in message
+
+
+# ---------------------------------------------------------------------------
+# Provider-boundary safety: retrieval wrapper must not leak inner sentinels
+# through formatted traceback or Ask-facing typed errors.
+# ---------------------------------------------------------------------------
+
+
+_RETRIEVAL_SENTINEL = (
+    "sentinel-retrieval-provider-uri=https://sentinel.example/"
+    "token=sentinel-token-retrieval query=do-not-leak"
+)
+
+
+def _log_record_blobs(record: logging.LogRecord) -> list[str]:
+    blobs = [record.getMessage(), str(record.__dict__), repr(record.args)]
+    for value in record.__dict__.values():
+        blobs.append(str(value))
+        blobs.append(repr(value))
+    return blobs
+
+
+def _assert_no_retrieval_sentinel(
+    surfaces: list[str],
+    *,
+    label: str,
+) -> None:
+    for surface in surfaces:
+        assert _RETRIEVAL_SENTINEL not in surface, (
+            f"{label}: sentinel leaked into {surface!r}"
+        )
+
+
+def _exc_surfaces(exc: BaseException) -> list[str]:
+    return [
+        str(exc),
+        repr(exc),
+        "".join(traceback.format_exception(exc)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_retrieval_untyped_embedding_error_traceback_is_safe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Untyped embedding RuntimeError must not leak via traceback."""
+
+    class _RaisingProvider(FakeArticleRagEmbeddingProvider):
+        async def embed_texts(
+            self, texts: list[str], *, model: str | None = None
+        ):
+            raise RuntimeError(_RETRIEVAL_SENTINEL)
+
+    plan = _make_plan()
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=FakeArticleRagVectorSearcher(hits=[]),
+        embedding_provider=_RaisingProvider(
+            dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+            model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+        ),
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+            await service.retrieve_for_record(
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                query_text="hello",
+            )
+    err = exc_info.value
+    assert err.failure_code == FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED
+    assert err.retryable is False
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_retrieval_sentinel(blobs, label="retrieval.untyped_embedding")
+
+
+@pytest.mark.anyio
+async def test_retrieval_typed_embedding_error_with_sentinel_cause_is_safe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Typed embedding error must not leak an inner sentinel cause."""
+
+    class _RaisingProvider(FakeArticleRagEmbeddingProvider):
+        async def embed_texts(
+            self, texts: list[str], *, model: str | None = None
+        ):
+            raise ArticleRagIndexWorkerError(
+                "embedding backend failed",
+                retryable=True,
+                failure_class="embedding",
+                failure_code="embedding_backend_failed",
+            ) from RuntimeError(_RETRIEVAL_SENTINEL)
+
+    plan = _make_plan()
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=FakeArticleRagVectorSearcher(hits=[]),
+        embedding_provider=_RaisingProvider(
+            dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+            model=_DEFAULT_QUERY_EMBEDDING_MODEL,
+        ),
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+            await service.retrieve_for_record(
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                query_text="hello",
+            )
+    err = exc_info.value
+    assert err.failure_code == FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED
+    assert err.retryable is True
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_retrieval_sentinel(blobs, label="retrieval.typed_embedding")
+
+
+@pytest.mark.anyio
+async def test_retrieval_untyped_searcher_error_traceback_is_safe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Untyped searcher RuntimeError must not leak via traceback."""
+
+    class _RaisingSearcher(FakeArticleRagVectorSearcher):
+        async def search(
+            self,
+            *,
+            collection: str,
+            query_vector: tuple[float, ...],
+            limit: int,
+            stable_document_id: uuid.UUID | None = None,
+        ) -> ArticleRagVectorSearchResult:
+            raise RuntimeError(_RETRIEVAL_SENTINEL)
+
+    plan = _make_plan()
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=_RaisingSearcher(),
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+            await service.retrieve_for_record(
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                query_text="hello",
+            )
+    err = exc_info.value
+    assert err.failure_code == FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED
+    assert err.retryable is False
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_retrieval_sentinel(blobs, label="retrieval.untyped_searcher")
+
+
+@pytest.mark.anyio
+async def test_retrieval_typed_searcher_error_with_sentinel_cause_is_safe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Typed searcher error must not leak an inner sentinel cause."""
+
+    class _RaisingSearcher(FakeArticleRagVectorSearcher):
+        async def search(
+            self,
+            *,
+            collection: str,
+            query_vector: tuple[float, ...],
+            limit: int,
+            stable_document_id: uuid.UUID | None = None,
+        ) -> ArticleRagVectorSearchResult:
+            raise ArticleRagVectorSearcherError(
+                "vector search backend failed",
+                retryable=True,
+                failure_code="vector_search_backend_failed",
+            ) from RuntimeError(_RETRIEVAL_SENTINEL)
+
+    plan = _make_plan()
+    service = _build_service(
+        plan=plan,
+        indexed_run_row=_indexed_run_row(plan),
+        searcher=_RaisingSearcher(),
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
+            await service.retrieve_for_record(
+                reading_record_id=_RECORD_ID,
+                user_id=_USER_ID,
+                query_text="hello",
+            )
+    err = exc_info.value
+    assert err.failure_code == FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED
+    assert err.retryable is True
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_retrieval_sentinel(blobs, label="retrieval.typed_searcher")

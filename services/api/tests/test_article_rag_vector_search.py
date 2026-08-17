@@ -23,8 +23,10 @@ AND a real token is set; it is skipped by default.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
+import traceback
 import types
 import uuid
 from typing import Any
@@ -566,8 +568,8 @@ async def test_zilliz_searcher_ensure_client_raises_when_sdk_missing(
 ) -> None:
     """When the local ``from pymilvus import MilvusClient`` raises
     ImportError, ``_ensure_client`` surfaces a typed
-    ``vector_searcher_sdk_missing`` error and preserves the original
-    ImportError as ``__cause__``.
+    ``vector_searcher_sdk_missing`` error and suppresses the raw
+    ImportError cause.
 
     We exercise this by installing a stub ``pymilvus`` module that
     lacks ``MilvusClient`` — the local import then fails.  This is
@@ -593,7 +595,7 @@ async def test_zilliz_searcher_ensure_client_raises_when_sdk_missing(
     with pytest.raises(ArticleRagVectorSearcherError) as exc_info:
         searcher._ensure_client()  # type: ignore[attr-defined]
     assert exc_info.value.failure_code == "vector_searcher_sdk_missing"
-    assert isinstance(exc_info.value.__cause__, ImportError)
+    assert exc_info.value.__cause__ is None
 
 
 # ---------------------------------------------------------------------------
@@ -1169,3 +1171,212 @@ async def test_fake_searcher_filters_hits_by_stable_document_id() -> None:
     assert [h.chunk_id for h in unfiltered.hits] == [
         "a1", "b1", "a2", "anon",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Provider-boundary safety: factory logs + SDK traceback must not leak
+# URI / token / collection / query / provider text.
+# ---------------------------------------------------------------------------
+
+
+_URI_SENTINEL = "https://sentinel-uri-searcher-9f3a.invalid/path?token=sentinel-qry-2c"
+_TOKEN_SENTINEL = "sentinel-token-searcher-7c2e"
+_COLLECTION_SENTINEL = "sentinel_collection_searcher_b1a9"
+_PROVIDER_SENTINEL = "sentinel-provider-name-searcher-8e2f"
+_SDK_SENTINEL = "sentinel-sdk-raw-message-searcher-4f8d"
+_QUERY_SENTINEL = "sentinel-query-text-searcher-do-not-leak"
+_SEARCHER_LOG_SENTINELS = (
+    _URI_SENTINEL,
+    _TOKEN_SENTINEL,
+    _COLLECTION_SENTINEL,
+    _PROVIDER_SENTINEL,
+    _SDK_SENTINEL,
+    _QUERY_SENTINEL,
+)
+
+
+def _log_record_blobs(record: logging.LogRecord) -> list[str]:
+    blobs = [record.getMessage(), str(record.__dict__), repr(record.args)]
+    for value in record.__dict__.values():
+        blobs.append(str(value))
+        blobs.append(repr(value))
+    return blobs
+
+
+def _assert_no_sentinels(
+    surfaces: list[str],
+    sentinels: tuple[str, ...] = _SEARCHER_LOG_SENTINELS,
+    *,
+    label: str,
+) -> None:
+    for surface in surfaces:
+        for sentinel in sentinels:
+            assert sentinel not in surface, (
+                f"{label}: {sentinel!r} leaked into {surface!r}"
+            )
+
+
+def _exc_surfaces(exc: BaseException) -> list[str]:
+    return [
+        str(exc),
+        repr(exc),
+        "".join(traceback.format_exception(exc)),
+    ]
+
+
+def test_zilliz_searcher_factory_logs_never_echo_config(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Factory debug must not interpolate provider_name or config values."""
+    with caplog.at_level(logging.DEBUG):
+        unconfigured = build_default_article_rag_vector_searcher(
+            _FakeSettings(reader_article_rag_vector_provider=_PROVIDER_SENTINEL)
+        )
+        incomplete = build_default_article_rag_vector_searcher(
+            _FakeSettings(
+                reader_article_rag_vector_provider="zilliz",
+                reader_article_rag_zilliz_uri=_URI_SENTINEL,
+                reader_article_rag_zilliz_token="",
+                reader_article_rag_zilliz_collection=_COLLECTION_SENTINEL,
+            )
+        )
+    assert isinstance(unconfigured, UnconfiguredArticleRagVectorSearcher)
+    assert isinstance(incomplete, UnconfiguredArticleRagVectorSearcher)
+    blobs: list[str] = []
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="searcher.factory.logs")
+
+
+@pytest.mark.anyio
+async def test_zilliz_searcher_ensure_client_never_logs_sentinels(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Client construction must not log collection, URI, or token."""
+    _install_pymilvus_stub(monkeypatch)
+    searcher = ZillizArticleRagVectorSearcher(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_COLLECTION_SENTINEL,
+    )
+    with caplog.at_level(logging.DEBUG):
+        searcher._ensure_client()  # type: ignore[attr-defined]
+    blobs: list[str] = []
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="searcher.ensure_client.logs")
+
+
+@pytest.mark.anyio
+async def test_zilliz_searcher_client_construction_failure_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MilvusClient() failure must not leak URI/token/collection via traceback."""
+
+    def _raising_client(*, uri: str, token: str) -> None:
+        raise RuntimeError(
+            f"{_SDK_SENTINEL} uri={uri} token={token} "
+            f"collection={_COLLECTION_SENTINEL} query={_QUERY_SENTINEL}"
+        )
+
+    fake_module = types.ModuleType("pymilvus")
+    fake_module.MilvusClient = _raising_client  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_module)
+    searcher = ZillizArticleRagVectorSearcher(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_COLLECTION,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagVectorSearcherError) as exc_info:
+            await searcher.search(
+                collection=_FAKE_COLLECTION,
+                query_vector=(0.1, 0.2),
+                limit=3,
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_search_backend_failed"
+    assert err.retryable is True
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="searcher.client_construction")
+
+
+@pytest.mark.anyio
+async def test_zilliz_searcher_import_error_traceback_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ImportError must not leak URI/token/collection via traceback."""
+
+    class _MissingMilvusModule(types.ModuleType):
+        def __getattr__(self, name: str) -> Any:
+            raise ImportError(
+                f"cannot import {name!r} uri={_URI_SENTINEL} "
+                f"token={_TOKEN_SENTINEL} collection={_COLLECTION_SENTINEL}"
+            )
+
+    monkeypatch.setitem(sys.modules, "pymilvus", _MissingMilvusModule("pymilvus"))
+    searcher = ZillizArticleRagVectorSearcher(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_COLLECTION,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagVectorSearcherError) as exc_info:
+            searcher._ensure_client()  # type: ignore[attr-defined]
+    err = exc_info.value
+    assert err.failure_code == "vector_searcher_sdk_missing"
+    assert err.retryable is False
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="searcher.import_error")
+
+
+@pytest.mark.anyio
+async def test_zilliz_searcher_sdk_error_traceback_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """search SDK errors must not attach see __cause__ or the raw traceback."""
+
+    class _RaisingClient:
+        def search(self, **kwargs: Any) -> None:
+            raise RuntimeError(
+                f"{_SDK_SENTINEL} uri={_URI_SENTINEL} token={_TOKEN_SENTINEL} "
+                f"collection={_COLLECTION_SENTINEL} query={_QUERY_SENTINEL} "
+                f"filter={kwargs.get('filter')}"
+            )
+
+    fake_module = types.ModuleType("pymilvus")
+    fake_module.MilvusClient = lambda *, uri, token: _RaisingClient()  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_module)
+    searcher = ZillizArticleRagVectorSearcher(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_COLLECTION,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ArticleRagVectorSearcherError) as exc_info:
+            await searcher.search(
+                collection=_FAKE_COLLECTION,
+                query_vector=(0.1, 0.2),
+                limit=3,
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_search_backend_failed"
+    assert err.retryable is True
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="searcher.search_sdk")

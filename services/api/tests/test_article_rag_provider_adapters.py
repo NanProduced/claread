@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -1395,8 +1396,8 @@ async def test_zilliz_writer_no_token_in_raised_error(
 ):
     """The token + chunk text MUST NOT appear in raised exception messages.
     The contract is a fixed diagnostic that excludes any verbatim SDK
-    content (which may echo the chunk text or token).  ``__cause__``
-    retains the original exception for ops inspection."""
+    content (which may echo the chunk text or token).  ``from None``
+    drops the original SDK exception so traceback rendering stays safe."""
     secret_token = "zilliz-real-token-do-not-leak"
     secret_chunk_text = "SECRET-CHUNK-DO-NOT-LEAK-DO-NOT-LEAK"
 
@@ -1441,8 +1442,8 @@ async def test_zilliz_writer_no_token_in_raised_error(
     # Stable failure code + retryable for transport errors.
     assert err.failure_code == "vector_write_failed"
     assert err.retryable is True
-    # ``__cause__`` preserves the original SDK exception.
-    assert isinstance(err.__cause__, RuntimeError)
+    # Raw SDK cause is suppressed so traceback cannot echo sentinels.
+    assert err.__cause__ is None
 
 
 @pytest.mark.anyio
@@ -3017,3 +3018,285 @@ async def test_writer_valid_contract_metadata_passes(
     assert result.upserted_count == 1
     assert result.collection == _FROZEN_VECTOR_NAMESPACE
     assert len(fake_client.upsert_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Provider-boundary safety: logs + formatted traceback must not leak
+# URI / token / collection / provider / dim / SDK text.
+# ---------------------------------------------------------------------------
+
+
+_URI_SENTINEL = "https://sentinel-uri-writer-9f3a.invalid/path?token=sentinel-qry-1b"
+_TOKEN_SENTINEL = "sentinel-token-writer-7c2e"
+_COLLECTION_SENTINEL = "sentinel_collection_writer_b1a9"
+_PROVIDER_SENTINEL = "sentinel-provider-name-writer-8e2f"
+_SDK_SENTINEL = "sentinel-sdk-raw-message-writer-4f8d"
+_DIM_SENTINEL = 424242
+_WRITER_LOG_SENTINELS = (
+    _URI_SENTINEL,
+    _TOKEN_SENTINEL,
+    _COLLECTION_SENTINEL,
+    _PROVIDER_SENTINEL,
+    _SDK_SENTINEL,
+    str(_DIM_SENTINEL),
+)
+
+
+def _log_record_blobs(record: logging.LogRecord) -> list[str]:
+    blobs = [record.getMessage(), str(record.__dict__), repr(record.args)]
+    for value in record.__dict__.values():
+        blobs.append(str(value))
+        blobs.append(repr(value))
+    return blobs
+
+
+def _assert_no_sentinels(
+    surfaces: list[str],
+    sentinels: tuple[str, ...] = _WRITER_LOG_SENTINELS,
+    *,
+    label: str,
+) -> None:
+    for surface in surfaces:
+        for sentinel in sentinels:
+            assert sentinel not in surface, (
+                f"{label}: {sentinel!r} leaked into {surface!r}"
+            )
+
+
+def _exc_surfaces(exc: BaseException) -> list[str]:
+    return [
+        str(exc),
+        repr(exc),
+        "".join(traceback.format_exception(exc)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_ensure_client_never_logs_sentinels(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Client construction must not log URI, token, collection, or dim."""
+    _install_pymilvus_stub(monkeypatch)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_COLLECTION_SENTINEL,
+        dim=_DIM_SENTINEL,
+    )
+    with caplog.at_level(logging.DEBUG):
+        writer._ensure_client()
+    blobs: list[str] = []
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.ensure_client.logs")
+
+
+def test_zilliz_writer_factory_logs_never_echo_provider_or_dim(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Factory debug must not interpolate provider_name or dim."""
+    with caplog.at_level(logging.DEBUG):
+        unconfigured = build_default_article_rag_vector_writer(
+            Settings(reader_article_rag_vector_provider=_PROVIDER_SENTINEL)
+        )
+        incomplete = build_default_article_rag_vector_writer(
+            Settings(
+                reader_article_rag_vector_provider="zilliz",
+                reader_article_rag_zilliz_uri="",
+                reader_article_rag_zilliz_token="",
+                reader_article_rag_zilliz_collection="",
+                reader_article_rag_vector_dim=_DIM_SENTINEL,
+            )
+        )
+    assert isinstance(unconfigured, UnconfiguredArticleRagVectorWriter)
+    assert isinstance(incomplete, UnconfiguredArticleRagVectorWriter)
+    blobs: list[str] = []
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.factory.logs")
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_client_construction_failure_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MilvusClient() failure must not leak URI/token/collection via traceback."""
+
+    def _raising_client(*, uri: str, token: str) -> None:
+        raise RuntimeError(
+            f"{_SDK_SENTINEL} uri={uri} token={token} "
+            f"collection={_COLLECTION_SENTINEL}"
+        )
+
+    fake_module = types.ModuleType("pymilvus")
+    fake_module.MilvusClient = _raising_client  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_module)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=1024,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+            await writer.upsert_chunks(
+                collection=_FAKE_ZILLIZ_COLLECTION,
+                chunks_with_embeddings=[_make_chunk(text="construction")],
+                metadata=_make_write_metadata(chunk_count=1),
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_write_failed"
+    assert err.retryable is True
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.client_construction")
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_schema_construction_failure_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CollectionSchema() failure must not leak the raw SDK traceback."""
+
+    class _RaisingSchema:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError(f"{_SDK_SENTINEL} schema={_COLLECTION_SENTINEL}")
+
+    class _Client:
+        def has_collection(self, *, collection_name: str) -> bool:
+            return False
+
+        def create_collection(self, **kwargs: object) -> None:
+            raise AssertionError("create_collection must not run")
+
+        def upsert(self, **kwargs: object) -> dict[str, int]:
+            raise AssertionError("upsert must not run")
+
+    class _StubFieldSchema:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class _StubDataType:
+        VARCHAR = "VARCHAR"
+        INT64 = "INT64"
+        FLOAT_VECTOR = "FLOAT_VECTOR"
+
+    fake_module = types.ModuleType("pymilvus")
+    fake_module.MilvusClient = lambda *, uri, token: _Client()  # type: ignore[assignment]
+    fake_module.CollectionSchema = _RaisingSchema  # type: ignore[assignment]
+    fake_module.FieldSchema = _StubFieldSchema  # type: ignore[assignment]
+    fake_module.DataType = _StubDataType  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_module)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=1024,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+            await writer.upsert_chunks(
+                collection=_FAKE_ZILLIZ_COLLECTION,
+                chunks_with_embeddings=[_make_chunk(text="schema")],
+                metadata=_make_write_metadata(chunk_count=1),
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_write_failed"
+    assert err.retryable is True
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.schema_construction")
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_index_construction_failure_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """create_index() failure must not leak the raw SDK traceback."""
+
+    class _Client:
+        def has_collection(self, *, collection_name: str) -> bool:
+            return True
+
+        def list_indexes(self, **kwargs: object) -> list[str]:
+            return []
+
+        def prepare_index_params(self) -> _FakeIndexParams:
+            return _FakeIndexParams()
+
+        def create_index(self, **kwargs: object) -> None:
+            raise RuntimeError(f"{_SDK_SENTINEL} index={_COLLECTION_SENTINEL}")
+
+        def upsert(self, **kwargs: object) -> dict[str, int]:
+            raise AssertionError("upsert must not run")
+
+    fake_module = types.ModuleType("pymilvus")
+    fake_module.MilvusClient = lambda *, uri, token: _Client()  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "pymilvus", fake_module)
+    writer = ZillizArticleRagVectorWriter(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=1024,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+            await writer.upsert_chunks(
+                collection=_FAKE_ZILLIZ_COLLECTION,
+                chunks_with_embeddings=[_make_chunk(text="index")],
+                metadata=_make_write_metadata(chunk_count=1),
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_write_failed"
+    assert err.retryable is True
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.index_construction")
+
+
+@pytest.mark.anyio
+async def test_zilliz_writer_upsert_sdk_failure_traceback_is_safe(
+    _pymilvus_clean: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """upsert SDK errors must not attach see __cause__ or the raw traceback."""
+    _install_pymilvus_stub_with_raising_upsert(
+        monkeypatch,
+        exc=RuntimeError(
+            f"{_SDK_SENTINEL} uri={_URI_SENTINEL} token={_TOKEN_SENTINEL} "
+            f"collection={_COLLECTION_SENTINEL}"
+        ),
+    )
+    writer = ZillizArticleRagVectorWriter(
+        uri=_URI_SENTINEL,
+        token=_TOKEN_SENTINEL,
+        collection=_FAKE_ZILLIZ_COLLECTION,
+        dim=1024,
+    )
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
+            await writer.upsert_chunks(
+                collection=_FAKE_ZILLIZ_COLLECTION,
+                chunks_with_embeddings=[_make_chunk(text="upsert")],
+                metadata=_make_write_metadata(chunk_count=1),
+            )
+    err = exc_info.value
+    assert err.failure_code == "vector_write_failed"
+    assert err.retryable is True
+    assert "see __cause__" not in str(err)
+    blobs = _exc_surfaces(err)
+    for record in caplog.records:
+        blobs.extend(_log_record_blobs(record))
+    _assert_no_sentinels(blobs, label="writer.upsert")
