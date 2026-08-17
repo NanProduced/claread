@@ -1,14 +1,9 @@
-import type {
-  ReaderCandidateDocumentOutlineItem,
-  ReaderCandidateDocumentPreviewMode,
-  ReaderCandidateDocumentRiskItem,
-} from "@/types/api/reader-plate";
-
 export const PENDING_CANDIDATE_STORAGE_KEY =
   "claread:web:pending-candidate";
 
 export type PendingCandidateOrigin = "submit" | "resume";
 
+/** L2 Content Check 的「稍后处理」恢复入口。不含旧确认模态字段。 */
 export interface PendingCandidateInput {
   readingRecordId: string;
   candidateDocumentId: string;
@@ -20,46 +15,14 @@ export interface PendingCandidateInput {
   originalInputId?: string | null;
   /**
    * Snapshot of the user-provided text (text path) or the original filename
-   * (artifact path). Used to restore the form when the user clicks "重新编辑".
-   * Optional for non-form paths (e.g. zero-data pipeline candidate).
+   * (artifact path). Used to restore the form when the user clicks "返回修改".
    */
   inputSnapshot?: string | null;
   filename?: string | null;
   /**
-   * Short preview from `candidate_document.canonical_text_preview` so the
-   * confirm-callout can show the user what they're about to confirm.
-   */
-  canonicalTextPreview?: string | null;
-  /**
-   * Typed outline from `candidate_document.preview.document_outline`. Surfaced
-   * in the confirm dialog when `preview_mode === "outline_only"` or when the
-   * upstream payload carries items even with `preview_text`. Optional because
-   * the legacy submit path does not surface this field.
-   */
-  documentOutline?: ReaderCandidateDocumentOutlineItem[];
-  /**
-   * Typed risk items from `candidate_document.preview.risk_items`. Surfaced
-   * in the confirm dialog as a short warning list. Optional for the same
-   * reason as `documentOutline`.
-   */
-  riskItems?: ReaderCandidateDocumentRiskItem[];
-  /**
-   * The typed `preview_mode` from the candidate-document read response. Used
-   * by the dialog to decide whether to render the outline/risk lists. May be
-   * absent on legacy submit-origin candidates.
-   */
-  previewMode?: ReaderCandidateDocumentPreviewMode;
-  /**
-   * The source document's character count when the recovery response supplies
-   * it. This is only used to make a truncated or outline-only preview honest
-   * to the reader; it does not expose raw source content.
-   */
-  totalCharCount?: number;
-  /**
    * How this pending candidate was created. `submit` is the normal
-   * first-time submit flow (textarea may be pre-filled). `resume` is
-   * the recovery flow from `?resume_candidate=` and disallows edit
-   * affordances.
+   * first-time submit flow. `resume` is the recovery flow from
+   * `?resume_candidate=` and hides "返回修改".
    */
   origin?: PendingCandidateOrigin;
   savedAt?: string;
@@ -78,10 +41,6 @@ function isOptionalString(value: unknown): boolean {
   return value === null || value === undefined || typeof value === "string";
 }
 
-function isOptionalArray(value: unknown): boolean {
-  return value === undefined || Array.isArray(value);
-}
-
 function isValidPendingCandidate(value: unknown): value is PendingCandidate {
   if (!value || typeof value !== "object") {
     return false;
@@ -95,14 +54,6 @@ function isValidPendingCandidate(value: unknown): value is PendingCandidate {
   if (!isOptionalString(candidate.originalInputId)) return false;
   if (!isOptionalString(candidate.inputSnapshot)) return false;
   if (!isOptionalString(candidate.filename)) return false;
-  if (!isOptionalString(candidate.canonicalTextPreview)) return false;
-  if (!isOptionalArray(candidate.documentOutline)) return false;
-  if (!isOptionalArray(candidate.riskItems)) return false;
-  if (!isOptionalString(candidate.previewMode)) return false;
-  if (
-    candidate.totalCharCount !== undefined &&
-    (typeof candidate.totalCharCount !== "number" || !Number.isFinite(candidate.totalCharCount) || candidate.totalCharCount < 0)
-  ) return false;
 
   if (typeof candidate.savedAt !== "string" || Number.isNaN(Date.parse(candidate.savedAt))) {
     return false;
@@ -147,11 +98,6 @@ export function savePendingCandidate(
     originalInputId: input.originalInputId ?? null,
     inputSnapshot: input.inputSnapshot ?? null,
     filename: input.filename ?? null,
-    canonicalTextPreview: input.canonicalTextPreview ?? null,
-    documentOutline: input.documentOutline ?? undefined,
-    riskItems: input.riskItems ?? undefined,
-    previewMode: input.previewMode ?? undefined,
-    totalCharCount: input.totalCharCount ?? undefined,
     origin: input.origin ?? "submit",
     savedAt: input.savedAt ?? new Date().toISOString(),
   };

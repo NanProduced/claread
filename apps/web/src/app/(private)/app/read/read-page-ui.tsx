@@ -26,6 +26,12 @@ import { cn } from "@/lib/cn";
 interface ReadPageUiState {
   hasContent: boolean;
   setHasContent: (value: boolean) => void;
+  /**
+   * 专注任务态（Content Check 确认 / 等待解析）：右侧「今日精选」栏收起，
+   * 中间任务区获得完整宽度。任务结束即恢复。
+   */
+  focusMode: boolean;
+  setFocusMode: (value: boolean) => void;
 }
 
 const ReadPageUiContext = createContext<ReadPageUiState | null>(null);
@@ -33,6 +39,8 @@ const ReadPageUiContext = createContext<ReadPageUiState | null>(null);
 const NOOP_UI_STATE: ReadPageUiState = {
   hasContent: false,
   setHasContent: () => {},
+  focusMode: false,
+  setFocusMode: () => {},
 };
 
 export function useReadPageUi(): ReadPageUiState {
@@ -41,14 +49,57 @@ export function useReadPageUi(): ReadPageUiState {
 
 export function ReadPageUiProvider({ children }: { children: ReactNode }) {
   const [hasContent, setHasContent] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const value = useMemo(
-    () => ({ hasContent, setHasContent }),
-    [hasContent],
+    () => ({ hasContent, setHasContent, focusMode, setFocusMode }),
+    [hasContent, focusMode],
   );
   return (
     <ReadPageUiContext.Provider value={value}>
       {children}
     </ReadPageUiContext.Provider>
+  );
+}
+
+/**
+ * 右侧「今日精选」栏的 focus 收起容器：focusMode 下隐藏（xl 断点的常驻
+ * 栏与移动端 details 折叠区均适用），任务结束即恢复。
+ */
+export function DailyRailCollapsible({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const { focusMode } = useReadPageUi();
+  if (focusMode) return null;
+  return (
+    <div data-testid="daily-rail-collapsible" className={className}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 输入页主网格：focusMode 下收起右栏轨道，中间任务区居中并放宽到
+ * ~72rem（editorial 上限），不再留下空轨道占位。
+ */
+export function ReadPageFocusGrid({ children }: { children: ReactNode }) {
+  const { focusMode } = useReadPageUi();
+  return (
+    <div
+      data-testid="read-page-focus-grid"
+      data-focus={focusMode ? "true" : "false"}
+      className={cn(
+        "grid gap-10 lg:min-h-0 lg:flex-1 xl:gap-12 2xl:gap-16",
+        focusMode
+          ? "xl:grid-cols-[minmax(0,72rem)] xl:justify-center"
+          : "xl:grid-cols-[minmax(0,1fr)_24rem]",
+      )}
+    >
+      {children}
+    </div>
   );
 }
 

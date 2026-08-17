@@ -317,13 +317,16 @@ describe("AnalysisLoadingStatusBar", () => {
   it("uses reassurance copy without fake progress or timers", () => {
     render(
       <AnalysisLoadingStatusBar
-        messagePrefix="正在透读"
+        messagePrefix="正在准备"
+        detail="正在提交，准备解析…"
       />,
     );
 
-    expect(screen.getByText("正在透读")).toBeTruthy();
+    expect(screen.getByText("正在准备")).toBeTruthy();
+    expect(screen.getByText("正在提交，准备解析…")).toBeTruthy();
     expect(screen.getByText("离开本页不会影响透读，完成后会保存到阅读记录")).toBeTruthy();
-    expect(screen.getByText("正在梳理文章结构")).toBeTruthy();
+    // 不再有虚构进度的轮播文案
+    expect(screen.queryByText("正在梳理文章结构")).toBeNull();
 
     const renderedText = document.body.textContent ?? "";
     expect(renderedText).not.toMatch(/\d{1,2}:\d{2}/);
@@ -652,7 +655,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "开始透读" })).toBeNull();
     });
-    expect(screen.getByText("正在透读")).toBeTruthy();
+    expect(screen.getByText("正在准备")).toBeTruthy();
     expect(screen.getByText("离开本页不会影响透读，完成后会保存到阅读记录")).toBeTruthy();
 
     // Settle the in-flight fetch so React finishes its updates cleanly.
@@ -796,8 +799,9 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     await waitFor(() => {
       expect(screen.getByText("这次没法直接开始透读")).toBeTruthy();
     });
-    expect(screen.getByText("内容过短")).toBeTruthy();
-    expect(screen.getByText("英文比例过低")).toBeTruthy();
+    expect(screen.getByText("英文内容太短，补充成一段完整的英文文章再试。")).toBeTruthy();
+    expect(screen.getByText("英文占比太低，透读目前为英文材料设计。")).toBeTruthy();
+    expect(screen.queryByText("内容过短")).toBeNull();
     expect(screen.getByText(/我们收到的内容/)).toBeTruthy();
     // Debug-only fields must not leak to the user.
     expect(screen.queryByText("english_word_ratio")).toBeNull();
@@ -829,6 +833,44 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(screen.getByRole("button", { name: "移除" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "开始透读" })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stashes pasted text when attaching a file and restores it on remove", async () => {
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText(
+      "Paste an English article here",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: { value: "Pasted English article body." },
+    });
+
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile("paper.md", "text/markdown")] },
+    });
+
+    expect(screen.queryByPlaceholderText("Paste an English article here")).toBeNull();
+    expect(
+      screen.getByText("已暂存你粘贴的内容，移除文件后恢复"),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile("other.md", "text/markdown")] },
+    });
+    expect(
+      screen.getByText("已暂存你粘贴的内容，移除文件后恢复"),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "移除" }));
+    const restored = screen.getByPlaceholderText(
+      "Paste an English article here",
+    ) as HTMLTextAreaElement;
+    expect(restored.value).toBe("Pasted English article body.");
   });
 
   it("accepts a dragged image file on the text input surface without starting upload", async () => {
@@ -942,7 +984,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/文件解析服务暂未启动或队列阻塞/)).toBeTruthy();
+      expect(screen.getByText("解析服务暂时没响应，请稍后重试或换个文件")).toBeTruthy();
     });
     expect(navigationMock.push).not.toHaveBeenCalled();
   });
@@ -1491,150 +1533,34 @@ describe("confirmed-source route guard (L2)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// F3 handoff shape guards (source-level)
-//   pending-candidate and CandidateConfirmCallout are unit-tested via
-//   source-grep here to keep the jsdom env config untouched. Behavioral
-//   tests for these modules require either a project-level jsdom default
-//   in vitest.config.ts or per-file directives applied uniformly; this
-//   project currently relies on the latter, so source guards stay portable.
-// ---------------------------------------------------------------------------
-
 describe("pending-candidate helper shape (source guard)", () => {
   const HELPER_PATH = "src/app/(private)/app/read/pending-candidate.ts";
 
-  it("exposes the unified handoff fields (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
+  it("keeps L2 defer fields and drops old dialog-only preview fields", () => {
     const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
     expect(source).toContain("readingRecordId");
     expect(source).toContain("candidateDocumentId");
     expect(source).toContain("originalInputId");
     expect(source).toContain("inputSnapshot");
     expect(source).toContain("filename");
-    expect(source).toContain("canonicalTextPreview");
     expect(source).toContain("savedAt");
+    expect(source).not.toContain("canonicalTextPreview");
+    expect(source).not.toContain("documentOutline");
+    expect(source).not.toContain("riskItems");
   });
 
   it("treats originalInputId and inputSnapshot as optional (artifact path does not always have them)", () => {
     const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
-    // The validator must allow null/undefined for the optional fields.
     expect(source).toMatch(/originalInputId\?: string \| null/);
     expect(source).toMatch(/inputSnapshot\?: string \| null/);
     expect(source).toMatch(/filename\?: string \| null/);
-    expect(source).toMatch(/canonicalTextPreview\?: string \| null/);
   });
 });
 
-describe("CandidateConfirmDialog shape (source guard)", () => {
-  const DIALOG_PATH =
-    "src/app/(private)/app/read/CandidateConfirmDialog.tsx";
-  const CALLOUT_PATH =
-    "src/app/(private)/app/reader/[recordId]/CandidateConfirmCallout.tsx";
-
-  it("wires matching pending candidate → 409 candidate_conflict → 其它 BFF error → success refresh", () => {
-    const source = readFileSync(resolve(process.cwd(), DIALOG_PATH), "utf-8");
-    const fallbackSource = readFileSync(resolve(process.cwd(), CALLOUT_PATH), "utf-8");
-    // success path: clearPendingCandidate + fallback refresh hook.
-    expect(source).toContain("clearPendingCandidate");
-    expect(fallbackSource).toContain("window.location.reload");
-    // 409 / candidate_conflict branch
-    expect(source).toContain("candidate_conflict");
-    expect(source).toContain("提取结果需要重新确认");
-    // error branch surfaces BFF message verbatim, not raw debug fields
-    expect(source).toContain("payload.message");
-    // 确认并开始透读 / 稍后处理 / 重新提交 are all present
-    expect(source).toContain("确认并开始透读");
-    expect(source).toContain("稍后处理");
-    expect(source).toContain("重新提交");
-    // debug fields not exposed in the DOM
-    expect(source).not.toMatch(/failure_class|failure_code|rationale_code/);
-    expect(source).not.toMatch(/english_word_ratio|natural_language_score/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resume_candidate entry
-//
-// These tests lock in the `?resume_candidate=...` entry path. They are
-// pure DOM-level behavioral tests: window.location.search is set before
-// render, the BFF GET to
-// `/api/web/reader/records/{recordId}/candidate-document` is mocked
-// via vi.stubGlobal("fetch", ...), and assertions are made against the
-// visible DOM (dialog open state, button presence, textarea value,
-// preview text).
-// ---------------------------------------------------------------------------
-
-function makeResumeResponse(previewMode: "full_text" | "truncated_preview" | "outline_only") {
-  const previewTextByMode: Record<typeof previewMode, string> = {
-    full_text: "Full article body shown verbatim to the reader in resume mode.",
-    truncated_preview: "Truncated preview body shown to the reader in resume mode.",
-    outline_only: "",
-  };
-  // outline_only must not have a title fallback either; the dialog is
-  // expected to render its built-in fallback copy in that case.
-  const titleByMode: Record<typeof previewMode, string | null> = {
-    full_text: "Resume fixture title",
-    truncated_preview: "Resume fixture title",
-    outline_only: null,
-  };
-  return {
-    ok: true as const,
-    record_id: "rec_resume_1",
-    candidate_document_id: "cand_resume_1",
-    record_generation: 1,
-    status: "ready" as const,
-    title: titleByMode[previewMode],
-    preview: {
-      preview_mode: previewMode,
-      preview_text: previewTextByMode[previewMode],
-      is_truncated: previewMode !== "full_text",
-      total_char_count: previewMode === "outline_only" ? 6400 : 128,
-      document_outline:
-        previewMode === "outline_only"
-          ? [
-              {
-                order_index: 0,
-                block_type_label: "heading" as const,
-                heading_text: "Section A",
-                char_count: 10,
-              },
-            ]
-          : [],
-      risk_items:
-        previewMode === "truncated_preview"
-          ? [
-              {
-                risk_kind: "low_confidence_ocr" as const,
-                user_message: "Potential risk line",
-                severity: "warning" as const,
-              },
-            ]
-          : [],
-    },
-    source_type: "pasted_text" as const,
-    filename: null,
-    source_label: "粘贴文本",
-    created_at: "2026-07-15T00:00:00.000Z",
-    updated_at: "2026-07-15T00:00:00.000Z",
-  };
-}
-
-function installResumeFetchMock(payload: unknown, status = 200) {
+function installConfirmedSourceFetchMock(payload: unknown, status = 200) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/confirmed-source")) {
-      // L2 resume 入口先探测 confirmed-source；存量记录返回 404，
-      // 前端回退旧 candidate-document 流（本组用例锁定的行为）。
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          status: 404,
-          code: "confirmed_source_not_found",
-          message: "没有找到可继续确认的草稿。",
-        }),
-        { status: 404, headers: { "content-type": "application/json" } },
-      );
-    }
-    if (url.includes("/candidate-document")) {
       return new Response(JSON.stringify(payload), {
         status,
         headers: { "content-type": "application/json" },
@@ -1653,9 +1579,9 @@ function setLocationSearch(search: string) {
 }
 
 describe("resume_candidate entry", () => {
-  it("200 with full_text preview opens the dialog in resume mode and does not prefill the textarea", async () => {
+  it("confirmed-source 200 opens Content Check in resume mode and does not prefill the input", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(makeResumeResponse("full_text"));
+    installConfirmedSourceFetchMock(makeConfirmedSourceReadResponse());
 
     render(
       <AnalyzeSubmitForm
@@ -1665,43 +1591,21 @@ describe("resume_candidate entry", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-
-    // In resume mode the dialog must NOT expose edit affordances.
-    expect(screen.queryByRole("button", { name: "重新提交" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
-
-    // The two buttons that should always be visible in resume mode.
-    expect(screen.getByRole("button", { name: "确认并开始透读" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-
-    // The preview body must surface the upstream preview_text.
-    expect(screen.getByTestId("candidate-confirm-preview").textContent).toContain(
-      "Full article body shown verbatim to the reader in resume mode.",
-    );
-
-    // The textarea must NOT be pre-filled from the resume payload.
-    // (The textarea is still rendered behind the dialog; its value must remain
-    // empty because the resume flow does not call setText().)
-    const textarea = screen.getByPlaceholderText(
-      "Paste an English article here",
-    ) as HTMLTextAreaElement;
-    expect(textarea.value).toBe("");
-
-    // localStorage must NOT have been touched by the resume flow.
+    expect(screen.getByRole("button", { name: "确认并开始阅读" })).toBeTruthy();
     expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
   });
 
-  it("query param wins over a submit-origin localStorage candidate; localStorage value is not used", async () => {
-    // Seed localStorage with a *submit*-origin candidate (different ids).
+  it("query param wins over a submit-origin localStorage candidate", async () => {
     const seededSubmitCandidate = {
       readingRecordId: "rec_local_submit",
       candidateDocumentId: "cand_local_submit",
       originalInputId: "inp_local_submit",
       inputSnapshot: "LocalStorage submit snapshot must NOT leak into the textarea.",
       filename: null,
-      canonicalTextPreview: "LocalStorage submit preview",
       origin: "submit",
       savedAt: new Date().toISOString(),
     };
@@ -1711,7 +1615,7 @@ describe("resume_candidate entry", () => {
     );
 
     setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(makeResumeResponse("full_text"));
+    installConfirmedSourceFetchMock(makeConfirmedSourceReadResponse());
 
     render(
       <AnalyzeSubmitForm
@@ -1721,28 +1625,10 @@ describe("resume_candidate entry", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
+    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
 
-    // Resume mode hides edit affordances.
-    expect(screen.queryByRole("button", { name: "重新提交" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
-
-    // The dialog must show the resume payload's preview, not the localStorage one.
-    expect(screen.getByTestId("candidate-confirm-preview").textContent).toContain(
-      "Full article body shown verbatim to the reader in resume mode.",
-    );
-    expect(screen.getByTestId("candidate-confirm-preview").textContent).not.toContain(
-      "LocalStorage submit preview",
-    );
-
-    // Textarea must not have been filled from localStorage either.
-    const textareaAfterQuery = screen.getByPlaceholderText(
-      "Paste an English article here",
-    ) as HTMLTextAreaElement;
-    expect(textareaAfterQuery.value).toBe("");
-
-    // localStorage entry stays untouched (resume flow does not write to it).
     const stillThere = window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY);
     expect(stillThere).not.toBeNull();
     const parsed = JSON.parse(stillThere ?? "{}") as Record<string, unknown>;
@@ -1750,88 +1636,14 @@ describe("resume_candidate entry", () => {
     expect(parsed.origin).toBe("submit");
   });
 
-  it("200 with full_text preview renders the preview_text inside the dialog body", async () => {
+  it("confirmed-source 404 shows the old-record terminal copy", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(makeResumeResponse("full_text"));
-
-    render(
-      <AnalyzeSubmitForm
-        readingGoal="daily_reading"
-        readingVariant="intermediate_reading"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
-    });
-
-    const previewBody = screen.getByTestId("candidate-confirm-preview").textContent ?? "";
-    expect(previewBody).toContain(
-      "Full article body shown verbatim to the reader in resume mode.",
-    );
-    // The fallback copy must NOT appear when upstream gave us preview_text.
-    expect(previewBody).not.toContain("暂无可展示的正文预览");
-  });
-
-  it("200 with truncated_preview renders the preview_text; outline/risk UI may also render", async () => {
-    setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(makeResumeResponse("truncated_preview"));
-
-    render(
-      <AnalyzeSubmitForm
-        readingGoal="daily_reading"
-        readingVariant="intermediate_reading"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
-    });
-
-    const previewBody = screen.getByTestId("candidate-confirm-preview").textContent ?? "";
-    // Lock in the preview_text rendering regardless of what outline/risk UI does.
-    expect(previewBody).toContain(
-      "Truncated preview body shown to the reader in resume mode.",
-    );
-    expect(previewBody).not.toContain("暂无可展示的正文预览");
-    expect(screen.getByText("内容较长，以下为节选（约 128 字）。")).toBeTruthy();
-    expect(screen.getByTestId("candidate-confirm-risk-list").textContent).toContain("Potential risk line");
-  });
-
-  it("200 with outline_only shows the structural overview", async () => {
-    setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(makeResumeResponse("outline_only"));
-
-    render(
-      <AnalyzeSubmitForm
-        readingGoal="daily_reading"
-        readingVariant="intermediate_reading"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
-    });
-
-    const previewBody = screen.getByTestId("candidate-confirm-preview").textContent ?? "";
-    expect(previewBody).toContain("暂无可展示的正文预览");
-    expect(screen.getByText("内容较长，以下为结构概览（约 6,400 字）。")).toBeTruthy();
-    expect(screen.getByTestId("candidate-confirm-outline-list").textContent).toContain("Section A");
-    // Resume mode must still hide edit affordances.
-    expect(screen.queryByRole("button", { name: "重新提交" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
-    expect(screen.getByRole("button", { name: "确认并开始透读" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-  });
-
-  it("404 from BFF renders the inline 未找到可继续确认的内容 message and 前往阅读记录 button (→ /app/library)", async () => {
-    setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(
+    installConfirmedSourceFetchMock(
       {
         ok: false,
         status: 404,
-        code: "candidate_not_found",
-        message: "未找到可继续确认的内容。",
+        code: "confirmed_source_not_found",
+        message: "没有找到可继续确认的草稿。",
       },
       404,
     );
@@ -1844,32 +1656,19 @@ describe("resume_candidate entry", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("未找到可继续确认的内容。")).toBeTruthy();
+      expect(
+        screen.getByText("这条记录来自旧版本，无法继续确认，请重新提交"),
+      ).toBeTruthy();
     });
 
-    // The 404 CTA must route to /app/library (NOT /app/reader/{id}):
-    // 404's four collapsed causes (not found / not owner / soft-deleted /
-    // no ready candidate) all mean "don't try Reader again", so re-entering
-    // Reader via recordId may loop.
     const libraryButton = screen.getByRole("button", { name: "前往阅读记录" });
-    expect(libraryButton).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "返回阅读记录页" })).toBeNull();
-
     fireEvent.click(libraryButton);
     expect(navigationMock.push).toHaveBeenCalledWith("/app/library");
-
-    // No confirm dialog should appear in the 404 path.
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
-    // Textarea must be empty (no pre-fill from the failed resume fetch).
-    const textareaNotFound = screen.getByPlaceholderText(
-      "Paste an English article here",
-    ) as HTMLTextAreaElement;
-    expect(textareaNotFound.value).toBe("");
   });
 
-  it("409 with candidate_conflict_open_reader pushes to the reader route and does not show the dialog", async () => {
+  it("409 with candidate_conflict_open_reader pushes to the reader route", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(
+    installConfirmedSourceFetchMock(
       {
         ok: false,
         status: 409,
@@ -1889,102 +1688,18 @@ describe("resume_candidate entry", () => {
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_resume_1");
     });
-
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
-    expect(screen.queryByText("未找到可继续确认的内容")).toBeNull();
   });
 
-  it("409 with candidate_conflict_return_to_library renders the inline message and 前往阅读记录 link; no dialog", async () => {
-    setLocationSearch("?resume_candidate=rec_resume_1");
-    installResumeFetchMock(
-      {
-        ok: false,
-        status: 409,
-        code: "candidate_conflict_return_to_library",
-        message: "这篇内容当前无法继续确认。",
-      },
-      409,
-    );
-
-    render(
-      <AnalyzeSubmitForm
-        readingGoal="daily_reading"
-        readingVariant="intermediate_reading"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("这篇内容当前无法继续确认。")).toBeTruthy();
-    });
-
-    const libraryLink = screen.getByRole("button", { name: "前往阅读记录" });
-    expect(libraryLink).toBeTruthy();
-
-    // No confirm dialog.
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
-    expect(navigationMock.push).not.toHaveBeenCalled();
-
-    // Activating the link pushes to the library route.
-    fireEvent.click(libraryLink);
-    expect(navigationMock.push).toHaveBeenCalledWith("/app/library");
-  });
-
-  it("confirmed-source 200 opens the same-page Content Check instead of the legacy dialog", async () => {
+  it("5xx / network failure renders the 重试加载 button; retry reloads Content Check", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
 
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/confirmed-source")) {
-        return new Response(JSON.stringify(makeConfirmedSourceReadResponse()), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      throw new Error(`Unexpected fetch ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <AnalyzeSubmitForm
-        readingGoal="daily_reading"
-        readingVariant="intermediate_reading"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
-    });
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
-    // resume 来源：无"返回修改"，但保留稍后处理与主 CTA。
-    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
-    expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-    // localStorage 不被 resume 流写入（BFF 是真相源）。
-    expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
-  });
-
-  it("5xx / network failure renders the 重试加载 button; clicking it re-invokes the fetch", async () => {
-    setLocationSearch("?resume_candidate=rec_resume_1");
-
-    // First fetch: network failure. Subsequent fetches: confirmed-source 404
-    // (legacy record) → candidate-document success.
     const fetchMock = vi
       .fn<(input: RequestInfo | URL) => Promise<Response>>()
       .mockRejectedValueOnce(new Error("network down"))
       .mockImplementation(async (input) => {
         const url = String(input);
         if (url.includes("/confirmed-source")) {
-          return new Response(
-            JSON.stringify({
-              ok: false,
-              status: 404,
-              code: "confirmed_source_not_found",
-              message: "没有找到可继续确认的草稿。",
-            }),
-            { status: 404, headers: { "content-type": "application/json" } },
-          );
-        }
-        if (url.includes("/candidate-document")) {
-          return new Response(JSON.stringify(makeResumeResponse("full_text")), {
+          return new Response(JSON.stringify(makeConfirmedSourceReadResponse()), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
@@ -2001,19 +1716,14 @@ describe("resume_candidate entry", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/加载失败/)).toBeTruthy();
+      expect(screen.getByText("加载草稿失败，请稍后重试。")).toBeTruthy();
     });
 
-    const retryButton = screen.getByRole("button", { name: "重试加载" });
-    expect(retryButton).toBeTruthy();
-
-    fireEvent.click(retryButton);
+    fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-
-    // The retry must have triggered an additional fetch call.
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -2025,7 +1735,6 @@ describe("resume_candidate entry", () => {
       originalInputId: "inp_local_submit",
       inputSnapshot: "LocalStorage submit snapshot must populate the textarea.",
       filename: null,
-      canonicalTextPreview: "LocalStorage submit preview",
       origin: "submit",
       savedAt: new Date().toISOString(),
     };
@@ -2070,7 +1779,6 @@ describe("resume_candidate entry", () => {
     await waitFor(() => {
       expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
     });
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
     expect(screen.getByRole("button", { name: "返回修改" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
 
@@ -2112,9 +1820,6 @@ describe("resume_candidate entry", () => {
       "Paste an English article here",
     ) as HTMLTextAreaElement;
     expect(textarea.value).toBe("");
-
-    // No confirm dialog should appear.
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
 
     // Resume-error inline sections must NOT be present either.
     expect(screen.queryByText("未找到可继续确认的内容")).toBeNull();

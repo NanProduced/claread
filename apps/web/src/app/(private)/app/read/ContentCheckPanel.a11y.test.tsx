@@ -92,7 +92,7 @@ function makeReadResponse() {
       { code: "raw_html_block", message: "已移除原始 HTML 块", classification: "adaptation_notice" as const },
     ],
     content_check: [
-      { code: "unclosed_fence", message: "代码块缺少结束围栏", classification: "content_check" as const },
+      { code: "has_unclosed_fence", message: "代码块缺少结束围栏", classification: "content_check" as const },
     ],
   };
 }
@@ -119,7 +119,7 @@ function renderPanel() {
       origin="submit"
       onOpenReader={vi.fn()}
       onConfirmed={vi.fn()}
-      onLegacyFallback={vi.fn()}
+      onSourceMissing={vi.fn()}
       onBackToInput={vi.fn()}
       onDefer={vi.fn()}
     />,
@@ -212,16 +212,16 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(panel.className).toContain("motion-safe:duration-200");
   });
 
-  it("风险卡片操作按钮（采用建议/保留普通文字/自行修改）可按名称定位", async () => {
+  it("风险卡片操作按钮（采用建议/保留原文/去修改）可按名称定位", async () => {
     installFetchMock();
     renderPanel();
     await waitForReady();
 
     expect(screen.getByRole("button", { name: /采用建议/ })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "保留普通文字" }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "自行修改" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "保留原文" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "去修改" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("content-check-keep-all-plain").textContent).toContain(
-      "全部按普通文字继续",
+      "全部保留原文",
     );
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, ChevronDown, FileText, FileUp, ImageIcon, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, FileText, FileType, FileUp, ImageIcon, RefreshCw, X } from "lucide-react";
 import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -25,7 +25,6 @@ import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
 import type { ReaderUnifiedInputSubmitResponseDto } from "@/types/api/reader-plate";
 import type {
   ReaderArtifactPipelineStatusResult,
-  ReaderCandidateDocumentReadResult,
   ReaderPlateBffError,
   ReaderSourceArtifactSubmitInputResult,
   ReaderSourceArtifactUploadCompleteResult,
@@ -35,9 +34,7 @@ import {
   clearPendingCandidate,
   readPendingCandidate,
   savePendingCandidate,
-  type PendingCandidate,
 } from "./pending-candidate";
-import { CandidateConfirmDialog } from "./CandidateConfirmDialog";
 import { ContentCheckPanel } from "./ContentCheckPanel";
 import { useReadPageUi } from "./read-page-ui";
 import {
@@ -49,6 +46,7 @@ import {
   summarizeLintWarnings,
   type MarkdownLintResult,
 } from "./markdown-lint";
+import { rejectedReasonCopyForFlags } from "./content-check-guidance";
 import {
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
@@ -63,21 +61,12 @@ type SubmitState =
   | { kind: "success"; message: string }
   | { kind: "error"; message: string }
   | {
-      kind: "candidate";
-      candidate: PendingCandidate;
-    }
-  | {
-      /**
-       * L2 同页 Content Check（替代候选确认模态的默认流程）。
-       * fallbackCandidate 用于该 record 无 Confirmed Source 行（L2 前存量
-       * 记录）时回退旧 CandidateConfirmDialog 流程。
-       */
+      /** L2 同页 Content Check。Confirmed Source 404 走 resume-not-found。 */
       kind: "content-check";
       recordId: string;
       filename: string | null;
       inputSnapshot: string | null;
       origin: "submit" | "resume";
-      fallbackCandidate: PendingCandidate | null;
     }
   | {
       kind: "rejected";
@@ -87,8 +76,6 @@ type SubmitState =
   | { kind: "resume-not-found"; recordId: string; message: string }
   | { kind: "resume-return-to-library"; message: string }
   | { kind: "resume-failed"; recordId: string; message: string };
-
-type ReaderCandidateResumePayload = ReaderCandidateDocumentReadResult;
 
 type UnifiedSubmitPayload =
   | ({ ok: true } & ReaderUnifiedInputSubmitResponseDto)
@@ -110,14 +97,6 @@ interface AttachedSource {
 
 type PipelineOutcome = ReaderArtifactPipelineStatusSafeDto["outcome"];
 type PipelineNextAction = ReaderArtifactPipelineStatusSafeDto["next_action"];
-
-const LOADING_MESSAGES = [
-  "正在梳理文章结构",
-  "正在识别关键表达",
-  "正在整理语法线索",
-  "正在生成精读批注",
-  "正在准备阅读视图",
-];
 
 const SOURCE_ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/jpg,image/webp,image/gif";
 const SUPPORTED_SOURCE_FORMATS = "PDF / Markdown / TXT / PNG / JPG / WEBP / GIF";
@@ -202,7 +181,7 @@ function summarizeOutcome(outcome: PipelineOutcome): string {
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024)).toLocaleString("en-US")} KB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
@@ -301,7 +280,7 @@ function ApertureCornerSubmitButton({
       </span>
       <span className="aperture-corner-cta__content">
         <span className="aperture-corner-cta__label">
-          {isPending ? "透读中..." : "开始透读"}
+          {isPending ? "透读中…" : "开始透读"}
         </span>
         {!isPending ? (
           <ArrowRight aria-hidden className="aperture-corner-cta__arrow" />
@@ -329,6 +308,7 @@ function MiniAperturePulse({ className }: { className?: string }) {
 }
 
 function AnalysisLoadingArtwork() {
+  // 静态品牌插画：不叠加编排动效（DESIGN.md 禁止用动效表演解析过程）。
   return (
     <div className="relative h-[18.5rem] w-full max-w-[34rem] sm:h-[20rem]">
       <div className="absolute inset-0 flex items-center justify-center">
@@ -341,232 +321,12 @@ function AnalysisLoadingArtwork() {
             sizes="(max-width: 640px) 80vw, 29rem"
             className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
           />
-
-          <div className="pointer-events-none absolute inset-0 motion-reduce:hidden" aria-hidden="true">
-            <span className="loading-stage__pulse loading-stage__pulse--outer" />
-            <span className="loading-stage__pulse loading-stage__pulse--inner" />
-            <span className="loading-stage__scan-track" />
-            <span className="loading-stage__scan-core" />
-            <span className="loading-stage__glint loading-stage__glint--left" />
-            <span className="loading-stage__glint loading-stage__glint--right" />
-            <span className="loading-stage__highlight-shimmer" />
-          </div>
         </div>
       </div>
-
-      <style>{`
-        .loading-stage__pulse {
-          position: absolute;
-          left: 57%;
-          top: 46.2%;
-          transform: translate(-50%, -50%) scale(0.92);
-          border-radius: 999px;
-          border: 1px solid color-mix(in srgb, var(--lens-blue) 16%, transparent);
-          opacity: 0;
-          animation: loading-stage-pulse 3.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-        }
-
-        .loading-stage__pulse--outer {
-          width: 26%;
-          height: 26%;
-        }
-
-        .loading-stage__pulse--inner {
-          width: 18%;
-          height: 18%;
-          animation-delay: 0.24s;
-        }
-
-        .loading-stage__scan-track {
-          position: absolute;
-          left: 28%;
-          right: 19%;
-          top: 49.2%;
-          height: 1px;
-          overflow: hidden;
-        }
-
-        .loading-stage__scan-core {
-          position: absolute;
-          left: 28%;
-          top: calc(49.2% - 3px);
-          width: 52%;
-          height: 6px;
-          border-radius: 999px;
-          background: color-mix(in srgb, var(--lens-blue) 50%, transparent);
-          opacity: 0;
-          filter: blur(0.4px);
-          animation: loading-stage-scan 3.1s ease-in-out infinite;
-        }
-
-        .loading-stage__glint {
-          position: absolute;
-          width: 16px;
-          height: 16px;
-          opacity: 0;
-        }
-
-        .loading-stage__glint::before,
-        .loading-stage__glint::after {
-          content: "";
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%);
-          border-radius: 999px;
-          background: color-mix(in srgb, var(--surface) 72%, var(--lens-blue) 28%);
-        }
-
-        .loading-stage__glint::before {
-          width: 16px;
-          height: 2px;
-        }
-
-        .loading-stage__glint::after {
-          width: 2px;
-          height: 16px;
-        }
-
-        .loading-stage__glint--left {
-          left: 19.2%;
-          top: 60.8%;
-          animation: loading-stage-glint-left 3.1s ease-in-out infinite;
-        }
-
-        .loading-stage__glint--right {
-          left: 78.4%;
-          top: 29.8%;
-          width: 14px;
-          height: 14px;
-          animation: loading-stage-glint-right 3.1s ease-in-out infinite;
-        }
-
-        .loading-stage__highlight-shimmer {
-          position: absolute;
-          left: 36.2%;
-          top: 63.6%;
-          width: 18.5%;
-          height: 4.2%;
-          overflow: hidden;
-          border-radius: 999px;
-          opacity: 0;
-          animation: loading-stage-shimmer 3.1s ease-in-out infinite;
-        }
-
-        .loading-stage__highlight-shimmer::before {
-          content: "";
-          position: absolute;
-          inset: 0;
-          background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
-          transform: translateX(-115%);
-          animation: loading-stage-shimmer-pass 3.1s ease-in-out infinite;
-        }
-
-        @keyframes loading-stage-pulse {
-          0%,
-          14%,
-          100% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(0.92);
-          }
-
-          30% {
-            opacity: 0.42;
-          }
-
-          56% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(1.18);
-          }
-        }
-
-        @keyframes loading-stage-scan {
-          0%,
-          16%,
-          100% {
-            opacity: 0;
-            transform: translateX(-18%);
-          }
-
-          28% {
-            opacity: 0.88;
-          }
-
-          62% {
-            opacity: 0.24;
-            transform: translateX(18%);
-          }
-        }
-
-        @keyframes loading-stage-glint-left {
-          0%,
-          38%,
-          100% {
-            opacity: 0;
-            transform: scale(0.72);
-          }
-
-          46% {
-            opacity: 0.88;
-            transform: scale(1);
-          }
-
-          58% {
-            opacity: 0;
-            transform: scale(1.08);
-          }
-        }
-
-        @keyframes loading-stage-glint-right {
-          0%,
-          60%,
-          100% {
-            opacity: 0;
-            transform: scale(0.74);
-          }
-
-          68% {
-            opacity: 0.72;
-            transform: scale(1);
-          }
-
-          79% {
-            opacity: 0;
-            transform: scale(1.06);
-          }
-        }
-
-        @keyframes loading-stage-shimmer {
-          0%,
-          56%,
-          100% {
-            opacity: 0;
-          }
-
-          68%,
-          88% {
-            opacity: 0.72;
-          }
-        }
-
-        @keyframes loading-stage-shimmer-pass {
-          0%,
-          56% {
-            transform: translateX(-115%);
-          }
-
-          86% {
-            transform: translateX(118%);
-          }
-
-          100% {
-            transform: translateX(118%);
-          }
-        }
-      `}</style>
     </div>
   );
 }
+
 
 function AnalysisLoadingStage({
   title,
@@ -606,33 +366,26 @@ function AnalysisLoadingStage({
 
 export function AnalysisLoadingStatusBar({
   messagePrefix,
+  detail,
 }: {
   messagePrefix: string;
+  /** 真实阶段状态（pipeline next_action 映射），无则不显示。 */
+  detail?: string;
 }) {
-  const [messageIndex, setMessageIndex] = useState(0);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setMessageIndex((current) => (current + 1) % LOADING_MESSAGES.length);
-    }, 2600);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
   return (
     <div className="flex min-h-12 max-w-[38rem] items-center gap-3 font-sans text-[0.78rem]">
       <MiniAperturePulse className="h-8 w-8 bg-surface/76" />
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <p className="shrink-0 font-semibold text-ink">{messagePrefix}</p>
-          <span className="hidden h-1 w-1 shrink-0 rounded-full bg-hairline sm:inline-flex" aria-hidden="true" />
-          <p
-            key={messageIndex}
-            className="min-w-0 text-[0.75rem] font-semibold text-ink/74 motion-safe:animate-in motion-safe:fade-in motion-reduce:animate-none"
-            aria-live="polite"
-          >
-            {LOADING_MESSAGES[messageIndex]}
-          </p>
+          {detail ? (
+            <>
+              <span className="hidden h-1 w-1 shrink-0 rounded-full bg-hairline sm:inline-flex" aria-hidden="true" />
+              <p className="min-w-0 text-[0.75rem] font-semibold text-ink/74" aria-live="polite">
+                {detail}
+              </p>
+            </>
+          ) : null}
         </div>
         <p className="mt-1 min-w-0 text-[0.72rem] font-medium leading-5 text-muted-foreground">
           离开本页不会影响透读，完成后会保存到阅读记录
@@ -649,22 +402,30 @@ const SOURCE_FORMAT_SHORT_LABELS: Record<SourceFileKind, string> = {
   image: "图片",
 };
 
+const SOURCE_KIND_ICONS: Record<SourceFileKind, typeof FileText> = {
+  pdf: FileText,
+  markdown: FileType,
+  text: FileType,
+  image: ImageIcon,
+};
+
 /**
- * 上传文件状态：压缩成单一文件行（图标 + 文件名 + 格式 · 大小 + 更换/移除）。
- * 不重复解释流程状态（格式待处理提示、提交后动作说明），不提供无判断
- * 价值的装饰性预览卡。
+ * 上传文件状态：文件行（按类型区分图标 + 文件名 + 格式 · 大小 + 更换/移除）
+ * + 一行「接下来会发生什么」的低噪预告，消除信任移交时刻的沉默。
  */
 function SourceFilePreview({
   source,
   onReplace,
   onRemove,
+  stashedTextHint,
 }: {
   source: AttachedSource;
   onReplace: () => void;
   onRemove: () => void;
+  stashedTextHint?: boolean;
 }) {
   const { descriptor } = source;
-  const isImage = descriptor.kind === "image";
+  const KindIcon = SOURCE_KIND_ICONS[descriptor.kind];
 
   return (
     <div
@@ -676,11 +437,7 @@ function SourceFilePreview({
         className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-3 border-b border-hairline/70 pb-5 font-sans"
       >
         <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface/70 text-ink">
-          {isImage ? (
-            <ImageIcon aria-hidden className="h-4.5 w-4.5" />
-          ) : (
-            <FileText aria-hidden className="h-4.5 w-4.5" />
-          )}
+          <KindIcon aria-hidden className="h-4.5 w-4.5" />
         </span>
         <div className="min-w-0 flex-1 basis-48">
           <p
@@ -697,11 +454,29 @@ function SourceFilePreview({
           <Button type="button" variant="secondary" size="sm" onClick={onReplace}>
             更换
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRemove}
+            className="hover:text-feedback-error"
+          >
             移除
           </Button>
         </div>
       </div>
+      <ol className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 font-sans text-[0.74rem] font-medium text-muted-foreground">
+        <li>提取文字</li>
+        <li aria-hidden="true" className="text-subtle">→</li>
+        <li>可能需要你过目</li>
+        <li aria-hidden="true" className="text-subtle">→</li>
+        <li>开始阅读</li>
+      </ol>
+      {stashedTextHint ? (
+        <p className="mt-2 font-sans text-[0.74rem] font-medium text-muted-foreground">
+          已暂存你粘贴的内容，移除文件后恢复
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -719,6 +494,7 @@ export function AnalyzeSubmitForm({
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dragDepthRef = useRef(0);
   const attachedSourceRef = useRef<AttachedSource | null>(null);
+  const stashedEditorTextRef = useRef<string | null>(null);
   const [text, setText] = useState("");
   const [attachedSource, setAttachedSource] = useState<AttachedSource | null>(null);
   const [isDragActive, setDragActive] = useState(false);
@@ -727,7 +503,6 @@ export function AnalyzeSubmitForm({
   const [readingVariant, setReadingVariant] = useState<ReaderRecordReadingVariant>(defaults.readingVariant);
   const [isReadingPlanOpen, setReadingPlanOpen] = useState(false);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
-  const [isCandidateDialogOpen, setCandidateDialogOpen] = useState(false);
   // Phase 1 / P0: 输入端预警 lint 结果（非阻塞，后端仍是 fail-closed 单一真相源）
   const [lintResult, setLintResult] = useState<MarkdownLintResult>({
     warnings: [],
@@ -743,21 +518,42 @@ export function AnalyzeSubmitForm({
   const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
   // 状态栏只呈现近似词数（基于已 debounce 的 text，不恢复逐键 serialize）。
   const approxWordCount = useMemo(() => formatApproxWordCount(text), [text]);
+  // Markdown 结构识别确认（安静、非阻塞）：让用户看到格式被理解。
+  const markdownStructureLabels = useMemo(() => {
+    if (!text.trim()) return [];
+    const labels: string[] = [];
+    if (/^#{1,6}\s/m.test(text)) labels.push("标题");
+    if (/^\s*(?:[-*+]|\d+\.)\s/m.test(text)) labels.push("列表");
+    if (/^\s*\|.*\|\s*$/m.test(text)) labels.push("表格");
+    if (/^```/m.test(text)) labels.push("代码块");
+    if (/^>\s?/m.test(text)) labels.push("引用");
+    return labels;
+  }, [text]);
 
   // L2/L3：编辑器有内容（或进入 Content Check）后收起 Hero，编辑器成首屏主任务。
-  const { setHasContent } = useReadPageUi();
+  // Content Check / 等待解析进入 focusMode：右侧「今日精选」收起，任务区获得全宽。
+  const { setHasContent, setFocusMode } = useReadPageUi();
   useEffect(() => {
     setHasContent(
       Boolean(attachedSource) || text.trim().length > 0 || state.kind === "content-check",
     );
   }, [attachedSource, text, state.kind, setHasContent]);
+  useEffect(() => {
+    setFocusMode(state.kind === "content-check" || isWaiting);
+  }, [state.kind, isWaiting, setFocusMode]);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const resumeRecordId = searchParams.get("resume_candidate")?.trim() ?? "";
 
     if (resumeRecordId) {
-      void runResumeFlow(resumeRecordId);
+      setState({
+        kind: "content-check",
+        recordId: resumeRecordId,
+        filename: null,
+        inputSnapshot: null,
+        origin: "resume",
+      });
       return;
     }
 
@@ -767,16 +563,12 @@ export function AnalyzeSubmitForm({
         const snapshot = pending.inputSnapshot ?? "";
         setText(snapshot);
         markdownEditorRef.current?.setValue(snapshot);
-        // 刷新恢复：默认走 L2 Content Check（GET confirmed-source 拿
-        // draft + 最新 candidate）；存量记录无 source 行时由面板回退旧
-        // 候选确认模态。
         setState({
           kind: "content-check",
           recordId: pending.readingRecordId,
           filename: pending.filename ?? null,
           inputSnapshot: pending.inputSnapshot ?? null,
-          origin: "submit",
-          fallbackCandidate: pending,
+          origin: pending.origin === "resume" ? "resume" : "submit",
         });
       }
     }, 0);
@@ -821,7 +613,12 @@ export function AnalyzeSubmitForm({
     clearPendingCandidate();
     lastFileRef.current = null;
     setCurrentAttachedSource(null);
-    setCandidateDialogOpen(false);
+    const stashed = stashedEditorTextRef.current;
+    stashedEditorTextRef.current = null;
+    if (stashed !== null) {
+      setText(stashed);
+      markdownEditorRef.current?.setValue(stashed);
+    }
     setState({ kind: "idle" });
     resetFileInput();
     markdownEditorRef.current?.focus();
@@ -830,7 +627,6 @@ export function AnalyzeSubmitForm({
   function selectSourceFile(file: File) {
     stopPolling();
     clearPendingCandidate();
-    setCandidateDialogOpen(false);
     setDragActive(false);
     dragDepthRef.current = 0;
 
@@ -843,6 +639,11 @@ export function AnalyzeSubmitForm({
         message: validation.message,
       });
       return;
+    }
+
+    if (stashedEditorTextRef.current === null) {
+      const live = markdownEditorRef.current?.flush() ?? text;
+      stashedEditorTextRef.current = live;
     }
 
     lastFileRef.current = file;
@@ -978,7 +779,7 @@ export function AnalyzeSubmitForm({
         stopPolling();
         setState({
           kind: "error",
-          message: "文件解析服务暂未启动或队列阻塞，请确认本地 Worker 已启动后重试。",
+          message: "解析服务暂时没响应，请稍后重试或换个文件",
         });
         return;
       }
@@ -1034,22 +835,19 @@ export function AnalyzeSubmitForm({
         });
         return;
       }
-      const saved = savePendingCandidate({
+      savePendingCandidate({
         readingRecordId,
         candidateDocumentId,
         originalInputId: null,
         inputSnapshot: null,
         filename: currentFilename,
-        canonicalTextPreview: status.candidate_document?.canonical_text_preview ?? null,
       });
-      // L2 默认流程：同页 Content Check；存量记录由面板回退旧模态。
       setState({
         kind: "content-check",
         recordId: readingRecordId,
         filename: currentFilename,
         inputSnapshot: null,
         origin: "submit",
-        fallbackCandidate: saved,
       });
       return;
     }
@@ -1085,7 +883,7 @@ export function AnalyzeSubmitForm({
     setState({
       kind: "artifact-uploading",
       filename: file.name,
-      message: "正在准备上传...",
+      message: "正在准备上传…",
     });
 
     try {
@@ -1118,7 +916,7 @@ export function AnalyzeSubmitForm({
       setState({
         kind: "artifact-uploading",
         filename: file.name,
-        message: "正在上传文件...",
+        message: "正在上传文件…",
       });
 
       let putOk = false;
@@ -1155,7 +953,7 @@ export function AnalyzeSubmitForm({
       setState({
         kind: "artifact-uploading",
         filename: file.name,
-        message: "正在提交文件...",
+        message: "正在提交文件…",
       });
 
       const submitResult = await postSubmitInput(artifactId, {
@@ -1183,124 +981,6 @@ export function AnalyzeSubmitForm({
         kind: "error",
         message: userFacingErrorCopy(error, "文件处理失败，请稍后重试。"),
       });
-    }
-  }
-
-  async function runResumeFlow(recordId: string) {
-    // L2：resume 入口改为 GET confirmed-source（draft + 最新 candidate，
-    // 合同 “GET draft / resume 语义”）。404（L2 前存量记录无 source 行）回退旧
-    // candidate-document 流；record_state_advanced 直接打开 Reader。
-    try {
-      const sourceResponse = await fetch(
-        `/api/web/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
-        { method: "GET" },
-      );
-      const sourcePayload = (await sourceResponse.json()) as {
-        ok: boolean;
-        status?: number;
-        code?: string;
-        message?: string;
-      };
-      if (sourcePayload.ok) {
-        setState({
-          kind: "content-check",
-          recordId,
-          filename: null,
-          inputSnapshot: null,
-          origin: "resume",
-          fallbackCandidate: null,
-        });
-        return;
-      }
-      if (sourcePayload.code === "candidate_conflict_open_reader") {
-        router.push(appReaderRoute(recordId));
-        return;
-      }
-      if (sourcePayload.status !== 404 && sourcePayload.code !== "confirmed_source_not_found") {
-        setState({
-          kind: "resume-failed",
-          recordId,
-          message: sourcePayload.message?.trim() || "加载失败，请稍后重试。",
-        });
-        return;
-      }
-      // 404：走下方旧 candidate-document 恢复流。
-    } catch {
-      // 网络异常不是 404：不穿透到旧端点（会掩盖真实故障），直接呈现可重试失败。
-      setState({
-        kind: "resume-failed",
-        recordId,
-        message: "加载失败，请稍后重试。",
-      });
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `/api/web/reader/records/${encodeURIComponent(recordId)}/candidate-document`,
-        { method: "GET" },
-      );
-      const payload = (await response.json()) as ReaderCandidateResumePayload;
-
-      if (payload.ok) {
-        const candidate: PendingCandidate = {
-          readingRecordId: payload.record_id,
-          candidateDocumentId: payload.candidate_document_id,
-          originalInputId: null,
-          inputSnapshot: null,
-          filename: payload.filename ?? null,
-          canonicalTextPreview:
-            payload.preview.preview_text?.trim() ||
-            payload.title?.trim() ||
-            null,
-          documentOutline: payload.preview.document_outline ?? [],
-          riskItems: payload.preview.risk_items ?? [],
-          previewMode: payload.preview.preview_mode,
-          totalCharCount: payload.preview.total_char_count,
-          origin: "resume",
-          savedAt: new Date().toISOString(),
-        };
-        // Do NOT save to localStorage; the BFF is the source of truth.
-        // Do NOT call setText() — resume mode must not pre-fill the input.
-        setState({ kind: "candidate", candidate });
-        setCandidateDialogOpen(true);
-        return;
-      }
-
-      handleResumeError(recordId, payload);
-    } catch {
-      setState({
-        kind: "resume-failed",
-        recordId,
-        message: "加载失败，请稍后重试。",
-      });
-    }
-  }
-
-  function handleResumeError(
-    recordId: string,
-    payload: { status: number; code?: string; message?: string },
-  ) {
-    const message = payload.message?.trim() || "加载失败，请稍后重试。";
-    switch (payload.code) {
-      case "candidate_conflict_open_reader":
-        router.push(appReaderRoute(recordId));
-        return;
-      case "candidate_conflict_return_to_library":
-        setState({
-          kind: "resume-return-to-library",
-          message: "这篇内容当前无法继续确认。",
-        });
-        return;
-      case "candidate_not_found":
-        setState({
-          kind: "resume-not-found",
-          recordId,
-          message: "未找到可继续确认的内容。",
-        });
-        return;
-      default:
-        setState({ kind: "resume-failed", recordId, message });
     }
   }
 
@@ -1352,7 +1032,7 @@ export function AnalyzeSubmitForm({
     // submitText 重新计算并刷新 badge；不阻断、服务端权威清洗。
     setLintResult(lintMarkdownInput(submitText));
 
-    setState({ kind: "pending", message: "正在提交透读任务..." });
+    setState({ kind: "pending", message: "正在提交，准备解析…" });
 
     try {
       const response = await fetch(readPageSubmitEndpoint(), {
@@ -1388,29 +1068,26 @@ export function AnalyzeSubmitForm({
           return;
         }
         case "candidate_document_required": {
-          const pending = savePendingCandidate({
+          savePendingCandidate({
             readingRecordId: payload.reading_record_id,
             candidateDocumentId: payload.candidate_document_id,
             originalInputId: payload.original_input_id,
             inputSnapshot: trimmed,
           });
-          // L2 默认流程：同页 Content Check（GET confirmed-source 加载草稿）。
-          // 存量记录无 source 行时面板回退旧候选确认模态；pending 保存失败
-          // 不阻断——草稿在服务端，稍后处理/刷新恢复仅依赖 localStorage。
           setState({
             kind: "content-check",
             recordId: payload.reading_record_id,
             filename: null,
             inputSnapshot: trimmed,
             origin: "submit",
-            fallbackCandidate: pending,
           });
           return;
         }
         case "input_rejected_or_action_required": {
           setState({
             kind: "rejected",
-            reasons: payload.suitability.reasons ?? [],
+            // suitability.reasons 是后端英文诊断句，不上屏；按 flags 映射。
+            reasons: rejectedReasonCopyForFlags(payload.suitability.flags ?? []),
             preview: payload.suitability.normalized_preview ?? "",
           });
           return;
@@ -1437,11 +1114,19 @@ export function AnalyzeSubmitForm({
   const loadingStageTitle =
     state.kind === "artifact-uploading" || state.kind === "artifact-polling"
       ? "正在提取这份来源"
-      : "正在透读这篇文章";
+      : "正在准备阅读";
   const waitingMessagePrefix =
-    state.kind === "artifact-uploading" || state.kind === "artifact-polling"
-      ? "正在提取"
-      : "正在透读";
+    state.kind === "artifact-uploading"
+      ? "正在上传"
+      : state.kind === "artifact-polling"
+        ? "正在提取"
+        : "正在准备";
+  const waitingDetail =
+    state.kind === "artifact-uploading" ||
+    state.kind === "artifact-polling" ||
+    state.kind === "pending"
+      ? state.message
+      : undefined;
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -1475,17 +1160,12 @@ export function AnalyzeSubmitForm({
               clearPendingCandidate();
               router.push(appReaderRoute(recordId) as Route);
             }}
-            onLegacyFallback={() => {
-              if (state.fallbackCandidate) {
-                setState({ kind: "candidate", candidate: state.fallbackCandidate });
-                setCandidateDialogOpen(true);
-              } else {
-                setState({
-                  kind: "resume-not-found",
-                  recordId: state.recordId,
-                  message: "未找到可继续确认的内容。",
-                });
-              }
+            onSourceMissing={() => {
+              setState({
+                kind: "resume-not-found",
+                recordId: state.recordId,
+                message: "这条记录来自旧版本，无法继续确认，请重新提交",
+              });
             }}
             onBackToInput={(markdown) => {
               clearPendingCandidate();
@@ -1502,7 +1182,6 @@ export function AnalyzeSubmitForm({
                   originalInputId: null,
                   inputSnapshot: state.inputSnapshot,
                   filename: state.filename,
-                  canonicalTextPreview: info.canonicalTextPreview,
                 });
               }
               setState({ kind: "idle" });
@@ -1557,6 +1236,7 @@ export function AnalyzeSubmitForm({
               source={attachedSource}
               onReplace={openFilePicker}
               onRemove={clearAttachedSource}
+              stashedTextHint={Boolean(stashedEditorTextRef.current?.trim())}
             />
           ) : (
             <MarkdownTextInput
@@ -1565,7 +1245,7 @@ export function AnalyzeSubmitForm({
               ariaLabelledBy="analysis-text-label"
               ariaDescribedBy="analysis-text-hint"
               placeholder="粘贴英文文章，或直接开始输入"
-              placeholderSub="支持网页、Markdown、PDF、TXT"
+              placeholderSub="支持 Markdown / PDF / TXT / 图片"
               initialValue={text}
               onChange={(markdown) => {
                 setText(markdown);
@@ -1607,6 +1287,7 @@ export function AnalyzeSubmitForm({
             {isWaiting ? (
               <AnalysisLoadingStatusBar
                 messagePrefix={waitingMessagePrefix}
+                detail={waitingDetail}
               />
             ) : (
               <div
@@ -1623,6 +1304,22 @@ export function AnalyzeSubmitForm({
                       title={`共 ${text.trim().length.toLocaleString("zh-CN")} 字符`}
                     >
                       {approxWordCount}
+                    </span>
+                  ) : null}
+
+                  {!attachedSource && !text.trim() ? (
+                    <span className="font-medium text-subtle">
+                      粘贴文章或上传文件后即可开始
+                    </span>
+                  ) : null}
+
+                  {!attachedSource && markdownStructureLabels.length > 0 ? (
+                    <span
+                      data-testid="read-source-structure-hint"
+                      className="inline-flex items-center gap-1 font-medium text-subtle"
+                    >
+                      <Check aria-hidden className="h-3 w-3 text-lens-blue" />
+                      已识别{markdownStructureLabels.join("、")}结构
                     </span>
                   ) : null}
 
@@ -1653,12 +1350,10 @@ export function AnalyzeSubmitForm({
                   {!attachedSource ? (
                     <button
                       type="button"
-                      className="focus-ring group/source inline-flex min-h-9 shrink-0 items-center gap-2 self-start whitespace-nowrap px-0 text-sm font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
+                      className="focus-ring group/source inline-flex min-h-10 shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-[var(--cl-radius-control-sm)] border border-hairline/80 bg-surface/40 px-3 text-sm font-medium leading-none text-ink transition-colors duration-200 hover:border-lens-blue/34 hover:text-lens-blue"
                       onClick={openFilePicker}
                     >
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
-                        <FileUp aria-hidden className="h-3.5 w-3.5" />
-                      </span>
+                      <FileUp aria-hidden className="h-3.5 w-3.5 text-subtle transition-colors duration-200 group-hover/source:text-lens-blue" />
                       <span>上传文件</span>
                     </button>
                   ) : null}
@@ -1715,7 +1410,7 @@ export function AnalyzeSubmitForm({
         )}
       </div>
 
-      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "content-check" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
+      {state.kind !== "idle" && !isWaiting && state.kind !== "content-check" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
         <div
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-feedback-error" : "text-lens-blue"
@@ -1752,68 +1447,6 @@ export function AnalyzeSubmitForm({
             </div>
           ) : null}
         </div>
-      ) : null}
-
-      {state.kind === "candidate" ? (
-        <>
-          {!isCandidateDialogOpen ? (
-            <section
-              role="status"
-              aria-live="polite"
-              className="relative z-30 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-ink lg:mx-12"
-            >
-              <div className="min-w-0">
-                <p className="font-semibold">已提取出待确认的英文正文</p>
-                <p className="mt-1 text-[0.76rem] text-muted-foreground">
-                  请确认正文完整后进入透读。
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="primary-ink"
-                  size="sm"
-                  onClick={() => setCandidateDialogOpen(true)}
-                >
-                  查看并确认
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    clearPendingCandidate();
-                    const snapshot = state.candidate.inputSnapshot ?? "";
-                    setText(snapshot);
-                    markdownEditorRef.current?.setValue(snapshot);
-                    setCurrentAttachedSource(null);
-                    setState({ kind: "idle" });
-                    setCandidateDialogOpen(false);
-                  }}
-                >
-                  重新编辑
-                </Button>
-              </div>
-            </section>
-          ) : null}
-          <CandidateConfirmDialog
-            candidate={state.candidate}
-            open={isCandidateDialogOpen}
-            onOpenChange={setCandidateDialogOpen}
-            mode={state.candidate.origin === "resume" ? "resume" : "submit"}
-            onConfirmed={(candidate) => {
-              router.push(appReaderRoute(candidate.readingRecordId));
-            }}
-            onRestart={(candidate) => {
-              const snapshot = candidate.inputSnapshot ?? "";
-              setText(snapshot);
-              markdownEditorRef.current?.setValue(snapshot);
-              setCurrentAttachedSource(null);
-              setState({ kind: "idle" });
-              setCandidateDialogOpen(false);
-            }}
-          />
-        </>
       ) : null}
 
       {state.kind === "rejected" ? (
@@ -1905,7 +1538,15 @@ export function AnalyzeSubmitForm({
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => void runResumeFlow(state.recordId)}
+              onClick={() =>
+                setState({
+                  kind: "content-check",
+                  recordId: state.recordId,
+                  filename: null,
+                  inputSnapshot: null,
+                  origin: "resume",
+                })
+              }
             >
               重试加载
             </Button>

@@ -110,13 +110,13 @@ function makeReadResponse(overrides: Record<string, unknown> = {}) {
     ],
     content_check: [
       {
-        code: "unclosed_fence",
-        message: "代码块缺少结束围栏",
+        code: "has_unclosed_fence",
+        message: "Fenced code block is missing its closing fence.",
         classification: "content_check" as const,
       },
       {
-        code: "footnote_ref",
-        message: "脚注引用无法入结构",
+        code: "footnote_reference",
+        message: "Footnote reference encountered.",
         classification: "content_check" as const,
       },
     ],
@@ -172,7 +172,7 @@ function renderPanel(overrides: Partial<Parameters<typeof ContentCheckPanel>[0]>
     origin: "submit",
     onOpenReader: vi.fn(),
     onConfirmed: vi.fn(),
-    onLegacyFallback: vi.fn(),
+    onSourceMissing: vi.fn(),
     onBackToInput: vi.fn(),
     onDefer: vi.fn(),
     ...overrides,
@@ -202,7 +202,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
 
     const panel = screen.getByTestId("content-check-panel");
     expect(panel.textContent).toContain("先请你过目");
-    expect(panel.textContent).toContain("冻结这份正文");
+    expect(panel.textContent).toContain("正文冻结");
     expect(screen.getByText("确认识别出的正文")).toBeTruthy();
 
     // 结构化预览：编辑器内是内容本身，不裸露整篇 Markdown 之外的
@@ -220,8 +220,8 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     expect(rail.textContent).not.toContain("已移除原始 HTML 块");
 
     fireEvent.click(screen.getByRole("button", { name: /已自动处理 2 项/ }));
-    expect(rail.textContent).toContain("已移除原始 HTML 块");
-    expect(rail.textContent).toContain("已降级不安全链接");
+    expect(rail.textContent).toContain("网页标记已清理");
+    expect(rail.textContent).toContain("不安全链接已去掉");
   });
 
   it("content_check 风险卡片展示上下文与建议，支持逐条处置", async () => {
@@ -233,38 +233,39 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     expect(items).toHaveLength(2);
 
     const fenceItem = items.find(
-      (item) => item.getAttribute("data-code") === "unclosed_fence",
+      (item) => item.getAttribute("data-code") === "has_unclosed_fence",
     )!;
-    // 原文上下文（excerpt 从草稿派生）+ 明确建议。
+    // 原文上下文（excerpt 从草稿派生）+ 明确建议。不直接渲染后端 message。
     expect(fenceItem.textContent).toContain("```python");
-    expect(fenceItem.textContent).toContain("建议：");
+    expect(fenceItem.textContent).toContain("建议补上");
     expect(fenceItem.textContent).toContain("采用建议");
+    expect(fenceItem.textContent).toContain("代码块未闭合");
 
     // 保留普通文字：处置单条风险。
     const footnoteItem = items.find(
-      (item) => item.getAttribute("data-code") === "footnote_ref",
+      (item) => item.getAttribute("data-code") === "footnote_reference",
     )!;
     fireEvent.click(
       Array.from(footnoteItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "保留普通文字",
+        (button) => button.textContent === "保留原文",
       )!,
     );
     await waitFor(() =>
       expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
     );
     expect(screen.getByTestId("content-check-resolved-summary").textContent).toContain(
-      "已按普通文字处理 1 项",
+      "已处理 1 项",
     );
   });
 
-  it("采用建议对 unclosed_fence 机械补全围栏并写回编辑器", async () => {
+  it("采用建议对 has_unclosed_fence 机械补全围栏并写回编辑器", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
 
     const fenceItem = screen
       .getAllByTestId("content-check-risk-item")
-      .find((item) => item.getAttribute("data-code") === "unclosed_fence")!;
+      .find((item) => item.getAttribute("data-code") === "has_unclosed_fence")!;
     fireEvent.click(
       Array.from(fenceItem.querySelectorAll("button")).find(
         (button) => button.textContent?.includes("采用建议"),
@@ -279,12 +280,12 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       expect(
         screen
           .getAllByTestId("content-check-risk-item")
-          .some((item) => item.getAttribute("data-code") === "unclosed_fence"),
+          .some((item) => item.getAttribute("data-code") === "has_unclosed_fence"),
       ).toBe(false),
     );
   });
 
-  it("全部按普通文字继续清空风险列表", async () => {
+  it("全部保留原文清空风险列表", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
@@ -294,7 +295,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       expect(screen.queryAllByTestId("content-check-risk-item")).toHaveLength(0),
     );
     expect(screen.getByTestId("content-check-resolved-summary").textContent).toContain(
-      "已按普通文字处理 2 项",
+      "已处理 2 项",
     );
   });
 
@@ -302,12 +303,12 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     installFetchMock({
       content_check: [
         {
-          code: "footnote_ref",
+          code: "footnote_reference",
           message: "第一处脚注引用",
           classification: "content_check",
         },
         {
-          code: "footnote_ref",
+          code: "footnote_reference",
           message: "第二处脚注引用",
           classification: "content_check",
         },
@@ -324,7 +325,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const firstItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(firstItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "保留普通文字",
+        (button) => button.textContent === "保留原文",
       )!,
     );
     expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1);
@@ -425,12 +426,15 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
     );
     expect(screen.getByTestId("content-check-rejected").textContent).toContain(
+      "英文内容太短，补充成一段完整的英文文章再试。",
+    );
+    expect(screen.getByTestId("content-check-rejected").textContent).not.toContain(
       "内容过短",
     );
     expect((saveButton as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("rejected 原因回退：quality 无 reasons 时取 content_check 消息", async () => {
+  it("rejected 原因回退：quality 无 flags 时取 content_check 映射", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -486,7 +490,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
     );
     expect(screen.getByTestId("content-check-rejected").textContent).toContain(
-      "代码占比过高，不适合透读",
+      "这份内容以代码为主，批注价值有限，建议确认是否继续。",
     );
   });
 

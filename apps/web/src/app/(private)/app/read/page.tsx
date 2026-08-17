@@ -5,7 +5,12 @@ import { dailyArticleRoute, dailyRoute } from "@/lib/routes";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import { getProfileSettings } from "@/services/bff/profile";
 import { ReadPageIntake } from "./ReadPageIntake";
-import { ReadPageHero, ReadPageUiProvider } from "./read-page-ui";
+import {
+  DailyRailCollapsible,
+  ReadPageFocusGrid,
+  ReadPageHero,
+  ReadPageUiProvider,
+} from "./read-page-ui";
 
 export const dynamic = "force-dynamic";
 
@@ -134,38 +139,42 @@ export default async function PasteToReadPage() {
   return (
     <main className="min-h-dvh bg-surface-canvas px-5 py-6 text-ink sm:px-8 lg:h-dvh lg:overflow-y-auto lg:px-12 xl:px-14">
       <div className="mx-auto flex w-full max-w-[1920px] flex-col lg:h-full">
-        <div className="grid gap-10 lg:min-h-0 lg:flex-1 xl:grid-cols-[minmax(0,1fr)_24rem] xl:gap-12 2xl:gap-16">
+        <ReadPageUiProvider>
+          <ReadPageFocusGrid>
           <section className="flex min-w-0 flex-col pt-4 sm:pt-6 lg:min-h-0 lg:pt-8">
-            <ReadPageUiProvider>
-              <ReadPageHero />
+            <ReadPageHero />
 
-              <div className="mt-5 flex min-h-0 flex-1 flex-col lg:mt-6">
-                <ReadPageIntake
-                  readingGoal={readingDefaults.readingGoal}
-                  readingVariant={readingDefaults.readingVariant}
-                />
-              </div>
-            </ReadPageUiProvider>
+            <div className="mt-5 flex min-h-0 flex-1 flex-col lg:mt-6">
+              <ReadPageIntake
+                readingGoal={readingDefaults.readingGoal}
+                readingVariant={readingDefaults.readingVariant}
+              />
+            </div>
 
-            <details className="group mt-8 shrink-0 border-t border-hairline/70 pt-5 xl:hidden">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-sm font-semibold text-ink marker:hidden">
-                <span>今日精选</span>
-                <span className="text-xs font-medium text-muted-foreground transition-colors group-open:text-ink">
-                  展开
-                </span>
-              </summary>
-              <div className="mt-5 pb-2">
-                {renderDailyPickPanel()}
-              </div>
-            </details>
+            <DailyRailCollapsible className="xl:hidden">
+              <details className="group mt-8 shrink-0 border-t border-hairline/70 pt-5">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-sm font-semibold text-ink marker:hidden">
+                  <span>今日精选</span>
+                  <span className="text-xs font-medium text-muted-foreground transition-colors group-open:text-ink">
+                    展开
+                  </span>
+                </summary>
+                <div className="mt-5 pb-2">
+                  {renderDailyPickPanel()}
+                </div>
+              </details>
+            </DailyRailCollapsible>
           </section>
 
-          <aside className="hidden min-w-0 border-l border-hairline/60 pl-10 pt-8 xl:block">
-            <ScrollArea className="sticky top-8 max-h-[calc(100dvh-4rem)] pr-4">
-              {renderDailyPickPanel()}
-            </ScrollArea>
-          </aside>
-        </div>
+          <DailyRailCollapsible className="hidden min-w-0 border-l border-hairline/60 pl-10 pt-8 xl:block">
+            <aside>
+              <ScrollArea className="sticky top-8 max-h-[calc(100dvh-4rem)] pr-4">
+                {renderDailyPickPanel()}
+              </ScrollArea>
+            </aside>
+          </DailyRailCollapsible>
+          </ReadPageFocusGrid>
+        </ReadPageUiProvider>
       </div>
     </main>
   );

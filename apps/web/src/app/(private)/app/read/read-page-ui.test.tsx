@@ -5,10 +5,34 @@ import { useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  DailyRailCollapsible,
+  ReadPageFocusGrid,
   ReadPageHero,
   ReadPageUiProvider,
   useReadPageUi,
 } from "./read-page-ui";
+
+function FocusScene({ focus }: { focus: boolean }) {
+  return (
+    <ReadPageUiProvider>
+      <SetFocus value={focus} />
+      <ReadPageFocusGrid>
+        <section>任务区</section>
+        <DailyRailCollapsible className="hidden xl:block">
+          <aside>今日精选</aside>
+        </DailyRailCollapsible>
+      </ReadPageFocusGrid>
+    </ReadPageUiProvider>
+  );
+}
+
+function SetFocus({ value }: { value: boolean }) {
+  const { setFocusMode } = useReadPageUi();
+  useEffect(() => {
+    setFocusMode(value);
+  }, [setFocusMode, value]);
+  return null;
+}
 
 function HeroWithState({ hasContent }: { hasContent: boolean }) {
   return (
@@ -86,5 +110,27 @@ describe("ReadPageHero 同一身份收缩", () => {
     }
     render(<Probe />);
     expect(screen.getByText("no")).toBeTruthy();
+  });
+});
+
+describe("focusMode：专注任务态收起右侧今日精选", () => {
+  afterEach(cleanup);
+
+  it("非 focus：双列网格 + 今日精选可见", () => {
+    render(<FocusScene focus={false} />);
+    const grid = screen.getByTestId("read-page-focus-grid");
+    expect(grid.getAttribute("data-focus")).toBe("false");
+    expect(grid.className).toContain("xl:grid-cols-[minmax(0,1fr)_24rem]");
+    expect(screen.getByText("今日精选")).toBeTruthy();
+  });
+
+  it("focus：网格退化为居中单列，今日精选收起，不留空轨道", () => {
+    render(<FocusScene focus={true} />);
+    const grid = screen.getByTestId("read-page-focus-grid");
+    expect(grid.getAttribute("data-focus")).toBe("true");
+    expect(grid.className).toContain("xl:grid-cols-[minmax(0,72rem)]");
+    expect(grid.className).not.toContain("24rem");
+    expect(screen.queryByText("今日精选")).toBeNull();
+    expect(screen.getByText("任务区")).toBeTruthy();
   });
 });

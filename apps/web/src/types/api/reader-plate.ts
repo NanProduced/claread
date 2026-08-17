@@ -989,6 +989,10 @@ export type ReaderAdaptationClassificationDto =
 /**
  * Mirrors `AdaptationRecord` in
  * `services/api/app/schemas/reader_input_adapter.py` (L1, landed).
+ *
+ * `message` 是技术诊断字段。BFF 保留透传，供「技术详情」与调试。
+ * 前端常规 UI 禁止直接渲染 `message`；用户文案以
+ * `content-check-guidance.ts` 的 code 映射表为单一真相源。
  */
 export interface ReaderAdaptationRecordDto {
   code: string;

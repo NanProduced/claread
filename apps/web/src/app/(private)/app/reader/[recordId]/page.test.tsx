@@ -29,10 +29,6 @@ vi.mock("./ReaderOpenedBeacon", () => ({
   ReaderOpenedBeacon: () => null,
 }));
 
-vi.mock("./CandidateConfirmCallout", () => ({
-  CandidateConfirmCallout: () => null,
-}));
-
 function makeSnapshot(recordId: string): ReaderPlateSnapshotDto {
   return {
     record_id: recordId,

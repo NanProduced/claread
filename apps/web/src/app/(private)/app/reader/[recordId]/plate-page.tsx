@@ -19,7 +19,6 @@ import {
 } from "@/lib/reader-plate-snapshot/progressive-transition";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 
-import { CandidateConfirmCallout } from "./CandidateConfirmCallout";
 import { ReaderOpenedBeacon } from "./ReaderOpenedBeacon";
 
 function deriveSnapshotStateKind(
@@ -527,8 +526,6 @@ export default function ReadingRecordPage({
           recordId={recordId}
           snapshotStateKind={deriveSnapshotStateKind(snapshotState.kind)}
         />
-        <CandidateConfirmCallout recordId={recordId} />
-
         <ReaderProgressiveStatusStrip
           phase={progressivePhase}
           statusLine={progressiveStatusLine}

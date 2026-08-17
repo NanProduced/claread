@@ -38,7 +38,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   // Reader / Ask page layer
   { rel: "src/app/(private)/app/reader/[recordId]/FavoriteButton.tsx", label: "FavoriteButton (page)" },
   { rel: "src/app/(private)/app/read/page.tsx", label: "read page" },
-  { rel: "src/app/(private)/app/read/CandidateConfirmDialog.tsx", label: "CandidateConfirmDialog" },
   // Formerly conflicting files, now converged
   { rel: "src/app/(private)/app/read/AnalyzeSubmitForm.tsx", label: "AnalyzeSubmitForm" },
   { rel: "src/components/reader/AiWorkspacePanel.tsx", label: "AiWorkspacePanel" },

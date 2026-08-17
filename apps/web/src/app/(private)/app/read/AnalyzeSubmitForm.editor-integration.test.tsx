@@ -62,7 +62,6 @@ function seedPendingCandidate(inputSnapshot: string) {
       originalInputId: "inp_r1_reedit",
       inputSnapshot,
       filename: null,
-      canonicalTextPreview: null,
       origin: "submit",
       savedAt: new Date().toISOString(),
     }),
@@ -280,7 +279,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     // 空态辅助文案由 PlateContent 的 after: 伪元素绘制，中文界面不再
     // 出现纯英文占位提示。
     expect(editorEl.getAttribute("data-placeholder-sub")).toBe(
-      "支持网页、Markdown、PDF、TXT",
+      "支持 Markdown / PDF / TXT / 图片",
     );
     expect(
       Array.from(surface.children).some(

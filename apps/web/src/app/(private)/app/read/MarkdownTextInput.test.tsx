@@ -594,12 +594,12 @@ describe("workbench scroll & placeholder contract", () => {
         onChange={() => {}}
         onSubmit={() => {}}
         placeholder="粘贴英文文章，或直接开始输入"
-        placeholderSub="支持网页、Markdown、PDF、TXT"
+        placeholderSub="支持 Markdown、PDF、TXT"
       />,
     );
     const editorEl = utils.container.querySelector("#analysis-text") as HTMLElement;
     expect(editorEl.getAttribute("data-placeholder")).toBe("粘贴英文文章，或直接开始输入");
-    expect(editorEl.getAttribute("data-placeholder-sub")).toBe("支持网页、Markdown、PDF、TXT");
+    expect(editorEl.getAttribute("data-placeholder-sub")).toBe("支持 Markdown、PDF、TXT");
     expect(editorEl.getAttribute("aria-placeholder")).toBe("粘贴英文文章，或直接开始输入");
     // 桌面端正文是唯一滚动容器（工作台高度链的末端）。
     expect(editorEl.className).toContain("overflow-y-auto");

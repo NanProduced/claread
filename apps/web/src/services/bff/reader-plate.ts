@@ -1024,6 +1024,7 @@ const CONFIRMED_SOURCE_EDIT_SOURCES = new Set([
   "content_check",
 ]);
 
+/** 透传 code/message/classification。message 仅供技术详情，UI 不得当正文渲染。 */
 function sanitizeAdaptationRecords(value: unknown): ReaderAdaptationRecordDto[] {
   if (!Array.isArray(value)) return [];
   return (value as unknown[])

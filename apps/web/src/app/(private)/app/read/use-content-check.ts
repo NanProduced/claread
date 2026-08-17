@@ -16,7 +16,7 @@
  *   - source_frozen / record_state_advanced：记录已推进，交回 onOpenReader。
  *   - reparse/网络失败：保留用户编辑（dirty 不丢），可显式重试。
  *   - 404：该 record 没有 Confirmed Source 行（L2 之前的存量记录），
- *     交回 onLegacyFallback 走旧 candidate-document 流。
+ *     交回 onSourceMissing，由输入页展示终态提示。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,6 +28,11 @@ import type {
   ReaderConfirmedSourceUpdateOutcomeDto,
   ReaderConfirmedSourceUpdateResponseDto,
 } from "@/types/api/reader-plate";
+import {
+  guidanceForContentCheckCode,
+  mapRejectedFlagCopy,
+  rejectedReasonCopyForFlags,
+} from "./content-check-guidance";
 
 const AUTOSAVE_DEBOUNCE_MS = 1200;
 
@@ -52,26 +57,30 @@ export interface ContentCheckDraft {
 }
 
 /**
- * rejected outcome 的原因通道（真实后端合同）：PUT 响应无顶层
- * suitability，原因在 quality.suitability.reasons 与 content_check。
+ * rejected outcome 的用户可见原因。
+ * `quality.suitability.reasons` 与 `item.message` 是英文诊断，不上屏；
+ * 优先按 `quality.suitability.flags`（闭合 union）映射，无 flags 时回退
+ * content_check code 映射，最后通用兜底。
  */
 export function readRejectedReasons(
   quality: Record<string, unknown> | null,
   contentCheck: ReaderAdaptationRecordDto[],
 ): string[] {
   const suitability = quality?.suitability;
-  if (suitability && typeof suitability === "object") {
-    const reasons = (suitability as { reasons?: unknown }).reasons;
-    if (Array.isArray(reasons)) {
-      const strings = reasons.filter(
-        (item): item is string => typeof item === "string" && item.trim().length > 0,
-      );
-      if (strings.length > 0) return strings;
-    }
-  }
-  return contentCheck
-    .map((item) => item.message)
-    .filter((message) => message.trim().length > 0);
+  const flags =
+    suitability && typeof suitability === "object"
+      ? (suitability as { flags?: unknown }).flags
+      : undefined;
+  const flagList = Array.isArray(flags)
+    ? flags.filter((flag): flag is string => typeof flag === "string")
+    : [];
+  const flagCopy = mapRejectedFlagCopy(flagList);
+  if (flagCopy.length > 0) return flagCopy;
+  const codeCopy = contentCheck
+    .map((item) => guidanceForContentCheckCode(item.code).suggestion)
+    .filter((suggestion) => suggestion.trim().length > 0);
+  if (codeCopy.length > 0) return codeCopy;
+  return rejectedReasonCopyForFlags([]);
 }
 
 export type ContentCheckPhase =
@@ -108,7 +117,8 @@ type ConfirmResult = { ok: true } | BffError;
 export interface UseContentCheckOptions {
   recordId: string;
   onOpenReader: (recordId: string) => void;
-  onLegacyFallback: () => void;
+  /** Confirmed Source 不存在（L2 前存量记录）。 */
+  onSourceMissing: () => void;
   onConfirmed: (recordId: string) => void;
 }
 
@@ -131,6 +141,8 @@ export interface ContentCheckController {
   retryLoad: () => void;
   resolveCheckCode: (code: string) => void;
   resolveAllCheckCodes: (resolutionKeys?: readonly string[]) => void;
+  /** 撤销某项已决（恢复为待决）。 */
+  unresolveCheckCode: (code: string) => void;
 }
 
 function buildDraftFromRead(
@@ -184,7 +196,7 @@ function applyUpdateToDraft(
 export function useContentCheck({
   recordId,
   onOpenReader,
-  onLegacyFallback,
+  onSourceMissing,
   onConfirmed,
 }: UseContentCheckOptions): ContentCheckController {
   const [state, setState] = useState<ContentCheckState>({
@@ -205,11 +217,11 @@ export function useContentCheck({
   const saveChainRef = useRef<Promise<boolean>>(Promise.resolve(true));
   // 回调 ref，避免 async 流程捕获过期闭包。写入只能在 effect 中进行。
   const onOpenReaderRef = useRef(onOpenReader);
-  const onLegacyFallbackRef = useRef(onLegacyFallback);
+  const onSourceMissingRef = useRef(onSourceMissing);
   const onConfirmedRef = useRef(onConfirmed);
   useEffect(() => {
     onOpenReaderRef.current = onOpenReader;
-    onLegacyFallbackRef.current = onLegacyFallback;
+    onSourceMissingRef.current = onSourceMissing;
     onConfirmedRef.current = onConfirmed;
   });
 
@@ -250,7 +262,7 @@ export function useContentCheck({
       return draft;
     }
     if (payload.status === 404) {
-      onLegacyFallbackRef.current();
+      onSourceMissingRef.current();
       return null;
     }
     if (
@@ -590,6 +602,15 @@ export function useContentCheck({
     });
   }, []);
 
+  const unresolveCheckCode = useCallback((code: string) => {
+    setResolvedCheckCodes((current) => {
+      if (!current.has(code)) return current;
+      const next = new Set(current);
+      next.delete(code);
+      return next;
+    });
+  }, []);
+
   return {
     state,
     workingMarkdown,
@@ -602,5 +623,6 @@ export function useContentCheck({
     retryLoad,
     resolveCheckCode,
     resolveAllCheckCodes,
+    unresolveCheckCode,
   };
 }

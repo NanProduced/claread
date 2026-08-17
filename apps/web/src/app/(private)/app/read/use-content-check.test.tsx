@@ -6,13 +6,13 @@
  * 覆盖：初始 GET 加载、编辑→PUT reparse、stale 409 自动重放、双重 stale
  * 进入 conflict、conflict 恢复（载入最新 / 重放）、保存失败保留草稿、
  * confirm 成功 / stale_candidate_revision 重试 / stable 直达、
- * source_frozen → open_reader、404 → legacy fallback。
+ * source_frozen → open_reader、404 → onSourceMissing。
  */
 
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useContentCheck } from "./use-content-check";
+import { readRejectedReasons, useContentCheck } from "./use-content-check";
 
 const RECORD_ID = "rec_cc_1";
 
@@ -111,7 +111,7 @@ function installFetchMock(routes: MockRoutes) {
 function createCallbacks() {
   return {
     onOpenReader: vi.fn(),
-    onLegacyFallback: vi.fn(),
+    onSourceMissing: vi.fn(),
     onConfirmed: vi.fn(),
   };
 }
@@ -142,7 +142,7 @@ describe("useContentCheck 初始加载", () => {
     expect(result.current.state.dirty).toBe(false);
   });
 
-  it("GET 404 → onLegacyFallback（存量记录回退旧流程）", async () => {
+  it("GET 404 → onSourceMissing（存量记录终态）", async () => {
     installFetchMock({
       onGet: () =>
         json(
@@ -153,7 +153,7 @@ describe("useContentCheck 初始加载", () => {
     const { result, callbacks } = renderContentCheck();
 
     await waitFor(() =>
-      expect(callbacks.onLegacyFallback).toHaveBeenCalledTimes(1),
+      expect(callbacks.onSourceMissing).toHaveBeenCalledTimes(1),
     );
     expect(result.current.state.draft).toBeNull();
   });
@@ -670,5 +670,51 @@ describe("useContentCheck content_check 处置", () => {
 
     act(() => result.current.resolveAllCheckCodes());
     expect(result.current.resolvedCheckCodes.has("footnote_ref")).toBe(true);
+  });
+});
+
+describe("readRejectedReasons", () => {
+  it("maps content_check codes to user copy and ignores English diagnostic reasons", () => {
+    const reasons = readRejectedReasons(
+      {
+        suitability: {
+          reasons: [
+            "pdf_text defaults to candidate review unless extraction confidence is explicitly high and the text is clearly simple.",
+          ],
+        },
+      },
+      [
+        {
+          code: "code_dominant",
+          message: "Input appears to be code-dominant without Markdown prose structure.",
+          classification: "content_check",
+        },
+      ],
+    );
+    expect(reasons).toEqual([
+      "这份内容以代码为主，批注价值有限，建议确认是否继续。",
+    ]);
+    expect(reasons.join(" ")).not.toContain("pdf_text");
+    expect(reasons.join(" ")).not.toContain("code-dominant");
+  });
+
+  it("uses generic fallback when no flags or content_check codes exist", () => {
+    expect(readRejectedReasons({ suitability: { reasons: ["english debug"] } }, [])).toEqual([
+      "这份内容暂时无法生成阅读版本，可以调整后重新提交。",
+    ]);
+  });
+
+  it("prefers suitability.flags mapping over content_check and never renders English reasons", () => {
+    const reasons = readRejectedReasons(
+      {
+        suitability: {
+          flags: ["too_short_for_learning"],
+          reasons: ["English content is too short for learning (37 words)."],
+        },
+      },
+      [],
+    );
+    expect(reasons).toEqual(["英文内容太短，补充成一段完整的英文文章再试。"]);
+    expect(reasons.join(" ")).not.toContain("English");
   });
 });

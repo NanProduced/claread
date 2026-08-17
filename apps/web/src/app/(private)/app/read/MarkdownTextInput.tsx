@@ -1054,7 +1054,7 @@ export const MarkdownTextInput = forwardRef<
           // baseline、同文档宽度。pointer-events-none，不拦截交互。
           "before:pointer-events-none before:absolute before:left-5 before:top-6 before:text-muted-foreground/78 before:content-[attr(data-placeholder)] data-[empty=false]:before:hidden has-[[data-slate-string]]:before:hidden sm:before:left-[max(2rem,calc(50%-24rem))] sm:before:top-8",
           // 空态辅助文案：主文案下一行，focus 后淡出，同样不拦截交互。
-          "after:pointer-events-none after:absolute after:left-5 after:top-[calc(1.5rem+1.68em)] after:text-[0.82rem] after:leading-[1.68] after:text-muted-foreground/60 after:content-[attr(data-placeholder-sub)] after:transition-opacity after:duration-200 focus:after:opacity-0 data-[empty=false]:after:hidden has-[[data-slate-string]]:after:hidden motion-reduce:after:transition-none sm:after:left-[max(2rem,calc(50%-24rem))] sm:after:top-[calc(2rem+1.68em)]",
+          "after:pointer-events-none after:absolute after:left-5 after:top-[calc(1.5rem+1.68em)] after:text-[0.82rem] after:leading-[1.68] after:text-muted-foreground/60 after:content-[attr(data-placeholder-sub)] data-[empty=false]:after:hidden has-[[data-slate-string]]:after:hidden sm:after:left-[max(2rem,calc(50%-24rem))] sm:after:top-[calc(2rem+1.68em)]",
           "[&_strong]:font-semibold",
           className,
         )}
