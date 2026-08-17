@@ -252,12 +252,16 @@ class SearchCurrentArticleToolInput(BaseModel):
 
     Scope is always the current envelope's record/base/document.
     The model supplies only the query (and optional result limit).
+
+    ``limit`` mirrors the host truth exactly: 1..10 (the TurnCoordinator
+    clamps to this range and defaults None to 5) — the model contract
+    must never advertise values the host silently reduces.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     query: str = Field(min_length=1, max_length=2000)
-    limit: int | None = Field(default=None, ge=1, le=20)
+    limit: int | None = Field(default=None, ge=1, le=10)
 
 
 # ---------------------------------------------------------------------------

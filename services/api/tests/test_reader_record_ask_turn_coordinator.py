@@ -1050,3 +1050,51 @@ async def test_control_account_exhaustion_remains_hard_abort():
     assert metered.host_budget_abort is True
     assert metered.text == ""
     assert metered.status == "budget_exhausted"
+
+# ---------------------------------------------------------------------------
+# Wave 11 B1: search_current_article limit contract (model-facing == host)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_limit_contract_model_facing_boundary():
+    """The model-facing DTO accepts 1..10 and rejects 11..20."""
+    from pydantic import ValidationError
+
+    from app.services.reader_record_ask.tool_contracts import (
+        SearchCurrentArticleToolInput,
+    )
+
+    assert SearchCurrentArticleToolInput(query="q", limit=10).limit == 10
+    assert SearchCurrentArticleToolInput(query="q", limit=1).limit == 1
+    assert SearchCurrentArticleToolInput(query="q", limit=None).limit is None
+
+    for bad in (11, 20, 0, -1):
+        with pytest.raises(ValidationError):
+            SearchCurrentArticleToolInput(query="q", limit=bad)
+
+
+@pytest.mark.asyncio
+async def test_search_limit_contract_host_clamp_and_default():
+    """Host clamps any value into 1..10 and defaults None to 5.
+
+    Each case uses a fresh coordinator: the per-turn Article RAG
+    call-limit admits exactly one search per turn.
+    """
+    cases = [
+        (None, 5),
+        (1, 1),
+        (5, 5),
+        (10, 10),
+        (11, 10),
+        (99, 10),
+        (0, 1),
+    ]
+    for raw, expected in cases:
+        port = FakeArticleRagSearchPort()
+        coord = _coordinator(article_rag=port)
+        await coord.assemble_turn()
+        await coord.search_current_article("q", limit=raw)
+        assert port.last_limit == expected, (
+            f"limit={raw!r} must reach the port as {expected}"
+        )
