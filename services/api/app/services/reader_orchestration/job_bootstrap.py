@@ -13,6 +13,7 @@ from app.config.settings import Settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.analysis_section_jobs import (
+    ANALYSIS_SECTION_ORIGINS,
     ANALYSIS_SECTION_REQUEST_ORIGIN,
     GRAMMAR_ANALYSIS_SECTION_FINGERPRINT,
     GRAMMAR_ANALYSIS_SECTION_POLICY_VERSION,
@@ -130,6 +131,20 @@ DISPLAY_TITLE_OPERATION_FINGERPRINT = "display_title_zh_v1"
 DEFAULT_DISPLAY_TITLE_MAX_ATTEMPTS = 5
 _BOOTSTRAP_READY_PRODUCT_STATES = frozenset({"readable_enhancing", "processing"})
 
+# Explicit failed-enhancement recovery entry (same-generation successor
+# jobs). ``failed`` records are rejected by the ordinary bootstrap gate;
+# only ``recover_failed_enhancement_jobs`` may widen the gate to these
+# states. ``readable_enhancing`` is accepted so a repeated recovery call
+# (the first call already restored the state) stays an idempotent
+# missing-job bootstrap instead of failing closed.
+_RECOVERY_ELIGIBLE_PRODUCT_STATES = frozenset({"failed", "readable_enhancing"})
+RECOVERY_TRIGGER_MANUAL = "manual"
+RECOVERY_TRIGGER_AUTOMATIC = "automatic"
+_RECOVERY_TRIGGER_KINDS = frozenset({RECOVERY_TRIGGER_MANUAL, RECOVERY_TRIGGER_AUTOMATIC})
+RECOVERY_EVENT_SCHEMA = "reader_parse_recovery_requested_v1"
+RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS = "same_generation_successor_jobs"
+RECOVERY_BILLING_MODE = "internal_only"
+
 # Semantic outline (optional, request-eligible only; not a budget layer).
 SEMANTIC_OUTLINE_RUN_TYPE = "semantic_outline_layer"
 SEMANTIC_OUTLINE_JOB_TYPE = "build_semantic_outline"
@@ -239,6 +254,23 @@ _LAYER_NAME_BY_JOB_TYPE: dict[str, str] = {
     VOCABULARY_BATCH_JOB_TYPE: "vocabulary",
     GRAMMAR_JOB_TYPE: "grammar_bundle",  # also covers GRAMMAR_BATCH_JOB_TYPE (same value)
 }
+
+# Enhancement job types managed by this bootstrap. Scopes the
+# failed-predecessor collection for recovery events; unrelated terminal
+# jobs (e.g. analysis-section lanes) are not reported as predecessors.
+# ``build_grammar_bundle_window`` is kept as a literal because importing
+# grammar_window_bootstrap at module load would create an import cycle
+# (it must stay equal to grammar_window_bootstrap.GRAMMAR_WINDOW_JOB_TYPE).
+_RECOVERY_ENHANCEMENT_JOB_TYPES: tuple[str, ...] = (
+    DISPLAY_TITLE_JOB_TYPE,
+    TRANSLATION_JOB_TYPE,
+    TRANSLATION_BATCH_JOB_TYPE,
+    VOCABULARY_JOB_TYPE,
+    VOCABULARY_BATCH_JOB_TYPE,
+    GRAMMAR_JOB_TYPE,
+    "build_grammar_bundle_window",
+    SEMANTIC_OUTLINE_JOB_TYPE,
+)
 
 
 def _compose_operation_fingerprint(
@@ -893,6 +925,43 @@ class EnhancementBootstrapSummary:
     semantic_outline_results: tuple[SemanticOutlineBootstrapResult, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class _EnhancementBootstrapBatch:
+    """Per-capability results of one shared bootstrap-core transaction."""
+
+    display_title_results: list[DisplayTitleBootstrapResult]
+    translation_results: list[TranslationBootstrapResult]
+    vocabulary_results: list[VocabularyBootstrapResult]
+    grammar_results: list[GrammarBootstrapResult]
+    semantic_outline_results: list[SemanticOutlineBootstrapResult]
+    use_grammar_window_path: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EnhancementRecoverySummary:
+    """Outcome of one ``recover_failed_enhancement_jobs`` invocation.
+
+    ``recovered`` is True only when the call actually created successor
+    jobs or performed the failed -> readable_enhancing restore; a
+    deterministic no-op (nothing left to recover) returns ``recovered=False``
+    with no state change and no recovery event.
+    """
+
+    record_id: UUID
+    base_id: UUID
+    expected_generation: int
+    trigger: str
+    previous_product_state: str
+    next_product_state: str
+    predecessor_job_ids: tuple[UUID, ...] = ()
+    successor_job_ids: tuple[UUID, ...] = ()
+    successor_run_ids: tuple[UUID, ...] = ()
+    successor_job_types: tuple[str, ...] = ()
+    grammar_window_successor_job_ids: tuple[UUID, ...] = ()
+    recovered: bool = False
+    event_written: bool = False
+
+
 # Injected request eligibility for semantic outline. Default is always-false
 # (opt-in). Tests and future product flags inject predicates; length thresholds
 # must not be hard-coded as product freezes in this module.
@@ -993,6 +1062,10 @@ class _LockedActiveBaseState:
     last_event_sequence: int
     strategy: ReaderVariantStrategy
     readiness_state: str = "submitted"
+    # Product state observed when the record row was locked. Ordinary
+    # bootstrap only ever sees ``processing`` / ``readable_enhancing``;
+    # the explicit recovery entry also loads ``failed`` records.
+    product_state: str = "processing"
     # Short-article batch path: cached active base text. Populated
     # lazily by ``_load_article_route`` so the per-article route classifier
     # does not issue a second ``reading_bases.text`` SELECT when both the
@@ -1747,7 +1820,6 @@ class EnhancementJobBootstrapService:
         trace_id: UUID | None = None,
         force_legacy_grammar: bool = False,
     ) -> EnhancementBootstrapSummary:
-        use_grammar_window_path = False
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 state = await _load_locked_active_base_state(
@@ -1757,33 +1829,11 @@ class EnhancementJobBootstrapService:
                 )
                 if trace_id is None:
                     trace_id = uuid4()
-                display_title_results = await _bootstrap_display_title_job(
+                batch = await self._bootstrap_all_enhancement_jobs(
                     conn,
                     state=state,
                     trace_id=trace_id,
-                )
-                translation_results = await self._bootstrap_translation_jobs(
-                    conn,
-                    state=state,
-                    trace_id=trace_id,
-                )
-                vocabulary_results = await self._bootstrap_vocabulary_jobs(
-                    conn,
-                    state=state,
-                    trace_id=trace_id,
-                )
-                grammar_results, use_grammar_window_path = (
-                    await self._bootstrap_grammar_jobs_or_windowed(
-                        conn,
-                        state=state,
-                        trace_id=trace_id,
-                        force_legacy_grammar=force_legacy_grammar,
-                    )
-                )
-                semantic_outline_results = await self._bootstrap_semantic_outline_job(
-                    conn,
-                    state=state,
-                    trace_id=trace_id,
+                    force_legacy_grammar=force_legacy_grammar,
                 )
 
         # grammar-window path: dispatch to GrammarWindowBootstrapService AFTER the outer
@@ -1796,15 +1846,8 @@ class EnhancementJobBootstrapService:
         # Pass the same trace_id used by display/translation/vocab runs so
         # window reader_runs.envelope_json carries the shared trace root
         # (requirement 5: same-record runs share one trace_id).
-        if use_grammar_window_path:
-            from .grammar_window_bootstrap import GrammarWindowBootstrapService
-
-            grammar_window_service = GrammarWindowBootstrapService(pool=self._pool)
-            await grammar_window_service.bootstrap_grammar_window_plan(
-                record_id=state.record_id,
-                base_id=state.base_id,
-                trace_id=trace_id,
-            )
+        if batch.use_grammar_window_path:
+            await self._dispatch_grammar_window_plan(state=state, trace_id=trace_id)
 
         return EnhancementBootstrapSummary(
             record_id=state.record_id,
@@ -1812,17 +1855,303 @@ class EnhancementJobBootstrapService:
             expected_generation=state.expected_generation,
             last_event_sequence=state.last_event_sequence,
             job_counts=EnhancementBootstrapJobCounts(
-                display_title=len(display_title_results),
-                translation=len(translation_results),
-                vocabulary=len(vocabulary_results),
-                grammar_bundle=len(grammar_results),
-                semantic_outline=len(semantic_outline_results),
+                display_title=len(batch.display_title_results),
+                translation=len(batch.translation_results),
+                vocabulary=len(batch.vocabulary_results),
+                grammar_bundle=len(batch.grammar_results),
+                semantic_outline=len(batch.semantic_outline_results),
             ),
-            display_title_results=tuple(display_title_results),
-            translation_results=tuple(translation_results),
-            vocabulary_results=tuple(vocabulary_results),
-            grammar_results=tuple(grammar_results),
-            semantic_outline_results=tuple(semantic_outline_results),
+            display_title_results=tuple(batch.display_title_results),
+            translation_results=tuple(batch.translation_results),
+            vocabulary_results=tuple(batch.vocabulary_results),
+            grammar_results=tuple(batch.grammar_results),
+            semantic_outline_results=tuple(batch.semantic_outline_results),
+        )
+
+    async def _bootstrap_all_enhancement_jobs(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID,
+        force_legacy_grammar: bool = False,
+        include_analysis_sections: bool = True,
+    ) -> _EnhancementBootstrapBatch:
+        """Shared transactional core: run every capability bootstrap helper.
+
+        Used by both ``bootstrap_missing_jobs`` (ordinary gate) and
+        ``recover_failed_enhancement_jobs`` (recovery-widened gate) so the
+        two entry points cannot drift. Callers own the surrounding
+        transaction; eligibility gates are enforced beforehand.
+
+        ``include_analysis_sections=False`` is the record-level recovery
+        lane: GROUPED_WINDOWED vocab/grammar bootstrap would otherwise
+        rebuild first-section jobs whose failures belong to the
+        analysis-section request flow.
+        """
+        display_title_results = await _bootstrap_display_title_job(
+            conn,
+            state=state,
+            trace_id=trace_id,
+        )
+        translation_results = await self._bootstrap_translation_jobs(
+            conn,
+            state=state,
+            trace_id=trace_id,
+        )
+        vocabulary_results = await self._bootstrap_vocabulary_jobs(
+            conn,
+            state=state,
+            trace_id=trace_id,
+            include_analysis_sections=include_analysis_sections,
+        )
+        grammar_results, use_grammar_window_path = (
+            await self._bootstrap_grammar_jobs_or_windowed(
+                conn,
+                state=state,
+                trace_id=trace_id,
+                force_legacy_grammar=force_legacy_grammar,
+                include_analysis_sections=include_analysis_sections,
+            )
+        )
+        semantic_outline_results = await self._bootstrap_semantic_outline_job(
+            conn,
+            state=state,
+            trace_id=trace_id,
+        )
+        return _EnhancementBootstrapBatch(
+            display_title_results=display_title_results,
+            translation_results=translation_results,
+            vocabulary_results=vocabulary_results,
+            grammar_results=grammar_results,
+            semantic_outline_results=semantic_outline_results,
+            use_grammar_window_path=use_grammar_window_path,
+        )
+
+    async def _dispatch_grammar_window_plan(
+        self,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID,
+    ) -> None:
+        """Post-commit idempotent grammar-window plan dispatch."""
+        from .grammar_window_bootstrap import GrammarWindowBootstrapService
+
+        grammar_window_service = GrammarWindowBootstrapService(pool=self._pool)
+        await grammar_window_service.bootstrap_grammar_window_plan(
+            record_id=state.record_id,
+            base_id=state.base_id,
+            trace_id=trace_id,
+        )
+
+    async def recover_failed_enhancement_jobs(
+        self,
+        *,
+        record_id: UUID,
+        user_id: UUID,
+        trigger: str,
+        trace_id: UUID | None = None,
+    ) -> EnhancementRecoverySummary:
+        """Explicit same-generation recovery for failed enhancement work.
+
+        The ONLY entry point allowed to bootstrap a ``failed`` record.
+        Contract:
+
+        - trigger fail-closed (``manual`` / ``automatic``); article-ready
+          readiness gate; ordinary bootstrap eligibility otherwise.
+        - ``failed_terminal`` predecessors stay immutable audit rows;
+          successors are new runs/jobs via the shared idempotent helpers.
+        - Analysis-section lanes are excluded from predecessors AND from
+          successor creation (their own request flow recovers them).
+        - Window successors, the product_state restore, and the single
+          ``record_state_changed`` recovery event all commit atomically in
+          one transaction under the record lock; no work created means no
+          flip and no event. No billing rows are written.
+        """
+        # Fail-closed trigger validation before touching the database.
+        if trigger not in _RECOVERY_TRIGGER_KINDS:
+            raise ValueError(
+                "recovery trigger must be one of: "
+                f"{sorted(_RECOVERY_TRIGGER_KINDS)}"
+            )
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                state = await _load_locked_active_base_state(
+                    conn,
+                    record_id=record_id,
+                    user_id=user_id,
+                    allowed_product_states=_RECOVERY_ELIGIBLE_PRODUCT_STATES,
+                )
+                # Fail-closed readiness gate: only article-ready records may
+                # be restored to readable_enhancing.
+                if state.readiness_state not in _ARTICLE_READY_READINESS_STATES:
+                    raise ValueError(
+                        "recovery requires an article-ready record "
+                        f"(readiness_state={state.readiness_state!r})"
+                    )
+                if trace_id is None:
+                    trace_id = uuid4()
+                previous_product_state = state.product_state
+                # Ordinary-lane predecessors only: analysis-section jobs
+                # (request_origin in ANALYSIS_SECTION_ORIGINS) share some
+                # job types but are recovered via their own request flow;
+                # treating them as ordinary predecessors would report
+                # failures this entry cannot rebuild.
+                predecessor_rows = await conn.fetch(
+                    """
+                    SELECT id
+                    FROM reader_jobs
+                    WHERE reading_record_id = $1
+                      AND base_id = $2
+                      AND expected_generation = $3
+                      AND status = 'failed_terminal'
+                      AND job_type = ANY($4::text[])
+                      AND COALESCE(input_json->>'request_origin', '')
+                          <> ALL($5::text[])
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    state.record_id,
+                    state.base_id,
+                    state.expected_generation,
+                    list(_RECOVERY_ENHANCEMENT_JOB_TYPES),
+                    list(ANALYSIS_SECTION_ORIGINS),
+                )
+                predecessor_job_ids = tuple(
+                    UUID(str(row["id"])) for row in predecessor_rows
+                )
+                batch = await self._bootstrap_all_enhancement_jobs(
+                    conn,
+                    state=state,
+                    trace_id=trace_id,
+                    include_analysis_sections=False,
+                )
+                created_jobs: list[tuple[UUID, UUID, str]] = [
+                    (result.run_id, result.job_id, job_type)
+                    for results, job_type in (
+                        (batch.display_title_results, DISPLAY_TITLE_JOB_TYPE),
+                        (batch.translation_results, TRANSLATION_BATCH_JOB_TYPE),
+                        (batch.vocabulary_results, VOCABULARY_BATCH_JOB_TYPE),
+                        (batch.grammar_results, GRAMMAR_BATCH_JOB_TYPE),
+                        (batch.semantic_outline_results, SEMANTIC_OUTLINE_JOB_TYPE),
+                    )
+                    for result in results
+                ]
+                # Grammar-window lane (legacy window plans): create window
+                # successors inside THIS transaction under the same record
+                # lock. ``recovered`` / the state flip / the event below are
+                # driven only by successors actually created here; any
+                # creation failure rolls the entire recovery back, and
+                # concurrent recoveries serialize on the FOR UPDATE record
+                # lock, so there is no pre-check/dispatch TOCTOU gap.
+                from .grammar_window_bootstrap import (
+                    GRAMMAR_WINDOW_JOB_TYPE,
+                    GrammarWindowBootstrapService,
+                )
+
+                window_successors = await (
+                    GrammarWindowBootstrapService(
+                        pool=self._pool
+                    ).recover_failed_terminal_window_jobs_in_transaction(
+                        conn,
+                        state=state,
+                        trace_id=trace_id,
+                    )
+                )
+                window_successor_job_ids = tuple(
+                    job_id for _, job_id in window_successors
+                )
+                created_jobs.extend(
+                    (run_id, job_id, GRAMMAR_WINDOW_JOB_TYPE)
+                    for run_id, job_id in window_successors
+                )
+                recovered = bool(created_jobs)
+                next_product_state = previous_product_state
+                event_written = False
+                if recovered:
+                    if previous_product_state == "failed":
+                        result = await conn.execute(
+                            """
+                            UPDATE reading_records
+                            SET product_state = 'readable_enhancing',
+                                updated_at = NOW()
+                            WHERE id = $1
+                              AND generation = $2
+                              AND deleted_at IS NULL
+                              AND lifecycle_status = 'active'
+                              AND product_state = 'failed'
+                            """,
+                            state.record_id,
+                            state.expected_generation,
+                        )
+                        if result != "UPDATE 1":
+                            raise RuntimeError(
+                                "recovery product_state restore failed for "
+                                f"record {state.record_id}"
+                            )
+                        next_product_state = "readable_enhancing"
+                    successor_job_types = tuple(
+                        dict.fromkeys(job_type for _, _, job_type in created_jobs)
+                    )
+                    payload = {
+                        "event_schema": RECOVERY_EVENT_SCHEMA,
+                        "trigger": trigger,
+                        "recovery_mode": RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS,
+                        "record_id": str(state.record_id),
+                        "base_id": str(state.base_id),
+                        "generation": state.expected_generation,
+                        "trace_id": str(trace_id),
+                        "previous_product_state": previous_product_state,
+                        "next_product_state": next_product_state,
+                        "predecessor_job_ids": [
+                            str(job_id) for job_id in predecessor_job_ids
+                        ],
+                        "successor_job_ids": [
+                            str(job_id) for _, job_id, _ in created_jobs
+                        ],
+                        "successor_run_ids": [
+                            str(run_id) for run_id, _, _ in created_jobs
+                        ],
+                        "successor_job_types": list(successor_job_types),
+                        "billing_mode": RECOVERY_BILLING_MODE,
+                    }
+                    await ReaderEventRuntime().publish_event_in_transaction(
+                        conn,
+                        record_id=state.record_id,
+                        event_type="record_state_changed",
+                        payload_json=payload,
+                    )
+                    event_written = True
+                    _logger.info(
+                        "reader_enhancement_recovery record_id=%s base_id=%s "
+                        "trigger=%s previous_product_state=%s "
+                        "next_product_state=%s predecessors=%d successors=%d "
+                        "window_successors=%d",
+                        state.record_id,
+                        state.base_id,
+                        trigger,
+                        previous_product_state,
+                        next_product_state,
+                        len(predecessor_job_ids),
+                        len(created_jobs),
+                        len(window_successor_job_ids),
+                    )
+
+        return EnhancementRecoverySummary(
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            trigger=trigger,
+            previous_product_state=previous_product_state,
+            next_product_state=next_product_state,
+            predecessor_job_ids=predecessor_job_ids,
+            successor_job_ids=tuple(job_id for _, job_id, _ in created_jobs),
+            successor_run_ids=tuple(run_id for run_id, _, _ in created_jobs),
+            successor_job_types=(
+                tuple(dict.fromkeys(job_type for _, _, job_type in created_jobs))
+            ),
+            grammar_window_successor_job_ids=window_successor_job_ids,
+            recovered=recovered,
+            event_written=event_written,
         )
 
     async def bootstrap_semantic_outline_job(
@@ -1896,6 +2225,7 @@ class EnhancementJobBootstrapService:
         *,
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
+        include_analysis_sections: bool = True,
     ) -> list[VocabularyBootstrapResult]:
         # Route hardening: classify via deterministic document
         # features (see ``_bootstrap_translation_jobs``).
@@ -1908,6 +2238,10 @@ class EnhancementJobBootstrapService:
             return await self._bootstrap_vocabulary_batch_job(
                 conn, state=state, route=route, trace_id=trace_id
             )
+        if not include_analysis_sections:
+            # Record-level recovery lane: section jobs are recovered via
+            # their own request flow; never rebuild the first section here.
+            return []
         section = await _plan_first_analysis_section(conn, state=state)
         if section is None:
             return []
@@ -2212,6 +2546,7 @@ class EnhancementJobBootstrapService:
         state: _LockedActiveBaseState,
         trace_id: UUID | None = None,
         force_legacy_grammar: bool = False,
+        include_analysis_sections: bool = True,
     ) -> tuple[list[GrammarBootstrapResult], bool]:
         """Route-aware grammar bootstrap routing.
 
@@ -2244,6 +2579,11 @@ class EnhancementJobBootstrapService:
         # the whole-article compact batch path.
         route = await _load_article_route(conn, state=state)
         if route is ArticleRoute.GROUPED_WINDOWED:
+            if not include_analysis_sections:
+                # Record-level recovery lane: section jobs are recovered
+                # via their own request flow; never rebuild the first
+                # section here.
+                return [], False
             section = await _plan_first_analysis_section(conn, state=state)
             if section is None:
                 return [], False
@@ -3131,7 +3471,17 @@ async def _load_locked_active_base_state(
     *,
     record_id: UUID,
     user_id: UUID,
+    allowed_product_states: frozenset[str] | None = None,
 ) -> _LockedActiveBaseState:
+    """Lock the record and validate the active-base fence.
+
+    ``allowed_product_states`` defaults to
+    :data:`_BOOTSTRAP_READY_PRODUCT_STATES`; only the explicit
+    failed-enhancement recovery entry widens the gate (it passes
+    :data:`_RECOVERY_ELIGIBLE_PRODUCT_STATES`). All other eligibility
+    checks (ownership, lifecycle, base ownership, generation fence,
+    base status) are identical in both modes.
+    """
     record_row = await conn.fetchrow(
         """
         SELECT
@@ -3156,7 +3506,12 @@ async def _load_locked_active_base_state(
         raise LookupError(f"reading record {record_id} not found for user {user_id}")
     if record_row["lifecycle_status"] != "active":
         raise ValueError("enhancement bootstrap requires an active reading record")
-    if record_row["product_state"] not in _BOOTSTRAP_READY_PRODUCT_STATES:
+    ready_states = (
+        allowed_product_states
+        if allowed_product_states is not None
+        else _BOOTSTRAP_READY_PRODUCT_STATES
+    )
+    if record_row["product_state"] not in ready_states:
         raise ValueError("reading record is not ready for enhancement bootstrap")
 
     base_id = record_row["active_base_id"]
@@ -3204,6 +3559,7 @@ async def _load_locked_active_base_state(
         last_event_sequence=await _load_last_event_sequence(conn, record_id=record_id),
         strategy=strategy,
         readiness_state=str(record_row["readiness_state"] or "submitted"),
+        product_state=str(record_row["product_state"]),
     )
 
 

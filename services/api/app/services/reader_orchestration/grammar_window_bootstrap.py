@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -255,12 +256,18 @@ class GrammarWindowBootstrapService:
                 job_ids: list[UUID] = []
                 for window in windows:
                     window_id = uuid4()
-                    job_id = await self._create_window_reader_job(
+                    _run_id, job_id = await self._create_window_reader_job(
                         conn,
                         state=state,
                         plan_id=plan_id,
                         window_id=window_id,
                         window=window,
+                        context_anchor_prev_ids=[
+                            a.anchor_segment_id for a in window.context_anchor_prev
+                        ],
+                        context_anchor_next_ids=[
+                            a.anchor_segment_id for a in window.context_anchor_next
+                        ],
                         trace_id=effective_trace_id,
                     )
                     await conn.execute(
@@ -315,12 +322,19 @@ class GrammarWindowBootstrapService:
         plan_id: UUID,
         window_id: UUID,
         window: PlannedWindow,
+        context_anchor_prev_ids: Sequence[str],
+        context_anchor_next_ids: Sequence[str],
         trace_id: UUID,
-    ) -> UUID:
+    ) -> tuple[UUID, UUID]:
         """Create one reader_runs row + one reader_jobs row for a window job.
 
         Follows the per-unit-run pattern from ``_insert_unit_job``: each window
         gets its own reader_runs row so it can be tracked independently.
+        Returns ``(run_id, job_id)``.
+
+        Context anchors enter as the persisted segment-id lists: the fresh
+        plan path extracts them from ``PlannedWindow`` views, the recovery
+        path passes the ids stored on ``analysis_windows`` directly.
 
         ``trace_id`` is written into ``reader_runs.envelope_json`` so the
         pipeline runner's worker_tick span can propagate the same trace root
@@ -420,12 +434,8 @@ class GrammarWindowBootstrapService:
             "window_index": window.window_index,
             "target_unit_ids": window.target_unit_ids,
             "target_anchor_ids": window.target_anchor_ids,
-            "context_anchor_prev": [
-                a.anchor_segment_id for a in window.context_anchor_prev
-            ],
-            "context_anchor_next": [
-                a.anchor_segment_id for a in window.context_anchor_next
-            ],
+            "context_anchor_prev": list(context_anchor_prev_ids),
+            "context_anchor_next": list(context_anchor_next_ids),
             "window_budget": window_budget,
             "record_id": str(state.record_id),
             "base_id": str(state.base_id),
@@ -473,7 +483,7 @@ class GrammarWindowBootstrapService:
         if job_row is None:
             raise RuntimeError("reader_jobs insert did not return a row")
         job_id: UUID = job_row["id"]
-        return job_id
+        return run_id, job_id
 
     async def _load_existing_plan(
         self,
@@ -511,3 +521,116 @@ class GrammarWindowBootstrapService:
             windows=tuple(windows),
             job_ids=tuple(job_ids),
         )
+
+    async def recover_failed_terminal_window_jobs_in_transaction(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        trace_id: UUID,
+    ) -> tuple[tuple[UUID, UUID], ...]:
+        """Create successor jobs for ``failed_terminal`` grammar window jobs.
+
+        Runs INSIDE the caller's outer recovery transaction on the caller's
+        connection, reusing the already-locked ``state`` (the recovery entry
+        holds the ``reading_records`` FOR UPDATE lock there): concurrent
+        recoveries serialize on that lock, and any creation failure rolls
+        the whole recovery back — no pre-check/dispatch TOCTOU gap.
+
+        ``bootstrap_grammar_window_plan`` is idempotent on an existing
+        active plan and therefore never recovers a window whose job died
+        terminally. This explicit recovery entry creates one successor
+        run/job per failed window under the SAME window row and resets
+        that window to ``pending`` so the existing worker preflight accepts
+        the successor. The failed predecessor job rows stay untouched as
+        immutable audit records; no plan / window rows are deleted and no
+        new generation is created.
+
+        Selection is fail-closed fenced on the FULL job identity
+        (record / base / generation / job_type / target_type) AND on the
+        window binding (``target_key = window id``): ``analysis_windows.job_id``
+        has no FK/unique guarantee that the job belongs to that window, so a
+        corrupt or mis-linked pointer never qualifies for recovery.
+
+        Returns ``(run_id, job_id)`` pairs of the successor jobs created
+        (empty when there is nothing to recover, which also makes repeated
+        calls idempotent).
+        """
+        window_rows = await conn.fetch(
+            """
+            SELECT w.*
+            FROM analysis_windows w
+            JOIN layer_analysis_plans p ON p.id = w.plan_id
+            JOIN reader_jobs j ON j.id = w.job_id
+            WHERE p.reading_record_id = $1
+              AND p.base_id = $2
+              AND p.generation = $3
+              AND p.layer_type = $4
+              AND p.status IN ('planning', 'active')
+              AND j.status = 'failed_terminal'
+              AND j.reading_record_id = $1
+              AND j.base_id = $2
+              AND j.expected_generation = $3
+              AND j.job_type = $5
+              AND j.target_type = $6
+              AND j.target_key = w.id::text
+            ORDER BY w.window_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            state.expected_generation,
+            GRAMMAR_WINDOW_LAYER_TYPE,
+            GRAMMAR_WINDOW_JOB_TYPE,
+            GRAMMAR_WINDOW_TARGET_TYPE,
+        )
+        if not window_rows:
+            return ()
+        successors: list[tuple[UUID, UUID]] = []
+        for row in window_rows:
+            window_id = row["id"]
+            window = PlannedWindow(
+                window_index=row["window_index"],
+                target_anchor_ids=list(row["target_anchor_ids"]),
+                target_unit_ids=list(row["target_unit_ids"]),
+                target_block_ids=list(row["target_block_ids"]),
+                char_count=row["char_count"],
+                anchor_count=row["anchor_count"],
+            )
+            run_id, job_id = await self._create_window_reader_job(
+                conn,
+                state=state,
+                plan_id=row["plan_id"],
+                window_id=window_id,
+                window=window,
+                context_anchor_prev_ids=[
+                    str(segment_id) for segment_id in row["context_anchor_prev"]
+                ],
+                context_anchor_next_ids=[
+                    str(segment_id) for segment_id in row["context_anchor_next"]
+                ],
+                trace_id=trace_id,
+            )
+            # Reset the window so the worker preflight accepts the
+            # successor (pending -> running). Guarded by the failed
+            # predecessor job id so a concurrent recovery cannot be
+            # applied twice.
+            updated = await conn.execute(
+                """
+                UPDATE analysis_windows
+                SET status = 'pending',
+                    started_at = NULL,
+                    completed_at = NULL,
+                    job_id = $2
+                WHERE id = $1
+                  AND job_id = $3
+                """,
+                window_id,
+                job_id,
+                row["job_id"],
+            )
+            if updated != "UPDATE 1":
+                raise RuntimeError(
+                    f"analysis window {window_id} recovery fence failed"
+                )
+            successors.append((run_id, job_id))
+        return tuple(successors)
