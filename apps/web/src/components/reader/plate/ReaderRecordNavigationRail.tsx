@@ -514,6 +514,37 @@ export function ReaderRecordNavigationRail({
   const [panelOpen, setPanelOpen] = useState(false);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
 
+  // Same-source revision refresh: keep only still-navigable active/focus and
+  // the panel open. If a key that was a section became a group (or vanished),
+  // drop it from active/focus, release the scroll lock so scroll-spy resumes,
+  // and (while open) move focus to the first remaining section. These value
+  // adjustments happen during render on the revision fence (adjust-state-when-
+  // props-change); the outline-revision effect below only clears ref-side
+  // state (scroll lock, stale close timer, target cache).
+  const [prevOutlineRevision, setPrevOutlineRevision] = useState(outlineRevision);
+  if (prevOutlineRevision !== outlineRevision) {
+    setPrevOutlineRevision(outlineRevision);
+    if (!available) {
+      if (activeKey !== null) {
+        setActiveKey(null);
+      }
+      if (focusedKey !== null) {
+        setFocusedKey(null);
+      }
+    } else {
+      const sectionKeys = new Set(
+        items.filter((n) => n.role === "section").map((n) => n.key),
+      );
+      const firstSection =
+        items.find((n) => n.role === "section")?.key ?? null;
+      setActiveKey((prev) => (prev && sectionKeys.has(prev) ? prev : null));
+      setFocusedKey((prev) => {
+        if (prev && sectionKeys.has(prev)) return prev;
+        return panelOpen ? firstSection : null;
+      });
+    }
+  }
+
   const wrapperRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rowRefsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -558,25 +589,15 @@ export function ReaderRecordNavigationRail({
     targetMapRef.current = new Map();
   }, [scopeKey]);
 
-  // Same-source revision refresh: keep only still-navigable active/focus and the
-  // panel open. If a key that was a section became a group (or vanished), drop it
-  // from active/focus, release its scroll lock so scroll-spy resumes, and (while
-  // open) move focus to the first remaining section.
+  // Same-source revision refresh — ref-side cleanup only (active/focus value
+  // pruning happens during render on the revision fence above).
   useEffect(() => {
     if (outlineRevisionRef.current === outlineRevision) {
       return;
     }
     outlineRevisionRef.current = outlineRevision;
 
-    const sectionKeys = new Set(
-      items.filter((n) => n.role === "section").map((n) => n.key),
-    );
-    const firstSection =
-      items.find((n) => n.role === "section")?.key ?? null;
-
     if (!available) {
-      setActiveKey(null);
-      setFocusedKey(null);
       lockedKeyRef.current = null;
       if (scrollLockTimerRef.current !== null) {
         window.clearTimeout(scrollLockTimerRef.current);
@@ -586,16 +607,11 @@ export function ReaderRecordNavigationRail({
       return;
     }
 
-    setActiveKey((prev) => (prev && sectionKeys.has(prev) ? prev : null));
-    setFocusedKey((prev) => {
-      if (prev && sectionKeys.has(prev)) return prev;
-      // Missing or now a group: jump to the first section when open, else null
-      // (the panel-open effect assigns a section on the next open).
-      return panelOpen ? firstSection : null;
-    });
-
     // Release a scroll lock stuck on a key that is no longer a section so the
     // scroll-spy can resume (it re-subscribes on `items` change regardless).
+    const sectionKeys = new Set(
+      items.filter((n) => n.role === "section").map((n) => n.key),
+    );
     if (lockedKeyRef.current && !sectionKeys.has(lockedKeyRef.current)) {
       lockedKeyRef.current = null;
       if (scrollLockTimerRef.current !== null) {
@@ -701,9 +717,11 @@ export function ReaderRecordNavigationRail({
   ]);
 
   // Initialize focused key when the panel opens; clear on close. Focus only ever
-  // lands on sections — groups are skipped entirely.
-  useEffect(() => {
-    if (panelOpen && focusedKey === null) {
+  // lands on sections — groups are skipped entirely. Adjusted during render
+  // (adjust-state-when-props-change) because it is a pure sync to
+  // panelOpen/items/activeKey — no async cascade, no stale one-frame flash.
+  if (panelOpen) {
+    if (focusedKey === null) {
       const firstSection =
         items.find((item) => item.role === "section")?.key ?? null;
       const activeSection =
@@ -713,12 +731,14 @@ export function ReaderRecordNavigationRail({
         )
           ? activeKey
           : null;
-      setFocusedKey(activeSection ?? firstSection);
+      const nextFocusedKey = activeSection ?? firstSection;
+      if (nextFocusedKey !== null) {
+        setFocusedKey(nextFocusedKey);
+      }
     }
-    if (!panelOpen) {
-      setFocusedKey(null);
-    }
-  }, [panelOpen, focusedKey, activeKey, items]);
+  } else if (focusedKey !== null) {
+    setFocusedKey(null);
+  }
 
   // Focus the row matching focusedKey when it changes (keyboard nav).
   useEffect(() => {

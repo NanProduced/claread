@@ -439,9 +439,16 @@ function NoteView({
 }) {
   const [deleteConfirming, setDeleteConfirming] = React.useState(false);
 
-  React.useEffect(() => {
+  // Delete confirmation must never survive a mode/note switch: reset it
+  // during render (adjust-state-when-props-change pattern) so the stale
+  // "确认删除？" state can never flash across note boundaries.
+  const [deleteConfirmResetKey, setDeleteConfirmResetKey] = React.useState(
+    `${mode}:${note.assetId}`,
+  );
+  if (`${mode}:${note.assetId}` !== deleteConfirmResetKey) {
+    setDeleteConfirmResetKey(`${mode}:${note.assetId}`);
     setDeleteConfirming(false);
-  }, [mode, note.assetId]);
+  }
 
   if (mode === "view") {
     return (

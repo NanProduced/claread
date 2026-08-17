@@ -734,12 +734,13 @@ function ReaderCalloutComponent({
 
     if (isGroupedGrammar) {
       groupContext.expandItem(grammarItemId);
-    } else if (isStandaloneGrammar) {
+    } else {
       // T4.2a-PUX-R4-R2.1C: lift expand state into itemId-keyed context so
       // it survives targeted replaceNodes on the same callout element.
+      // Grammar callouts WITHOUT itemId never reach this branch: the
+      // guard above requires grammarItemId, and with one present the
+      // only remaining distinction is grouped vs standalone context.
       expansionContext.expandItem(grammarItemId);
-    } else {
-      setLocalExpanded(true);
     }
   }, [
     expandGrammarItemRequest?.itemId,
@@ -748,7 +749,6 @@ function ReaderCalloutComponent({
     grammarItemId,
     groupContext,
     isGroupedGrammar,
-    isStandaloneGrammar,
     isGrammar,
   ]);
 

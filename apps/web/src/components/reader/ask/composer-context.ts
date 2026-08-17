@@ -102,9 +102,16 @@ export function useAskComposerContext({
   // Identity replacement clears auto/manual selection slots and their
   // fingerprints only. Explicit attachments and pending quick actions
   // survive. Browser highlight dismissal does NOT clear slots.
-  useEffect(() => {
+  // State slots reset during render on the identity fence (adjust-state-
+  // when-props-change); the fingerprint refs reset in the effect below so
+  // the ingest effect still reads fresh refs in the same commit.
+  const [prevIdentityKey, setPrevIdentityKey] = useState(identityKey);
+  if (prevIdentityKey !== identityKey) {
+    setPrevIdentityKey(identityKey);
     setAutoSelectionAttachment(null);
     setManualSelectionAttachments([]);
+  }
+  useEffect(() => {
     dismissedAutoSelectionFingerprintRef.current = null;
     lastAutoSelectionFingerprintRef.current = null;
   }, [identityKey]);
