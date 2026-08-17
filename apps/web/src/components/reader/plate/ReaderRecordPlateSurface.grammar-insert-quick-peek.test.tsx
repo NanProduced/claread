@@ -20,6 +20,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { ReactNode } from "react";
 import type { Descendant } from "platejs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReaderGrammarExpansionControlRef } from "@/components/editor/plugins/reader-blocks-kit";
 
 import {
   type ReaderAnchorSegmentNodeDto,
@@ -89,7 +90,13 @@ vi.mock("@/components/editor/plugins/reader-blocks-kit", async () => {
   const { useEffect } = await import("react");
   return {
     ...actual,
-    ReaderGrammarExpansionProvider: ({ children, controlRef }: any) => {
+    ReaderGrammarExpansionProvider: ({
+      children,
+      controlRef,
+    }: {
+      children: ReactNode;
+      controlRef?: ReaderGrammarExpansionControlRef;
+    }) => {
       useEffect(() => {
         if (controlRef) {
           controlRef.current = mockGrammarControl;
@@ -99,7 +106,7 @@ vi.mock("@/components/editor/plugins/reader-blocks-kit", async () => {
             controlRef.current = null;
           }
         };
-      }, []);
+      }, [controlRef]);
       return children;
     },
   };

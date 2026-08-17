@@ -2661,6 +2661,35 @@ export function ReaderRecordPlateSurface({
   // switch, generation switch). The rAF callback checks this token before
   // touching any ref — stale restores abort without side effects.
   const quickPeekRestoreTokenRef = useRef(0);
+  // Quick Peek floating-layer cluster. Declared above the plate-value swap
+  // effect because the swap effect reads and rewrites the anchor ref and the
+  // floating reference (freeze → restore), and the React Compiler requires
+  // those bindings to precede their first use for its order analysis.
+  const quickPeekAnchorRef = useRef<ReaderQuickPeekAnchor>(null);
+  const [dictionaryOpen, setDictionaryOpen] = useState(false);
+  const quickPeekOpen =
+    !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
+  // Current snapshot's source identity — the plate-value swap effect captures
+  // it into pendingRestoreRef for the rAF re-anchor validation.
+  const generation = snapshot.record.generation;
+  const baseId = snapshot.base.base_id;
+  const quickPeekPositionKey =
+    inspectState !== null
+      ? `inspect:${inspectState.markId}:${inspectState.anchorOffsets?.startOffset ?? ""}:${inspectState.anchorOffsets?.endOffset ?? ""}`
+      : lookupState.kind !== "idle"
+        ? `lookup:${lookupState.query}:${lookupState.context.sentenceId}:${lookupState.context.anchorText}:${lookupState.context.anchorOffsets?.startOffset ?? ""}:${lookupState.context.anchorOffsets?.endOffset ?? ""}:${lookupState.context.occurrence ?? ""}:${quickPeekAnchorBlockId ?? ""}`
+        : "closed";
+  const quickPeekFloating = useReaderFloatingLayer({
+    open: quickPeekOpen,
+    positionKey: quickPeekPositionKey,
+    placement: "bottom-start",
+    offsetPx: 8,
+    collisionPadding: 12,
+    strategy: "fixed",
+  });
+
+  const { refs: quickPeekFloatingRefs, update: quickPeekFloatingUpdate } =
+    quickPeekFloating;
   useEffect(() => {
     const isOpen = lookupState.kind !== "idle" || inspectState !== null;
     quickPeekInteractionRef.current = {
@@ -2938,6 +2967,36 @@ export function ReaderRecordPlateSurface({
   useEffect(() => {
     onReloadContextConsumedRef.current = onReloadContextConsumed ?? null;
   }, [onReloadContextConsumed]);
+
+  /**
+   * Grammar 联动的 hover-intent 通道：进入延迟 ~120ms（掠过不误触），
+   * 退出延迟 ~180ms（指针在卡片与原文之间移动时不闪断）。点击/键盘
+   * focus 仍走 setActiveGrammarItemId 即时通道。
+   * Declared above the plate-value swap effect: the swap effect's mark
+   * handlers call it, and the React Compiler requires the binding to precede
+   * the first use for its order analysis.
+   */
+  const grammarHoverTimersRef = useRef<{ enter?: number; leave?: number }>({});
+  const hoverGrammarItemId = useCallback((itemId: string | null) => {
+    const timers = grammarHoverTimersRef.current;
+    if (timers.enter !== undefined) {
+      window.clearTimeout(timers.enter);
+      timers.enter = undefined;
+    }
+    if (timers.leave !== undefined) {
+      window.clearTimeout(timers.leave);
+      timers.leave = undefined;
+    }
+    if (itemId !== null) {
+      timers.enter = window.setTimeout(() => {
+        setActiveGrammarItemId(itemId);
+      }, 120);
+    } else {
+      timers.leave = window.setTimeout(() => {
+        setActiveGrammarItemId(null);
+      }, 180);
+    }
+  }, []);
 
   // plateValue 变化时同步 editor 内容，避免重新创建 editor 实例。
   // T2.1: `editor.tf.setValue` replaces the entire editor children, which
@@ -3775,18 +3834,13 @@ export function ReaderRecordPlateSurface({
     collisionPadding: 10,
     strategy: "fixed",
   });
-  const [dictionaryOpen, setDictionaryOpen] = useState(false);
   const dictionaryRailVisible =
     dictionaryOpen && !(isWorkspaceShell && sidebarMode === "locked");
-  const quickPeekOpen =
-    !dictionaryOpen && (lookupState.kind !== "idle" || inspectState !== null);
 
   // T4.2a-PUX-R2: source-identity-scoped interaction reset. A base_id or
   // generation change invalidates every anchor-bound interaction from the
   // previous source. Scroll is intentionally preserved by the plateValue
   // swap effect and is not source-identity-scoped.
-  const generation = snapshot.record.generation;
-  const baseId = snapshot.base.base_id;
   const prevSourceIdentityRef = useRef({ generation, baseId });
   useEffect(() => {
     const previous = prevSourceIdentityRef.current;
@@ -3842,31 +3896,14 @@ export function ReaderRecordPlateSurface({
     };
   }, []);
 
-  useEffect(() => {
-    if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {
-      setDictionaryOpen(false);
-    }
-    return undefined;
-  }, [dictionaryOpen, isWorkspaceShell, sidebarMode]);
+  // In a locked workspace shell the dictionary rail must never stay open:
+  // this is a pure derivation from (shell, locked, dictionaryOpen), adjusted
+  // during render (adjust-state-when-props-change) so no stale open frame
+  // can survive the lock transition.
+  if (isWorkspaceShell && sidebarMode === "locked" && dictionaryOpen) {
+    setDictionaryOpen(false);
+  }
 
-  const quickPeekAnchorRef = useRef<ReaderQuickPeekAnchor>(null);
-  const quickPeekPositionKey =
-    inspectState !== null
-      ? `inspect:${inspectState.markId}:${inspectState.anchorOffsets?.startOffset ?? ""}:${inspectState.anchorOffsets?.endOffset ?? ""}`
-      : lookupState.kind !== "idle"
-        ? `lookup:${lookupState.query}:${lookupState.context.sentenceId}:${lookupState.context.anchorText}:${lookupState.context.anchorOffsets?.startOffset ?? ""}:${lookupState.context.anchorOffsets?.endOffset ?? ""}:${lookupState.context.occurrence ?? ""}:${quickPeekAnchorBlockId ?? ""}`
-        : "closed";
-  const quickPeekFloating = useReaderFloatingLayer({
-    open: quickPeekOpen,
-    positionKey: quickPeekPositionKey,
-    placement: "bottom-start",
-    offsetPx: 8,
-    collisionPadding: 12,
-    strategy: "fixed",
-  });
-
-  const { refs: quickPeekFloatingRefs, update: quickPeekFloatingUpdate } =
-    quickPeekFloating;
   useEffect(() => {
     if (!quickPeekOpen) {
       return;
@@ -3940,11 +3977,12 @@ export function ReaderRecordPlateSurface({
   });
   const [capacityDowngradeDismissed, setCapacityDowngradeDismissed] =
     useState(false);
-  useEffect(() => {
-    if (hasSidecarCapacity) {
-      setCapacityDowngradeDismissed(false);
-    }
-  }, [hasSidecarCapacity]);
+  // Recovered sidecar capacity clears a previously dismissed downgrade notice:
+  // pure derivation from hasSidecarCapacity, adjusted during render
+  // (adjust-state-when-props-change).
+  if (hasSidecarCapacity && capacityDowngradeDismissed) {
+    setCapacityDowngradeDismissed(false);
+  }
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -5823,32 +5861,9 @@ export function ReaderRecordPlateSurface({
   );
 
   /**
-   * Grammar 联动的 hover-intent 通道：进入延迟 ~120ms（掠过不误触），
-   * 退出延迟 ~180ms（指针在卡片与原文之间移动时不闪断）。点击/键盘
-   * focus 仍走 setActiveGrammarItemId 即时通道。
+   * Grammar 联动的 hover-intent 通道（定义与实现见上方，位于 plate-value
+   * swap effect 之前，保证编译器顺序分析通过）。
    */
-  const grammarHoverTimersRef = useRef<{ enter?: number; leave?: number }>({});
-  const hoverGrammarItemId = useCallback((itemId: string | null) => {
-    const timers = grammarHoverTimersRef.current;
-    if (timers.enter !== undefined) {
-      window.clearTimeout(timers.enter);
-      timers.enter = undefined;
-    }
-    if (timers.leave !== undefined) {
-      window.clearTimeout(timers.leave);
-      timers.leave = undefined;
-    }
-    if (itemId !== null) {
-      timers.enter = window.setTimeout(() => {
-        setActiveGrammarItemId(itemId);
-      }, 120);
-    } else {
-      timers.leave = window.setTimeout(() => {
-        setActiveGrammarItemId(null);
-      }, 180);
-    }
-  }, []);
-
   const grammarInteraction = useMemo(
     () => ({
       activeGrammarItemId,

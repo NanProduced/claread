@@ -5556,6 +5556,61 @@ describe("ReaderRecordPlateSurface", () => {
     });
   });
 
+  it("resets the delete-confirmation state when switching to another note", async () => {
+    const firstNote = makePolicyNoteAsset({
+      asset_id: "asset_note_confirm_a",
+      note_text: "First policy note.",
+    });
+    const secondNote = makePolicyNoteAsset({
+      asset_id: "asset_note_confirm_b",
+      note_text: "Second policy note.",
+      anchor: policyNoteAnchor("policy choices"),
+    });
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([firstNote, secondNote])} />,
+    );
+
+    const firstMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-note-asset-ids~="asset_note_confirm_a"]',
+    );
+    expect(firstMark).not.toBeNull();
+    if (!firstMark) {
+      throw new Error("Expected first note mark");
+    }
+
+    fireEvent.click(firstMark);
+    let panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(panel.textContent).toContain("First policy note.");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "删除笔记" }),
+    );
+    expect(screen.getByText("确认删除？")).toBeTruthy();
+
+    const secondMarks = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-reader-record-user-note-asset-ids~="asset_note_confirm_b"]',
+      ),
+    );
+    const secondMark = secondMarks.find((element) =>
+      element.textContent?.includes("choices"),
+    );
+    if (!secondMark) {
+      throw new Error("Expected second note mark fragment");
+    }
+    fireEvent.click(secondMark);
+    panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    await waitFor(() => {
+      expect(panel.textContent).toContain("Second policy note.");
+    });
+    // Switching notes resets the stale delete-confirmation: the new note's
+    // delete entry point must be available again, no "确认删除？" residue.
+    expect(screen.queryByText("确认删除？")).toBeNull();
+    expect(
+      await screen.findByRole("button", { name: "删除笔记" }),
+    ).toBeTruthy();
+  });
+
   it("cancels a draft note without calling any write endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
