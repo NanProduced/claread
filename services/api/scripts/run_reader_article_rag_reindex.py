@@ -56,9 +56,33 @@ SUMMARY_KEYS = (
     "failed",
 )
 
+# Wave 11: the single "latest run truth" source.  For every ACTIVE
+# reading record it selects the LATEST run of the record's ACTIVE stable
+# document (descending updated_at, then descending id for a stable
+# tie-break).  Both the --all candidate list and the dry-run
+# classification derive from THIS one query, so dry-run and execute can
+# never disagree about which record is eligible / in-progress.
+_LATEST_RUN_TRUTH_SQL = """
+    (
+        SELECT DISTINCT ON (ir.reading_record_id)
+            ir.reading_record_id,
+            rr.user_id,
+            ir.status
+        FROM reader_article_rag_index_runs ir
+        JOIN stable_reading_documents sd
+          ON sd.id = ir.stable_document_id
+         AND sd.status = 'active'
+        JOIN reading_records rr
+          ON rr.id = ir.reading_record_id
+         AND rr.deleted_at IS NULL
+         AND rr.lifecycle_status = 'active'
+        ORDER BY ir.reading_record_id, ir.updated_at DESC, ir.id DESC
+    ) latest
+"""
+
 # Wave 7.1 / P2: the dry-run classification joins the reading record
 # (deleted_at IS NULL + lifecycle_status='active') so deleted/inactive
-# records are skipped, and classifies on the LATEST run of the active
+# records are skipped, and classifies on the LATEST run of the ACTIVE
 # stable document — indexed -> reindex-eligible; failed/superseded ->
 # recovery-eligible (Wave 7.1 / P0); in-flight -> in-progress.
 _DRY_RUN_STATUS_SQL = """
@@ -71,22 +95,21 @@ _DRY_RUN_STATUS_SQL = """
      AND rr.deleted_at IS NULL
      AND rr.lifecycle_status = 'active'
     WHERE ir.reading_record_id = $1
-    ORDER BY ir.updated_at DESC
+    ORDER BY ir.updated_at DESC, ir.id DESC
     LIMIT 1
 """
 
-# Wave 7.1 / P0: the --all candidate list includes records whose run
-# FAILED (recoverable via the service's recovery path), not only
-# currently-indexed ones.
-_ALL_CANDIDATES_SQL = """
-    SELECT DISTINCT ir.reading_record_id, rr.user_id
-    FROM reader_article_rag_index_runs ir
-    JOIN reading_records rr
-      ON rr.id = ir.reading_record_id
-     AND rr.deleted_at IS NULL
-     AND rr.lifecycle_status = 'active'
-    WHERE ir.status IN ('indexed', 'failed')
-    ORDER BY ir.reading_record_id
+# Wave 7.1 / P0: the --all candidate list includes records whose LATEST
+# run FAILED or was SUPERSEDED (both recoverable via the service's
+# recovery path), not only currently-indexed ones.  Wave 11: the
+# candidate list is the latest-run truth restricted to indexed /
+# failed / superseded — an old indexed run on a stale stable document,
+# or a newer queued/superseded run, no longer selects the record.
+_ALL_CANDIDATES_SQL = f"""
+    SELECT latest.reading_record_id, latest.user_id
+    FROM {_LATEST_RUN_TRUTH_SQL}
+    WHERE latest.status IN ('indexed', 'failed', 'superseded')
+    ORDER BY latest.reading_record_id
 """
 
 _RECORD_OWNER_SQL = """
@@ -148,8 +171,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--all",
         action="store_true",
         help=(
-            "Reindex every active record with an indexed or failed "
-            "Article RAG run (failed runs are recovery-eligible)."
+            "Reindex every active record whose LATEST Article RAG run "
+            "is indexed, failed, or superseded (failed/superseded runs "
+            "are recovery-eligible)."
         ),
     )
     parser.add_argument(

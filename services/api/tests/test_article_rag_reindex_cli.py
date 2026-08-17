@@ -127,6 +127,10 @@ class _FakePool:
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         s = sql.lower()
+        # The --all candidates query embeds the latest-run truth (which
+        # also mentions stable_reading_documents) — route DISTINCT first.
+        if "distinct" in s:
+            return list(self.candidate_rows)
         if "stable_reading_documents" in s:
             if args:
                 key = args[0]
@@ -136,8 +140,6 @@ class _FakePool:
                     if r["reading_record_id"] == key
                 ]
             return list(self.dry_run_rows)
-        if "distinct" in s:
-            return list(self.candidate_rows)
         if "user_id from reading_records" in s:
             if args:
                 key = args[0]
@@ -475,3 +477,411 @@ def test_all_candidates_sql_includes_failed_runs() -> None:
     candidates_sql = source[candidates_start:candidates_end]
     assert "'indexed'" in candidates_sql
     assert "'failed'" in candidates_sql
+
+# ---------------------------------------------------------------------------
+# Wave 11: latest-run truth (real PostgreSQL integration)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeServiceProbe:
+    """Records execute-mode calls against the production service."""
+
+    def __init__(self) -> None:
+        self.calls: list[uuid.UUID] = []
+
+    async def reindex_article_rag_index_in_transaction(
+        self, conn: Any, *, reading_record_id: uuid.UUID, user_id: uuid.UUID
+    ) -> _FakeReindexResult:
+        self.calls.append(reading_record_id)
+        return _FakeReindexResult(
+            reading_record_id=reading_record_id,
+            status="reindex_enqueued",
+        )
+
+
+async def _seed_env(pool: Any) -> uuid.UUID:
+    """Seed one record + active stable document; returns record id."""
+    from tests.test_article_rag_index_worker import _seed_paragraph_environment
+
+    await _seed_paragraph_environment(pool)
+    from tests.test_article_rag_index_plan import _RECORD_ID
+
+    return _RECORD_ID
+
+
+async def _insert_run(
+    pool: Any,
+    *,
+    record_id: uuid.UUID,
+    stable_document_id: uuid.UUID,
+    status: str,
+    base_id: uuid.UUID | None = None,
+    run_id: uuid.UUID | None = None,
+    updated_at_minutes_ago: int = 0,
+) -> uuid.UUID:
+    from tests.test_article_rag_index_plan import _BASE_ID
+
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO reader_article_rag_index_runs (
+                id, reading_record_id, stable_document_id, base_id,
+                record_generation, stable_document_content_sha256,
+                canonical_text_sha256, plan_content_sha256, chunk_count,
+                status, updated_at
+            )
+            VALUES (
+                COALESCE($1, gen_random_uuid()), $2, $3, $4, 1,
+                $5, $5, $5, 1, $6,
+                NOW() - make_interval(mins => $7)
+            )
+            RETURNING id
+            """,
+            run_id,
+            record_id,
+            stable_document_id,
+            base_id or _BASE_ID,
+            "a" * 64,
+            status,
+            updated_at_minutes_ago,
+        )
+
+
+@pytest.fixture
+async def reindex_db_env() -> Any:
+    import asyncpg as _asyncpg
+
+    from app.database.connection import init_connection
+    from tests.test_reader_orchestration_schema_baseline import (
+        BASELINE_SQL,
+        DATABASE_URL,
+    )
+
+    schema_name = f"test_w11_reindex_{uuid.uuid4().hex}"
+    admin_conn = await _asyncpg.connect(DATABASE_URL)
+    pool: Any = None
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+        pool = await _asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=4,
+            init=init_connection,
+            setup=lambda conn: conn.execute(
+                f'SET search_path TO "{schema_name}", public'
+            ),
+        )
+        yield pool
+    finally:
+        if pool is not None:
+            await pool.close()
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        await admin_conn.close()
+
+
+@pytest.mark.asyncio
+class TestLatestRunTruthDb:
+    async def test_old_indexed_with_latest_queued_is_in_progress(
+        self, reindex_db_env: Any
+    ) -> None:
+        """A record whose LATEST run is queued is in_progress even when
+        an older run was indexed — never eligible."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        old = await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+            updated_at_minutes_ago=10,
+        )
+        # A queued build cannot coexist with an active indexed run
+        # (uq_reader_article_rag_index_runs_active) — supersede the old
+        # run first, then enqueue the new build.
+        async with reindex_db_env.acquire() as conn:
+            await conn.execute(
+                "UPDATE reader_article_rag_index_runs SET status='superseded' WHERE id=$1",
+                old,
+            )
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="queued",
+        )
+
+        # Single-record dry-run classifies the latest run as in_progress.
+        single = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=[record_id], all_records=False, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        assert single["scanned"] == 1
+        assert single["eligible"] == 0
+        assert single["in_progress"] == 1
+
+        # --all candidate list excludes the in-progress record entirely.
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        assert summary["scanned"] == 0
+        assert summary["eligible"] == 0
+
+    async def test_latest_failed_is_recovery_eligible(
+        self, reindex_db_env: Any
+    ) -> None:
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+            updated_at_minutes_ago=10,
+        )
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="failed",
+        )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        assert summary["scanned"] == 1
+        assert summary["eligible"] == 1
+        assert summary["in_progress"] == 0
+
+    async def test_latest_superseded_is_recovery_eligible(
+        self, reindex_db_env: Any
+    ) -> None:
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+            updated_at_minutes_ago=10,
+        )
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="superseded",
+        )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        assert summary["scanned"] == 1
+        assert summary["eligible"] == 1
+
+    async def test_old_indexed_on_inactive_stable_document_ignored(
+        self, reindex_db_env: Any
+    ) -> None:
+        """Only the record's ACTIVE stable document's latest run counts."""
+        from tests.test_article_rag_index_plan import _RECORD_ID, _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        # A second (superseded) stable document carrying an indexed run.
+        async with reindex_db_env.acquire() as conn:
+            stale_sd = await conn.fetchval(
+                """
+                INSERT INTO stable_reading_documents (
+                    reading_record_id, record_generation, title,
+                    document_version, content_sha256, status
+                )
+                VALUES ($1, 2, 'stale', 2,
+                        encode(digest('stale', 'sha256'), 'hex'), 'superseded')
+                RETURNING id
+                """,
+                _RECORD_ID,
+            )
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=stale_sd, status="indexed",
+            updated_at_minutes_ago=5,
+        )
+        # Active stable document has a queued run -> in_progress.
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="queued",
+            updated_at_minutes_ago=5,
+        )
+
+        single = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=[record_id], all_records=False, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        assert single["eligible"] == 0
+        assert single["in_progress"] == 1
+
+        # --all candidates are drawn from the ACTIVE stable document
+        # only: the stale indexed run does not select the record.
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        assert summary["scanned"] == 0
+        assert summary["eligible"] == 0
+
+    async def test_deleted_record_not_selected(self, reindex_db_env: Any) -> None:
+        from tests.test_article_rag_index_plan import (
+            _RECORD_ID,
+            _STABLE_DOC_ID,
+        )
+
+        record_id = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+        )
+        async with reindex_db_env.acquire() as conn:
+            await conn.execute(
+                "UPDATE reading_records SET deleted_at = NOW() WHERE id=$1",
+                _RECORD_ID,
+            )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        assert summary["scanned"] == 0
+        assert summary["eligible"] == 0
+
+    async def test_no_run_record_is_not_eligible(self, reindex_db_env: Any) -> None:
+        record_id = await _seed_env(reindex_db_env)
+        del record_id
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        assert summary["scanned"] == 0
+        assert summary["eligible"] == 0
+        assert summary["in_progress"] == 0
+
+    async def test_id_tie_break_is_deterministic(self, reindex_db_env: Any) -> None:
+        """Identical updated_at resolves by descending id."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="failed",
+            run_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            updated_at_minutes_ago=5,
+        )
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+            run_id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+            updated_at_minutes_ago=5,
+        )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        # Highest id wins -> indexed -> eligible.
+        assert summary["eligible"] == 1
+
+    async def test_limit_applies_after_stable_order(
+        self, reindex_db_env: Any
+    ) -> None:
+        """--limit caps the stably-ordered candidate list."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        first = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=first,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+        )
+
+        async with reindex_db_env.acquire() as conn:
+            second_record = await conn.fetchval(
+                "INSERT INTO reading_records (user_id, source_type) "
+                "VALUES ((SELECT id FROM users LIMIT 1), 'text') RETURNING id"
+            )
+            second_sd = await conn.fetchval(
+                """
+                INSERT INTO stable_reading_documents (
+                    reading_record_id, record_generation, title,
+                    document_version, content_sha256, status
+                )
+                VALUES ($1, 1, 'second', 1,
+                        encode(digest('second', 'sha256'), 'hex'), 'active')
+                RETURNING id
+                """,
+                second_record,
+            )
+            base_id = await conn.fetchval(
+                """
+                INSERT INTO reading_bases (
+                    reading_record_id, base_version, record_generation, text,
+                    content_sha256, content_utf16_length,
+                    canonicalizer_version, builder_version, segmenter_version,
+                    status
+                )
+                VALUES ($1, 1, 1, 'second body',
+                        encode(digest('second body', 'sha256'), 'hex'),
+                        utf16_code_unit_length('second body'),
+                        'c', 'b', 's', 'active')
+                RETURNING id
+                """,
+                second_record,
+            )
+        await _insert_run(
+            reindex_db_env, record_id=second_record,
+            stable_document_id=second_sd, status="indexed",
+            base_id=base_id,
+        )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=1,
+        )
+
+        assert summary["scanned"] == 1
+        assert summary["eligible"] == 1
+
+    async def test_dry_run_and_execute_share_candidate_semantics(
+        self, reindex_db_env: Any
+    ) -> None:
+        """Execute mode consumes the SAME latest-run candidate list."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+        )
+
+        probe = _FakeServiceProbe()
+        dry = await run_reindex(
+            pool=reindex_db_env, service=probe,
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        executed = await run_reindex(
+            pool=reindex_db_env, service=probe,
+            record_ids=None, all_records=True, execute=True,
+            rate_limit_per_second=0.0, limit=None,
+        )
+
+        assert dry["eligible"] == 1
+        assert executed["enqueued"] == 1
+        assert probe.calls == [record_id]
