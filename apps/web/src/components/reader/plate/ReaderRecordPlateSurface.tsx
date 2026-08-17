@@ -2207,7 +2207,8 @@ function ReaderRecordMoreMenu({
         sideOffset={8}
         className={cn(
           "w-[340px] overflow-hidden rounded-xl border border-hairline/70 p-0 shadow-[var(--reader-floating-shadow)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-          "bg-surface text-ink",
+          // Floating layer over the top bar: raised surface tier.
+          "bg-surface-raised text-ink",
         )}
         data-testid="reader-record-more-menu-content"
         data-reader-record-more-menu-panel="true"

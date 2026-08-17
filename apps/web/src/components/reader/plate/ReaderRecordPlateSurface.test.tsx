@@ -5014,9 +5014,13 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(duplicateWarning.textContent).toContain("这个选区已有笔记");
     expect(duplicateWarning.textContent).toContain("Existing note for memory.");
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "保存笔记" }).disabled,
-    ).toBe(true);
+    // The note panel is a floating layer gated by readerFloatingStyles
+    // (visibility hidden until the positioning timer flushes); wait for
+    // the layer to become queryable before touching its controls.
+    const saveNoteButton = await waitFor(
+      () => screen.getByRole<HTMLButtonElement>("button", { name: "保存笔记" }),
+    );
+    expect(saveNoteButton.disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "仍新增一条" }));
     await waitFor(() => {
@@ -5069,7 +5073,12 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.click(noteButton);
 
     await screen.findByTestId("reader-record-note-duplicate-warning");
-    fireEvent.click(screen.getByRole("button", { name: "查看/编辑已有笔记" }));
+    // Floating-layer visibility gate: wait for the panel controls to
+    // become queryable before clicking (see readerFloatingStyles).
+    const viewExistingNote = await waitFor(
+      () => screen.getByRole("button", { name: "查看/编辑已有笔记" }),
+    );
+    fireEvent.click(viewExistingNote);
 
     const panel = await screen.findByTestId("reader-record-inline-comment-panel");
     await waitFor(() => {
