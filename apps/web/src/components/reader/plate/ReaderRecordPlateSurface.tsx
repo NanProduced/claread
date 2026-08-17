@@ -79,6 +79,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
+import { ReaderAnalysisProgressControl } from "@/components/reader/plate/ReaderAnalysisProgressControl";
 import {
   Tooltip,
   TooltipContent,
@@ -2039,6 +2040,7 @@ function ReaderRecordTopBar({
   themePreference,
   onSettingsChange,
   onThemeChange,
+  onRequestSnapshotReload,
 }: {
   snapshot: ReaderPlateSnapshotDto;
   surfaceMode: "intensive" | "immersive";
@@ -2047,6 +2049,7 @@ function ReaderRecordTopBar({
   themePreference: ThemePreference;
   onSettingsChange: (next: ReaderSettingsState) => void;
   onThemeChange: (next: ThemePreference) => void;
+  onRequestSnapshotReload?: () => void | Promise<void>;
 }) {
   const titleState = resolveReaderRecordTitleState(snapshot.record);
 
@@ -2060,6 +2063,11 @@ function ReaderRecordTopBar({
         <ReaderRecordTopBarTitle titleState={titleState} />
       </div>
       <div className="ml-auto flex shrink-0 items-center">
+        <ReaderAnalysisProgressControl
+          recordId={snapshot.record_id}
+          progress={snapshot.analysis_progress}
+          onRequestSnapshotReload={onRequestSnapshotReload}
+        />
         <FavoriteButton recordId={snapshot.record_id} variant="icon-only" />
         <ReaderRecordMoreMenu
           snapshot={snapshot}
@@ -6177,6 +6185,7 @@ export function ReaderRecordPlateSurface({
         themePreference={themePreference}
         onSettingsChange={handleSettingsChange}
             onThemeChange={setThemePreference}
+            onRequestSnapshotReload={onRequestSnapshotReload}
           />
         </div>
         <section
