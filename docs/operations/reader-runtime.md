@@ -343,7 +343,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/reader/records/$recor
 
 `run_reader_article_rag_reindex.py` 是唯一的 reindex 入口：**默认 dry-run**（只读分类、零写入、零服务调用），写操作必须显式 `--execute`。
 
-- `--record-id <uuid>` 与 `--all` 互斥且必选其一；`--all` 只处理「当前 active stable document 的**最新** Article RAG run」为 `indexed` / `failed` / `superseded` 的 active 记录（old indexed run 被新 queued/superseded run 取代时不入选；dry-run 与 execute 使用同一 latest-run 候选集合）。
+- `--record-id <uuid>` 与 `--all` 互斥且必选其一；`--all` 按「当前 active stable document 的**最新** Article RAG run（`created_at` 尝试顺序，同刻以 `id` 兜底）」三态分类：最新 `queued` / `indexing` / `planned` → 不进入候选；最新 `failed` / `superseded` → recovery 候选；最新 `indexed` → reindex 候选（dry-run 与 execute 使用同一 latest-run 候选集合，旧 run 后续的状态触碰不改变"最新尝试"判定）。
 - `--limit N` 只允许与 `--all` 组合，在稳定排序后截断候选。
 - `--rate-limit-per-second`（默认 1.0，`0` 关闭）只作用于 execute 迭代间隔。
 - execute 每个 record 独立事务：单条失败不中断批次，summary 稳定输出 `scanned / eligible / enqueued / in_progress / skipped / failed`；恢复路径（最新 run 为 failed/superseded）计入 `eligible` 并产出 `recovery_enqueued`（服务返回 `recovery_enqueued` 状态，summary 计入 `enqueued`）。

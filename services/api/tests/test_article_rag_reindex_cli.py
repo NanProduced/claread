@@ -519,9 +519,12 @@ async def _insert_run(
     base_id: uuid.UUID | None = None,
     run_id: uuid.UUID | None = None,
     updated_at_minutes_ago: int = 0,
+    created_at_minutes_ago: int | None = None,
 ) -> uuid.UUID:
     from tests.test_article_rag_index_plan import _BASE_ID
 
+    if created_at_minutes_ago is None:
+        created_at_minutes_ago = updated_at_minutes_ago
     async with pool.acquire() as conn:
         return await conn.fetchval(
             """
@@ -529,12 +532,13 @@ async def _insert_run(
                 id, reading_record_id, stable_document_id, base_id,
                 record_generation, stable_document_content_sha256,
                 canonical_text_sha256, plan_content_sha256, chunk_count,
-                status, updated_at
+                status, created_at, updated_at
             )
             VALUES (
                 COALESCE($1, gen_random_uuid()), $2, $3, $4, 1,
                 $5, $5, $5, 1, $6,
-                NOW() - make_interval(mins => $7)
+                NOW() - make_interval(mins => $7),
+                NOW() - make_interval(mins => $8)
             )
             RETURNING id
             """,
@@ -544,6 +548,7 @@ async def _insert_run(
             base_id or _BASE_ID,
             "a" * 64,
             status,
+            created_at_minutes_ago,
             updated_at_minutes_ago,
         )
 
@@ -885,3 +890,87 @@ class TestLatestRunTruthDb:
         assert dry["eligible"] == 1
         assert executed["enqueued"] == 1
         assert probe.calls == [record_id]
+
+    async def test_latest_attempt_follows_created_at_not_updated_at(
+        self, reindex_db_env: Any
+    ) -> None:
+        """The newest index ATTEMPT wins even when an older run's
+        updated_at was touched later (state churn must not reorder)."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        record_id = await _seed_env(reindex_db_env)
+        old_queued = await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="queued",
+            created_at_minutes_ago=10, updated_at_minutes_ago=10,
+        )
+        new_failed = await _insert_run(
+            reindex_db_env, record_id=record_id,
+            stable_document_id=_STABLE_DOC_ID, status="failed",
+        )
+        del new_failed
+        # State churn on the OLD run AFTER the new attempt was created:
+        # its updated_at now beats the new run, but it must NOT become
+        # the latest attempt.
+        async with reindex_db_env.acquire() as conn:
+            await conn.execute(
+                "UPDATE reader_article_rag_index_runs SET updated_at = NOW() WHERE id=$1",
+                old_queued,
+            )
+
+        single = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=[record_id], all_records=False, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        # Latest attempt = failed (newer created_at) -> recovery eligible.
+        assert single["eligible"] == 1, (
+            "latest attempt must be decided by created_at, not updated_at"
+        )
+        assert single["in_progress"] == 0
+
+    async def test_run_referencing_foreign_stable_document_excluded(
+        self, reindex_db_env: Any
+    ) -> None:
+        """A run whose stable_document belongs to another record must
+        never count for this record (reverse identity guard)."""
+        from tests.test_article_rag_index_plan import _STABLE_DOC_ID
+
+        await _seed_env(reindex_db_env)
+        # Second record whose run wrongly references the FIRST record's
+        # active stable document.
+        async with reindex_db_env.acquire() as conn:
+            second_record = await conn.fetchval(
+                "INSERT INTO reading_records (user_id, source_type) "
+                "VALUES ((SELECT id FROM users LIMIT 1), 'text') RETURNING id"
+            )
+            base_id = await conn.fetchval(
+                """
+                INSERT INTO reading_bases (
+                    reading_record_id, base_version, record_generation, text,
+                    content_sha256, content_utf16_length,
+                    canonicalizer_version, builder_version, segmenter_version,
+                    status
+                )
+                VALUES ($1, 1, 1, 'other body',
+                        encode(digest('other body', 'sha256'), 'hex'),
+                        utf16_code_unit_length('other body'),
+                        'c', 'b', 's', 'active')
+                RETURNING id
+                """,
+                second_record,
+            )
+        await _insert_run(
+            reindex_db_env, record_id=second_record,
+            stable_document_id=_STABLE_DOC_ID, status="indexed",
+            base_id=base_id,
+        )
+
+        summary = await run_reindex(
+            pool=reindex_db_env, service=_FakeServiceProbe(),
+            record_ids=None, all_records=True, execute=False,
+            rate_limit_per_second=0.0, limit=None,
+        )
+        # Neither record may select via the cross-referenced run.
+        assert summary["scanned"] == 0
+        assert summary["eligible"] == 0
