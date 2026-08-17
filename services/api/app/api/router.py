@@ -13,6 +13,7 @@ from app.api.routes.quota import router as quota_router
 from app.api.routes.reader_notes import router as reader_notes_router
 from app.api.routes.reader_orchestration import router as reader_orchestration_router
 from app.api.routes.reader_record_ask import router as reader_record_ask_router
+from app.api.routes.reader_recovery import router as reader_recovery_router
 from app.api.routes.user_annotations import router as user_annotations_router
 from app.api.routes.vocabulary import router as vocabulary_router
 
@@ -23,6 +24,7 @@ api_router.include_router(auth_router)
 api_router.include_router(quota_router)
 api_router.include_router(reader_orchestration_router)
 api_router.include_router(reader_record_ask_router)
+api_router.include_router(reader_recovery_router)
 api_router.include_router(favorites_router)
 api_router.include_router(reader_notes_router)
 api_router.include_router(vocabulary_router)
