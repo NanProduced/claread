@@ -59,8 +59,27 @@ and the per-block-type defaults materialized by
       ``main_reading`` route with no text would produce an
       inconsistent block (main_reading policy but ``None`` canonical
       offsets).
+    * Placeholder-only blocks — text containing at least one U+200B
+      ZERO WIDTH SPACE and nothing but whitespace once every U+200B is
+      removed — are excluded from canonical text derivation: they keep
+      their block row, ``order_index``, ``block_id`` and parent links
+      (no renumbering, so parent references stay valid) but carry
+      ``None`` canonical offsets and contribute no canonical text,
+      Reading Unit or translation input. Their frozen
+      ``interpretation_policy`` is demoted to
+      ``default_route="ignored"`` / ``rag_eligible=False`` so the
+      Article RAG chunker skips them instead of failing on its
+      main_reading-without-canonical-offsets invariant. The plan
+      records ONE stable diagnostics warning when at least one
+      placeholder-only block was ACTUALLY excluded from canonical text
+      (a placeholder block on a non-main_reading route contributed
+      nothing anyway and does not trigger the warning). Inline U+200B
+      inside real text (``alpha\u200Bbeta``) is preserved unchanged.
     * If no main-reading text is produced, the plan fails closed with
-      ``StableDocumentFreezePlanError``.
+      ``StableDocumentFreezePlanError`` (this also covers an input
+      whose blocks are ALL placeholder-only).
+    * A ``title`` that is itself placeholder-only text is frozen as
+      ``None`` instead of persisting the invisible placeholder.
     * ``content_sha256`` is computed via
       ``compute_stable_document_content_sha256`` over the FINAL block
       list (with canonical offsets populated), so any policy / offset
@@ -101,6 +120,31 @@ CANONICAL_TEXT_BLOCK_SEPARATOR = "\n\n"
 # for ``table`` / ``table_row``). The freeze plan skips these wrappers
 # when deriving canonical text instead of failing closed.
 _STRUCTURAL_WRAPPER_BLOCK_TYPES = frozenset({"list", "table", "table_row"})
+
+# Placeholder-only content marker: U+200B ZERO WIDTH SPACE. Some source
+# formats (notably copy-pasted / extracted documents) emit invisible
+# ZWSP-only paragraphs or headings. Such blocks must not feed the
+# Canonical Text Layer, Reading Units or translation, but the block row
+# itself stays in the document tree (no renumbering).
+_PLACEHOLDER_BLOCK_CHARS = "\u200b"
+
+# Single stable diagnostics warning emitted when at least one
+# placeholder-only block was excluded from canonical text derivation.
+# Reuses the existing ``diagnostics.warnings`` mechanism; no new event
+# system. Emitted at most once per freeze plan.
+PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING = "placeholder_only_blocks_excluded"
+
+
+def _is_placeholder_only_text(text: str | None) -> bool:
+    """Return True when ``text`` contains at least one U+200B and,
+    after removing every U+200B, only whitespace remains.
+
+    Inline U+200B inside real text (``alpha\u200Bbeta``) returns False
+    and is preserved unchanged across the whole chain.
+    """
+    if not text or _PLACEHOLDER_BLOCK_CHARS not in text:
+        return False
+    return not text.replace(_PLACEHOLDER_BLOCK_CHARS, "").strip()
 
 
 class StableDocumentFreezePlanError(ValueError):
@@ -234,6 +278,17 @@ def build_stable_document_freeze_plan(
         and not (block.text_content or "").strip()
     }
 
+    # Placeholder-only blocks (U+200B + whitespace only) are excluded
+    # from canonical text derivation. They are NOT removed or
+    # renumbered: block rows, order_index and parent references stay
+    # exactly as the caller supplied them — only their canonical text /
+    # offsets / Reading Unit / translation contribution is cut off.
+    placeholder_block_ids = {
+        block.block_id
+        for block in ordered
+        if _is_placeholder_only_text(block.text_content)
+    }
+
     # (2) Derive Canonical Text Layer. Only blocks whose
     # interpretation_policy.default_route == "main_reading" contribute.
     # Block-type defaults (paragraph / heading / list_item / blockquote
@@ -250,6 +305,12 @@ def build_stable_document_freeze_plan(
 
     cursor_utf16 = 0
     separator_utf16 = utf16_code_unit_length(CANONICAL_TEXT_BLOCK_SEPARATOR)
+    # Set only when a placeholder-only block is ACTUALLY skipped during
+    # canonical derivation (i.e. it was main_reading-routed). A
+    # placeholder block already on rag_ask_only / metadata_only /
+    # ignored never contributed canonical text, so no exclusion happens
+    # and no warning is emitted for it.
+    placeholder_excluded_from_canonical = False
     for block in ordered:
         route = _block_route(block)
         block_routes[block.block_id] = route
@@ -260,6 +321,12 @@ def build_stable_document_freeze_plan(
         # Generic wrapper rule: list/table/callout containers participate in
         # the Stable tree but never contribute a second copy of child text.
         if block.block_id in structural_wrapper_ids:
+            continue
+
+        # Placeholder-only blocks stay in the tree but never contribute
+        # canonical text (and therefore no Reading Unit / translation).
+        if block.block_id in placeholder_block_ids:
+            placeholder_excluded_from_canonical = True
             continue
 
         text = _block_canonical_text(block)
@@ -304,6 +371,10 @@ def build_stable_document_freeze_plan(
 
     canonical_text = CANONICAL_TEXT_BLOCK_SEPARATOR.join(canonical_chunks)
 
+    if placeholder_excluded_from_canonical:
+        # One stable warning regardless of the placeholder block count.
+        warnings.append(PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING)
+
     if not canonical_text:
         # (9) Fail closed: no main-reading text produced.
         raise StableDocumentFreezePlanError(
@@ -325,6 +396,7 @@ def build_stable_document_freeze_plan(
     frozen_blocks: list[StableDocumentBlock] = []
     for block in ordered:
         offsets = canonical_offsets.get(block.block_id)
+        update_fields: dict[str, Any] = {}
         if offsets is None:
             # Force canonical offsets to None for non-main_reading
             # blocks, regardless of what the caller passed in. This
@@ -332,27 +404,35 @@ def build_stable_document_freeze_plan(
             # solely from the policy decision, not from caller-supplied
             # offsets that might be inconsistent with the policy.
             if (
-                block.canonical_text_start_utf16 is None
-                and block.canonical_text_end_utf16 is None
+                block.canonical_text_start_utf16 is not None
+                or block.canonical_text_end_utf16 is not None
             ):
-                frozen_blocks.append(block.model_copy(deep=True))
-            else:
-                frozen_blocks.append(
-                    block.model_copy(
-                        deep=True,
-                        update={
-                            "canonical_text_start_utf16": None,
-                            "canonical_text_end_utf16": None,
-                        },
-                    )
-                )
-            continue
+                update_fields["canonical_text_start_utf16"] = None
+                update_fields["canonical_text_end_utf16"] = None
+        else:
+            start_utf16, end_utf16 = offsets
+            update_fields["canonical_text_start_utf16"] = start_utf16
+            update_fields["canonical_text_end_utf16"] = end_utf16
 
-        start_utf16, end_utf16 = offsets
-        update_fields: dict[str, Any] = {
-            "canonical_text_start_utf16": start_utf16,
-            "canonical_text_end_utf16": end_utf16,
-        }
+        if block.block_id in placeholder_block_ids and block.interpretation_policy is not None:
+            # RAG guard: a placeholder block keeps its row but carries
+            # ``None`` canonical offsets. Leaving ``default_route =
+            # "main_reading"`` + ``rag_eligible=True`` would trip the
+            # Article RAG index plan's fail-closed invariant
+            # (main_reading route without canonical offsets). Demote
+            # the FROZEN copy's policy to ``ignored`` /
+            # ``rag_eligible=False`` — a route the RAG chunker skips
+            # (article_rag_index_plan ``_EXCLUDED_ROUTES`` +
+            # rag_eligible filter) and a combination the
+            # StableDocumentInterpretationPolicy validator explicitly
+            # requires. The caller-owned input policy is untouched.
+            update_fields["interpretation_policy"] = (
+                block.interpretation_policy.model_copy(
+                    deep=True,
+                    update={"default_route": "ignored", "rag_eligible": False},
+                )
+            )
+
         frozen_blocks.append(
             block.model_copy(
                 deep=True,
@@ -385,10 +465,14 @@ def build_stable_document_freeze_plan(
     # changes will change the hash.
     content_sha256 = compute_stable_document_content_sha256(frozen_blocks)
 
+    # A placeholder-only title (U+200B + whitespace) must not be
+    # persisted; freeze it as None instead.
+    frozen_title = None if _is_placeholder_only_text(title) else title
+
     stable_document = StableReadingDocument(
         reading_record_id=reading_record_id,
         record_generation=record_generation,
-        title=title,
+        title=frozen_title,
         document_version=document_version,
         source_profile_json=source_profile_json or {},
         content_sha256=content_sha256,

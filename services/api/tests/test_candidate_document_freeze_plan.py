@@ -9,6 +9,8 @@ API route, or the orchestrator.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from app.contracts.annotation import (
@@ -19,8 +21,12 @@ from app.schemas.reader_documents import (
     StableDocumentBlock,
     StableDocumentInterpretationPolicy,
 )
+from app.services.reader_orchestration.candidate_document_creation_service import (
+    _build_candidate_blocks,
+)
 from app.services.reader_orchestration.document_freeze_plan import (
     CANONICAL_TEXT_BLOCK_SEPARATOR,
+    PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING,
     StableDocumentFreezePlan,
     StableDocumentFreezePlanError,
     build_stable_document_freeze_plan,
@@ -1399,3 +1405,303 @@ def test_full_document_freeze_with_mixed_block_types() -> None:
 
     # No warnings (all main_reading blocks had text).
     assert plan.diagnostics.warnings == []
+
+
+# --------------------------------------------------------------------
+# Placeholder-only (U+200B) block guard at the freeze-plan boundary
+# --------------------------------------------------------------------
+
+_ZWSP = "\u200b"
+
+
+def test_candidate_builder_zwsp_placeholder_blocks_excluded_from_canonical() -> None:
+    """Regression for the real Candidate builder -> freeze plan chain
+    (the Candidate -> Confirm path does NOT re-run the input
+    normalizer). A ZWSP-only placeholder paragraph produced by the
+    actual candidate builder must not contribute canonical text,
+    offsets, Reading Unit or translation input, while the block row,
+    numbering and provenance stay untouched.
+    """
+    blocks, candidate_title = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="# Real title\n\nReal paragraph.\n\n\u200b\n\n- item one\n",
+        filename="placeholder.md",
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+
+    placeholder_ids = {
+        block.block_id
+        for block in blocks
+        if block.text_content
+        and _ZWSP in block.text_content
+        and not block.text_content.replace(_ZWSP, "").strip()
+    }
+    assert placeholder_ids, (
+        "candidate builder must emit the ZWSP-only line as a block"
+    )
+
+    # Snapshot the caller-owned input for the non-mutation assertions.
+    input_snapshot = [
+        (b.block_id, b.order_index, b.text_content, b.source_refs_json)
+        for b in blocks
+    ]
+
+    plan = build_stable_document_freeze_plan(
+        reading_record_id="rec-1",
+        record_generation=1,
+        document_version=1,
+        title=candidate_title,
+        blocks=blocks,
+    )
+
+    # The placeholder text never enters canonical text; real text does.
+    assert _ZWSP not in plan.canonical_text
+    assert "Real paragraph." in plan.canonical_text
+    assert "item one" in plan.canonical_text
+
+    blocks_by_id = {b.block_id: b for b in plan.blocks}
+    for block_id in placeholder_ids:
+        frozen = blocks_by_id[block_id]
+        # Block row stays in the tree with its original text...
+        assert frozen.text_content is not None
+        assert _ZWSP in frozen.text_content
+        # ...but carries no canonical offsets, so no Reading Unit /
+        # translation task can be derived from it (units are sliced
+        # from canonical text by base_builder).
+        assert frozen.canonical_text_start_utf16 is None
+        assert frozen.canonical_text_end_utf16 is None
+
+    # No renumbering / no removal: block ids, order and text match the
+    # caller input one-to-one; provenance (source_refs_json) preserved.
+    assert len(plan.blocks) == len(blocks)
+    input_by_id = {b.block_id: b for b in blocks}
+    for frozen, (block_id, order_index, text_content, source_refs_json) in zip(
+        sorted(plan.blocks, key=lambda b: b.order_index),
+        input_snapshot,
+        strict=True,
+    ):
+        assert frozen.block_id == block_id
+        assert frozen.order_index == order_index
+        assert frozen.text_content == text_content
+        assert frozen.source_refs_json == source_refs_json
+        # Freeze plan blocks are deep copies, never aliased with input.
+        assert frozen is not input_by_id[block_id]
+
+    # Caller-owned input blocks were not mutated.
+    assert [
+        (b.block_id, b.order_index, b.text_content, b.source_refs_json)
+        for b in blocks
+    ] == input_snapshot
+
+    # One diagnostics warning, route still recorded for observability.
+    assert plan.diagnostics.warnings == [
+        PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING
+    ]
+    for block_id in placeholder_ids:
+        assert block_id in plan.diagnostics.block_routes
+
+    # Real title from the real heading is still persisted.
+    assert plan.stable_document.title == "Real title"
+
+
+def test_zwsp_paragraph_before_list_freezes_without_rejection() -> None:
+    """A ZWSP placeholder paragraph BEFORE a list tree must not reject
+    the document and must not shift / renumber ids: parent references
+    stay valid because nothing is removed.
+    """
+    list_wrapper = StableDocumentBlock(
+        block_id="lst1",
+        order_index=1,
+        block_type="list",
+        text_content=None,
+    )
+    list_item = StableDocumentBlock(
+        block_id="li1",
+        order_index=2,
+        block_type="list_item",
+        text_content="Item one.",
+        parent_block_id="lst1",
+    )
+    plan = _build([_paragraph("p0", _ZWSP, 0), list_wrapper, list_item])
+
+    blocks_by_id = {b.block_id: b for b in plan.blocks}
+    # Placeholder paragraph kept, no canonical offsets.
+    assert blocks_by_id["p0"].text_content == _ZWSP
+    assert blocks_by_id["p0"].canonical_text_start_utf16 is None
+    # List child unaffected, parent reference intact.
+    assert blocks_by_id["li1"].parent_block_id == "lst1"
+    assert blocks_by_id["li1"].canonical_text_start_utf16 == 0
+    # No renumbering: order indexes unchanged.
+    assert [b.order_index for b in plan.blocks] == [0, 1, 2]
+    assert plan.canonical_text == "Item one."
+    assert plan.diagnostics.warnings == [
+        PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING
+    ]
+
+
+def test_placeholder_heading_does_not_become_title_and_title_none() -> None:
+    """A placeholder heading contributes no canonical text, and a
+    placeholder-only document title is frozen as None (not persisted).
+    """
+    plan = _build(
+        [_heading("h1", _ZWSP, 0), _paragraph("p1", "Body.", 1)],
+        title=_ZWSP + " ",
+    )
+
+    blocks_by_id = {b.block_id: b for b in plan.blocks}
+    assert blocks_by_id["h1"].canonical_text_start_utf16 is None
+    assert blocks_by_id["h1"].canonical_text_end_utf16 is None
+    assert plan.canonical_text == "Body."
+    # Placeholder title must not be persisted.
+    assert plan.stable_document.title is None
+
+
+def test_inline_zwsp_preserved_character_by_character() -> None:
+    """Inline U+200B inside real text (alpha\u200Bbeta) is NOT a
+    placeholder: it stays in canonical text byte-for-byte and produces
+    no warning.
+    """
+    inline_text = f"alpha{_ZWSP}beta"
+    plan = _build([_paragraph("p1", inline_text, 0)])
+
+    assert plan.canonical_text == inline_text
+    block = plan.blocks[0]
+    assert block.text_content == inline_text
+    sliced = slice_by_utf16_offsets(
+        plan.canonical_text,
+        block.canonical_text_start_utf16,
+        block.canonical_text_end_utf16,
+    )
+    assert sliced == inline_text
+    assert plan.diagnostics.warnings == []
+
+
+def test_multiple_placeholder_blocks_emit_single_warning() -> None:
+    plan = _build(
+        [
+            _paragraph("p1", _ZWSP, 0),
+            _heading("h1", f"{_ZWSP}{_ZWSP}  ", 1),
+            _paragraph("p2", "Real.", 2),
+        ]
+    )
+    # Exactly ONE warning no matter how many placeholder blocks.
+    assert plan.diagnostics.warnings == [
+        PLACEHOLDER_ONLY_BLOCKS_EXCLUDED_WARNING
+    ]
+    assert plan.canonical_text == "Real."
+
+
+def test_all_placeholder_input_hits_existing_no_main_reading_error() -> None:
+    """A fully placeholder input reuses the existing freeze-plan
+    fail-closed error — no new normalization exception chain.
+    """
+    with pytest.raises(StableDocumentFreezePlanError, match="no main-reading"):
+        _build(
+            [
+                _paragraph("p1", _ZWSP, 0),
+                _heading("h1", _ZWSP + _ZWSP, 1),
+            ]
+        )
+
+
+def test_non_main_reading_placeholder_block_emits_no_warning() -> None:
+    """A placeholder block already routed off main_reading (footnote
+    default = rag_ask_only) contributed nothing to canonical text to
+    begin with: no exclusion happened, so no diagnostics warning.
+    """
+    plan = _build(
+        [
+            _paragraph("p1", "Real.", 0),
+            _footnote("fn1", _ZWSP, 1),
+        ]
+    )
+    assert plan.diagnostics.block_routes["fn1"] == "rag_ask_only"
+    assert plan.diagnostics.warnings == []
+
+
+def test_frozen_placeholder_policy_accepted_by_rag_chunker() -> None:
+    """Feed the frozen (persisted) placeholder shape — demoted policy +
+    None canonical offsets — into the real Article RAG chunker: the
+    placeholder block is skipped WITHOUT raising the
+    main_reading-without-offsets error, and real text still chunks.
+    """
+    from app.services.reader_orchestration.article_rag_index_plan import (
+        ArticleRagIndexPlanService,
+        _BlockRow,
+    )
+
+    placeholder_input = StableDocumentBlock(
+        block_id="p1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=_ZWSP,
+        interpretation_policy=StableDocumentInterpretationPolicy(
+            allowed_source_scope=["main_reading_text"],
+            default_route="main_reading",
+            rag_eligible=True,
+            notes=["placeholder-probe-note"],
+        ),
+    )
+    input_blocks = [placeholder_input, _paragraph("p2", "Real.", 1)]
+    plan = _build(input_blocks)
+
+    frozen_by_id = {b.block_id: b for b in plan.blocks}
+    placeholder = frozen_by_id["p1"]
+    # Minimal contract: the frozen placeholder block no longer carries
+    # the locked combination (main_reading + rag_eligible=True + None
+    # canonical offsets).
+    assert placeholder.canonical_text_start_utf16 is None
+    assert placeholder.canonical_text_end_utf16 is None
+    assert placeholder.interpretation_policy is not None
+    assert placeholder.interpretation_policy.default_route == "ignored"
+    assert placeholder.interpretation_policy.rag_eligible is False
+    # Caller-owned input policy is untouched (frozen copy only).
+    assert input_blocks[0].interpretation_policy is not None
+    assert input_blocks[0].interpretation_policy.default_route == "main_reading"
+    assert input_blocks[0].interpretation_policy.rag_eligible is True
+    # Nested isolation: the demoted frozen policy's lists must NOT be
+    # aliased with the caller input policy (no-aliasing contract).
+    assert placeholder.interpretation_policy.allowed_source_scope is not (
+        input_blocks[0].interpretation_policy.allowed_source_scope
+    )
+    assert placeholder.interpretation_policy.notes is not (
+        input_blocks[0].interpretation_policy.notes
+    )
+    assert placeholder.interpretation_policy.allowed_source_scope == [
+        "main_reading_text"
+    ]
+    assert placeholder.interpretation_policy.notes == ["placeholder-probe-note"]
+    # Real block keeps its main_reading policy + offsets.
+    assert frozen_by_id["p2"].interpretation_policy is not None
+    assert frozen_by_id["p2"].interpretation_policy.default_route == "main_reading"
+    assert frozen_by_id["p2"].canonical_text_start_utf16 is not None
+
+    block_rows = [
+        _BlockRow(
+            block_id=b.block_id,
+            order_index=b.order_index,
+            block_type=b.block_type,
+            text_content=b.text_content,
+            canonical_text_start_utf16=b.canonical_text_start_utf16,
+            canonical_text_end_utf16=b.canonical_text_end_utf16,
+            interpretation_policy=b.interpretation_policy.model_dump(mode="json"),
+        )
+        for b in plan.blocks
+    ]
+
+    chunks = ArticleRagIndexPlanService(pool=None)._build_chunks(
+        blocks=block_rows,
+        units=(),
+        segments=(),
+        stable_document_id=uuid4(),
+        reading_record_id=uuid4(),
+        base_id=uuid4(),
+        record_generation=1,
+        include_rag_ask_only=False,
+        base_text=plan.canonical_text,
+        base_utf16_length=utf16_code_unit_length(plan.canonical_text),
+    )
+
+    # Placeholder produces no chunk; the real paragraph chunks normally.
+    assert [chunk.text for chunk in chunks] == ["Real."]
