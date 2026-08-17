@@ -13,6 +13,7 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   type ReaderPlateSnapshotDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 const navigateFactoryResultA = Object.assign(
   vi.fn(async () => ({
@@ -131,6 +132,7 @@ function minimalSnapshot(
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   } as ReaderPlateSnapshotDto;
 }
 

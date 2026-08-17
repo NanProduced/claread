@@ -132,6 +132,13 @@ export function classifyReaderEvent(
   // 2. Representation-capable events (projection_ops / record_state_changed).
   //    These event types are ALWAYS classified by the representation payload
   //    classifier. Missing/invalid payload → reload_or_reset (never cursor_only).
+  if (event.event_type === "record_state_changed") {
+    const payload = event.payload;
+    if (isPlainObject(payload) && payload.topic === "analysis_progress") {
+      return classifyAnalysisProgressPayload(payload, snapshotFence);
+    }
+  }
+
   if (
     event.event_type === "projection_ops" ||
     event.event_type === "record_state_changed"
@@ -335,4 +342,73 @@ function classifyNonRepresentationEvent(
         reason: `unknown_event_type:${eventType}`,
       };
   }
+}
+
+const ANALYSIS_PROGRESS_MUTATIONS = new Set([
+  "enqueue_or_resume",
+  "capability_paused",
+  "capability_failed",
+]);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidAnalysisProgressPayload(payload: Record<string, unknown>): boolean {
+  if (payload.topic !== "analysis_progress") {
+    return false;
+  }
+  if (typeof payload.base_id !== "string" || payload.base_id.length === 0) {
+    return false;
+  }
+  if (
+    typeof payload.generation !== "number" ||
+    !Number.isInteger(payload.generation) ||
+    payload.generation < 1
+  ) {
+    return false;
+  }
+  const sectionIds = payload.accepted_section_ids;
+  if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+    return false;
+  }
+  for (const sectionId of sectionIds) {
+    if (typeof sectionId !== "string" || sectionId.length === 0) {
+      return false;
+    }
+  }
+  if (
+    typeof payload.mutation !== "string" ||
+    !ANALYSIS_PROGRESS_MUTATIONS.has(payload.mutation)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function classifyAnalysisProgressPayload(
+  payload: Record<string, unknown>,
+  snapshotFence: SnapshotFenceContext | null,
+): ReaderEventClassification {
+  if (!isValidAnalysisProgressPayload(payload)) {
+    return {
+      kind: "reload_or_reset",
+      reason: "analysis_progress_invalid_payload",
+    };
+  }
+  const fenceReady =
+    snapshotFence !== null &&
+    snapshotFence.baseId !== null &&
+    snapshotFence.generation !== null;
+  if (
+    fenceReady &&
+    (payload.base_id !== snapshotFence.baseId ||
+      payload.generation !== snapshotFence.generation)
+  ) {
+    return {
+      kind: "reload_or_reset",
+      reason: "analysis_progress_fence_mismatch",
+    };
+  }
+  return { kind: "reload_snapshot", reason: "analysis_progress" };
 }

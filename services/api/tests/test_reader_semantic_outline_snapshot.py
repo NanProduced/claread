@@ -20,6 +20,7 @@ from app.services.reader_orchestration.semantic_outline_snapshot import (
     project_semantic_outline_for_snapshot,
 )
 from app.services.reader_orchestration.snapshot import build_reader_plate_snapshot
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 NOW = datetime(2026, 7, 17, 12, 0, 0, tzinfo=UTC)
 BASE_ID = "base_outline_snap_01"
@@ -162,9 +163,9 @@ def _snapshot(
     layers: list[ReaderSnapshotLayer] | None = None,
     generation: int = GENERATION,
 ) -> ReaderPlateSnapshot:
-    return build_reader_plate_snapshot(
-        build_result,
-        snapshot_taken_at=NOW,
+    return build_reader_plate_snapshot(build_result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=NOW,
         last_event_sequence=1,
         record=_record(generation=generation),
         enhancement_layers=layers or [],

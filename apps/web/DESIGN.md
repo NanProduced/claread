@@ -109,7 +109,7 @@ ui 字体服务导航、按钮、输入、状态、菜单和信息密集型界�
 
 文章标题下的 badge 只呈现一句友好总览：“解析中”“解析完成”“等待继续”“需要确认”或“解析遇到问题”。它不显示内部执行名、百分比、模型或诊断。
 
-更多菜单提供“文章状态”入口，进入二级界面后才展示面向用户的细节与必要操作。状态不能以顶部 alert、连续 toast、自动弹出面板或抢占滚动的页内提示出现。
+sticky TopBar 右侧的解析进度控件是 `analysis_progress` 的权威可见入口，顺序为：解析状态 → Favorite → More。点击该控件展开 Popover，展示解析详情和继续操作。More 菜单中的“文章状态”属于 record / readiness 级信息，不是 `analysis_progress` 操作入口。状态不能以顶部 alert、连续 toast、或抢占滚动的页内提示出现。分段解析的首部分完成并首次进入待用户继续状态时，状态 Popover 可安静地自动展开一次；不得在初始加载时展开、重复展开、抢焦点或改变滚动位置。
 
 ### Candidate confirmation
 
@@ -157,7 +157,7 @@ Settings Dialog 是 AppShell 持有的无导航 Dialog：由 `SettingsDialogProv
 
 - **Do** 让文章、当前任务和下一步行动先于系统过程出现。
 - **Do** 用固定左轨、居中阅读列、细分隔线和受控留白建立稳定秩序。
-- **Do** 把解析详情、继续操作和可追溯状态收纳进“文章状态”二级菜单。
+- **Do** 把解析详情和继续操作放在 TopBar 解析进度 Popover 中；More 的“文章状态”只说明 record / readiness，不承担 analysis_progress 操作。
 - **Do** 只在用户必须确认、继续或重试时使用 dialog，并让关闭后的事项可再次找到。
 - **Do** 让 Ask 从选区或本文上下文启动，并始终标明它正在讨论的范围。
 - **Do** 使用现有 token 和公共 primitives；新页面不得自行引入原始色值、私有阴影或页面专属 hover recipe。

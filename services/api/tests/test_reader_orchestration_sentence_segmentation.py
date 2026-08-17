@@ -52,6 +52,7 @@ from app.services.reader_orchestration.translation_worker import (
     TranslationBatchUnitContext,
     build_deterministic_translation_groups,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 HARRY_FRAGMENT = (
     "This criticized the royal family and the media in the U.K. "
@@ -713,9 +714,9 @@ def test_snapshot_projection_for_uk_it_base_has_no_stray_initialism_leaves() -> 
         return "".join(parts)
 
     result = _build_result(HARRY_FRAGMENT)
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=SNAPSHOT_TAKEN_AT,
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=SNAPSHOT_TAKEN_AT,
         last_event_sequence=7,
     )
 

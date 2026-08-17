@@ -13,6 +13,7 @@ import {
   type ReaderPlateSnapshotDto,
   type ReaderUnitType,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
   type ReaderRecordPlateDocument,
@@ -117,6 +118,7 @@ function makeSnapshot(
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

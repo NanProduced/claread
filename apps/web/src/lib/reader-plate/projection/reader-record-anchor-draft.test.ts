@@ -3,10 +3,11 @@
 import { computeUtf16FNV1a } from "@claread/contracts";
 import { describe, expect, it } from "vitest";
 
-import type {
-  ReaderPlateSnapshotDto,
-  ReaderSnapshotAnchorSegmentDto,
+import {
+  type ReaderPlateSnapshotDto,
+  type ReaderSnapshotAnchorSegmentDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 import {
   anchorDraftForSelectionSegment,
@@ -86,6 +87,7 @@ function makeSnapshot(
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

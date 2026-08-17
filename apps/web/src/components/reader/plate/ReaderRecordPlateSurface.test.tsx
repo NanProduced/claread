@@ -3107,6 +3107,36 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actionCluster?.className).toContain("shrink-0");
   });
 
+  it("places the analysis progress control before FavoriteButton in the sticky top bar", () => {
+    const snapshot = makeSnapshot();
+    render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    const topBar = screen.getByTestId("reader-record-top-bar");
+    const workspaceChrome = topBar.closest(".reader-workspace-shell__topbar");
+    expect(workspaceChrome).not.toBeNull();
+
+    const progressTrigger = screen.getByTestId("reader-analysis-progress-trigger");
+    const favorite = topBar.querySelector('button[title="收藏"]');
+    const moreTrigger = screen.getByTestId("reader-record-more-menu-trigger");
+    expect(favorite).not.toBeNull();
+    expect(topBar.contains(progressTrigger)).toBe(true);
+    expect(
+      progressTrigger.compareDocumentPosition(favorite as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      (favorite as Node).compareDocumentPosition(moreTrigger) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    expect(screen.getByTestId("reader-record-plate-header").querySelector(
+      '[data-testid="reader-analysis-progress-trigger"]',
+    )).toBeNull();
+    expect(document.querySelectorAll('[data-testid="reader-analysis-progress-trigger"]')).toHaveLength(1);
+    expect(screen.getByTestId("reader-record-more-menu-trigger")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "打开 Ask Claread" })).toBeTruthy();
+  });
+
   it("renders top bar title skeleton when title generation is pending", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = null;

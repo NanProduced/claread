@@ -900,47 +900,39 @@ async def test_v2_very_long_grouped_windowed_topology_and_reading_order(
         f"very-long must produce multi-window translation, got "
         f"{len(translation_jobs)}"
     )
-    assert len(vocabulary_jobs) >= 2, (
-        f"very-long must produce multi-window vocabulary, got "
+    assert len(vocabulary_jobs) == 1, (
+        f"very-long auto path creates one first-section vocabulary job, got "
         f"{len(vocabulary_jobs)}"
     )
-    assert len(grammar_window_jobs) >= 2, (
-        f"very-long must produce multi grammar windows, got "
-        f"{len(grammar_window_jobs)}"
-    )
-    assert len(grammar_batch_jobs) == 0, (
-        "GROUPED_WINDOWED must not create compact grammar batch jobs"
+    assert len(grammar_window_jobs) == 0
+    assert len(grammar_batch_jobs) == 1, (
+        "GROUPED_WINDOWED must create one first-section grammar batch job"
     )
 
-    for j in translation_jobs + vocabulary_jobs:
+    for j in translation_jobs:
         assert j["article_route"] == "grouped_windowed"
         assert ":window:" in str(j["target_key"] or ""), (
             f"{j['job_type']} target_key missing window: {j['target_key']!r}"
         )
         assert j["attempt_count"] == 1
-        # Shared *_v1 base (not structured).
-        if j["job_type"] == "translate_article":
-            assert j["operation_fingerprint"].startswith(_FP_TRANS_SHORT)
-            assert j["policy_version"] == _POL_TRANS_SHORT
-        else:
-            assert j["operation_fingerprint"].startswith(_FP_VOCAB_SHORT)
-            assert j["policy_version"] == _POL_VOCAB_SHORT
-
-    for j in grammar_window_jobs:
-        # Legacy grammar-window grammar identity uses the window UUID itself as target_key;
-        # unlike translation/vocabulary it does not use a ":window:" suffix.
-        input_json = _parse_json(j["input_json"])
-        assert str(input_json.get("window_id")) == str(j["target_key"])
+        assert j["operation_fingerprint"].startswith(_FP_TRANS_SHORT)
+        assert j["policy_version"] == _POL_TRANS_SHORT
+    for j in vocabulary_jobs:
+        assert j["article_route"] == "grouped_windowed"
+        assert str(j["target_key"] or "").startswith("ras1_")
         assert j["attempt_count"] == 1
-        assert j["operation_fingerprint"].startswith(_FP_GRAM_WINDOW) or (
-            j["operation_fingerprint"] == _FP_GRAM_WINDOW
-        )
+        assert j["operation_fingerprint"].startswith("vocabulary_analysis_section_v1:")
 
-    # Effective calls == planned window job counts (first-success, no retry).
+    for j in grammar_batch_jobs:
+        input_json = _parse_json(j["input_json"])
+        assert input_json.get("request_origin") == "automatic_analysis_section_v1"
+        assert j["attempt_count"] == 1
+        assert j["operation_fingerprint"].startswith("grammar_analysis_section_v1:")
+
     assert batch_t.call_count == len(translation_jobs)
     assert batch_v.call_count == len(vocabulary_jobs)
-    assert window_g.call_count == len(grammar_window_jobs)
-    assert batch_g.call_count == 0
+    assert window_g.call_count == 0
+    assert batch_g.call_count == 1
     assert title.call_count == 1
 
     # Reading-order publish: translation layers ordered by unit order_index.
@@ -964,8 +956,8 @@ async def test_v2_very_long_grouped_windowed_topology_and_reading_order(
 
     layer_counts = await _fetch_layer_counts(pool, article.record_id)
     assert layer_counts.get("translation", 0) == unit_count
-    assert layer_counts.get("vocabulary", 0) == unit_count
-    # Grammar window path may budget-cap density; require both subtypes present.
+    vocab_targets = _parse_json(vocabulary_jobs[0]["input_json"]).get("target_unit_ids") or []
+    assert layer_counts.get("vocabulary", 0) == len(vocab_targets)
     assert layer_counts.get("grammar_note", 0) > 0
     assert layer_counts.get("sentence_analysis", 0) > 0
 
@@ -978,7 +970,11 @@ async def test_v2_very_long_grouped_windowed_topology_and_reading_order(
 async def test_v2_noop_grammar_window_terminal_budget_and_no_retry(
     v2_env: asyncpg.Pool,
 ) -> None:
-    """Empty grammar candidates → no_op terminal, budget ok, no duplicate LLM."""
+    """GROUPED auto path no longer creates grammar windows.
+
+    Grammar-window no-op/empty-LLM coverage lives in grammar-window
+    component tests. This sample now locks first-section compact grammar.
+    """
     pool = v2_env
     batch_t = _CountingBatchTranslator()
     batch_v = _CountingBatchVocabularyExecutor()
@@ -1010,59 +1006,23 @@ async def test_v2_noop_grammar_window_terminal_budget_and_no_retry(
         max_jobs=80,
         lease_prefix="v2-noop",
     )
-    _assert_finalized(result, allow_no_op=True)
+    _assert_finalized(result)
 
-    fin = result.completion_finalization_result
-    assert fin.outcome == "completed_with_no_op", (
-        f"expected completed_with_no_op, got {fin.outcome!r}"
-    )
     assert await _fetch_readiness(pool, article.record_id) == "coverage_complete"
 
     jobs = await _fetch_jobs(pool, article.record_id)
     grammar_window_jobs = [
         j for j in jobs if j["job_type"] == "build_grammar_bundle_window"
     ]
-    assert len(grammar_window_jobs) >= 1
-
-    # Jobs themselves succeed (publish path marks window no_op, job succeeded).
-    for j in grammar_window_jobs:
-        # Keep the same legacy grammar-window window identity contract in the no-op path.
-        input_json = _parse_json(j["input_json"])
-        assert str(input_json.get("window_id")) == str(j["target_key"])
-        assert j["status"] == "succeeded", (
-            f"window job status={j['status']!r}, expected succeeded"
-        )
-        assert j["attempt_count"] == 1, (
-            f"window job must not retry on no-op; attempt_count={j['attempt_count']}"
-        )
-        assert j["max_attempts"] >= 1
-        output_ref = _parse_json(j["output_ref_json"]) or {}
-        assert output_ref.get("no_op") is True
-        diagnostics = output_ref.get("diagnostics") or {}
-        assert diagnostics.get("no_op_cause") == "llm_empty"
-        # Rationale may live on job row or only in output_ref depending on
-        # transition payload; prefer output_ref + window status below.
-
-    windows = await _fetch_analysis_windows(pool, article.record_id)
-    assert len(windows) == len(grammar_window_jobs)
-    for w in windows:
-        assert w["status"] == "no_op", (
-            f"window_index={w['window_index']} status={w['status']!r}"
-        )
-        coverage = _parse_json(w["coverage"]) or {}
-        diag = coverage.get("diagnostics") or {}
-        assert diag.get("no_op_cause") == "llm_empty"
-        raw = diag.get("raw_candidate_count_by_type") or {}
-        assert int(raw.get("grammar_note", 0)) == 0
-        assert int(raw.get("sentence_analysis", 0)) == 0
-
-    # Effective LLM calls: exactly one per planned grammar window job.
-    assert empty_window.call_count == len(grammar_window_jobs), (
-        f"expected {len(grammar_window_jobs)} grammar LLM calls, "
-        f"got {empty_window.call_count} (duplicate or missing)"
-    )
-    # No grammar batch fallback under GROUPED_WINDOWED.
-    assert batch_g.call_count == 0
+    grammar_batch_jobs = [
+        j
+        for j in jobs
+        if j["job_type"] == "build_grammar_bundle" and j["target_type"] == "unit_range"
+    ]
+    assert len(grammar_window_jobs) == 0
+    assert len(grammar_batch_jobs) == 1
+    assert empty_window.call_count == 0
+    assert batch_g.call_count == 1
 
     # Translation / vocabulary / title still succeed normally.
     assert batch_t.call_count >= 1
@@ -1077,11 +1037,13 @@ async def test_v2_noop_grammar_window_terminal_budget_and_no_retry(
             assert j["status"] == "succeeded"
             assert j["attempt_count"] == 1
 
-    # No grammar layers published (all windows no-op).
     layer_counts = await _fetch_layer_counts(pool, article.record_id)
-    assert layer_counts.get("grammar_note", 0) == 0
-    assert layer_counts.get("sentence_analysis", 0) == 0
-    # Translation/vocabulary still published.
     unit_count = await _fetch_unit_count(pool, article.record_id)
+    vocab_job = next(
+        j for j in jobs if j["job_type"] == "build_vocabulary_layer_article"
+    )
+    vocab_targets = _parse_json(vocab_job["input_json"]).get("target_unit_ids") or []
     assert layer_counts.get("translation", 0) == unit_count
-    assert layer_counts.get("vocabulary", 0) == unit_count
+    assert layer_counts.get("vocabulary", 0) == len(vocab_targets)
+    assert layer_counts.get("grammar_note", 0) > 0
+    assert layer_counts.get("sentence_analysis", 0) > 0

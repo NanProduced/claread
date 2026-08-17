@@ -16,6 +16,7 @@ import {
   type ReaderTranslationGroupNodeDto,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 /**
  * DTO shape tests: verify the TypeScript contracts match the backend
@@ -376,6 +377,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
     user_assets: [],
     parsed_decisions: [],
     value,
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 
@@ -448,6 +450,13 @@ describe("Reader Plate DTO shapes", () => {
     expect(snapshot.last_event_sequence).toBe(3);
     // Snapshot must NOT expose projection_version.
     expect("projection_version" in snapshot).toBe(false);
+  });
+
+  it("ReaderPlateSnapshotDto requires analysis_progress", () => {
+    const snapshot = makeSnapshot();
+    expect(snapshot.analysis_progress.plan_version).toBe("reader_analysis_sections_v1");
+    expect(snapshot.analysis_progress.mode).toBe("automatic");
+    expect(Array.isArray(snapshot.analysis_progress.sections)).toBe(true);
   });
 
   it("ReaderPlateSnapshotDto.value is a list of reader_unit nodes", () => {

@@ -42,6 +42,7 @@ from app.services.reader_orchestration.base_builder import (
 from app.services.reader_orchestration.stable_annotation_analysis import (
     StableBlockAnnotation,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 pytestmark = [
     pytest.mark.chain_reader_parse,
@@ -354,9 +355,9 @@ def test_snapshot_source_block_includes_stable_block_fields_when_annotated() -> 
         canonical_text=canonical_text,
         stable_block_annotations=annotations,
     )
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
         last_event_sequence=3,
     )
 
@@ -385,9 +386,9 @@ def test_snapshot_source_block_omits_stable_block_fields_when_not_annotated() ->
         base_id=_BASE_ID,
         canonical_text=canonical_text,
     )
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
         last_event_sequence=1,
     )
 
@@ -420,9 +421,9 @@ def test_snapshot_navigation_unit_carries_stable_block_type_for_outline() -> Non
         canonical_text=canonical_text,
         stable_block_annotations=annotations,
     )
-    snapshot = build_reader_plate_snapshot(
-        result,
-        snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
+    snapshot = build_reader_plate_snapshot(result,
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=datetime(2026, 7, 24, 12, 0, tzinfo=UTC),
         last_event_sequence=5,
     )
 

@@ -16,10 +16,11 @@ import type { Descendant } from "platejs";
 import { describe, expect, it } from "vitest";
 
 import { mergeIncrementalProjection } from "@/lib/reader-plate-snapshot/incremental-projection-merger";
-import type {
-  ReaderEventResponseDto,
-  ReaderPlateSnapshotDto,
+import {
+  type ReaderEventResponseDto,
+  type ReaderPlateSnapshotDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -175,6 +176,7 @@ function makeBaseSnapshot(
     user_assets: [],
     parsed_decisions: [],
     value: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 

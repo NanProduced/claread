@@ -1132,33 +1132,17 @@ async def test_non_short_article_creates_multiple_vocabulary_window_jobs(
     vocab_batch_jobs = [
         j for j in jobs if j["job_type"] == "build_vocabulary_layer_article"
     ]
-    # Non-short article must create at least 1 window job; with 8 units of
-    # ~1600 chars each and target=3000, expect ~4 windows.
-    assert len(vocab_batch_jobs) >= 2, (
-        f"expected >=2 vocabulary window jobs, got {len(vocab_batch_jobs)}"
+    assert len(vocab_batch_jobs) == 1, (
+        f"GROUPED_WINDOWED auto path creates one first-section vocabulary job, "
+        f"got {len(vocab_batch_jobs)}"
     )
-    # Must NOT create per-unit vocabulary jobs
     per_unit_vocab = [j for j in jobs if j["job_type"] == "build_vocabulary_layer"]
     assert len(per_unit_vocab) == 0
-
-    # Each window job must have distinct target_key, input_hash, and window_id
-    target_keys = [j["input_json"].get("window_id") for j in vocab_batch_jobs]
-    assert len(set(target_keys)) == len(vocab_batch_jobs), (
-        "window_ids must be distinct across window jobs"
-    )
-    input_hashes = [j["input_hash"] for j in vocab_batch_jobs]
-    assert len(set(input_hashes)) == len(vocab_batch_jobs), (
-        "input_hashes must be distinct across window jobs"
-    )
-
-    # target_unit_ids across all windows must cover every unit exactly once
-    all_target_unit_ids: list[str] = []
-    for j in vocab_batch_jobs:
-        ids = j["input_json"].get("target_unit_ids") or []
-        all_target_unit_ids.extend(ids)
-    assert len(set(all_target_unit_ids)) == len(all_target_unit_ids), (
-        "units must not overlap across windows"
-    )
+    payload = vocab_batch_jobs[0]["input_json"]
+    assert payload.get("request_origin") == "automatic_analysis_section_v1"
+    assert payload.get("analysis_section_order_index") == 0
+    assert payload.get("target_unit_ids")
+    assert set(payload["target_unit_ids"]) <= set(payload["analysis_section_unit_ids"])
 
 
 async def test_vocabulary_window_jobs_idempotent_rebootstrap(
@@ -1212,9 +1196,9 @@ async def test_vocabulary_window_jobs_partial_publish_only_fills_missing(
     vocab_batch_first = [
         j for j in jobs_first if j["job_type"] == "build_vocabulary_layer_article"
     ]
-    assert len(vocab_batch_first) >= 2
+    assert len(vocab_batch_first) == 1
 
-    # Simulate publishing vocabulary layers for the units in the first window
+    # Simulate publishing vocabulary layers for the first-section executable units
     first_window_unit_ids = vocab_batch_first[0]["input_json"]["target_unit_ids"]
     async with strategy_env.acquire() as conn:
         base_id = await conn.fetchval(
@@ -1271,20 +1255,8 @@ async def test_vocabulary_window_jobs_partial_publish_only_fills_missing(
         j for j in jobs_second if j["job_type"] == "build_vocabulary_layer_article"
     ]
 
-    # The succeeded first-window job should still be present
     assert first_job_id in {j["job_id"] for j in vocab_batch_second}
-
-    # NEW window jobs (not the succeeded first window) must NOT include
-    # any of the first window's already-published unit_ids.
-    new_window_jobs = [j for j in vocab_batch_second if j["job_id"] != first_job_id]
-    assert len(new_window_jobs) >= 1
-    for j in new_window_jobs:
-        ids = set(j["input_json"]["target_unit_ids"])
-        assert not ids.intersection(first_window_unit_ids), (
-            "window "
-            f"{j['job_id']} includes already-published units "
-            f"{ids & set(first_window_unit_ids)}"
-        )
+    assert len(vocab_batch_second) == 1
 
 
 async def test_vocabulary_window_jobs_target_key_distinct(
@@ -1315,17 +1287,15 @@ async def test_vocabulary_window_jobs_target_key_distinct(
             record_id,
         )
 
-    assert len(rows) >= 2
+    assert len(rows) == 1
     target_keys = [r["target_key"] for r in rows]
+    assert rows[0]["target_key"].startswith("ras1_")
     idempotency_keys = [r["idempotency_key"] for r in rows]
     input_hashes = [r["input_hash"] for r in rows]
-    # All distinct
     assert len(set(target_keys)) == len(rows)
     assert len(set(idempotency_keys)) == len(rows)
     assert len(set(input_hashes)) == len(rows)
-    # target_key format: {record_id}:window:{window_id}
-    for tk in target_keys:
-        assert ":window:" in tk
+    assert rows[0]["operation_fingerprint"].startswith("vocabulary_analysis_section_v1:")
 
 
 # ---------------------------------------------------------------------------#
@@ -2944,13 +2914,10 @@ async def test_structured_article_routes_to_compact_grammar_batch(
     )
 
 
-async def test_long_article_keeps_grammar_window_path(
+async def test_long_article_uses_first_section_grammar_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
-    """A GROUPED_WINDOWED article keeps the grammar-window analysis-window path.
-    ``build_grammar_bundle_window`` jobs + ``analysis_windows`` rows are
-    created. No ``build_grammar_bundle`` / ``unit_range`` batch job or
-    per-unit ``build_grammar_bundle`` / ``unit`` job is created."""
+    """A GROUPED_WINDOWED article uses one first-section compact grammar job."""
     user_id = await insert_user(strategy_env)
     record_id = await _submit_with_strategy(
         strategy_env,
@@ -2970,22 +2937,10 @@ async def test_long_article_keeps_grammar_window_path(
         strategy_env, record_id
     )
 
-    # grammar-window window jobs created
-    assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) > 0, (
-        "GROUPED_WINDOWED: expected build_grammar_bundle_window jobs"
-    )
-    # grammar-window analysis windows created
-    assert analysis_window_count > 0, (
-        "GROUPED_WINDOWED: expected analysis_windows rows"
-    )
-    # No compact grammar batch job (build_grammar_bundle / unit_range)
-    assert grammar_by_target.get("build_grammar_bundle:unit_range", 0) == 0, (
-        "GROUPED_WINDOWED: build_grammar_bundle:unit_range must not exist"
-    )
-    # No per-unit grammar fan-out
-    assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0, (
-        "GROUPED_WINDOWED: per-unit build_grammar_bundle:unit must not exist"
-    )
+    assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) == 0
+    assert analysis_window_count == 0
+    assert grammar_by_target.get("build_grammar_bundle:unit_range", 0) == 1
+    assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0
 
 
 async def test_no_per_unit_grammar_fanout_across_three_routes(

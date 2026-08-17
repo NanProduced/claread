@@ -16,6 +16,8 @@ import type {
   ReaderPlainTextSubmitRequestDto,
   ReaderPlainTextSubmitResponseDto,
   ReaderPlateSnapshotDto,
+  ReaderAnalysisSectionRequestDto,
+  ReaderAnalysisSectionRequestResponseDto,
   ReaderSectionTranslationRequestDto,
   ReaderSectionTranslationResponseDto,
   ReaderSourceArtifactSubmitInputRequestDto,
@@ -47,6 +49,7 @@ import type {
  *   - GET  /reader/records/{record_id}/article-rag-index/status
  *   - POST /reader/records/{record_id}/article-rag-index/ensure
  *   - POST /reader/records/{record_id}/section-translation
+ *   - POST /reader/records/{record_id}/analysis-sections/requests
  *
  * This module intentionally does NOT touch the legacy `/scene` endpoints.
  */
@@ -295,6 +298,21 @@ export function submitUpstreamReaderSectionTranslation(
 ): Promise<UpstreamResult<ReaderSectionTranslationResponseDto>> {
   return fastApiFetch<ReaderSectionTranslationResponseDto>(
     `/reader/records/${encodeURIComponent(recordId)}/section-translation`,
+    {
+      method: "POST",
+      sessionToken,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function submitUpstreamReaderAnalysisSectionRequest(
+  recordId: string,
+  payload: ReaderAnalysisSectionRequestDto,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderAnalysisSectionRequestResponseDto>> {
+  return fastApiFetch<ReaderAnalysisSectionRequestResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/analysis-sections/requests`,
     {
       method: "POST",
       sessionToken,

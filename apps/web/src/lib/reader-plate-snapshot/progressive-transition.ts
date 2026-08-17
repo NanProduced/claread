@@ -1140,6 +1140,19 @@ export function makePuxSnapshot(options: {
       },
     ],
     enhancement_layers,
+    analysis_progress: {
+      mode: "automatic",
+      plan_version: "reader_analysis_sections_v1",
+      overall_status: "queued",
+      active_phase: null,
+      translation_status: "not_started",
+      completed_section_count: 0,
+      total_section_count: 0,
+      active_section_id: null,
+      needs_user_action: false,
+      last_progress_at: null,
+      sections: [],
+    },
     enhancement_progress: {
       overall_status:
         options.readiness === "coverage_complete"

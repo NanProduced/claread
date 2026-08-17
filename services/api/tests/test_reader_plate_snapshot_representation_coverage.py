@@ -55,6 +55,7 @@ from app.services.reader_orchestration.snapshot import (
     _build_snapshot_id,
     build_reader_plate_snapshot,
 )
+from tests.reader_orchestration_test_support import fixture_analysis_progress
 
 NOW = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
 RECORD_ID = "00000000-0000-0000-0000-000000000001"
@@ -298,9 +299,9 @@ def _build_snapshot(
     enhancement_progress: ReaderEnhancementProgress | None = None,
     snapshot_taken_at: datetime = NOW,
 ) -> object:
-    return build_reader_plate_snapshot(
-        build_result or _build_result(),
-        snapshot_taken_at=snapshot_taken_at,
+    return build_reader_plate_snapshot(build_result or _build_result(),
+        analysis_progress=fixture_analysis_progress(),
+snapshot_taken_at=snapshot_taken_at,
         last_event_sequence=last_event_sequence,
         record=record,
         enhancement_layers=enhancement_layers,
@@ -820,6 +821,7 @@ def test_build_snapshot_id_uses_sha256_truncated_to_16_hex() -> None:
         last_event_sequence=1,
         enhancement_layers=[],
         parsed_decisions=[],
+        analysis_progress=fixture_analysis_progress(),
     )
     assert snapshot_id.startswith("reader_snapshot_")
     fingerprint = snapshot_id.removeprefix("reader_snapshot_")
@@ -835,12 +837,14 @@ def test_build_snapshot_id_is_deterministic() -> None:
         last_event_sequence=1,
         enhancement_layers=[],
         parsed_decisions=[],
+        analysis_progress=fixture_analysis_progress(),
     )
     snap_id_b = _build_snapshot_id(
         build_result,
         last_event_sequence=1,
         enhancement_layers=[],
         parsed_decisions=[],
+        analysis_progress=fixture_analysis_progress(),
     )
     assert snap_id_a == snap_id_b
 
@@ -850,11 +854,15 @@ def test_build_snapshot_id_parts_format() -> None:
     build_result = _build_result()
     layer = _make_layer()
     decision = _make_parsed_decision()
+    progress = fixture_analysis_progress()
     expected_parts = [
         build_result.base.reading_record_id,
         build_result.base.base_id,
         build_result.base.content_sha256,
         "1",
+        "ap:"
+        f"{progress.mode}:{progress.overall_status}:"
+        f"{progress.translation_status}:{progress.completed_section_count}",
         f"layer:{layer.layer_id}:{layer.target_scope}:{layer.target_key}:{layer.schema_version}",
         f"parsed:{decision.unit_id}:{decision.policy_code}:{decision.parsed_state}:{decision.rationale_code or ''}",
     ]
@@ -868,6 +876,7 @@ def test_build_snapshot_id_parts_format() -> None:
         last_event_sequence=1,
         enhancement_layers=[layer],
         parsed_decisions=[decision],
+        analysis_progress=progress,
     )
     assert actual_id == expected_id
 
@@ -876,11 +885,15 @@ def test_build_snapshot_id_empty_rationale_code() -> None:
     """rationale_code=None is serialized as empty string in the fingerprint."""
     build_result = _build_result()
     decision = _make_parsed_decision(rationale_code=None)
+    progress = fixture_analysis_progress()
     expected_parts = [
         build_result.base.reading_record_id,
         build_result.base.base_id,
         build_result.base.content_sha256,
         "1",
+        "ap:"
+        f"{progress.mode}:{progress.overall_status}:"
+        f"{progress.translation_status}:{progress.completed_section_count}",
         f"parsed:{decision.unit_id}:{decision.policy_code}:{decision.parsed_state}:",
     ]
     expected_hash = hashlib.sha256(
@@ -893,6 +906,7 @@ def test_build_snapshot_id_empty_rationale_code() -> None:
         last_event_sequence=1,
         enhancement_layers=[],
         parsed_decisions=[decision],
+        analysis_progress=progress,
     )
     assert actual_id == expected_id
 

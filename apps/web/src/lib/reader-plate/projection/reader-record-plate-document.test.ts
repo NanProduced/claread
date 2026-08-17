@@ -16,6 +16,7 @@ import {
   type ReaderVocabularyMarkDto,
   type ReaderGrammarNoteMarkDto,
 } from "@/types/api/reader-plate";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 import {
   READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION,
@@ -394,6 +395,7 @@ function makeSnapshot(
       },
     ],
     value: [makeUnit()],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 
@@ -1707,6 +1709,7 @@ describe("stable paragraph inline marks projection", () => {
       ],
       enhancement_layers: [],
       enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
       ask_supplements: [],
       user_assets: [],
       parsed_decisions: [],
@@ -1971,6 +1974,7 @@ describe("L1 code/table metadata projection", () => {
       anchor_segments: anchorSegments,
       enhancement_layers: [],
       enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
       ask_supplements: [],
       user_assets: [],
       parsed_decisions: [],
@@ -2644,6 +2648,7 @@ describe("wrapper composition order", () => {
       anchor_segments: anchorSegments,
       enhancement_layers: [],
       enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
       ask_supplements: extras.supplements ?? [],
       user_assets: [],
       parsed_decisions: [],

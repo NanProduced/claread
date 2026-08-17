@@ -7,6 +7,10 @@ from uuid import UUID
 import asyncpg
 
 from app.database.connection import init_connection
+from app.schemas.reader_orchestration import ReaderAnalysisProgress
+from app.services.reader_orchestration.analysis_section_plan import (
+    ANALYSIS_SECTION_PLAN_VERSION,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceResult,
     ArticleReadyPersistenceService,
@@ -25,6 +29,24 @@ from tests.test_reader_orchestration_schema_baseline import (
 
 BASELINE_SQL = _BASELINE_SQL
 _WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+def fixture_analysis_progress(**overrides: object) -> ReaderAnalysisProgress:
+    payload: dict[str, object] = {
+        "mode": "automatic",
+        "plan_version": ANALYSIS_SECTION_PLAN_VERSION,
+        "overall_status": "queued",
+        "active_phase": "translation",
+        "translation_status": "queued",
+        "completed_section_count": 0,
+        "total_section_count": 0,
+        "active_section_id": None,
+        "needs_user_action": False,
+        "last_progress_at": None,
+        "sections": [],
+    }
+    payload.update(overrides)
+    return ReaderAnalysisProgress.model_validate(payload)
 
 
 class CompatTranslationLayerPublisher:
