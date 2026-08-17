@@ -792,98 +792,98 @@ class TestNoNetworkGuard:
             )
 
 
-    # ---------------------------------------------------------------------------
-    # Runbook doc — dry-run sections
-    # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Runbook doc — dry-run sections
+# ---------------------------------------------------------------------------
 
 
-    class TestRunbookHasDryRunSections:
-        """The runbook must document the article-RAG dry-run command and point at
-        the canonical real-chain acceptance test as the SINGLE real-chain
-        entry point.  The prior smoke-collection namespace design has
-        been retired; the runbook must NOT reference it anymore.
-        """
+class TestRunbookHasDryRunSections:
+    """The runbook must document the article-RAG dry-run command and point at
+    the canonical real-chain acceptance test as the SINGLE real-chain
+    entry point.  The prior smoke-collection namespace design has
+    been retired; the runbook must NOT reference it anymore.
+    """
 
-        @pytest.fixture(scope="class")
-        def doc_text(self) -> str:
-            assert RUNBOOK_DOC.exists(), f"Runbook not found at {RUNBOOK_DOC}"
-            return RUNBOOK_DOC.read_text(encoding="utf-8")
+    @pytest.fixture(scope="class")
+    def doc_text(self) -> str:
+        assert RUNBOOK_DOC.exists(), f"Runbook not found at {RUNBOOK_DOC}"
+        return RUNBOOK_DOC.read_text(encoding="utf-8")
 
-        def test_doc_has_no_network_dry_run_section(self, doc_text: str) -> None:
-            # Soft assertions — the runbook must mention the dry-run
-            # command and the env-gate that disables real calls.
-            assert "dry-run" in doc_text.lower() or "dry run" in doc_text.lower()
-            assert "READER_ARTICLE_RAG_SMOKE" in doc_text
-            # The opt-in gate must be described as opt-in (not default).
-            assert "opt-in" in doc_text.lower()
+    def test_doc_has_no_network_dry_run_section(self, doc_text: str) -> None:
+        # Soft assertions — the runbook must mention the dry-run
+        # command and the env-gate that disables real calls.
+        assert "dry-run" in doc_text.lower() or "dry run" in doc_text.lower()
+        assert "READER_ARTICLE_RAG_SMOKE" in doc_text
+        # The opt-in gate must be described as opt-in (not default).
+        assert "opt-in" in doc_text.lower()
 
-        def test_doc_documents_canonical_real_acceptance_module(
-            self, doc_text: str
-        ) -> None:
-            # The runbook must name the canonical real-chain acceptance
-            # module as the SINGLE real-chain entry point.  The prior
-            # smoke design has been retired.
-            assert CANONICAL_REAL_ACCEPTANCE_MODULE in doc_text, (
-                f"Runbook must point at "
-                f"{CANONICAL_REAL_ACCEPTANCE_MODULE!r} as the single "
-                f"real-chain acceptance entry point"
-            )
+    def test_doc_documents_canonical_real_acceptance_module(
+        self, doc_text: str
+    ) -> None:
+        # The runbook must name the canonical real-chain acceptance
+        # module as the SINGLE real-chain entry point.  The prior
+        # smoke design has been retired.
+        assert CANONICAL_REAL_ACCEPTANCE_MODULE in doc_text, (
+            f"Runbook must point at "
+            f"{CANONICAL_REAL_ACCEPTANCE_MODULE!r} as the single "
+            f"real-chain acceptance entry point"
+        )
 
-        def test_doc_has_no_retired_smoke_prefix(self, doc_text: str) -> None:
-            # 0-match enforcement: the retired smoke collection namespace
-            # prefix MUST NOT appear in the runbook.  The prefix is
-            # assembled at runtime so this test source file does not
-            # contain the literal contiguous string either (which would
-            # otherwise break the rg 0-match contract on this file).
-            assert _RETIRED_SMOKE_PREFIX not in doc_text, (
-                "Runbook must NOT reference the retired smoke-collection "
-                "namespace prefix.  The single-path convergence writes to "
-                "the production article_rag_chunks collection with "
-                "precise fixture isolation instead."
-            )
+    def test_doc_has_no_retired_smoke_prefix(self, doc_text: str) -> None:
+        # 0-match enforcement: the retired smoke collection namespace
+        # prefix MUST NOT appear in the runbook.  The prefix is
+        # assembled at runtime so this test source file does not
+        # contain the literal contiguous string either (which would
+        # otherwise break the rg 0-match contract on this file).
+        assert _RETIRED_SMOKE_PREFIX not in doc_text, (
+            "Runbook must NOT reference the retired smoke-collection "
+            "namespace prefix.  The single-path convergence writes to "
+            "the production article_rag_chunks collection with "
+            "precise fixture isolation instead."
+        )
 
-        def test_doc_warns_against_production_use_of_smoke_gate(
-            self, doc_text: str
-        ) -> None:
-            # The runbook must explicitly call out that the smoke gate
-            # must NEVER be set in production.  We accept the warning
-            # in any language — the runbook is bilingual (zh / en) — so
-            # we look for the gate name alongside a "production" / "prod"
-            # / "生产" indicator.
-            gate_seen = "READER_ARTICLE_RAG_SMOKE" in doc_text
-            production_warning = (
-                "production" in doc_text.lower()
-                or "prod" in doc_text.lower()
-                or "生产" in doc_text  # Chinese: production
-            )
-            assert gate_seen and production_warning, (
-                "Runbook must warn that READER_ARTICLE_RAG_SMOKE must "
-                "never be set in production.  Both the gate name and a "
-                "production / prod / 生产 warning are required."
-            )
+    def test_doc_warns_against_production_use_of_smoke_gate(
+        self, doc_text: str
+    ) -> None:
+        # The runbook must explicitly call out that the smoke gate
+        # must NEVER be set in production.  We accept the warning
+        # in any language — the runbook is bilingual (zh / en) — so
+        # we look for the gate name alongside a "production" / "prod"
+        # / "生产" indicator.
+        gate_seen = "READER_ARTICLE_RAG_SMOKE" in doc_text
+        production_warning = (
+            "production" in doc_text.lower()
+            or "prod" in doc_text.lower()
+            or "生产" in doc_text  # Chinese: production
+        )
+        assert gate_seen and production_warning, (
+            "Runbook must warn that READER_ARTICLE_RAG_SMOKE must "
+            "never be set in production.  Both the gate name and a "
+            "production / prod / 生产 warning are required."
+        )
 
-        def test_canonical_acceptance_file_has_no_retired_smoke_prefix(self) -> None:
-            # 0-match enforcement: the canonical real-chain acceptance
-            # test must NOT reference the retired smoke-collection
-            # namespace prefix.  It writes to the production
-            # ``article_rag_chunks`` collection, not a smoke-prefixed
-            # collection.  The prefix is assembled at runtime so this
-            # test source file does not contain the literal contiguous
-            # string either.
-            canonical_path = (
-                REPO_ROOT
-                / "services"
-                / "api"
-                / "tests"
-                / f"{CANONICAL_REAL_ACCEPTANCE_MODULE}.py"
-            )
-            assert canonical_path.exists(), (
-                f"Canonical acceptance test not found at {canonical_path}"
-            )
-            text = canonical_path.read_text(encoding="utf-8")
-            assert _RETIRED_SMOKE_PREFIX not in text, (
-                f"Canonical acceptance test {canonical_path.name} must "
-                f"NOT reference the retired smoke-collection namespace "
-                f"prefix.  The single-path convergence writes to "
-                f"article_rag_chunks, not a smoke-prefixed collection."
-            )
+    def test_canonical_acceptance_file_has_no_retired_smoke_prefix(self) -> None:
+        # 0-match enforcement: the canonical real-chain acceptance
+        # test must NOT reference the retired smoke-collection
+        # namespace prefix.  It writes to the production
+        # ``article_rag_chunks`` collection, not a smoke-prefixed
+        # collection.  The prefix is assembled at runtime so this
+        # test source file does not contain the literal contiguous
+        # string either.
+        canonical_path = (
+            REPO_ROOT
+            / "services"
+            / "api"
+            / "tests"
+            / f"{CANONICAL_REAL_ACCEPTANCE_MODULE}.py"
+        )
+        assert canonical_path.exists(), (
+            f"Canonical acceptance test not found at {canonical_path}"
+        )
+        text = canonical_path.read_text(encoding="utf-8")
+        assert _RETIRED_SMOKE_PREFIX not in text, (
+            f"Canonical acceptance test {canonical_path.name} must "
+            f"NOT reference the retired smoke-collection namespace "
+            f"prefix.  The single-path convergence writes to "
+            f"article_rag_chunks, not a smoke-prefixed collection."
+        )

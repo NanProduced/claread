@@ -334,8 +334,32 @@ describe("SidebarRail 最近阅读行菜单", () => {
     expect(trigger.className).toContain("opacity-0");
     expect(trigger.className).toContain("group-hover:opacity-100");
     expect(trigger.className).toContain("group-focus-within:opacity-100");
+    // Per-trigger Radix data-state, not a shared sidebar boolean.
+    expect(trigger.className).toContain("data-[state=open]:opacity-100");
     // Tab-focusable: must never be display:none.
     expect(trigger.className).not.toContain("hidden");
+  });
+
+  it("marks only the open row's trigger with data-state=open", async () => {
+    render(
+      <SidebarRail
+        pathname="/app/library"
+        recentRecords={[
+          makeRecord({ title: "侧栏甲" }),
+          makeRecord({ readingRecordId: "rr_2", title: "侧栏乙" }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: '打开“侧栏甲”的操作菜单' }));
+    await screen.findByRole("menu");
+
+    const triggers = screen
+      .getAllByRole("button", { hidden: true })
+      .filter((b) => (b.getAttribute("aria-label") ?? "").includes("的操作菜单"));
+    const opened = triggers.find((b) => b.getAttribute("aria-label")?.includes("侧栏甲"));
+    const other = triggers.find((b) => b.getAttribute("aria-label")?.includes("侧栏乙"));
+    expect(opened?.getAttribute("data-state")).toBe("open");
+    expect(other?.getAttribute("data-state")).not.toBe("open");
   });
 
   it("keeps the sidebar overlay open while a row menu is open (portalled)", async () => {

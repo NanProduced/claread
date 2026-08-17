@@ -395,6 +395,43 @@ describe("ReadingRecordSection row menu", () => {
     expect(link?.contains(trigger)).toBe(false);
   });
 
+  it("keeps the trigger visible on touch widths and quiet from md up", () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[makeReadingRecord({ title: "触控行" })]}
+        status="ready"
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: '打开“触控行”的操作菜单' });
+    expect(trigger.className).toContain("opacity-100");
+    expect(trigger.className).toContain("md:opacity-0");
+    expect(trigger.className).toContain("md:group-hover:opacity-100");
+    expect(trigger.className).not.toContain("hidden");
+  });
+
+  it("reveals exactly the open row's trigger via data-state, not a shared flag", async () => {
+    render(
+      <ReadingRecordSection
+        readingRecords={[
+          makeReadingRecord({ title: "行甲" }),
+          makeReadingRecord({ readingRecordId: "reading_record_2", title: "行乙" }),
+        ]}
+        status="ready"
+      />,
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.click(screen.getByRole("button", { name: '打开“行甲”的操作菜单' }), { pointerEventsCheck: 0 });
+    await screen.findByRole("menu");
+
+    const triggers = screen
+      .getAllByRole("button", { hidden: true })
+      .filter((b) => (b.getAttribute("aria-label") ?? "").includes("的操作菜单"));
+    const opened = triggers.find((b) => b.getAttribute("aria-label")?.includes("行甲"));
+    const other = triggers.find((b) => b.getAttribute("aria-label")?.includes("行乙"));
+    expect(opened?.getAttribute("data-state")).toBe("open");
+    expect(other?.getAttribute("data-state")).not.toBe("open");
+  });
+
   it("does not offer 从最近阅读中移除 in the Library menu", async () => {
     render(
       <ReadingRecordSection

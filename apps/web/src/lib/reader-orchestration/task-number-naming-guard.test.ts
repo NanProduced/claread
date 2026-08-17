@@ -485,7 +485,11 @@ describe("Syntax-aware task-history governance", () => {
 
   it("parses every tracked TypeScript source with TypeScript 5.9.3", () => {
     expect(ts.version).toBe("5.9.3");
-    expect(TYPESCRIPT_PATHS).toHaveLength(729);
+    // Ratchet count: 732 tracked sources at 2a0039df + 8 new TS/TSX
+    // files added by the Wave 10 lifecycle UI work (route handlers +
+    // actions menu + tests) = 740.  Bump this number whenever tracked
+    // TypeScript files are added.
+    expect(TYPESCRIPT_PATHS).toHaveLength(740);
     expect(PARSE_RESULTS.length).toBeGreaterThan(0);
     expect(
       PARSE_RESULTS.flatMap((result) =>

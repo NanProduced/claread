@@ -10,6 +10,7 @@ import {
 } from "@/lib/reader-record-status";
 import { appReadRoute, loginRouteBase } from "@/lib/routes";
 import { looksLikeSafeUserCopy } from "@/lib/user-facing-error";
+import { cn } from "@/lib/cn";
 import { ReadingRecordActionsMenu } from "@/components/reading-records/ReadingRecordActionsMenu";
 import type {
   ReadingRecordListItemVm,
@@ -206,7 +207,14 @@ export function ReadingRecordSection({
           recordId={item.readingRecordId}
           title={item.title}
           onDeleted={onRecordDeleted}
-          className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          className={cn(
+            "absolute right-1 top-1/2 -translate-y-1/2",
+            // Touch devices have no hover: the trigger is always visible
+            // below md.  From md up it stays quiet until the row is
+            // hovered/focused or the menu is open (per-trigger
+            // data-state=open).
+            "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 md:focus-visible:opacity-100 data-[state=open]:opacity-100",
+          )}
         />
       </li>
     );

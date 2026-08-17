@@ -387,9 +387,12 @@ export function SidebarRail({
                           onOpenChange={handleRecordActionMenuOpenChange}
                           className={cn(
                             "absolute right-1 top-1/2 -translate-y-1/2",
-                            recordActionMenuOpen
-                              ? "opacity-100"
-                              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                            // Visibility is per-trigger via Radix
+                            // data-state=open — only THIS row's ellipsis
+                            // shows while its menu is open.  The sidebar
+                            // keeps a single boolean (recordActionMenuOpen)
+                            // solely to prevent overlay auto-collapse.
+                            "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
                           )}
                         />
                       </li>
