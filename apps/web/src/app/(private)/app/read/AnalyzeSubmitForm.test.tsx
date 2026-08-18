@@ -756,7 +756,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
     expect(screen.getByText("确认识别出的正文")).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "返回修改" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新输入" })).toBeTruthy();
     expect(screen.queryByText("rec_unified_2")).toBeNull();
     expect(screen.queryByText("cand_1")).toBeNull();
     expect(screen.queryByText("inp_cand_1")).toBeNull();
@@ -1593,7 +1593,7 @@ describe("resume_candidate entry", () => {
     await waitFor(() => {
       expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新输入" })).toBeNull();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "确认并开始阅读" })).toBeTruthy();
     expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
@@ -1627,7 +1627,7 @@ describe("resume_candidate entry", () => {
     await waitFor(() => {
       expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新输入" })).toBeNull();
 
     const stillThere = window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY);
     expect(stillThere).not.toBeNull();
@@ -1779,7 +1779,7 @@ describe("resume_candidate entry", () => {
     await waitFor(() => {
       expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: "返回修改" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新输入" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
 
     // Content Check 编辑器展示服务端草稿（输入主区域已被面板替换）。
@@ -1788,8 +1788,8 @@ describe("resume_candidate entry", () => {
     ) as HTMLTextAreaElement;
     expect(panelEditor.value).toBe("Markdown article needing confirmation.");
 
-    // 返回修改：恢复输入编辑器并回填草稿文本。
-    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
+    // 重新输入：恢复输入编辑器并回填草稿文本。
+    fireEvent.click(screen.getByRole("button", { name: "重新输入" }));
     await waitFor(() => {
       expect(
         screen.getByPlaceholderText("Paste an English article here"),

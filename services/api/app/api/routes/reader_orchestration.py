@@ -1323,6 +1323,8 @@ async def list_reader_records(
                 last_opened_at=summary.last_opened_at,
                 display_title=summary.display_title,
                 source_label=summary.source_label,
+                reading_goal=summary.reading_goal,
+                reading_variant=summary.reading_variant,
             )
             for summary in summaries
         ],

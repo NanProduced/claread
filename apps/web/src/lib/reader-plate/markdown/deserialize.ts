@@ -18,9 +18,14 @@ import { createPlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { Descendant } from "platejs";
 
-import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
+import {
+  MARKDOWN_PLUGIN_OPTIONS,
+  MarkdownKit,
+} from "@/components/editor/plugins/markdown-kit";
+import { remarkPreserveUnsupported } from "./remark-preserve-unsupported";
 
 let _deserializerEditor: ReturnType<typeof createPlateEditor> | null = null;
+let _inputDeserializerEditor: ReturnType<typeof createPlateEditor> | null = null;
 
 function getDeserializerEditor() {
   if (!_deserializerEditor) {
@@ -29,6 +34,32 @@ function getDeserializerEditor() {
     });
   }
   return _deserializerEditor;
+}
+
+/**
+ * 输入端 deserializer：在 MARKDOWN_PLUGIN_OPTIONS 上追加
+ * remarkPreserveUnsupported（image→link、footnote→字面文本、task list→
+ * 可见标记），保证 initialValue / setValue 加载路径与粘贴路径一致，
+ * 不支持的结构可见保留、不静默丢失。仅输入端使用；projection 路径
+ * 继续走基础 deserializer。
+ */
+function getInputDeserializerEditor() {
+  if (!_inputDeserializerEditor) {
+    _inputDeserializerEditor = createPlateEditor({
+      plugins: [
+        MarkdownPlugin.configure({
+          options: {
+            ...MARKDOWN_PLUGIN_OPTIONS,
+            remarkPlugins: [
+              ...MARKDOWN_PLUGIN_OPTIONS.remarkPlugins,
+              remarkPreserveUnsupported,
+            ],
+          },
+        }),
+      ],
+    });
+  }
+  return _inputDeserializerEditor;
 }
 
 /**
@@ -60,6 +91,7 @@ export interface DeserializeMarkdownResult {
  */
 export function deserializeMarkdownToBlocksWithStatus(
   markdown: string,
+  options?: { preserveUnsupported?: boolean },
 ): DeserializeMarkdownResult {
   if (!markdown?.trim()) {
     return {
@@ -68,7 +100,9 @@ export function deserializeMarkdownToBlocksWithStatus(
     };
   }
   try {
-    const editor = getDeserializerEditor();
+    const editor = options?.preserveUnsupported
+      ? getInputDeserializerEditor()
+      : getDeserializerEditor();
     const blocks = editor.getApi(MarkdownPlugin).markdown.deserialize(markdown);
     return { blocks, status: "success" };
   } catch (error) {

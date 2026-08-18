@@ -48,6 +48,9 @@ export interface ReadingRecordListItemVm {
    * Raw source_metadata is NOT exposed to the browser.
    */
   sourceLabel: string;
+  /** 解析模式 code（原样透传，可能缺失；label 归 reading-defaults）。 */
+  readingGoal?: string | null;
+  readingVariant?: string | null;
 }
 
 export type ReadingRecordListResult =
@@ -217,6 +220,8 @@ export async function getReadingRecordListFromWeb(
       lastEventSequence: item.last_event_sequence,
       lastOpenedAt: item.last_opened_at,
       sourceLabel: item.source_label,
+      readingGoal: item.reading_goal ?? null,
+      readingVariant: item.reading_variant ?? null,
     })),
     total: data.total,
     limit: data.limit,

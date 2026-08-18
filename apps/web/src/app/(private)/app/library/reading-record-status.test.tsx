@@ -104,7 +104,7 @@ describe("statusLabelFor (双键 mapping)", () => {
     ]);
   });
 
-  it("renders 解析完成 in DOM for readable_enhancing + coverage_complete", () => {
+  it("readable_enhancing 已就绪记录不渲染状态文本（保持安静）", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -117,7 +117,9 @@ describe("statusLabelFor (双键 mapping)", () => {
         status="ready"
       />,
     );
-    expect(screen.getByText("解析完成")).toBeTruthy();
+    expect(screen.queryByText("解析完成")).toBeNull();
+    expect(screen.queryByText("可以开始阅读")).toBeNull();
+    expect(screen.getByText("Done")).toBeTruthy();
   });
 });
 
@@ -169,8 +171,8 @@ describe("needs_confirmation 恢复入口", () => {
     expect(ncItem?.querySelector("a")?.getAttribute("href")).toBe(
       "/app/read?resume_candidate=nc",
     );
-    expect(within(ncItem as HTMLElement).getByText("需要确认")).toBeTruthy();
-    expect(within(ncItem as HTMLElement).getByText("请确认已准备好的内容后开始阅读")).toBeTruthy();
+    expect(within(ncItem as HTMLElement).getByText("待确认")).toBeTruthy();
+    expect(within(ncItem as HTMLElement).queryByText("请确认已准备好的内容后开始阅读")).toBeNull();
     expect(within(ncItem as HTMLElement).getByText("继续确认")).toBeTruthy();
 
     // a1 仍可点击
@@ -221,7 +223,8 @@ describe("needs_confirmation 恢复入口", () => {
     expect(ncItem.querySelector("a")?.getAttribute("href")).toBe(
       "/app/read?resume_candidate=nc",
     );
-    expect(within(ncItem).getByText("请确认已准备好的内容后开始阅读")).toBeTruthy();
+    expect(within(ncItem).queryByText("请确认已准备好的内容后开始阅读")).toBeNull();
+    expect(within(ncItem).getByText("待确认")).toBeTruthy();
     expect(within(ncItem).getByText("继续确认")).toBeTruthy();
   });
 });

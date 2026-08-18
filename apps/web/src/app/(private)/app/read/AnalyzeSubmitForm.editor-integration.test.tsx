@@ -124,7 +124,7 @@ async function enterMarkdownViaRecoveryFlow(
     expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
   });
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新输入" }));
   });
   await waitFor(() => {
     expect(screen.queryByTestId("content-check-panel")).toBeNull();
@@ -178,7 +178,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     expect(screen.queryByText("已保留文档结构")).toBeNull();
 
     // 清空按钮出现。
-    expect(screen.getByTitle("清空")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "清空" })).toBeTruthy();
 
     // 真实 DOM 结构在编辑器内（不是 textarea mock）。
     const editorEl = document.querySelector("#analysis-text") as HTMLElement;
@@ -194,7 +194,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByTitle("清空"));
+      fireEvent.click(screen.getByRole("button", { name: "清空" }));
     });
 
     await waitFor(() => {

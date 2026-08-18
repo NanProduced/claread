@@ -6,6 +6,27 @@ import {
   deserializeMarkdownInline,
 } from "./deserialize";
 
+describe("deserializeMarkdownToBlocksWithStatus preserveUnsupported", () => {
+  const IMAGE_MD =
+    "Before paragraph.\n\n![A shaded avenue](avenue.jpg)\n\nAfter paragraph.";
+
+  it("preserveUnsupported: image 降级为可见 link，不静默丢失", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(IMAGE_MD, {
+      preserveUnsupported: true,
+    });
+    expect(result.status).toBe("success");
+    const json = JSON.stringify(result.blocks);
+    expect(json).toContain("A shaded avenue");
+    expect(json).toContain("avenue.jpg");
+  });
+
+  it("默认路径（projection）保持原行为，不追加输入端降级", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(IMAGE_MD);
+    expect(result.status).toBe("success");
+    expect(JSON.stringify(result.blocks)).not.toContain("avenue.jpg");
+  });
+});
+
 describe("deserializeMarkdownToBlocks", () => {
   it("returns empty paragraph for empty string", () => {
     const result = deserializeMarkdownToBlocks("");

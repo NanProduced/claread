@@ -94,7 +94,7 @@ export function ReadPageFocusGrid({ children }: { children: ReactNode }) {
       className={cn(
         "grid gap-10 lg:min-h-0 lg:flex-1 xl:gap-12 2xl:gap-16",
         focusMode
-          ? "xl:grid-cols-[minmax(0,72rem)] xl:justify-center"
+          ? "xl:grid-cols-[minmax(0,88rem)] xl:justify-center"
           : "xl:grid-cols-[minmax(0,1fr)_24rem]",
       )}
     >

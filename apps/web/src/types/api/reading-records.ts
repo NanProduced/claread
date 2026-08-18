@@ -45,6 +45,12 @@ export interface ReadingRecordListItemDto {
    * "上传文件 · report.pdf"). Raw metadata_json is never exposed.
    */
   source_label: string;
+  /**
+   * 解析模式（reading_records 的 first-class 字段，原样透传 code）。
+   * 存量记录可能缺失；label 映射归前端 reading-defaults 合同。
+   */
+  reading_goal?: string | null;
+  reading_variant?: string | null;
 }
 
 export interface ReadingRecordListResponseDto {

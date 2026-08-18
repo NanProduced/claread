@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent,
 import { ReadingPlanFields } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/primitives/tooltip";
 import { cn } from "@/lib/cn";
 import { userFacingErrorCopy } from "@/lib/user-facing-error";
 import {
@@ -35,6 +36,7 @@ import {
   readPendingCandidate,
   savePendingCandidate,
 } from "./pending-candidate";
+import { TextAction } from "@/components/primitives/text-action";
 import { ContentCheckPanel } from "./ContentCheckPanel";
 import { useReadPageUi } from "./read-page-ui";
 import {
@@ -410,8 +412,8 @@ const SOURCE_KIND_ICONS: Record<SourceFileKind, typeof FileText> = {
 };
 
 /**
- * 上传文件状态：文件行（按类型区分图标 + 文件名 + 格式 · 大小 + 更换/移除）
- * + 一行「接下来会发生什么」的低噪预告，消除信任移交时刻的沉默。
+ * 上传文件确认态：居中紧凑「落签卡」——文件信息 + 竖排三步预告 + 操作。
+ * 只支持单文件，内容量小就让卡片小而完整，不再用全宽行 + 大片空白硬撑。
  */
 function SourceFilePreview({
   source,
@@ -430,53 +432,70 @@ function SourceFilePreview({
   return (
     <div
       data-testid="source-file-preview"
-      className="relative z-10 flex min-h-0 flex-1 flex-col px-5 py-5 sm:px-8 sm:py-6"
+      className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8 sm:px-8"
     >
-      <div
-        data-testid="attached-source"
-        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-3 border-b border-hairline/70 pb-5 font-sans"
-      >
-        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface/70 text-ink">
-          <KindIcon aria-hidden className="h-4.5 w-4.5" />
-        </span>
-        <div className="min-w-0 flex-1 basis-48">
-          <p
-            className="truncate text-[0.94rem] font-semibold leading-6 text-ink"
-            title={source.file.name}
-          >
-            {source.file.name}
-          </p>
-          <p className="mt-0.5 text-[0.76rem] font-medium text-muted-foreground">
-            {SOURCE_FORMAT_SHORT_LABELS[descriptor.kind]} · {formatFileSize(source.file.size)}
-          </p>
+      <div className="w-full max-w-[32rem] rounded-[12px] border border-hairline/70 bg-surface px-6 py-6 shadow-[var(--app-panel-shadow-quiet)]">
+        <div
+          data-testid="attached-source"
+          className="flex min-w-0 items-center gap-4 font-sans"
+        >
+          <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface-raised/60 text-ink">
+            <KindIcon aria-hidden className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="cursor-default truncate text-[0.98rem] font-semibold leading-6 text-ink">
+                  {source.file.name}
+                </p>
+              </TooltipTrigger>
+              <TooltipContent>{source.file.name}</TooltipContent>
+            </Tooltip>
+            <p className="mt-0.5 text-[0.78rem] font-medium text-muted-foreground">
+              {SOURCE_FORMAT_SHORT_LABELS[descriptor.kind]} · {formatFileSize(source.file.size)}
+            </p>
+          </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={onReplace}>
-            更换
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onRemove}
-            className="hover:text-feedback-error"
-          >
+
+        <ol className="mt-5 space-y-2.5 border-t border-hairline/60 pt-5 font-sans text-[0.8rem]">
+          {["提取文字", "可能需要你过目", "开始阅读"].map((step, index) => (
+            <li key={step} className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "inline-flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border text-[0.62rem] font-semibold tabular-nums",
+                  index === 0
+                    ? "border-lens-blue/40 bg-lens-blue-soft text-lens-blue"
+                    : "border-hairline/80 text-subtle",
+                )}
+              >
+                {index + 1}
+              </span>
+              <span
+                className={cn(
+                  "font-medium",
+                  index === 0 ? "text-ink" : "text-muted-foreground",
+                )}
+              >
+                {step}
+              </span>
+            </li>
+          ))}
+        </ol>
+
+        {stashedTextHint ? (
+          <p className="mt-4 font-sans text-[0.74rem] font-medium text-muted-foreground">
+            已暂存你粘贴的内容，移除文件后恢复
+          </p>
+        ) : null}
+
+        <div className="mt-5 flex items-center justify-end gap-3 border-t border-hairline/60 pt-4">
+          <TextAction onClick={onReplace}>更换</TextAction>
+          <TextAction onClick={onRemove} className="hover:text-feedback-error">
             移除
-          </Button>
+          </TextAction>
         </div>
       </div>
-      <ol className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 font-sans text-[0.74rem] font-medium text-muted-foreground">
-        <li>提取文字</li>
-        <li aria-hidden="true" className="text-subtle">→</li>
-        <li>可能需要你过目</li>
-        <li aria-hidden="true" className="text-subtle">→</li>
-        <li>开始阅读</li>
-      </ol>
-      {stashedTextHint ? (
-        <p className="mt-2 font-sans text-[0.74rem] font-medium text-muted-foreground">
-          已暂存你粘贴的内容，移除文件后恢复
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -1112,9 +1131,11 @@ export function AnalyzeSubmitForm({
   }
 
   const loadingStageTitle =
-    state.kind === "artifact-uploading" || state.kind === "artifact-polling"
-      ? "正在提取这份来源"
-      : "正在准备阅读";
+    state.kind === "artifact-uploading"
+      ? "正在上传这份文件"
+      : state.kind === "artifact-polling"
+        ? "正在提取这份来源"
+        : "正在准备阅读";
   const waitingMessagePrefix =
     state.kind === "artifact-uploading"
       ? "正在上传"
@@ -1129,6 +1150,7 @@ export function AnalyzeSubmitForm({
       : undefined;
 
   return (
+    <TooltipProvider>
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <input
         ref={fileInputRef}
@@ -1196,11 +1218,9 @@ export function AnalyzeSubmitForm({
           onDrop={handleDrop}
           className={cn(
             "group/manuscript relative flex w-full flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-200 ease-out focus-within:bg-surface/58 focus-within:shadow-[var(--app-panel-shadow-quiet)] focus-within:ring-lens-blue/28",
-            // 文件已附着时编辑器不渲染：卡片收敛到文件行 + 状态栏的紧凑
-            // 高度，不保留编辑器大小的空白；其余状态保持工作台稳定高度。
-            attachedSource && !isWaiting
-              ? "shrink-0"
-              : "min-h-[24rem] flex-1 lg:min-h-[26rem]",
+            // 文件已附着时编辑器不渲染，但保持工作台高度：落签卡在可用
+            // 空间内垂直居中，避免顶部贴齐、下方大片空白。
+            "min-h-[24rem] flex-1 lg:min-h-[26rem]",
             isDragActive && "bg-lens-blue-soft/40 ring-lens-blue/34 shadow-[var(--app-panel-shadow-quiet)]",
           )}
         >
@@ -1267,20 +1287,25 @@ export function AnalyzeSubmitForm({
           )}
 
           {!isWaiting && !attachedSource && text.trim().length > 0 && (
-            <button
-              type="button"
-              className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
-              onClick={() => {
-                setText("");
-                setLintResult({ warnings: [], hasDangerousContent: false });
-                setDegradedMessage(null);
-                markdownEditorRef.current?.clear();
-                markdownEditorRef.current?.focus();
-              }}
-              title="清空"
-            >
-              <X aria-hidden className="h-4 w-4" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="清空"
+                  className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
+                  onClick={() => {
+                    setText("");
+                    setLintResult({ warnings: [], hasDangerousContent: false });
+                    setDegradedMessage(null);
+                    markdownEditorRef.current?.clear();
+                    markdownEditorRef.current?.focus();
+                  }}
+                >
+                  <X aria-hidden className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>清空</TooltipContent>
+            </Tooltip>
           )}
 
           <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-8">
@@ -1299,18 +1324,16 @@ export function AnalyzeSubmitForm({
                   className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs"
                 >
                   {!attachedSource && approxWordCount ? (
-                    <span
-                      className="font-medium text-subtle"
-                      title={`共 ${text.trim().length.toLocaleString("zh-CN")} 字符`}
-                    >
-                      {approxWordCount}
-                    </span>
-                  ) : null}
-
-                  {!attachedSource && !text.trim() ? (
-                    <span className="font-medium text-subtle">
-                      粘贴文章或上传文件后即可开始
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-default font-medium text-subtle">
+                          {approxWordCount}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {`共 ${text.trim().length.toLocaleString("zh-CN")} 字符`}
+                      </TooltipContent>
+                    </Tooltip>
                   ) : null}
 
                   {!attachedSource && markdownStructureLabels.length > 0 ? (
@@ -1324,25 +1347,35 @@ export function AnalyzeSubmitForm({
                   ) : null}
 
                   {lintResult.hasDangerousContent ? (
-                    <span
-                      data-testid="read-source-lint-warning"
-                      className="inline-flex items-center gap-1 font-semibold text-feedback-warning"
-                      title={summarizeLintWarnings(lintResult.warnings)}
-                    >
-                      <AlertTriangle aria-hidden className="h-3 w-3" />
-                      有 {lintResult.warnings.length} 处格式需要确认
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          data-testid="read-source-lint-warning"
+                          className="inline-flex cursor-default items-center gap-1 font-semibold text-feedback-warning"
+                        >
+                          <AlertTriangle aria-hidden className="h-3 w-3" />
+                          有 {lintResult.warnings.length} 处格式需要确认
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {summarizeLintWarnings(lintResult.warnings)}
+                      </TooltipContent>
+                    </Tooltip>
                   ) : null}
 
                   {!attachedSource && degradedMessage ? (
-                    <span
-                      data-testid="read-source-degraded-hint"
-                      className="inline-flex items-center gap-1 font-semibold text-feedback-warning"
-                      title={degradedMessage}
-                    >
-                      <AlertTriangle aria-hidden className="h-3 w-3" />
-                      部分格式已按纯文本显示
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          data-testid="read-source-degraded-hint"
+                          className="inline-flex cursor-default items-center gap-1 font-semibold text-feedback-warning"
+                        >
+                          <AlertTriangle aria-hidden className="h-3 w-3" />
+                          部分格式已按纯文本显示
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{degradedMessage}</TooltipContent>
+                    </Tooltip>
                   ) : null}
                 </div>
 
@@ -1350,15 +1383,20 @@ export function AnalyzeSubmitForm({
                   {!attachedSource ? (
                     <button
                       type="button"
-                      className="focus-ring group/source inline-flex min-h-10 shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-[var(--cl-radius-control-sm)] border border-hairline/80 bg-surface/40 px-3 text-sm font-medium leading-none text-ink transition-colors duration-200 hover:border-lens-blue/34 hover:text-lens-blue"
+                      className="focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-[var(--cl-radius-control-sm)] border border-transparent bg-surface-raised/50 px-3 text-sm font-normal leading-none text-ink transition-colors duration-150 hover:border-hairline hover:bg-surface-raised motion-reduce:transition-none"
                       onClick={openFilePicker}
                     >
-                      <FileUp aria-hidden className="h-3.5 w-3.5 text-subtle transition-colors duration-200 group-hover/source:text-lens-blue" />
+                      <FileUp aria-hidden className="h-3.5 w-3.5 text-subtle" />
                       <span>上传文件</span>
                     </button>
                   ) : null}
 
                   <div className="flex min-w-0 flex-col items-stretch gap-2 sm:ml-auto sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
+                    {!attachedSource && !text.trim() ? (
+                      <span className="self-center font-sans text-xs font-medium text-subtle sm:mr-1">
+                        粘贴文章或上传文件后即可开始
+                      </span>
+                    ) : null}
                     <Popover
                       open={isReadingPlanOpen}
                       onOpenChange={setReadingPlanOpen}
@@ -1554,5 +1592,6 @@ export function AnalyzeSubmitForm({
         </section>
       ) : null}
     </div>
+    </TooltipProvider>
   );
 }

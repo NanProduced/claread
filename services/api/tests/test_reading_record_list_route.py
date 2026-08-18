@@ -358,6 +358,72 @@ async def test_response_includes_display_title_and_source_label_fields(
                 assert len(item["source_label"]) >= 1
 
 
+async def test_response_includes_reading_goal_and_variant_codes(
+    reader_api_env: dict[str, object],
+) -> None:
+    """List items expose reading_goal / reading_variant codes verbatim."""
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            await _create_reader_input_record(client, title="Has Title")
+
+            response = await client.get(
+                "/reader/records?limit=10",
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 200
+            items = response.json()["items"]
+            assert len(items) == 1
+            # Unified input persists the centralized strategy defaults.
+            assert items[0]["reading_goal"] == "daily_reading"
+            assert items[0]["reading_variant"] == "intermediate_reading"
+
+
+async def test_reading_goal_and_variant_none_for_legacy_records(
+    reader_api_env: dict[str, object],
+) -> None:
+    """Legacy rows without strategy values project to None (nullable)."""
+    pool = reader_api_env["pool"]
+    app = reader_api_env["app"]
+    assert isinstance(pool, asyncpg.Pool)
+    assert isinstance(app, FastAPI)
+    user_id = await _insert_user(pool)
+
+    with _mock_auth(user_id):
+        async with await _create_client(app) as client:
+            record_id = await _create_reader_input_record(client, title="Legacy")
+            # Simulate a pre-strategy legacy row (test schema only).
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "ALTER TABLE reading_records"
+                    " ALTER COLUMN reading_goal DROP NOT NULL,"
+                    " ALTER COLUMN reading_variant DROP NOT NULL"
+                )
+                await conn.execute(
+                    """
+                    UPDATE reading_records
+                    SET reading_goal = NULL, reading_variant = NULL
+                    WHERE id = $1
+                    """,
+                    UUID(record_id),
+                )
+
+            response = await client.get(
+                "/reader/records?limit=10",
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 200
+            items = response.json()["items"]
+            assert len(items) == 1
+            assert items[0]["reading_goal"] is None
+            assert items[0]["reading_variant"] is None
+
+
 # ---------------------------------------------------------------------------
 # Tests: display_title priority matrix (DB-backed)
 # ---------------------------------------------------------------------------

@@ -607,3 +607,18 @@ describe("workbench scroll & placeholder contract", () => {
     expect(editorEl.className).toContain("flex-1");
   });
 });
+
+describe("reveal 定位", () => {
+  it("剥掉 link/image 语法后选中可见文本；无匹配返回 false", async () => {
+    const { ref } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue(
+        "Before paragraph.\n\n![A shaded avenue](avenue.jpg)\n\nAfter paragraph with more English words.",
+      );
+    });
+    expect(ref.current?.reveal("[A shaded avenue](avenue.jpg)")).toBe(true);
+    expect(ref.current?.reveal("some text that does not exist anywhere")).toBe(
+      false,
+    );
+  });
+});

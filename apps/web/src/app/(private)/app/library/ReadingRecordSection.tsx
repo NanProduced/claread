@@ -5,9 +5,10 @@ import Link from "next/link";
 import { Button } from "@/components/primitives/button";
 import { appReadResumeCandidateRoute } from "@/lib/routes";
 import {
-  readingRecordStatusKey,
-  readingRecordStatusLabel,
-} from "@/lib/reader-record-status";
+  formatReadingPlanSummary,
+  normalizeReadingDefaults,
+  type ReadingDefaultState,
+} from "@/lib/reading-defaults";
 import { appReadRoute, loginRouteBase } from "@/lib/routes";
 import { looksLikeSafeUserCopy } from "@/lib/user-facing-error";
 import { cn } from "@/lib/cn";
@@ -34,16 +35,55 @@ function timeLabelFor(item: ReadingRecordListItemVm): string {
   return `导入于 ${formatDate(item.createdAt)}`;
 }
 
+function readingPlanLabelFor(item: ReadingRecordListItemVm): string | null {
+  if (!item.readingGoal || !item.readingVariant) return null;
+  const plan = normalizeReadingDefaults({
+    readingGoal: item.readingGoal,
+    readingVariant: item.readingVariant,
+  } as Partial<ReadingDefaultState>);
+  return formatReadingPlanSummary(plan.readingGoal, plan.readingVariant);
+}
+
 const NEEDS_ATTENTION_PRODUCT_STATES = [
   "needs_confirmation",
   "action_required",
   "failed",
 ] as const satisfies readonly ReadingRecordProductState[];
 
-function statusLabelFor(item: ReadingRecordListItemVm): string {
-  return readingRecordStatusLabel(
-    readingRecordStatusKey(item.productState, item.readinessState),
-  );
+/**
+ * 状态 chip：进行中的解析显示安静的「解析中」；只有需要用户行动的状态
+ * 才用强调色；已就绪的记录保持安静，不再用灰字重复状态。
+ */
+function StatusChip({ item }: { item: ReadingRecordListItemVm }) {
+  if (item.productState === "processing") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.05em] text-muted-foreground">
+        解析中
+      </span>
+    );
+  }
+  if (item.productState === "needs_confirmation") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-lens-blue-soft px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.05em] text-lens-blue">
+        待确认
+      </span>
+    );
+  }
+  if (item.productState === "action_required") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-feedback-warning-soft px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.05em] text-ink/75">
+        待处理
+      </span>
+    );
+  }
+  if (item.productState === "failed") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-feedback-error/10 px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.05em] text-feedback-error">
+        解析失败
+      </span>
+    );
+  }
+  return null;
 }
 
 function recordCtaLabel(item: ReadingRecordListItemVm): string | null {
@@ -167,11 +207,10 @@ export function ReadingRecordSection({
   const { priorityTop, fullListItems } = splitForRender(readingRecords);
 
   const renderRow = (item: ReadingRecordListItemVm) => {
-    // CTA labels ("继续确认" / "去处理" / "查看详情") stay as plain
-    // user-facing status text — no pill CTA, no trailing arrow.  The
-    // whole row's only explicit action affordance is the low-noise
-    // Ellipsis menu.
+    // 行信息架构：标题 / 元信息（来源 · 阅读方案 · 时间）/ 右侧状态 chip
+    // + 行动提示。整行是唯一 Link 点击区，操作菜单 hover 出现。
     const ctaLabel = recordCtaLabel(item);
+    const planLabel = readingPlanLabelFor(item);
 
     return (
       <li key={item.readingRecordId} className="group relative">
@@ -186,19 +225,24 @@ export function ReadingRecordSection({
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.7rem] text-muted-foreground">
                 <span>{item.sourceLabel}</span>
+                {planLabel ? (
+                  <>
+                    <span aria-hidden="true" className="text-subtle/60">·</span>
+                    <span>{planLabel}</span>
+                  </>
+                ) : null}
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3 w-3 opacity-60" />
                   {timeLabelFor(item)}
                 </span>
-                <span>{statusLabelFor(item)}</span>
-                {ctaLabel ? (
-                  <span className="font-medium text-lens-blue">{ctaLabel}</span>
-                ) : null}
               </div>
-              {item.productState === "needs_confirmation" ? (
-                <p className="mt-1 text-[0.72rem] leading-snug text-muted-foreground">
-                  请确认已准备好的内容后开始阅读
-                </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <StatusChip item={item} />
+              {ctaLabel ? (
+                <span className="text-[0.72rem] font-medium text-lens-blue">
+                  {ctaLabel}
+                </span>
               ) : null}
             </div>
           </div>

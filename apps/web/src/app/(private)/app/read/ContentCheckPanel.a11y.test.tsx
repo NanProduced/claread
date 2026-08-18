@@ -181,7 +181,7 @@ describe("ContentCheckPanel a11y 合同", () => {
     confirm.focus();
     expect(document.activeElement).toBe(confirm);
 
-    const back = screen.getByRole("button", { name: "返回修改" });
+    const back = screen.getByRole("button", { name: "重新输入" });
     back.focus();
     expect(document.activeElement).toBe(back);
 
@@ -212,16 +212,16 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(panel.className).toContain("motion-safe:duration-200");
   });
 
-  it("风险卡片操作按钮（采用建议/保留原文/去修改）可按名称定位", async () => {
+  it("风险卡片操作按钮（采用建议/确认无误）与定位入口可按名称定位", async () => {
     installFetchMock();
     renderPanel();
     await waitForReady();
 
     expect(screen.getByRole("button", { name: /采用建议/ })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "保留原文" }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "去修改" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "确认无误" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "去修改" })).toBeNull();
     expect(screen.getByTestId("content-check-keep-all-plain").textContent).toContain(
-      "全部保留原文",
+      "全部确认无误",
     );
   });
 });

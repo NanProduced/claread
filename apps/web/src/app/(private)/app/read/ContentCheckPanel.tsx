@@ -40,6 +40,7 @@ import {
   MarkdownTextInput,
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
+import { TextAction } from "@/components/primitives/text-action";
 import { readRejectedReasons, useContentCheck } from "./use-content-check";
 
 export interface ContentCheckPanelDeferInfo {
@@ -303,9 +304,20 @@ export function ContentCheckPanel({
           {guidance.suggestion}
         </p>
         {excerpt ? (
-          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-surface/54 px-3 py-2 font-mono text-[0.72rem] leading-5 text-ink/78">
-            {excerpt}
-          </pre>
+          <button
+            type="button"
+            data-testid="content-check-reveal"
+            title={undefined}
+            onClick={() => editorRef.current?.reveal(excerpt)}
+            className="focus-ring mt-2 block w-full cursor-pointer rounded-[8px] text-left transition-colors hover:ring-1 hover:ring-lens-blue/30"
+          >
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-surface/54 px-3 py-2 font-mono text-[0.72rem] leading-5 text-ink/78">
+              {excerpt}
+            </pre>
+            <span className="mt-1 inline-block font-sans text-[0.68rem] font-medium text-subtle">
+              点击在正文中定位
+            </span>
+          </button>
         ) : null}
         {item.message ? (
           <details className="mt-2 text-[0.72rem] text-subtle">
@@ -316,7 +328,7 @@ export function ContentCheckPanel({
             </p>
           </details>
         ) : null}
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           {guidance.hasAutoFix ? (
             <Button
               type="button"
@@ -330,19 +342,11 @@ export function ContentCheckPanel({
           ) : null}
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             onClick={() => resolveCheckCode(key)}
           >
-            保留原文
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => editorRef.current?.focus()}
-          >
-            去修改
+            确认无误
           </Button>
         </div>
       </article>
@@ -365,9 +369,6 @@ export function ContentCheckPanel({
         >
           确认识别出的正文
         </h2>
-        <p className="mt-2 max-w-[42rem] font-sans text-[0.8rem] leading-6 text-muted-foreground">
-          这段内容里有系统无法完全确定的格式或结构，先请你过目：下面的预览就是最终用于阅读的正文，可以直接修改，修改会自动保存并重新检查。
-        </p>
         <p className="mt-2 inline-flex items-center gap-1.5 font-sans text-[0.74rem] font-medium text-subtle">
           <FileText aria-hidden className="h-3.5 w-3.5" />
           {filename?.trim() ? `来源：${filename.trim()}` : "来源：粘贴文本"}
@@ -413,16 +414,14 @@ export function ContentCheckPanel({
             {statusSummary}
           </p>
           {unresolvedChecks.length > 0 ? (
-            <button
-              type="button"
+            <TextAction
               data-testid="content-check-keep-all-plain"
               onClick={() =>
                 resolveAllCheckCodes(checkEntries.map((entry) => entry.key))
               }
-              className="focus-ring text-[0.76rem] font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-ink hover:underline"
             >
-              全部保留原文
-            </button>
+              全部确认无误
+            </TextAction>
           ) : null}
         </div>
       ) : null}
@@ -431,7 +430,7 @@ export function ContentCheckPanel({
         className={cn(
           "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 sm:px-8",
           hasRail &&
-            "xl:grid xl:grid-cols-[minmax(0,1fr)_16.5rem] xl:content-start xl:gap-6",
+            "xl:grid xl:grid-cols-[minmax(0,1fr)_19.5rem] xl:grid-rows-[minmax(0,1fr)] xl:gap-8",
         )}
       >
         <div className="order-2 min-h-[18rem] flex-1 xl:order-1 xl:col-start-1 xl:row-start-1">
@@ -447,7 +446,7 @@ export function ContentCheckPanel({
               initialValue={draft.savedMarkdown}
               onChange={handleEdit}
               onSubmit={handleConfirm}
-              className="mx-auto h-full min-h-[18rem] w-full max-w-[46rem] overflow-y-auto rounded-[8px] border border-hairline/60 bg-surface/38 px-6 py-5 font-reading text-[1.08rem] leading-[1.9] text-ink selection:bg-lens-blue/15 selection:text-ink sm:px-8 sm:text-[1.14rem]"
+              className="mx-auto h-full min-h-[18rem] w-full max-w-[52rem] overflow-y-auto rounded-[12px] border border-hairline/70 bg-surface px-6 py-6 font-sans text-base leading-[1.68] text-ink shadow-[var(--app-panel-shadow-quiet)] selection:bg-lens-blue/15 selection:text-ink sm:px-10 sm:py-8"
             />
           ) : null}
         </div>
@@ -455,7 +454,7 @@ export function ContentCheckPanel({
         {hasRail ? (
           <aside
             data-testid="content-check-summary-rail"
-            className="order-1 flex flex-col gap-4 xl:order-2 xl:col-start-2 xl:row-start-1"
+            className="order-1 flex flex-col gap-4 xl:order-2 xl:col-start-2 xl:row-start-1 xl:self-start xl:sticky xl:top-0"
           >
             {draft && draft.adaptationNotice.length > 0 ? (
               <AdaptationNoticeRail items={draft.adaptationNotice} />
@@ -466,22 +465,8 @@ export function ContentCheckPanel({
                 data-testid="content-check-risk-list"
                 className="space-y-3 font-sans"
               >
-                {attentionChecks.length > 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-[0.68rem] font-semibold tracking-[0.1em] text-subtle">
-                      需要你决定
-                    </p>
-                    {attentionChecks.map((entry) => renderCheckCard(entry))}
-                  </div>
-                ) : null}
-                {routineChecks.length > 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-[0.68rem] font-semibold tracking-[0.1em] text-subtle">
-                      建议你看一眼
-                    </p>
-                    {routineChecks.map((entry) => renderCheckCard(entry))}
-                  </div>
-                ) : null}
+                {attentionChecks.map((entry) => renderCheckCard(entry))}
+                {routineChecks.map((entry) => renderCheckCard(entry))}
               </div>
             ) : null}
 
@@ -502,13 +487,12 @@ export function ContentCheckPanel({
                       <span className="min-w-0 truncate text-muted-foreground">
                         {guidanceForContentCheckCode(item.code).title}
                       </span>
-                      <button
-                        type="button"
+                      <TextAction
                         onClick={() => unresolveCheckCode(key)}
-                        className="focus-ring shrink-0 text-[0.72rem] font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-ink hover:underline"
+                        className="min-h-0 px-0 text-[0.72rem]"
                       >
                         撤销
-                      </button>
+                      </TextAction>
                     </li>
                   ))}
                 </ul>
@@ -568,10 +552,7 @@ export function ContentCheckPanel({
               </p>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
+              <TextAction
                 disabled={isBusy}
                 onClick={() =>
                   onDefer({
@@ -584,17 +565,14 @@ export function ContentCheckPanel({
                 }
               >
                 稍后处理
-              </Button>
+              </TextAction>
               {origin === "submit" ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
+                <TextAction
                   disabled={isBusy}
                   onClick={() => onBackToInput(flushEditor())}
                 >
-                  返回修改
-                </Button>
+                  重新输入
+                </TextAction>
               ) : null}
               {state.errorMessage && state.dirty && state.phase === "ready" ? (
                 <Button

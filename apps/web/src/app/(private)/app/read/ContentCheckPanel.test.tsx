@@ -195,15 +195,16 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     vi.unstubAllGlobals();
   });
 
-  it("说明为什么需要确认与确认后会发生什么；不展示 raw Markdown 标记", async () => {
+  it("标题、来源与确认后果清楚；说明文案不集中堆砌；不展示 raw Markdown 标记", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
 
     const panel = screen.getByTestId("content-check-panel");
-    expect(panel.textContent).toContain("先请你过目");
+    // 确认后果（冻结）在 footer 主操作旁说明一次；header 不再堆砌长说明。
     expect(panel.textContent).toContain("正文冻结");
     expect(screen.getByText("确认识别出的正文")).toBeTruthy();
+    expect(screen.getByText(/来源：/)).toBeTruthy();
 
     // 结构化预览：编辑器内是内容本身，不裸露整篇 Markdown 之外的
     // raw 标记面板（不存在 raw source 视图切换）。
@@ -247,7 +248,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     )!;
     fireEvent.click(
       Array.from(footnoteItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "保留原文",
+        (button) => button.textContent === "确认无误",
       )!,
     );
     await waitFor(() =>
@@ -285,7 +286,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
   });
 
-  it("全部保留原文清空风险列表", async () => {
+  it("全部确认无误清空风险列表", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
@@ -325,7 +326,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const firstItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(firstItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "保留原文",
+        (button) => button.textContent === "确认无误",
       )!,
     );
     expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1);
@@ -494,7 +495,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
   });
 
-  it("操作层级：确认主 CTA / 返回修改次 CTA / 稍后处理低噪出口", async () => {
+  it("操作层级：确认主 CTA / 重新输入低噪出口 / 稍后处理低噪出口", async () => {
     installFetchMock();
     const props = renderPanel();
     await waitForPanelReady();
@@ -506,7 +507,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       canonicalTextPreview: "Title",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新输入" }));
     expect(props.onBackToInput).toHaveBeenCalledWith(DRAFT_MARKDOWN);
 
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
@@ -516,11 +517,11 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
   });
 
-  it("resume 来源隐藏返回修改", async () => {
+  it("resume 来源隐藏重新输入", async () => {
     installFetchMock();
     renderPanel({ origin: "resume" });
     await waitForPanelReady();
-    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新输入" })).toBeNull();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
   });
 });

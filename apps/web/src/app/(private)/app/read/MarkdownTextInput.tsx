@@ -470,6 +470,11 @@ export interface MarkdownTextInputHandle {
   /** 用 Markdown 字符串重置编辑器内容（会触发 onChange，父状态随之同步） */
   setValue: (markdown: string) => void;
   /**
+   * 在编辑器中定位并选中指定文本（用于从风险卡跳转：滚动到对应位置并
+   * 以选区高亮）。找不到时返回 false。
+   */
+  reveal: (excerpt: string) => boolean;
+  /**
    * 同步吸收 pending debounce，并返回 lint/提交共用的 Markdown 快照。
    */
   flush: () => string;
@@ -556,7 +561,9 @@ export const MarkdownTextInput = forwardRef<
   const [initialResult] = useState<DeserializeMarkdownResult>(
     () =>
       normalizeMarkdownDeserializeResult(
-        deserializeMarkdownToBlocksWithStatus(initialValue ?? ""),
+        deserializeMarkdownToBlocksWithStatus(initialValue ?? "", {
+          preserveUnsupported: true,
+        }),
       ),
   );
   const [isEmpty, setIsEmpty] = useState(
@@ -798,6 +805,67 @@ export const MarkdownTextInput = forwardRef<
         if (!editor) return;
         editor.tf.focus();
       },
+      reveal: (excerpt: string) => {
+        if (!editor) return false;
+        // 遍历文本叶子（Plate 节点树中 text 节点即 { text } 对象），
+        // 避免引入 slate 运行时依赖。
+        const findNeedle = (
+          needle: string,
+        ): { path: number[]; index: number } | null => {
+          const walk = (
+            nodes: Descendant[],
+            path: number[],
+          ): { path: number[]; index: number } | null => {
+            for (let i = 0; i < nodes.length; i += 1) {
+              const node = nodes[i] as {
+                text?: string;
+                children?: Descendant[];
+              };
+              if (typeof node.text === "string") {
+                const index = node.text.indexOf(needle);
+                if (index >= 0) return { path: [...path, i], index };
+                continue;
+              }
+              if (Array.isArray(node.children)) {
+                const found = walk(node.children, [...path, i]);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          return walk(editor.children as Descendant[], []);
+        };
+        // excerpt 是 Markdown 源码形态，编辑器里存的是可见文本：剥掉
+        // link/image 语法，跳过纯符号行（``` 围栏、表格线等），逐行尝试。
+        const needles = excerpt
+          .split("\n")
+          .map((line) => line.trim())
+          .map((line) => line.replace(/!?\[([^\]]+)\]\([^)]+\)/g, "$1"))
+          .map((line) => line.replace(/…$/, ""))
+          .filter((line) => line.length >= 4 && !/^[`#|>\-*\s]+$/.test(line));
+        for (const candidate of needles) {
+          const needle = candidate.slice(0, 80);
+          const found = findNeedle(needle);
+          if (!found) continue;
+          editor.tf.select({
+            anchor: { path: found.path, offset: found.index },
+            focus: { path: found.path, offset: found.index + needle.length },
+          });
+          editor.tf.focus();
+          // 等 Plate 把选区同步到 DOM 后滚动到可视位置。
+          window.setTimeout(() => {
+            const selection = window.getSelection();
+            const anchorNode = selection?.anchorNode;
+            const element =
+              anchorNode instanceof Element
+                ? anchorNode
+                : anchorNode?.parentElement;
+            element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+          }, 60);
+          return true;
+        }
+        return false;
+      },
       // 同步 pending 状态，并返回 lint/提交共用的单一 Markdown 快照。
       flush: () => {
         if (!editor) return "";
@@ -821,7 +889,11 @@ export const MarkdownTextInput = forwardRef<
         // 取消 pending debounce，避免 stale 内容覆盖新值。
         cancelPendingSerialize();
         // setValue 使用带状态 deserialize，失败时通知父组件。
-        const result = deserializeMarkdownToBlocksWithStatus(markdown);
+        // preserveUnsupported：与 initialValue / 粘贴路径一致，image 等
+        // 不支持结构降级为可见形态而非静默丢弃。
+        const result = deserializeMarkdownToBlocksWithStatus(markdown, {
+          preserveUnsupported: true,
+        });
         editor.tf.setValue(result.blocks as never[]);
         setIsEmpty(!hasTextContent(result.blocks));
         onDegradedRef.current?.(result);

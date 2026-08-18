@@ -12,7 +12,7 @@ const buttonVariants = cva(
     // existing Paper visual recipe (gradients, shadows, hover lift) does
     // not regress; only static text/border colors are routed through the
     // semantic token layer.
-    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap border text-sm font-semibold tracking-[0.01em] transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] disabled:pointer-events-none disabled:opacity-50",
+    "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border text-sm font-semibold tracking-[0.01em] transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-[var(--cl-duration-fast)] ease-[var(--cl-ease-standard)] disabled:cursor-not-allowed disabled:pointer-events-none disabled:opacity-50",
     primitiveFocusRing,
   ),
   {

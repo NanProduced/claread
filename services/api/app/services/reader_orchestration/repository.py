@@ -146,6 +146,10 @@ class ReaderRecordSummary:
     # from original_inputs.input_type + filename (e.g. "粘贴文本",
     # "上传文件 · report.pdf"). Raw metadata_json is never exposed.
     source_label: str = "未命名解读"
+    # Reading strategy codes passed through verbatim from reading_records
+    # (first-class facts). None for legacy rows without the columns set.
+    reading_goal: str | None = None
+    reading_variant: str | None = None
 
 
 _PROGRESS_CAPABILITIES = ("translation", "vocabulary", "grammar")
@@ -2067,6 +2071,8 @@ class ReaderOrchestrationRepository:
                         r.generation,
                         r.generated_title_zh,
                         r.title_generation_status,
+                        r.reading_goal,
+                        r.reading_variant,
                         COALESCE(oi.metadata_json, '{}'::jsonb)
                             AS source_metadata,
                         oi.input_type AS original_input_type,
@@ -2216,31 +2222,37 @@ class ReaderOrchestrationRepository:
                     recent_only,
                 )
 
-        summaries = tuple(
-            ReaderRecordSummary(
-                record_id=row["id"],
-                title=row["title"],
+        summaries_list: list[ReaderRecordSummary] = []
+        for row in rows:
+            projection = build_reading_record_list_projection(
+                record_title=row["title"],
+                generated_title_zh=row["generated_title_zh"],
+                title_generation_status=row["title_generation_status"],
+                ready_candidate_title=row["ready_candidate_title"],
+                original_input_type=row["original_input_type"],
+                original_input_filename=row["original_input_filename"],
                 source_type=str(row["source_type"]),
-                product_state=str(row["product_state"]),
-                readiness_state=str(row["readiness_state"]),
-                created_at=row["created_at"],
-                source_metadata=ensure_json_object(row["source_metadata"]),
-                last_event_sequence=int(row["last_event_sequence"]),
-                last_opened_at=row["last_opened_at"],
-                display_title=row["display_title"],
-                source_label=build_reading_record_list_projection(
-                    record_title=row["title"],
-                    generated_title_zh=row["generated_title_zh"],
-                    title_generation_status=row["title_generation_status"],
-                    ready_candidate_title=row["ready_candidate_title"],
-                    original_input_type=row["original_input_type"],
-                    original_input_filename=row["original_input_filename"],
-                    source_type=str(row["source_type"]),
-                ).source_label,
+                reading_goal=row["reading_goal"],
+                reading_variant=row["reading_variant"],
             )
-            for row in rows
-        )
-        return summaries, int(total)
+            summaries_list.append(
+                ReaderRecordSummary(
+                    record_id=row["id"],
+                    title=row["title"],
+                    source_type=str(row["source_type"]),
+                    product_state=str(row["product_state"]),
+                    readiness_state=str(row["readiness_state"]),
+                    created_at=row["created_at"],
+                    source_metadata=ensure_json_object(row["source_metadata"]),
+                    last_event_sequence=int(row["last_event_sequence"]),
+                    last_opened_at=row["last_opened_at"],
+                    display_title=row["display_title"],
+                    source_label=projection.source_label,
+                    reading_goal=projection.reading_goal,
+                    reading_variant=projection.reading_variant,
+                )
+            )
+        return tuple(summaries_list), int(total)
 
 
 # ----------------------------------------------------------------------

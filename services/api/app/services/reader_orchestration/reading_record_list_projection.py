@@ -72,6 +72,11 @@ class ReadingRecordListProjection:
 
     display_title: str
     source_label: str
+    # Reading strategy codes passed through verbatim (no label mapping —
+    # labels belong to the frontend reading-defaults contract). None when
+    # the row predates the first-class strategy columns.
+    reading_goal: str | None = None
+    reading_variant: str | None = None
 
 
 def build_reading_record_list_projection(
@@ -83,6 +88,8 @@ def build_reading_record_list_projection(
     original_input_type: str | None,
     original_input_filename: str | None,
     source_type: str | None,
+    reading_goal: str | None = None,
+    reading_variant: str | None = None,
 ) -> ReadingRecordListProjection:
     """Compute the safe ``display_title`` and ``source_label`` for a
     single reading-record list item.
@@ -109,6 +116,10 @@ def build_reading_record_list_projection(
         source_type: ``reading_records.source_type`` (legacy enum). Used
             only as a fallback for ``source_label`` when
             ``original_input_type`` is missing.
+        reading_goal: ``reading_records.reading_goal`` code, passed
+            through verbatim (may be None for legacy rows).
+        reading_variant: ``reading_records.reading_variant`` code,
+            passed through verbatim (may be None for legacy rows).
     """
     display_title = _compute_display_title(
         record_title=record_title,
@@ -127,6 +138,8 @@ def build_reading_record_list_projection(
     return ReadingRecordListProjection(
         display_title=display_title,
         source_label=source_label,
+        reading_goal=_clean(reading_goal),
+        reading_variant=_clean(reading_variant),
     )
 
 

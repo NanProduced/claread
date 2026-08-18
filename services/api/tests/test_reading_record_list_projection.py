@@ -257,3 +257,43 @@ def test_source_label_does_not_leak_raw_metadata() -> None:
     assert "source_ref" not in projection.source_label
     assert "{" not in projection.source_label
     assert "}" not in projection.source_label
+
+
+# ---------------------------------------------------------------------------
+# reading_goal / reading_variant passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_reading_goal_and_variant_pass_through_verbatim() -> None:
+    """Strategy codes are projected verbatim (no label mapping)."""
+    projection = build_reading_record_list_projection(
+        record_title="X",
+        generated_title_zh=None,
+        title_generation_status="pending",
+        ready_candidate_title=None,
+        original_input_type="plain_text",
+        original_input_filename=None,
+        source_type="text",
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+    )
+    assert projection.reading_goal == "daily_reading"
+    assert projection.reading_variant == "intermediate_reading"
+
+
+def test_reading_goal_and_variant_default_to_none_for_legacy_rows() -> None:
+    """Legacy rows without strategy values project to None."""
+    for goal, variant in ((None, None), ("", ""), ("  ", "  ")):
+        projection = build_reading_record_list_projection(
+            record_title="X",
+            generated_title_zh=None,
+            title_generation_status="pending",
+            ready_candidate_title=None,
+            original_input_type="plain_text",
+            original_input_filename=None,
+            source_type="text",
+            reading_goal=goal,
+            reading_variant=variant,
+        )
+        assert projection.reading_goal is None, (goal, variant)
+        assert projection.reading_variant is None, (goal, variant)

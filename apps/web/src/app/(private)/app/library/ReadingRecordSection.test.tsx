@@ -131,7 +131,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.queryByText("去登录")).toBeNull();
   });
 
-  it("renders items with title, date and a single user-language status", () => {
+  it("renders items with title, date and quiet status treatment", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -158,7 +158,7 @@ describe("ReadingRecordSection", () => {
     expect(firstLink?.getAttribute("href")).toBe("/app/reader/reading_record_1");
     expect(secondLink?.getAttribute("href")).toBe("/app/reader/reading_record_2");
 
-    expect(screen.getByText("可以开始阅读")).toBeTruthy();
+    expect(screen.queryByText("可以开始阅读")).toBeNull();
     expect(screen.getByText("解析中")).toBeTruthy();
 
     expect(screen.queryByText("文章就绪")).toBeNull();
@@ -208,10 +208,10 @@ describe("ReadingRecordSection", () => {
     expect(ncRow?.querySelector("a")?.getAttribute("href")).toBe(
       "/app/read?resume_candidate=reading_record_1",
     );
-    expect(within(ncRow as HTMLElement).getByText("需要确认")).toBeTruthy();
+    expect(within(ncRow as HTMLElement).getByText("待确认")).toBeTruthy();
     expect(
-      within(ncRow as HTMLElement).getByText("请确认已准备好的内容后开始阅读"),
-    ).toBeTruthy();
+      within(ncRow as HTMLElement).queryByText("请确认已准备好的内容后开始阅读"),
+    ).toBeNull();
     expect(within(ncRow as HTMLElement).getByText("继续确认")).toBeTruthy();
 
     // 顶部 region = [nc, action_required]；主列表为空
@@ -249,7 +249,7 @@ describe("ReadingRecordSection", () => {
     expect(link?.getAttribute("href")).toBe("/app/reader/reading_record_1");
   });
 
-  it("renders 可以开始阅读 (ready_to_read fallback) for unknown productState", () => {
+  it("unknown productState 不渲染状态文本（已就绪保持安静）", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -263,7 +263,7 @@ describe("ReadingRecordSection", () => {
 
     // Unknown productState falls into the default branch of readingRecordStatusKey,
     // which returns "ready_to_read" → "可以开始阅读".
-    expect(screen.getByText("可以开始阅读")).toBeTruthy();
+    expect(screen.queryByText("可以开始阅读")).toBeNull();
     expect(screen.queryByText("状态未知")).toBeNull();
   });
 

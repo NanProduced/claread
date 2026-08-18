@@ -128,7 +128,7 @@ describe("focusMode：专注任务态收起右侧今日精选", () => {
     render(<FocusScene focus={true} />);
     const grid = screen.getByTestId("read-page-focus-grid");
     expect(grid.getAttribute("data-focus")).toBe("true");
-    expect(grid.className).toContain("xl:grid-cols-[minmax(0,72rem)]");
+    expect(grid.className).toContain("xl:grid-cols-[minmax(0,88rem)]");
     expect(grid.className).not.toContain("24rem");
     expect(screen.queryByText("今日精选")).toBeNull();
     expect(screen.getByText("任务区")).toBeTruthy();

@@ -229,6 +229,13 @@ export function locateContentCheckExcerpt(
     return null;
   }
 
+  if (code === "image_ocr_uncertain") {
+    // 输入端 image 已降级为 link（remark-preserve-unsupported），匹配
+    // `![alt](src)` 与 `[alt](src)` 两种形态。
+    const index = lines.findIndex((line) => /!?\[[^\]]*\]\([^)]+\)/.test(line));
+    return index >= 0 ? clip(lines[index]) || null : null;
+  }
+
   return null;
 }
 

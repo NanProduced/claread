@@ -52,6 +52,8 @@ function makeListResponse(): ReadingRecordListResponseDto {
         last_opened_at: "2026-06-22T10:00:00Z",
         display_title: "First Reading",
         source_label: "粘贴文本",
+        reading_goal: "daily_reading",
+        reading_variant: "intermediate_reading",
       },
       {
         record_id: "reading_record_2",
@@ -161,6 +163,9 @@ describe("reading-records BFF list", () => {
       expect(first.productState).toBe("readable_enhancing");
       expect(first.readinessState).toBe("article_ready");
       expect(first.lastEventSequence).toBe(3);
+      // Strategy codes pass through verbatim (label mapping is UI-side)
+      expect(first.readingGoal).toBe("daily_reading");
+      expect(first.readingVariant).toBe("intermediate_reading");
 
       const second = result.items[1];
       expect(second.readingRecordId).toBe("reading_record_2");
@@ -172,6 +177,9 @@ describe("reading-records BFF list", () => {
       expect(second.productState).toBe("processing");
       expect(second.lastOpenedAt).toBeNull();
       expect(first.lastOpenedAt).toBe("2026-06-22T10:00:00Z");
+      // Legacy upstream items without strategy codes map to null
+      expect(second.readingGoal).toBeNull();
+      expect(second.readingVariant).toBeNull();
     }
 
     expect(vi.mocked(listUpstreamReadingRecords).mock.calls[0]).toEqual([

@@ -1492,6 +1492,11 @@ class ReaderRecordListItem(BaseModel):
     # ``source_label`` over interpreting ``source_metadata``.
     display_title: str = Field(min_length=1)
     source_label: str = Field(min_length=1)
+    # Reading strategy codes from ``reading_records`` (first-class facts),
+    # passed through verbatim without label mapping — labels belong to the
+    # client reading-defaults contract. None for legacy rows.
+    reading_goal: str | None = None
+    reading_variant: str | None = None
 
 
 class ReaderRecordListResponse(BaseModel):
