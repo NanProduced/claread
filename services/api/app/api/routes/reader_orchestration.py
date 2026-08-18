@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
@@ -169,6 +170,8 @@ from app.services.reader_orchestration.stable_ready_input_application_service im
     StableReadyInputApplicationResult,
     StableReadyInputApplicationService,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reader", tags=["reader"])
 _CLIENT_RECORD_ID_UNIQUE_CONSTRAINT = "uq_reading_records_user_client_active"
@@ -561,6 +564,10 @@ async def init_reader_source_artifact_upload(
             # Presigner failure must not break init-upload; fall back to
             # pending-credentials semantic. The client can retry with its
             # own credentials.
+            logger.exception(
+                "Presign failed for init-upload; falling back to "
+                "pending-credentials semantic",
+            )
             presigned = None
 
     return _build_source_artifact_upload_init_response(

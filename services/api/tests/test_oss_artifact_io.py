@@ -270,7 +270,12 @@ async def test_reader_raises_sdk_missing_when_oss2_not_installed() -> None:
         bucket=_BUCKET,
         endpoint=_ENDPOINT,
     )
-    with pytest.raises(ArtifactExtractionError) as exc_info:
+    # sys.modules[name] = None makes ``import oss2`` raise ImportError even
+    # when the real SDK is installed.
+    with (
+        patch.dict(sys.modules, {"oss2": None}),
+        pytest.raises(ArtifactExtractionError) as exc_info,
+    ):
         await reader.read_object(
             bucket=_BUCKET,
             endpoint=_ENDPOINT,
@@ -605,7 +610,10 @@ def test_aliyun_presigner_raises_when_sdk_missing() -> None:
         bucket=_BUCKET,
         endpoint=_ENDPOINT,
     )
-    with pytest.raises(PresignerNotConfiguredError, match="oss2 SDK is not installed"):
+    with (
+        patch.dict(sys.modules, {"oss2": None}),
+        pytest.raises(PresignerNotConfiguredError, match="oss2 SDK is not installed"),
+    ):
         presigner.presign_put_object(
             bucket=_BUCKET,
             endpoint=_ENDPOINT,

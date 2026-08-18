@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import pytest
 from app.api.routes import reader_orchestration
+from app.services.reader_orchestration.oss_presigner import NullPresigner
 from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactError,
     SourceArtifactRegistrationResult,
@@ -116,6 +117,15 @@ def _mock_source_artifact_service(
     )
 
 
+def _mock_null_presigner() -> patch:
+    # Pin the presigner so the pending-credentials contract is tested
+    # regardless of local OSS credentials / installed oss2 SDK.
+    return patch(
+        "app.api.routes.reader_orchestration.build_default_presigner",
+        return_value=NullPresigner(),
+    )
+
+
 def test_init_source_artifact_upload_happy_path_calls_service_with_auth_user_and_pending_oss() -> None:
     app = _build_app()
     result = _build_result()
@@ -166,7 +176,7 @@ def test_init_source_artifact_upload_response_includes_upload_target_without_cre
         object_ref=object_ref,
     )
 
-    with _mock_auth(), service_patch, TestClient(app) as client:
+    with _mock_auth(), service_patch, _mock_null_presigner(), TestClient(app) as client:
         response = client.post(
             _route_path(),
             headers=AUTH_HEADERS,
@@ -211,7 +221,7 @@ def test_init_source_artifact_upload_response_includes_upload_target_without_cre
     assert "authorization" not in {
         key.lower() for key in response_json["headers"].keys()
     }
-    # No presigner configured in test env → presigned fields are null
+    # Null presigner → presigned fields are null
     # and the response must never leak access keys / secrets.
     response_text = str(response_json)
     assert "access_key" not in response_text.lower()

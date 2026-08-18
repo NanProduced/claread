@@ -89,6 +89,8 @@ _migration_prep/
 .remember/
 .impeccable/
 .mcp.json
+.superpowers/
+.qoder/
 
 RTK.md
 skills-lock.json
