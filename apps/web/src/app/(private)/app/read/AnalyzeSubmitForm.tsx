@@ -1183,10 +1183,14 @@ export function AnalyzeSubmitForm({
               router.push(appReaderRoute(recordId) as Route);
             }}
             onSourceMissing={() => {
+              // Confirmed Source 404：记录已被删除，或来自无 source 行的
+              // 旧版本。清理「稍后处理」的恢复入口，避免每次打开输入页
+              // 都恢复成死链。
+              clearPendingCandidate();
               setState({
                 kind: "resume-not-found",
                 recordId: state.recordId,
-                message: "这条记录来自旧版本，无法继续确认，请重新提交",
+                message: "这条待确认的内容已不存在，可能已被删除，请重新提交",
               });
             }}
             onBackToInput={(markdown) => {

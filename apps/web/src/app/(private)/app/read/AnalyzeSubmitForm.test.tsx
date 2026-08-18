@@ -1657,7 +1657,7 @@ describe("resume_candidate entry", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("这条记录来自旧版本，无法继续确认，请重新提交"),
+        screen.getByText("这条待确认的内容已不存在，可能已被删除，请重新提交"),
       ).toBeTruthy();
     });
 

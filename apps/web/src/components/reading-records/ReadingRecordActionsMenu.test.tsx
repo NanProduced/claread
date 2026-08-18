@@ -37,6 +37,21 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+  // 测试环境的 window.localStorage 不可用（项目惯例：内存替身）。
+  const store = new Map<string, string>();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      get length() {
+        return store.size;
+      },
+      clear: () => store.clear(),
+      getItem: (key: string) => store.get(key) ?? null,
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    } satisfies Storage,
+  });
 });
 
 afterEach(() => {
@@ -162,6 +177,38 @@ describe("ReadingRecordActionsMenu", () => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
     });
     expect(routerReplace).not.toHaveBeenCalled();
+  });
+
+  it("deleting a record clears its pending candidate restore entry", async () => {
+    const { readPendingCandidate, PENDING_CANDIDATE_STORAGE_KEY } =
+      await import("@/app/(private)/app/read/pending-candidate");
+    window.localStorage.setItem(
+      PENDING_CANDIDATE_STORAGE_KEY,
+      JSON.stringify({
+        readingRecordId: "rec-1",
+        candidateDocumentId: "cand-1",
+        originalInputId: null,
+        inputSnapshot: "draft text",
+        filename: "sample.md",
+        origin: "submit",
+        savedAt: new Date().toISOString(),
+      }),
+    );
+    expect(readPendingCandidate()?.readingRecordId).toBe("rec-1");
+
+    render(<ReadingRecordActionsMenu recordId="rec-1" title="测试文章" />);
+    await userEvent.click(screen.getByRole("button", { name: '打开“测试文章”的操作菜单' }));
+    await screen.findByRole("menu");
+    await userEvent.click(screen.getByText("删除阅读记录"));
+    await screen.findByRole("alertdialog");
+    await userEvent.click(screen.getByRole("button", { name: "删除记录" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(readPendingCandidate()).toBeNull();
+    });
   });
 
   it("navigates to the library route when deleting the current record", async () => {

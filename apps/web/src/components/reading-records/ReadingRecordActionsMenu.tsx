@@ -23,6 +23,10 @@ import { toast } from "@/components/primitives/toast";
 import { useRecentReading } from "@/components/layout/recent-reading-context";
 import { appLibraryRoute } from "@/lib/routes";
 import { cn } from "@/lib/cn";
+import {
+  clearPendingCandidate,
+  readPendingCandidate,
+} from "@/app/(private)/app/read/pending-candidate";
 
 const FIXED_SAFE_ERROR_MESSAGE = "操作失败，请稍后重试。";
 
@@ -112,6 +116,12 @@ export function ReadingRecordActionsMenu({
         throw new Error("delete failed");
       }
       removeLocal(recordId);
+      // 同步清理输入页「稍后处理」的 pending candidate：记录已删除后，
+      // localStorage 里的恢复入口会变成 404 死链。
+      const pending = readPendingCandidate();
+      if (pending?.readingRecordId === recordId) {
+        clearPendingCandidate();
+      }
       onDeleted?.(recordId);
       router.refresh();
       toast.success("已删除阅读记录");
