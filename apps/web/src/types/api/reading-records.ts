@@ -75,3 +75,22 @@ export interface ReaderRecordDeletedResponseDto {
   deleted_at: string;
   vector_gc_intent_recorded: boolean;
 }
+
+/**
+ * Manual recovery response — mirrors the backend schema in
+ * `services/api/app/schemas/reader_recovery.py` for:
+ *   - POST /reader/records/{record_id}/recovery
+ *
+ * Both outcomes arrive with HTTP 200; internal identifiers
+ * (base/job/run ids, event flags) are intentionally absent.
+ */
+export type ReaderRecoveryOutcome = "recovery_started" | "nothing_to_recover";
+
+export interface ReaderRecoveryResponseDto {
+  record_id: string;
+  outcome: ReaderRecoveryOutcome;
+  previous_product_state: ReadingRecordProductState;
+  next_product_state: ReadingRecordProductState;
+  record_generation: number;
+  successor_job_count: number;
+}

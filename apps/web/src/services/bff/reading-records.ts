@@ -5,11 +5,13 @@ import {
   deleteReaderRecord,
   hideReaderRecordFromRecent,
   listUpstreamReadingRecords,
+  recoverReaderRecordUpstream,
 } from "@/services/api/reading-records";
 import { getWebSession } from "@/services/bff/session";
 import type {
   ReaderRecordDeletedResponseDto,
   ReaderRecordRecentRemovedResponseDto,
+  ReaderRecoveryResponseDto,
   ReadingRecordProductState,
   ReadingRecordReadinessState,
 } from "@/types/api/reading-records";
@@ -71,6 +73,70 @@ export type ReadingRecordRecentRemovedResult =
 export type ReadingRecordDeletedResult =
   | { ok: true; data: ReaderRecordDeletedResponseDto }
   | ReadingRecordsBffError;
+
+export type ReaderRecoveryResult =
+  | { ok: true; data: ReaderRecoveryResponseDto }
+  | ReadingRecordsBffError;
+
+const READING_RECORD_PRODUCT_STATES = [
+  "processing",
+  "needs_confirmation",
+  "readable_enhancing",
+  "action_required",
+  "failed",
+  "deleted",
+] as const satisfies readonly ReadingRecordProductState[];
+
+function isProductState(value: unknown): value is ReadingRecordProductState {
+  return (
+    typeof value === "string" &&
+    (READING_RECORD_PRODUCT_STATES as readonly string[]).includes(value)
+  );
+}
+
+function isIntegerAtLeast(value: unknown, min: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min;
+}
+
+/**
+ * `fastApiFetch<T>` only asserts the type, so validate and rebuild the
+ * recovery DTO here: drop any extra upstream fields and reject malformed
+ * payloads instead of forwarding them to the browser.
+ */
+function sanitizeReaderRecoveryData(raw: unknown): ReaderRecoveryResponseDto | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const data = raw as Record<string, unknown>;
+  const {
+    record_id,
+    outcome,
+    previous_product_state,
+    next_product_state,
+    record_generation,
+    successor_job_count,
+  } = data;
+  if (typeof record_id !== "string" || record_id.length === 0) {
+    return null;
+  }
+  if (outcome !== "recovery_started" && outcome !== "nothing_to_recover") {
+    return null;
+  }
+  if (!isProductState(previous_product_state) || !isProductState(next_product_state)) {
+    return null;
+  }
+  if (!isIntegerAtLeast(record_generation, 1) || !isIntegerAtLeast(successor_job_count, 0)) {
+    return null;
+  }
+  return {
+    record_id,
+    outcome,
+    previous_product_state,
+    next_product_state,
+    record_generation,
+    successor_job_count,
+  };
+}
 
 function authRequired(message: string): ReadingRecordsBffError {
   return { ok: false, status: 401, code: "auth_required", message };
@@ -210,4 +276,31 @@ export async function deleteReaderRecordFromWeb(
   }
 
   return { ok: true, data: upstreamResult.data };
+}
+
+export async function recoverReaderRecordFromWeb(
+  recordId: string,
+): Promise<ReaderRecoveryResult> {
+  const session = await requireAuthenticatedSession();
+  if (!("sessionToken" in session)) {
+    return session;
+  }
+
+  const upstreamResult = await recoverReaderRecordUpstream(
+    session.sessionToken,
+    recordId,
+  );
+
+  if (!upstreamResult.ok) {
+    return upstreamError(upstreamResult.status);
+  }
+
+  const data = sanitizeReaderRecoveryData(upstreamResult.data);
+  if (data === null) {
+    // Anomalous upstream success payload: surface a sanitized 503 and
+    // never forward the raw body.
+    return upstreamError(503);
+  }
+
+  return { ok: true, data };
 }

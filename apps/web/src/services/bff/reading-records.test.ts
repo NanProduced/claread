@@ -13,6 +13,7 @@ vi.mock("@/services/api/reading-records", () => ({
   listUpstreamReadingRecords: vi.fn(),
   hideReaderRecordFromRecent: vi.fn(),
   deleteReaderRecord: vi.fn(),
+  recoverReaderRecordUpstream: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
@@ -20,11 +21,13 @@ import {
   deleteReaderRecord,
   hideReaderRecordFromRecent,
   listUpstreamReadingRecords,
+  recoverReaderRecordUpstream,
 } from "@/services/api/reading-records";
 import {
   deleteReaderRecordFromWeb,
   getReadingRecordListFromWeb,
   hideReaderRecordFromRecentFromWeb,
+  recoverReaderRecordFromWeb,
 } from "./reading-records";
 import { appReaderRoute } from "@/lib/routes";
 import type { ReadingRecordListResponseDto } from "@/types/api/reading-records";
@@ -454,5 +457,208 @@ describe("reading-records BFF delete", () => {
       status: 401,
       code: "upstream_auth_failed",
     });
+  });
+});
+
+describe("reading-records BFF manual recovery", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  function makeRecoveryDto(
+    outcome: "recovery_started" | "nothing_to_recover",
+  ) {
+    return {
+      record_id: "rec-1",
+      outcome,
+      previous_product_state: "failed" as const,
+      next_product_state:
+        outcome === "recovery_started"
+          ? ("readable_enhancing" as const)
+          : ("failed" as const),
+      record_generation: 2,
+      successor_job_count: outcome === "recovery_started" ? 2 : 0,
+    };
+  }
+
+  it("calls upstream with the session token and recordId", async () => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: makeRecoveryDto("recovery_started"),
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(vi.mocked(recoverReaderRecordUpstream).mock.calls[0]).toEqual([
+      "session-token",
+      "rec-1",
+    ]);
+    expect(result).toEqual({
+      ok: true,
+      data: makeRecoveryDto("recovery_started"),
+    });
+  });
+
+  it("rejects anonymous sessions without calling upstream", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "anonymous",
+      source: "none",
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
+    expect(recoverReaderRecordUpstream).not.toHaveBeenCalled();
+  });
+
+  it("rejects mock_phone sessions without calling upstream", async () => {
+    vi.mocked(getWebSession).mockResolvedValue({
+      kind: "mock_phone",
+      source: "mock",
+      phone: "13800138000",
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
+    expect(recoverReaderRecordUpstream).not.toHaveBeenCalled();
+  });
+
+  it("passes the nothing_to_recover DTO through unchanged", async () => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: makeRecoveryDto("nothing_to_recover"),
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toEqual({
+      ok: true,
+      data: makeRecoveryDto("nothing_to_recover"),
+    });
+  });
+
+  it("keeps upstream 404 and 409 statuses without leaking raw text", async () => {
+    for (const status of [404, 409]) {
+      vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+        ok: false,
+        status,
+        message: "raw upstream diagnostic secret-sql",
+      });
+
+      const result = await recoverReaderRecordFromWeb("rec-1");
+
+      expect(result).toMatchObject({
+        ok: false,
+        status,
+        code: "upstream_error",
+      });
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("raw upstream diagnostic secret-sql");
+    }
+  });
+
+  it("maps upstream 5xx and network failures to 503", async () => {
+    for (const status of [500, 0]) {
+      vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+        ok: false,
+        status,
+        message: "boom",
+      });
+
+      const result = await recoverReaderRecordFromWeb("rec-1");
+
+      expect(result).toMatchObject({
+        ok: false,
+        status: 503,
+        code: "upstream_unavailable",
+      });
+    }
+  });
+
+  it("drops extra upstream fields from the sanitized DTO", async () => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: {
+        ...makeRecoveryDto("recovery_started"),
+        job_id: "job_123",
+        raw_debug: "internal trace probe-42",
+      } as unknown as ReturnType<typeof makeRecoveryDto>,
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toEqual({ ok: true, data: makeRecoveryDto("recovery_started") });
+    if (result.ok) {
+      expect(Object.keys(result.data)).toEqual([
+        "record_id",
+        "outcome",
+        "previous_product_state",
+        "next_product_state",
+        "record_generation",
+        "successor_job_count",
+      ]);
+    }
+  });
+
+  it("maps an unknown outcome on upstream success to sanitized 503", async () => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: {
+        ...makeRecoveryDto("recovery_started"),
+        outcome: "recovery_completed",
+      } as unknown as ReturnType<typeof makeRecoveryDto>,
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it.each([
+    ["negative record_generation", { record_generation: -1 }],
+    ["negative successor_job_count", { successor_job_count: -3 }],
+    ["invalid previous_product_state", { previous_product_state: "archived" }],
+    ["invalid next_product_state", { next_product_state: "archived" }],
+    ["empty record_id", { record_id: "" }],
+  ] as const)("maps %s on upstream success to sanitized 503", async (_label, patch) => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: {
+        ...makeRecoveryDto("recovery_started"),
+        ...patch,
+      } as unknown as ReturnType<typeof makeRecoveryDto>,
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("never serializes sensitive probes from anomalous success payloads", async () => {
+    vi.mocked(recoverReaderRecordUpstream).mockResolvedValue({
+      ok: true,
+      data: {
+        ...makeRecoveryDto("recovery_started"),
+        outcome: "unexpected",
+        raw_debug: "SELECT secret FROM credentials -- probe-7f3a",
+      } as unknown as ReturnType<typeof makeRecoveryDto>,
+    });
+
+    const result = await recoverReaderRecordFromWeb("rec-1");
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("probe-7f3a");
+    expect(serialized).not.toContain("SELECT secret");
+    expect(serialized).not.toContain("raw_debug");
   });
 });

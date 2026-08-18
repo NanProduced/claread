@@ -5,6 +5,7 @@ import type {
   ReaderRecordDeletedResponseDto,
   ReaderRecordOpenedResponseDto,
   ReaderRecordRecentRemovedResponseDto,
+  ReaderRecoveryResponseDto,
   ReadingRecordListResponseDto,
 } from "@/types/api/reading-records";
 
@@ -83,5 +84,19 @@ export function deleteReaderRecord(
   return fastApiFetch<ReaderRecordDeletedResponseDto>(
     `/reader/records/${encodeURIComponent(recordId)}`,
     { sessionToken, method: "DELETE" },
+  );
+}
+
+/**
+ * Manual same-generation recovery. No request body: identity comes from
+ * the session token and the trigger is fixed to manual on the backend.
+ */
+export function recoverReaderRecordUpstream(
+  sessionToken: string,
+  recordId: string,
+): Promise<UpstreamResult<ReaderRecoveryResponseDto>> {
+  return fastApiFetch<ReaderRecoveryResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/recovery`,
+    { sessionToken, method: "POST" },
   );
 }

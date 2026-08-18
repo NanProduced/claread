@@ -133,6 +133,54 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+const RECOVERY_EXPLANATION =
+  "部分解析没有完成，但正文和已完成内容仍可阅读。重新尝试不会重复扣费。";
+const RECOVERY_UNAVAILABLE_FEEDBACK =
+  "服务暂时不可用，请稍后重试。正文和已完成内容不会丢失。";
+
+type RecoveryOutcome = "recovery_started" | "nothing_to_recover";
+
+type RecoveryRequestResult =
+  | { ok: true; outcome: RecoveryOutcome }
+  | { ok: false; status: number | null };
+
+async function submitReaderRecordRecovery(
+  recordId: string,
+): Promise<RecoveryRequestResult> {
+  const response = await fetch(
+    `/api/web/reader/records/${encodeURIComponent(recordId)}/recovery`,
+    { method: "POST" },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | { ok?: unknown; outcome?: unknown }
+    | null;
+  // Never surface raw envelope text: feedback is fixed per status below.
+  // Trust only a 2xx response whose body carries the ok flag and one of
+  // the two known outcomes; anything else is an unavailable request.
+  const outcome = payload?.outcome;
+  if (
+    response.ok &&
+    payload?.ok === true &&
+    (outcome === "recovery_started" || outcome === "nothing_to_recover")
+  ) {
+    return { ok: true, outcome };
+  }
+  return { ok: false, status: response.status };
+}
+
+function recoveryFailureFeedback(status: number | null): string {
+  if (status === 401) {
+    return "登录状态已失效，请重新登录后再试。";
+  }
+  if (status === 404) {
+    return "没有找到这条阅读记录，请返回资料库确认后再试。";
+  }
+  if (status === 409) {
+    return "当前状态暂时无法恢复。正文和已完成内容仍会保留，请稍后刷新。";
+  }
+  return RECOVERY_UNAVAILABLE_FEEDBACK;
+}
+
 function isKnownCapability(value: unknown): value is ReaderAnalysisCapabilityStatus {
   return typeof value === "string" && value in CAPABILITY_LABELS;
 }
@@ -271,6 +319,9 @@ export function ReaderAnalysisProgressControl({
     ? sections.filter((section) => section.can_start === true)
     : [];
   const showRemaining = detailsTrusted && startableSections.length >= 2;
+  const showRecoveryAction =
+    progress.overall_status === "failed" &&
+    (automatic || progress.translation_status === "failed");
 
   useEffect(() => {
     if (observedKeyRef.current === observationKey) {
@@ -360,6 +411,35 @@ export function ReaderAnalysisProgressControl({
     }
   }
 
+  async function requestRecovery() {
+    if (pending) {
+      return;
+    }
+    setPending(true);
+    setFeedback(null);
+    try {
+      const result = await submitReaderRecordRecovery(recordId);
+      if (!result.ok) {
+        setFeedback(recoveryFailureFeedback(result.status));
+        return;
+      }
+      const successText =
+        result.outcome === "recovery_started"
+          ? "已重新开始解析，你可以继续阅读。"
+          : "当前没有需要重试的解析，已刷新最新状态。";
+      setFeedback(successText);
+      try {
+        await onRequestSnapshotReload?.();
+      } catch {
+        setFeedback(`${successText}状态暂未刷新，请稍后再试。`);
+      }
+    } catch {
+      setFeedback(RECOVERY_UNAVAILABLE_FEEDBACK);
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <TooltipProvider>
       <Popover
@@ -441,6 +521,27 @@ export function ReaderAnalysisProgressControl({
               >
                 解析详情暂时无法更新，请稍后重试。
               </p>
+            ) : null}
+            {showRecoveryAction ? (
+              <div
+                data-testid="reader-analysis-recovery"
+                className="mt-3 rounded-md border border-hairline px-3 py-2.5"
+              >
+                <p className="text-[0.78rem] leading-5 text-ink">
+                  {RECOVERY_EXPLANATION}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  density="compact"
+                  className="mt-2"
+                  disabled={pending}
+                  onClick={() => void requestRecovery()}
+                >
+                  {pending ? "正在重新尝试…" : "重新尝试解析"}
+                </Button>
+              </div>
             ) : null}
           </div>
 
