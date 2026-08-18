@@ -14,12 +14,22 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.config.settings import Settings, get_settings
 from app.database.connection import close_db, init_db
+from app.services.reader_orchestration.automatic_recovery import (
+    AutomaticRecoveryScanSummary,
+    AutomaticRecoveryService,
+)
 from app.services.reader_orchestration.worker_loop import (
     ReaderEnhancementWorkerLoopCycleSummary,
     ReaderEnhancementWorkerLoopService,
 )
 
 logger = logging.getLogger(__name__)
+
+# Structured-log alert surface for automatic recovery. These two constants
+# are the future Console/Sentry integration point; no separate sink,
+# protocol or interface class exists on purpose.
+_AUTOMATIC_RECOVERY_ALERT_MESSAGE = "reader_automatic_recovery_alert"
+_AUTOMATIC_RECOVERY_ALERT_SCHEMA = "reader_automatic_recovery_alert_v1"
 
 
 def _parse_args(settings: Settings) -> argparse.Namespace:
@@ -143,6 +153,128 @@ async def _run_once(
     )
 
 
+def _build_recovery_stats(
+    *,
+    status: str,
+    batch_size: int,
+    summary: AutomaticRecoveryScanSummary,
+) -> dict[str, Any]:
+    """Minimal ``--once`` stats object: counts only, no internal IDs."""
+    return {
+        "status": status,
+        "batch_size": batch_size,
+        "recovered_count": summary.recovered_count,
+        "noop_count": summary.noop_count,
+        "skipped_count": summary.skipped_count,
+        "error_count": summary.error_count,
+    }
+
+
+def _log_recovery_alert(
+    *,
+    alert_kind: str,
+    error_count: int,
+    batch_size: int,
+    recovered_count: int,
+    noop_count: int,
+    skipped_count: int,
+) -> None:
+    # One aggregated alert per cycle. Fields are counts only: no exception
+    # body/type/traceback, no user content, no job/run/record IDs.
+    logger.error(
+        _AUTOMATIC_RECOVERY_ALERT_MESSAGE,
+        extra={
+            "event_schema": _AUTOMATIC_RECOVERY_ALERT_SCHEMA,
+            "alert_kind": alert_kind,
+            "error_count": error_count,
+            "batch_size": batch_size,
+            "recovered_count": recovered_count,
+            "noop_count": noop_count,
+            "skipped_count": skipped_count,
+        },
+    )
+
+
+async def _run_automatic_recovery_cycle(
+    *,
+    recovery_service: AutomaticRecoveryService,
+    batch_size: int,
+) -> dict[str, Any]:
+    """Run one bounded automatic-recovery scan with fault isolation.
+
+    Scanner faults (candidate errors or a top-level exception) emit
+    exactly one sanitized alert and never stop the enhancement cycle.
+    Cancellation is not caught (``CancelledError`` is a BaseException).
+    """
+    try:
+        summary = await recovery_service.run_once(batch_size=batch_size)
+    except Exception:
+        _log_recovery_alert(
+            alert_kind="scan_failed",
+            error_count=1,
+            batch_size=batch_size,
+            recovered_count=0,
+            noop_count=0,
+            skipped_count=0,
+        )
+        return {
+            "status": "error",
+            "batch_size": batch_size,
+            "recovered_count": 0,
+            "noop_count": 0,
+            "skipped_count": 0,
+            "error_count": 1,
+        }
+    if summary.error_count > 0:
+        _log_recovery_alert(
+            alert_kind="candidate_errors",
+            error_count=summary.error_count,
+            batch_size=batch_size,
+            recovered_count=summary.recovered_count,
+            noop_count=summary.noop_count,
+            skipped_count=summary.skipped_count,
+        )
+    else:
+        logger.info(
+            "reader automatic recovery cycle completed",
+            extra={
+                "batch_size": batch_size,
+                "recovered_count": summary.recovered_count,
+                "noop_count": summary.noop_count,
+                "skipped_count": summary.skipped_count,
+                "error_count": summary.error_count,
+            },
+        )
+    return _build_recovery_stats(
+        status="completed", batch_size=batch_size, summary=summary
+    )
+
+
+async def _run_cycle(
+    *,
+    service: ReaderEnhancementWorkerLoopService,
+    recovery_service: AutomaticRecoveryService,
+    args: argparse.Namespace,
+) -> tuple[ReaderEnhancementWorkerLoopCycleSummary, dict[str, Any]]:
+    # Automatic recovery strictly precedes enhancement in every cycle so
+    # freshly created successor jobs are claimable in the same cycle.
+    recovery_stats = await _run_automatic_recovery_cycle(
+        recovery_service=recovery_service,
+        batch_size=args.batch_size,
+    )
+    summary = await _run_once(service=service, args=args)
+    return summary, recovery_stats
+
+
+def _build_once_payload(
+    summary: ReaderEnhancementWorkerLoopCycleSummary,
+    recovery_stats: dict[str, Any],
+) -> dict[str, Any]:
+    payload = _build_cycle_payload(summary)
+    payload["automatic_recovery"] = recovery_stats
+    return payload
+
+
 async def _run_worker(args: argparse.Namespace, settings: Settings) -> None:
     if args.batch_size < 1:
         raise ValueError("batch_size must be >= 1")
@@ -164,13 +296,28 @@ async def _run_worker(args: argparse.Namespace, settings: Settings) -> None:
     )
     try:
         service = ReaderEnhancementWorkerLoopService()
+        recovery_service = AutomaticRecoveryService()
         if args.once:
-            summary = await _run_once(service=service, args=args)
-            print(json.dumps(_build_cycle_payload(summary), ensure_ascii=False, indent=2))
+            summary, recovery_stats = await _run_cycle(
+                service=service,
+                recovery_service=recovery_service,
+                args=args,
+            )
+            print(
+                json.dumps(
+                    _build_once_payload(summary, recovery_stats),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return
 
         while True:
-            summary = await _run_once(service=service, args=args)
+            summary, _recovery_stats = await _run_cycle(
+                service=service,
+                recovery_service=recovery_service,
+                args=args,
+            )
             logger.info(
                 "reader enhancement worker cycle completed",
                 extra={
