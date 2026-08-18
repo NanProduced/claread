@@ -36,6 +36,7 @@ from app.services.reader_orchestration.analysis_section_jobs import (
 from app.services.reader_orchestration.analysis_section_request_service import (
     _load_planned_sections,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_window_bootstrap import (
     GRAMMAR_WINDOW_JOB_TYPE,
     GrammarWindowBootstrapService,
@@ -43,6 +44,7 @@ from app.services.reader_orchestration.grammar_window_bootstrap import (
 from app.services.reader_orchestration.job_bootstrap import (
     GRAMMAR_BATCH_JOB_TYPE,
     RECOVERY_EVENT_SCHEMA,
+    RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS,
     TRANSLATION_BATCH_JOB_TYPE,
     VOCABULARY_BATCH_JOB_TYPE,
     EnhancementJobBootstrapService,
@@ -256,6 +258,68 @@ async def _job_row(pool: asyncpg.Pool, job_id: UUID) -> asyncpg.Record:
         row = await conn.fetchrow("SELECT * FROM reader_jobs WHERE id = $1", job_id)
     assert row is not None
     return row
+
+
+async def _insert_synthetic_recovery_event(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+    *,
+    trigger: str,
+    generation: int,
+) -> None:
+    """Seed the recovery-event counter exactly as the core writes it.
+
+    Goes through ``ReaderEventRuntime`` so the sequence counter
+    (``reader_event_sequences``) and the event row stay consistent with
+    the allocation the recovery core performs under the record lock.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await ReaderEventRuntime().publish_event_in_transaction(
+                conn,
+                record_id=record_id,
+                event_type="record_state_changed",
+                payload_json={
+                    "event_schema": RECOVERY_EVENT_SCHEMA,
+                    "trigger": trigger,
+                    "recovery_mode": RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS,
+                    "generation": generation,
+                },
+            )
+
+
+async def _backdate_failed_jobs(
+    pool: asyncpg.Pool,
+    record_id: UUID,
+    *,
+    minutes: int = 120,
+) -> None:
+    """Age the failed_terminal rows past the automatic cooldown.
+
+    ``trg_reader_jobs_set_updated_at`` force-refreshes updated_at on
+    every UPDATE; disable it inside this throwaway schema while
+    backdating.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE reader_jobs "
+            "DISABLE TRIGGER trg_reader_jobs_set_updated_at"
+        )
+        try:
+            await conn.execute(
+                """
+                UPDATE reader_jobs
+                SET updated_at = NOW() - ($2::int * INTERVAL '1 minute')
+                WHERE reading_record_id = $1 AND status = 'failed_terminal'
+                """,
+                record_id,
+                minutes,
+            )
+        finally:
+            await conn.execute(
+                "ALTER TABLE reader_jobs "
+                "ENABLE TRIGGER trg_reader_jobs_set_updated_at"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1217,4 +1281,163 @@ async def test_recovery_readiness_gate_fails_closed(
     # Zero writes: no jobs, no events, product_state untouched.
     assert len(await _load_jobs(pool, record_id)) == len(jobs_before)
     assert await _recovery_events(pool, record_id) == []
+    assert str((await _load_record(pool, record_id))["product_state"]) == "failed"
+
+
+# ---------------------------------------------------------------------------
+# 13. Automatic trigger gate (purity / cooldown / attempt cap) is atomic
+#     inside the record FOR UPDATE transaction; manual skips it
+# ---------------------------------------------------------------------------
+
+
+async def test_automatic_trigger_cooldown_gate_fails_closed(
+    recovery_env: asyncpg.Pool,
+) -> None:
+    """A failure newer than the cooldown rejects the automatic trigger
+    under the record lock; manual stays user-explicit and unaffected."""
+    pool = recovery_env
+    user_id = await insert_user(pool)
+    record_id = await _setup_incident_record(pool, user_id)  # failed just now
+    jobs_before = await _load_jobs(pool, record_id)
+
+    with pytest.raises(ValueError, match="cooldown"):
+        await _recover(pool, record_id=record_id, user_id=user_id, trigger="automatic")
+
+    # Zero writes: no successors, no event, state untouched.
+    assert len(await _load_jobs(pool, record_id)) == len(jobs_before)
+    assert await _recovery_events(pool, record_id) == []
+    assert str((await _load_record(pool, record_id))["product_state"]) == "failed"
+
+    # The same record recovers immediately when explicitly requested.
+    summary = await _recover(pool, record_id=record_id, user_id=user_id, trigger="manual")
+    assert summary.recovered is True
+
+
+async def test_automatic_trigger_purity_gate_fails_closed(
+    recovery_env: asyncpg.Pool,
+) -> None:
+    """A mixed ordinary failure set rejects the automatic trigger even
+    when one failure is provider_timeout; manual still recovers."""
+    pool = recovery_env
+    user_id = await insert_user(pool)
+    result = await submit_article_ready(pool, user_id=user_id)
+    record_id = result.record_id
+    await _bootstrap(pool, record_id=record_id, user_id=user_id)
+    async with pool.acquire() as conn:
+        for job_type, failure_class, failure_code in (
+            (TRANSLATION_BATCH_JOB_TYPE, "provider", "provider_timeout"),
+            (VOCABULARY_BATCH_JOB_TYPE, "validation", "invalid_output"),
+        ):
+            updated = await conn.execute(
+                """
+                UPDATE reader_jobs
+                SET status = 'failed_terminal',
+                    failure_class = $2,
+                    failure_code = $3,
+                    attempt_count = max_attempts
+                WHERE reading_record_id = $1
+                  AND job_type = $4
+                  AND status = 'queued'
+                """,
+                record_id,
+                failure_class,
+                failure_code,
+                job_type,
+            )
+            assert updated == "UPDATE 1"
+        await conn.execute(
+            "UPDATE reading_records SET product_state = 'failed' WHERE id = $1",
+            record_id,
+        )
+    await _backdate_failed_jobs(pool, record_id)
+    jobs_before = await _load_jobs(pool, record_id)
+
+    with pytest.raises(ValueError, match="provider_timeout"):
+        await _recover(pool, record_id=record_id, user_id=user_id, trigger="automatic")
+
+    assert len(await _load_jobs(pool, record_id)) == len(jobs_before)
+    assert await _recovery_events(pool, record_id) == []
+    assert str((await _load_record(pool, record_id))["product_state"]) == "failed"
+
+    summary = await _recover(pool, record_id=record_id, user_id=user_id, trigger="manual")
+    assert summary.recovered is True
+
+
+async def test_automatic_trigger_attempt_cap_fails_closed(
+    recovery_env: asyncpg.Pool,
+) -> None:
+    """Two committed automatic same-generation recovery events close the
+    gate inside the core transaction; manual stays unaffected."""
+    pool = recovery_env
+    user_id = await insert_user(pool)
+    record_id = await _setup_incident_record(pool, user_id)
+    await _backdate_failed_jobs(pool, record_id)
+    for _ in range(2):
+        await _insert_synthetic_recovery_event(
+            pool, record_id, trigger="automatic", generation=1
+        )
+    jobs_before = await _load_jobs(pool, record_id)
+
+    with pytest.raises(ValueError, match="attempt cap"):
+        await _recover(pool, record_id=record_id, user_id=user_id, trigger="automatic")
+
+    # Zero writes beyond the seeded cap events.
+    assert len(await _load_jobs(pool, record_id)) == len(jobs_before)
+    assert len(await _recovery_events(pool, record_id)) == 2
+    assert str((await _load_record(pool, record_id))["product_state"]) == "failed"
+
+    summary = await _recover(pool, record_id=record_id, user_id=user_id, trigger="manual")
+    assert summary.recovered is True
+
+
+async def test_automatic_trigger_without_ordinary_predecessor_fails_closed(
+    recovery_env: asyncpg.Pool,
+) -> None:
+    """A record whose only failed_terminal work is in the analysis-section
+    lane has no ordinary predecessor: the automatic gate rejects it with
+    zero writes instead of bootstrapping on an empty predecessor set."""
+    pool = recovery_env
+    user_id = await insert_user(pool)
+    result = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=_GROUPED_TEXT,
+        title="Automatic Empty Predecessor",
+        language="en",
+    )
+    record_id = result.record_id
+    await _bootstrap(pool, record_id=record_id, user_id=user_id)
+    async with pool.acquire() as conn:
+        section_job_id = await conn.fetchval(
+            """
+            UPDATE reader_jobs
+            SET status = 'failed_terminal',
+                failure_class = 'provider',
+                failure_code = 'provider_timeout',
+                attempt_count = max_attempts
+            WHERE reading_record_id = $1
+              AND (input_json->>'request_origin') = $2
+              AND job_type = 'build_vocabulary_layer_article'
+              AND status = 'queued'
+            RETURNING id
+            """,
+            record_id,
+            ANALYSIS_SECTION_REQUEST_ORIGIN,
+        )
+        assert section_job_id is not None
+        await conn.execute(
+            "UPDATE reading_records SET product_state = 'failed' WHERE id = $1",
+            record_id,
+        )
+    jobs_before = await _load_jobs(pool, record_id)
+
+    with pytest.raises(ValueError, match="failed_terminal predecessor"):
+        await _recover(pool, record_id=record_id, user_id=user_id, trigger="automatic")
+
+    # Zero writes: no successor, no event, section job untouched, state
+    # stays failed.
+    assert len(await _load_jobs(pool, record_id)) == len(jobs_before)
+    assert await _recovery_events(pool, record_id) == []
+    section_row = await _job_row(pool, UUID(str(section_job_id)))
+    assert str(section_row["status"]) == "failed_terminal"
     assert str((await _load_record(pool, record_id))["product_state"]) == "failed"

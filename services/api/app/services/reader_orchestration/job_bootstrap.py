@@ -4,6 +4,7 @@ import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -144,6 +145,15 @@ _RECOVERY_TRIGGER_KINDS = frozenset({RECOVERY_TRIGGER_MANUAL, RECOVERY_TRIGGER_A
 RECOVERY_EVENT_SCHEMA = "reader_parse_recovery_requested_v1"
 RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS = "same_generation_successor_jobs"
 RECOVERY_BILLING_MODE = "internal_only"
+
+# R1 automatic-recovery policy, enforced atomically inside
+# ``recover_failed_enhancement_jobs`` under the record FOR UPDATE lock
+# (the scanner batch query is a pre-filter only). Manual triggers are
+# user-explicit and skip this gate.
+AUTOMATIC_RECOVERY_COOLDOWN_MINUTES = 30
+MAX_AUTOMATIC_RECOVERIES_PER_GENERATION = 2
+_AUTOMATIC_FAILURE_CLASS = "provider"
+_AUTOMATIC_FAILURE_CODE = "provider_timeout"
 
 # Semantic outline (optional, request-eligible only; not a budget layer).
 SEMANTIC_OUTLINE_RUN_TYPE = "semantic_outline_layer"
@@ -1944,6 +1954,71 @@ class EnhancementJobBootstrapService:
             trace_id=trace_id,
         )
 
+    async def _enforce_automatic_recovery_gate(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        predecessor_rows: list[asyncpg.Record],
+    ) -> None:
+        """Fail-closed R1 automatic policy, evaluated under the record lock.
+
+        Runs inside the same transaction that creates successors, so
+        scanner/worker races can never push a record past the automatic
+        policy: purity and cooldown see the committed predecessor rows,
+        and the attempt cap sees every committed recovery event.
+        """
+        if not predecessor_rows:
+            raise ValueError(
+                "automatic recovery requires at least one ordinary "
+                "failed_terminal predecessor"
+            )
+        for row in predecessor_rows:
+            if (
+                row["failure_class"] != _AUTOMATIC_FAILURE_CLASS
+                or row["failure_code"] != _AUTOMATIC_FAILURE_CODE
+            ):
+                raise ValueError(
+                    "automatic recovery requires every ordinary "
+                    "failed_terminal predecessor to be "
+                    f"{_AUTOMATIC_FAILURE_CLASS}/{_AUTOMATIC_FAILURE_CODE}"
+                )
+        newest_failure = max(row["updated_at"] for row in predecessor_rows)
+        now = await conn.fetchval("SELECT clock_timestamp()")
+        if now - newest_failure < timedelta(
+            minutes=AUTOMATIC_RECOVERY_COOLDOWN_MINUTES
+        ):
+            raise ValueError(
+                "automatic recovery cooldown has not elapsed for "
+                f"record {state.record_id}"
+            )
+        automatic_event_count = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM reader_events
+            WHERE reading_record_id = $1
+              AND event_type = 'record_state_changed'
+              AND payload_json->>'event_schema' = $2
+              AND payload_json->>'trigger' = $3
+              AND payload_json->>'recovery_mode' = $4
+              AND CASE
+                  WHEN payload_json->>'generation' ~ '^[0-9]+$'
+                  THEN (payload_json->>'generation')::int = $5
+                  ELSE FALSE
+              END
+            """,
+            state.record_id,
+            RECOVERY_EVENT_SCHEMA,
+            RECOVERY_TRIGGER_AUTOMATIC,
+            RECOVERY_MODE_SAME_GENERATION_SUCCESSOR_JOBS,
+            state.expected_generation,
+        )
+        if automatic_event_count >= MAX_AUTOMATIC_RECOVERIES_PER_GENERATION:
+            raise ValueError(
+                "automatic recovery attempt cap reached for record "
+                f"{state.record_id} generation {state.expected_generation}"
+            )
+
     async def recover_failed_enhancement_jobs(
         self,
         *,
@@ -1959,6 +2034,11 @@ class EnhancementJobBootstrapService:
 
         - trigger fail-closed (``manual`` / ``automatic``); article-ready
           readiness gate; ordinary bootstrap eligibility otherwise.
+        - ``automatic`` additionally enforces the R1 policy inside this
+          transaction: all ordinary predecessors provider/provider_timeout,
+          the 30-minute cooldown from the newest eligible failure, and the
+          per record+generation attempt cap counted from committed
+          recovery events. Manual is user-explicit and skips the gate.
         - ``failed_terminal`` predecessors stay immutable audit rows;
           successors are new runs/jobs via the shared idempotent helpers.
         - Analysis-section lanes are excluded from predecessors AND from
@@ -1999,7 +2079,7 @@ class EnhancementJobBootstrapService:
                 # failures this entry cannot rebuild.
                 predecessor_rows = await conn.fetch(
                     """
-                    SELECT id
+                    SELECT id, failure_class, failure_code, updated_at
                     FROM reader_jobs
                     WHERE reading_record_id = $1
                       AND base_id = $2
@@ -2019,6 +2099,12 @@ class EnhancementJobBootstrapService:
                 predecessor_job_ids = tuple(
                     UUID(str(row["id"])) for row in predecessor_rows
                 )
+                if trigger == RECOVERY_TRIGGER_AUTOMATIC:
+                    await self._enforce_automatic_recovery_gate(
+                        conn,
+                        state=state,
+                        predecessor_rows=predecessor_rows,
+                    )
                 batch = await self._bootstrap_all_enhancement_jobs(
                     conn,
                     state=state,
