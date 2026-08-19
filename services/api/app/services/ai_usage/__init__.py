@@ -37,6 +37,9 @@ from .service import (
     AIUsageEventCreate,
     insert_ai_usage_event_by_invocation_key_in_transaction,
     record_ai_usage_event,
+    record_invocation_keyed_usage_event,
+    record_reader_failed_usage_event,
+    update_ai_usage_event_metadata,
     update_ai_usage_event_outcome,
 )
 from .types import (
@@ -98,6 +101,9 @@ __all__ = [
     "compute_reader_ask_cost_points",
     "insert_ai_usage_event_by_invocation_key_in_transaction",
     "record_ai_usage_event",
+    "record_invocation_keyed_usage_event",
+    "record_reader_failed_usage_event",
     "resolve_model_metadata",
+    "update_ai_usage_event_metadata",
     "update_ai_usage_event_outcome",
 ]

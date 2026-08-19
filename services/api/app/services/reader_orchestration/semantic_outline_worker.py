@@ -23,12 +23,16 @@ from app.services.ai_usage import (
     STATUS_FAILED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
-    record_ai_usage_event,
+    record_reader_failed_usage_event,
 )
 from app.services.ai_usage import (
     STATUS_SUCCEEDED as USAGE_STATUS_SUCCEEDED,
 )
-from app.services.ai_usage.execution_diagnostics import with_execution_correlation
+from app.services.ai_usage.execution_diagnostics import (
+    current_execution,
+    valid_agent_run_usage_snapshot,
+    with_execution_correlation,
+)
 from app.services.model_execution_journal import (
     CapturedReceipt,
     CaptureEnvelopeConflictError,
@@ -1346,24 +1350,34 @@ class SemanticOutlineWorkerService:
         context: SemanticOutlineJobContext | None,
         error: SemanticOutlineGenerationError,
     ) -> UUID | None:
-        """Usage rules: call+usage → one failed event; zero-call / no usage → none.
+        """Usage rules: provider call observed → one keyed failed event.
 
-        Structured-output invalid after a call always records one event
-        (usage_data may be empty). Transient timeout without usage → zero.
+        With a usable AgentRun snapshot (any completeness, including
+        zero-response unavailable) a provider call always records one
+        keyed event — tokens are zero only when truly unobserved.
+        Without a snapshot: call+usage records; retryable timeout with no
+        usage records nothing; structured invalid still records one event.
         """
         if context is None:
             return None
         if not error.provider_call_made:
+            # Configuration / pre-call errors never produce model usage.
             return None
-        if error.usage_data is None:
+        snapshot = valid_agent_run_usage_snapshot(current_execution())
+        if error.usage_data is None and snapshot is None:
             if error.retryable:
-                # Timeout/network without provider usage payload.
+                # Timeout/network without any observed provider usage and
+                # without a usable snapshot.
                 return None
             # Structured invalid after a real call: still exactly one failed event
             # even when no token payload was returned.
             if error.failure_code != "model_output_invalid":
                 return None
-        return await record_ai_usage_event(
+        # A present snapshot (any completeness — including zero-response
+        # unavailable) means the agent runner observed this invocation, so
+        # the recorder can persist a keyed failed event with real or zero
+        # tokens (never fabricated).
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
@@ -1390,6 +1404,7 @@ class SemanticOutlineWorkerService:
                 error_message=str(error)[:500],
             )
         )
+        return event_id
 
     async def _complete_job_retry_later(
         self,

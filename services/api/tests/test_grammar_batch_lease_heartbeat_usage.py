@@ -258,17 +258,46 @@ class InMemoryUsageStore:
         }
         return row_id
 
-    async def record_failed(self, event: AIUsageEventCreate) -> UUID | None:
+    async def record_failed(
+        self,
+        event: AIUsageEventCreate,
+        *,
+        invocation_key: str | None = None,
+        snapshot_fragment: dict | None = None,
+        pool: object | None = None,
+    ) -> tuple[UUID | None, str]:
+        """Mirror of ``record_reader_failed_usage_event`` for failure paths.
+
+        Stores one keyed row per invocation; replays return the same row.
+        """
+        del pool  # in-memory fake ignores the pool override
+        resolved_key = invocation_key
+        if resolved_key is None:
+            from app.services.ai_usage.execution_diagnostics import current_execution
+
+            correlation = current_execution()
+            if correlation is not None:
+                resolved_key = (
+                    f"reader:{correlation.capability_code}:"
+                    f"{correlation.reader_job_id}:"
+                    f"{correlation.attempt_ordinal}:1"
+                )
+        if resolved_key is not None:
+            for row_id, row in self.rows.items():
+                if row["invocation_key"] == resolved_key:
+                    return row_id, "replayed"
+        self.insert_count += 1
         row_id = uuid4()
         self.rows[row_id] = {
-            "invocation_key": None,
+            "invocation_key": resolved_key,
             "request_id": event.request_id,
             "status": event.status,
             "usage_data": event.usage_data,
             "metadata": dict(event.metadata_json or {}),
             "error_code": event.error_code,
+            "snapshot_fragment": dict(snapshot_fragment or {}),
         }
-        return row_id
+        return row_id, "inserted"
 
     async def update(
         self,
@@ -432,7 +461,9 @@ def usage_store(monkeypatch) -> InMemoryUsageStore:
         grammar_worker_module, "update_ai_usage_event_outcome", store.update
     )
     monkeypatch.setattr(
-        grammar_worker_module, "record_ai_usage_event", store.record_failed
+        grammar_worker_module,
+        "record_reader_failed_usage_event",
+        store.record_failed,
     )
     return store
 
@@ -740,14 +771,16 @@ async def test_model_failure_before_usage_records_no_fabricated_tokens(
 
     assert result.status == "retry_later"
     assert publisher.calls == []
-    # Exactly one FAILED error event carrying NO token usage.
+    # Exactly one FAILED error event carrying NO token usage, now keyed by
+    # the invocation identity (OBS-01A) even though usage was unavailable.
     assert len(usage_store.rows) == 1
     row = next(iter(usage_store.rows.values()))
     assert row["status"] == "failed"
     assert row["usage_data"] is None
     assert row["error_code"] == "model_exploded"
-    # No invocation-keyed row exists (no real invocation completed).
-    assert usage_store.insert_count == 0
+    assert row["invocation_key"] is not None
+    assert row["invocation_key"].startswith("reader:reader_grammar_bundle:")
+    assert usage_store.insert_count == 1
 
 
 @pytest.mark.anyio
@@ -1096,10 +1129,11 @@ async def test_ownership_lost_retryable_error_writes_neither_job_nor_run(
     assert runtime.transitions == []
     assert run_status_calls == []
     # Model failed before returning usage → only the token-less FAILED
-    # error event, no invocation row.
-    assert usage_store.insert_count == 0
+    # error event (invocation-keyed, still no fabricated tokens).
+    assert usage_store.insert_count == 1
     statuses = [row["status"] for row in usage_store.rows.values()]
     assert statuses == ["failed"]
+    assert all(row["usage_data"] is None for row in usage_store.rows.values())
 
 
 class _FakePoolConn:

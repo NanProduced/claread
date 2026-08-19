@@ -36,7 +36,7 @@ from app.services.ai_usage import (
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
-    record_ai_usage_event,
+    record_reader_failed_usage_event,
     update_ai_usage_event_outcome,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
@@ -1722,7 +1722,7 @@ class GrammarBundleWorkerService:
     ) -> UUID | None:
         if context is None:
             return None
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
@@ -1757,6 +1757,7 @@ class GrammarBundleWorkerService:
                 },
             )
         )
+        return event_id
 
     # ------------------------------------------------------------------#
     # Compact grammar batch path (SHORT_BATCH / STRUCTURED_BATCH)
@@ -3219,7 +3220,7 @@ class GrammarBundleWorkerService:
     ) -> UUID | None:
         if context is None:
             return None
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
@@ -3251,6 +3252,7 @@ class GrammarBundleWorkerService:
                 },
             )
         )
+        return event_id
 
 
 def _build_grammar_prompt(context: GrammarJobContext) -> str:

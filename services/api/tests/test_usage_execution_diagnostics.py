@@ -188,6 +188,65 @@ def _metadata_from_record_call(fetchval_mock: AsyncMock) -> dict[str, Any]:
     raise AssertionError("expected metadata_json with execution_id in INSERT args")
 
 
+# ---------------------------------------------------------------------------
+# Fake agents supporting the Reader-scope ``agent.iter`` + ``AgentRun.next``
+# driver (OBS-01A). ``run`` stays for the non-Reader plain path.
+# ---------------------------------------------------------------------------
+
+
+class _FakeAgentRun:
+    def __init__(self, *, result: Any = None, error: BaseException | None = None):
+        self._result = result
+        self._error = error
+
+    async def __aenter__(self) -> _FakeAgentRun:
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> bool:
+        return False
+
+    @property
+    def next_node(self) -> Any:
+        if self._error is not None:
+            raise self._error
+        from pydantic_graph import End
+
+        return End(data=None)
+
+    @property
+    def result(self) -> Any:
+        return self._result
+
+    @property
+    def usage(self) -> Any:
+        return getattr(self._result, "usage", None)
+
+    def new_messages(self) -> list[Any]:
+        return []
+
+
+def _iter_result_agent(result: Any) -> Any:
+    class _Agent:
+        def iter(self, *args: Any, **kwargs: Any) -> _FakeAgentRun:
+            return _FakeAgentRun(result=result)
+
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            return result
+
+    return _Agent()
+
+
+def _iter_error_agent(error: BaseException) -> Any:
+    class _Agent:
+        def iter(self, *args: Any, **kwargs: Any) -> _FakeAgentRun:
+            return _FakeAgentRun(error=error)
+
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            raise error
+
+    return _Agent()
+
+
 def _assert_correlation_metadata(
     meta: dict[str, Any],
     *,
@@ -820,10 +879,6 @@ async def test_agent_run_exception_retains_agent_run_id_on_correlation() -> None
     claim = _claim()
     corr = begin_execution_from_claim(claim, capability_code="reader_translation")
 
-    class BoomAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("llm down")
-
     with execution_scope(corr):
         model_cfg = SimpleNamespace(
             provider="p", model_name="m", profile_name="pr"
@@ -834,7 +889,7 @@ async def test_agent_run_exception_retains_agent_run_id_on_correlation() -> None
         ), patch("app.llm.agent_runner.assert_real_llm_allowed"):
             with pytest.raises(RuntimeError, match="llm down"):
                 await agent_runner.run_agent_with_route(
-                    agent=BoomAgent(),
+                    agent=_iter_error_agent(RuntimeError("llm down")),
                     prompt="hi",
                     deps=None,
                     route=MODEL_ROUTE_READER_LAYER_TRANSLATION,
@@ -876,12 +931,10 @@ async def test_run_reader_scoped_agent_mints_and_attaches_agent_run_id() -> None
     claim = _claim()
     corr = begin_execution_from_claim(claim, capability_code="reader_vocabulary")
 
-    class OkAgent:
-        async def run(self, prompt: str, **kwargs: Any) -> Any:
-            return SimpleNamespace(output="ok", prompt=prompt)
-
     with execution_scope(corr):
-        result = await agent_runner.run_reader_scoped_agent(OkAgent(), "p")
+        result = await agent_runner.run_reader_scoped_agent(
+            _iter_result_agent(SimpleNamespace(output="ok")), "p"
+        )
         active = current_execution()
         assert active is not None
         assert active.agent_run_id is not None
@@ -893,13 +946,11 @@ async def test_run_reader_scoped_agent_exception_retains_agent_run_id() -> None:
     claim = _claim()
     corr = begin_execution_from_claim(claim, capability_code="reader_grammar_bundle")
 
-    class BoomAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("provider failed")
-
     with execution_scope(corr):
         with pytest.raises(RuntimeError, match="provider failed"):
-            await agent_runner.run_reader_scoped_agent(BoomAgent(), "p")
+            await agent_runner.run_reader_scoped_agent(
+                _iter_error_agent(RuntimeError("provider failed")), "p"
+            )
         active = current_execution()
         assert active is not None
         assert active.agent_run_id is not None
@@ -911,16 +962,19 @@ async def test_run_reader_scoped_agent_multiple_calls_mint_distinct_ids() -> Non
     corr = begin_execution_from_claim(claim, capability_code="reader_translation")
     ids: list[UUID] = []
 
-    class OkAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
+    class _CountingAgent:
+        def iter(self, *args: Any, **kwargs: Any) -> _FakeAgentRun:
             active = current_execution()
             assert active is not None and active.agent_run_id is not None
             ids.append(active.agent_run_id)
+            return _FakeAgentRun(result=SimpleNamespace(output="ok"))
+
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
             return SimpleNamespace(output="ok")
 
     with execution_scope(corr):
-        await agent_runner.run_reader_scoped_agent(OkAgent(), "one")
-        await agent_runner.run_reader_scoped_agent(OkAgent(), "two")
+        await agent_runner.run_reader_scoped_agent(_CountingAgent(), "one")
+        await agent_runner.run_reader_scoped_agent(_CountingAgent(), "two")
     assert len(ids) == 2
     assert ids[0] != ids[1]
 
@@ -1010,13 +1064,11 @@ async def test_agent_run_duration_local_monotonic_not_provider_latency() -> None
     corr = begin_execution_from_claim(claim, capability_code="reader_translation")
     times = iter([100.0, 100.250])  # 250ms
 
-    class OkAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(output="ok", usage=None)
-
     with execution_scope(corr):
         with patch("time.perf_counter", side_effect=lambda: next(times)):
-            result = await agent_runner.run_reader_scoped_agent(OkAgent(), "p")
+            result = await agent_runner.run_reader_scoped_agent(
+                _iter_result_agent(SimpleNamespace(output="ok", usage=None)), "p"
+            )
         provenance = current_duration_provenance()
         assert provenance is not None
         assert provenance.agent_run_duration_ms == 250
@@ -1051,23 +1103,21 @@ async def test_provider_timing_available_only_with_adapter_envelope() -> None:
     claim = _claim()
     corr = begin_execution_from_claim(claim, capability_code="reader_vocabulary")
 
-    class OkAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(
-                output="ok",
-                usage=SimpleNamespace(
-                    details={"request_duration_ms": 999},  # must NOT count
-                    input_tokens=1,
-                    output_tokens=1,
-                ),
-                _claread_provider_response_timing=make_provider_response_timing_envelope(
-                    provider_request_duration_ms=88,
-                    source_adapter="unit_test",
-                ),
-            )
+    ok_result = SimpleNamespace(
+        output="ok",
+        usage=SimpleNamespace(
+            details={"request_duration_ms": 999},  # must NOT count
+            input_tokens=1,
+            output_tokens=1,
+        ),
+        _claread_provider_response_timing=make_provider_response_timing_envelope(
+            provider_request_duration_ms=88,
+            source_adapter="unit_test",
+        ),
+    )
 
     with execution_scope(corr):
-        await agent_runner.run_reader_scoped_agent(OkAgent(), "p")
+        await agent_runner.run_reader_scoped_agent(_iter_result_agent(ok_result), "p")
         provenance = current_duration_provenance()
         assert provenance is not None
         assert provenance.provider_request_duration_ms == 88
@@ -1092,14 +1142,12 @@ async def test_agent_run_exception_retains_duration_provenance() -> None:
     corr = begin_execution_from_claim(claim, capability_code="reader_grammar_bundle")
     times = iter([10.0, 10.1])
 
-    class BoomAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("boom")
-
     with execution_scope(corr):
         with patch("time.perf_counter", side_effect=lambda: next(times)):
             with pytest.raises(RuntimeError, match="boom"):
-                await agent_runner.run_reader_scoped_agent(BoomAgent(), "p")
+                await agent_runner.run_reader_scoped_agent(
+                    _iter_error_agent(RuntimeError("boom")), "p"
+                )
         provenance = current_duration_provenance()
         assert provenance is not None
         assert provenance.agent_run_duration_ms == 100
@@ -1119,13 +1167,11 @@ async def test_duration_merged_into_usage_event_without_setting_latency_ms() -> 
     fake_pool = _fake_pool_returning(event_id)
     times = iter([1.0, 1.05])
 
-    class OkAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(output="ok", usage=None)
-
     with execution_scope(corr):
         with patch("time.perf_counter", side_effect=lambda: next(times)):
-            await agent_runner.run_reader_scoped_agent(OkAgent(), "p")
+            await agent_runner.run_reader_scoped_agent(
+                _iter_result_agent(SimpleNamespace(output="ok", usage=None)), "p"
+            )
         with patch("app.services.ai_usage.service.db_connection") as db:
             db.DB_POOL = fake_pool
             result = await record_ai_usage_event(
@@ -1169,15 +1215,13 @@ async def test_failure_span_includes_duration_provenance() -> None:
     set_default_recorder(recorder)
     span = SpanContext(span_id=uuid4(), trace_id=uuid4(), parent_span_id=None)
 
-    class BoomAgent:
-        async def run(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("down")
-
     try:
         with execution_scope(corr):
             with patch("time.perf_counter", side_effect=lambda: next(times)):
                 with pytest.raises(RuntimeError):
-                    await agent_runner.run_reader_scoped_agent(BoomAgent(), "p")
+                    await agent_runner.run_reader_scoped_agent(
+                        _iter_error_agent(RuntimeError("down")), "p"
+                    )
             with patch(
                 "app.services.reader_orchestration.span_recorder.current_span",
                 return_value=span,

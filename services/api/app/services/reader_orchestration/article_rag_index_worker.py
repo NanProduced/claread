@@ -205,6 +205,7 @@ class ArticleRagIndexWorkerError(RuntimeError):
         failure_code: str,
         rationale_code: str | None = None,
         diagnostics: Mapping[str, str | int | bool | None] | None = None,
+        embedding_usage_report: ArticleRagEmbeddingUsageReport | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
@@ -212,6 +213,13 @@ class ArticleRagIndexWorkerError(RuntimeError):
         self.failure_code = failure_code
         self.rationale_code = rationale_code or failure_code
         self.diagnostics = dict(diagnostics or {})
+        # OBS-01B-B typed usage carrier (in-memory only): lets a later
+        # worker stage read the embedding usage report off ANY typed
+        # worker error without getattr/hasattr probing. Default None keeps
+        # every existing caller unchanged; MUST NOT be merged into
+        # ``diagnostics`` (which flows into job output_ref / index-run
+        # error_json) nor change the message / str / repr.
+        self.embedding_usage_report = embedding_usage_report
 
 
 class _InputJsonError(ValueError):
@@ -239,6 +247,73 @@ class ArticleRagEmbedding:
     model: str
     vector: tuple[float, ...]
     dim: int
+
+
+# ---------------------------------------------------------------------------
+# Embedding usage carrier (OBS-01B-B)
+# ---------------------------------------------------------------------------
+#
+# Frozen, safe, in-memory typed usage report for the Article RAG embedding
+# boundary. Produced by index-capable providers (DashScope adapter, fakes);
+# consumed by a LATER worker stage to build ai_usage events. Carries ONLY
+# canonical token totals and bounded per-batch summaries — never raw
+# provider usage dicts, response bodies, chunk text, input_chars,
+# embedding vectors, API keys or exception strings.
+
+# Hard cap for the durable batch summary; aggregate totals always cover
+# every completed batch regardless of this cap.
+ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES = 8
+
+ARTICLE_RAG_EMBEDDING_COMPLETENESS_COMPLETE = "complete"
+ARTICLE_RAG_EMBEDDING_COMPLETENESS_PARTIAL = "partial"
+ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagEmbeddingBatchUsage:
+    """One completed provider batch — bounded, safe summary fields only."""
+
+    ordinal: int
+    request_id: str | None
+    input_count: int
+    total_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagEmbeddingUsageReport:
+    """Typed usage report for one embedding provider invocation.
+
+    ``provider_call_attempted`` is False only when no outbound call was
+    made (preflight / config failures, or a fake that never calls a real
+    provider) — the later usage-accounting stage must skip the event
+    entirely in that case. ``provider_succeeded`` reflects the provider
+    invocation itself (all planned batches returned success responses),
+    NOT post-provider local validation: a coverage/dimension mismatch
+    raised AFTER a successful provider call still carries
+    ``provider_succeeded=True`` with the full report.
+    """
+
+    provider_call_attempted: bool
+    provider_succeeded: bool
+    usage_completeness: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    batch_count: int
+    completed_batch_count: int
+    failed_batch_ordinal: int | None
+    batches: tuple[ArticleRagEmbeddingBatchUsage, ...]
+    batches_truncated_count: int
+    provider_name: str
+    model_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleRagEmbeddingInvocationResult:
+    """Index-capable embedding result: embeddings + typed usage report."""
+
+    embeddings: tuple[ArticleRagEmbedding, ...]
+    usage_report: ArticleRagEmbeddingUsageReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +391,27 @@ class ArticleRagEmbeddingProvider(Protocol):
     ) -> list[ArticleRagEmbedding]: ...
 
 
+class ArticleRagIndexEmbeddingProvider(Protocol):
+    """Index-scoped embedding provider with a typed usage report.
+
+    Narrow OBS-01B-B protocol for the INDEX path only. The shared
+    retrieval-facing :class:`ArticleRagEmbeddingProvider` is deliberately
+    untouched — retrieval keeps calling ``embed_texts`` and its providers
+    do not need usage. Index-capable providers additionally implement
+    ``embed_texts_with_usage``, returning embeddings plus the frozen
+    :class:`ArticleRagEmbeddingUsageReport` (canonical totals, bounded
+    batch summaries, completeness). Typed errors raised by this method may
+    carry ``ArticleRagIndexWorkerError.embedding_usage_report``.
+    """
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult: ...
+
+
 class ArticleRagVectorWriter(Protocol):
     """Upserts chunks (with embeddings) into a vector store.
 
@@ -360,6 +456,25 @@ class UnconfiguredArticleRagEmbeddingProvider:
             retryable=False,
             failure_class="configuration",
             failure_code=FAILURE_CODE_EMBEDDING_PROVIDER_UNCONFIGURED,
+        )
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # Same fail-closed error as ``embed_texts``; no outbound call was
+        # attempted, so NO usage report is attached (the later accounting
+        # stage must not claim provider_call_attempted).
+        raise ArticleRagIndexWorkerError(
+            "article RAG embedding provider is not configured; inject an "
+            "explicit fake provider for tests or wire a real DashScope / "
+            "Bailian / OpenAI provider for production",
+            retryable=False,
+            failure_class="configuration",
+            failure_code=FAILURE_CODE_EMBEDDING_PROVIDER_UNCONFIGURED,
+            embedding_usage_report=None,
         )
 
 
@@ -437,6 +552,40 @@ class FakeArticleRagEmbeddingProvider:
                 )
             )
         return results
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # Reuse the legacy surface to produce the embeddings — exactly one
+        # call_count increment per invocation (no double counting from the
+        # delegation). The fake never calls a real provider, so the report
+        # is attempted=False with NO fabricated tokens: the later
+        # accounting stage skips the usage event on attempted=False.
+        embeddings = await self.embed_texts(texts, model=model)
+        report = ArticleRagEmbeddingUsageReport(
+            provider_call_attempted=False,
+            provider_succeeded=True,
+            usage_completeness=(
+                ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+            ),
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            batch_count=0,
+            completed_batch_count=0,
+            failed_batch_ordinal=None,
+            batches=(),
+            batches_truncated_count=0,
+            provider_name="fake",
+            model_name=model or self._model,
+        )
+        return ArticleRagEmbeddingInvocationResult(
+            embeddings=tuple(embeddings),
+            usage_report=report,
+        )
 
 
 class FakeArticleRagVectorWriter:

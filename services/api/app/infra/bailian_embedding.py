@@ -21,11 +21,13 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Any
 
 import dashscope
 
 from app.config.settings import get_settings
 from app.infra.bailian_usage import (
+    canonical_embedding_tokens,
     combine_usage_data,
     provider_metadata_from_response,
     usage_data_from_response,
@@ -69,7 +71,25 @@ def _resolve_embedding_capability(effective_model: str) -> _ModelCapability:
 
 
 class EmbeddingError(Exception):
-    """Embedding failure with a deliberately small safe diagnostic envelope."""
+    """Embedding failure with a deliberately small safe diagnostic envelope.
+
+    OBS-01B-B partial-usage fields (all optional, backward compatible):
+
+    - ``provider_call_attempted``: True once a non-empty input reached the
+      outbound batch loop (any batch actually attempted). Config / API key
+      / capability preflight failures keep the default False.
+    - ``completed_batch_count``: number of batches that returned a success
+      response before the failing batch (0 when the first batch failed).
+    - ``usage_data``: ``combine_usage_data`` aggregate over the completed
+      batches ONLY (zeros when none completed). Never a raw provider dict.
+    - ``provider_metadata``: per-batch summaries (request_id, input_count,
+      canonical provider_usage_available / total_tokens) for the completed
+      batches. ``input_chars`` stays as an in-memory diagnostic only.
+    - ``model``: the actual ``effective_model`` used for the outbound call.
+
+    None of these fields ever carry response bodies, embeddings, chunk
+    text, API keys or raw exception strings.
+    """
 
     def __init__(
         self,
@@ -80,6 +100,11 @@ class EmbeddingError(Exception):
         retryable: bool | None = None,
         failed_batch_ordinal: int | None = None,
         batch_count: int | None = None,
+        usage_data: dict[str, Any] | None = None,
+        provider_metadata: dict[str, Any] | None = None,
+        model: str | None = None,
+        completed_batch_count: int = 0,
+        provider_call_attempted: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -87,6 +112,11 @@ class EmbeddingError(Exception):
         self.retryable = retryable
         self.failed_batch_ordinal = failed_batch_ordinal
         self.batch_count = batch_count
+        self.usage_data = usage_data
+        self.provider_metadata = provider_metadata
+        self.model = model
+        self.completed_batch_count = completed_batch_count
+        self.provider_call_attempted = provider_call_attempted
 
 
 def _safe_provider_status(value: object) -> int | None:
@@ -396,7 +426,15 @@ async def embed_texts_with_metadata(
     model: str | None = None,
     dimension: int | None = None,
 ) -> EmbeddingCallResult:
-    """批量文本 embedding，并返回安全裁剪后的 provider usage metadata。"""
+    """批量文本 embedding，并返回安全裁剪后的 provider usage metadata。
+
+    OBS-01B-B：多批次部分失败时，已完成批次的 aggregate usage 与逐批
+    canonical 摘要会附加到 re-raise 的同一个 ``EmbeddingError`` 上
+    （``usage_data`` / ``provider_metadata`` / ``model`` /
+    ``completed_batch_count`` / ``provider_call_attempted``），供上层
+    adapter 构造 partial usage report。config / API key / capability
+    等 preflight 失败不携带任何 usage（未发生 outbound 调用）。
+    """
     resolved_model, resolved_dimension, api_key = resolve_embedding_config()
     effective_model = model or resolved_model
     effective_dimension = dimension or resolved_dimension
@@ -421,6 +459,11 @@ async def embed_texts_with_metadata(
     usage_items: list[dict] = []
     batch_metadata: list[dict] = []
 
+    # A non-empty input has reached the outbound batch loop: every call
+    # from here on is provider-attempted (even if the first batch fails).
+    provider_call_attempted = True
+    batch_count = (len(texts) + capability.max_items - 1) // capability.max_items
+
     for i in range(0, len(texts), capability.max_items):
         batch = texts[i : i + capability.max_items]
         try:
@@ -433,19 +476,37 @@ async def embed_texts_with_metadata(
             )
         except EmbeddingError as exc:
             exc.failed_batch_ordinal = (i // capability.max_items) + 1
-            exc.batch_count = (len(texts) + capability.max_items - 1) // capability.max_items
+            exc.batch_count = batch_count
+            exc.completed_batch_count = len(batch_metadata)
+            exc.provider_call_attempted = provider_call_attempted
+            # Aggregate + per-batch summaries over the COMPLETED batches
+            # only (zeros when none completed). Safe shapes only — no raw
+            # provider dict, response body, or exception payload.
+            exc.usage_data = combine_usage_data(usage_items)
+            exc.provider_metadata = {
+                "provider_usage_available": any(
+                    item.get("provider_usage_available") for item in usage_items
+                ),
+                "batches": list(batch_metadata),
+            }
+            exc.model = effective_model
             raise
         all_embeddings.extend(batch_result.embeddings)
         usage_items.append(batch_result.usage_data)
+        canonical = canonical_embedding_tokens(batch_result.usage_data)
         batch_metadata.append(
             {
                 **batch_result.provider_metadata,
                 "input_count": len(batch),
+                # In-memory diagnostic only; downstream durable reports
+                # must not carry input_chars.
                 "input_chars": sum(len(text or "") for text in batch),
+                # Canonical embedding-boundary fields (OBS-01B-B).
+                "provider_usage_available": canonical["provider_usage_available"],
+                "total_tokens": canonical["aggregate"]["total_tokens"],
             }
         )
 
-    batch_count = (len(texts) + capability.max_items - 1) // capability.max_items
     logger.debug(
         "Embedded %d texts in %d batch(es) (model=%s, dim=%d)",
         len(texts),

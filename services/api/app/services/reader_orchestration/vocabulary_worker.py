@@ -33,7 +33,7 @@ from app.services.ai_usage import (
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
-    record_ai_usage_event,
+    record_reader_failed_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.model_execution_journal import (
@@ -2729,7 +2729,7 @@ class VocabularyWorkerService:
     ) -> UUID | None:
         if context is None:
             return None
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_VOCABULARY,
@@ -2761,6 +2761,7 @@ class VocabularyWorkerService:
                 },
             )
         )
+        return event_id
 
     async def _load_job_context(self, job_id: UUID) -> VocabularyJobContext:
         async with self.get_pool().acquire() as conn:
@@ -2987,7 +2988,7 @@ class VocabularyWorkerService:
     ) -> UUID | None:
         if context is None:
             return None
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_VOCABULARY,
@@ -3018,6 +3019,7 @@ class VocabularyWorkerService:
                 },
             )
         )
+        return event_id
 
 
 def _build_vocabulary_prompt(context: VocabularyJobContext) -> str:

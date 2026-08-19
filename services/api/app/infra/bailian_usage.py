@@ -116,3 +116,113 @@ def combine_usage_data(items: list[dict[str, Any]]) -> dict[str, Any]:
         "provider_usage_available": provider_usage_available,
         "aggregate": aggregate,
     }
+
+
+# ---------------------------------------------------------------------------
+# Embedding-boundary canonical token mapping (text-embedding-v3/v4)
+# ---------------------------------------------------------------------------
+#
+# DashScope text-embedding responses bill by INPUT tokens and only report
+# ``total_tokens`` (native API) or ``prompt_tokens`` + ``total_tokens``
+# (OpenAI-compatible surface). The generic LLM weighted billing reads
+# input/output tokens, so an unmapped embedding usage would price at 0.
+# This mapping is ONLY for the embedding usage boundary — it must never be
+# applied to generic LLM usage normalization.
+
+
+def _valid_embedding_token(value: Any) -> int | None:
+    """Return ``value`` iff it is a non-bool, non-negative int; else None."""
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, int):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _canonical_embedding_result(available: bool, input_tokens: int) -> dict[str, Any]:
+    return {
+        "provider_usage_available": available,
+        "aggregate": {
+            "input_tokens": input_tokens,
+            "output_tokens": 0,
+            "total_tokens": input_tokens,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+    }
+
+
+def _canonical_from_flat_usage(usage: Mapping[str, Any]) -> int | None:
+    """Raw provider usage rules: input > prompt > total, explicit 0 wins."""
+    for key in ("input_tokens", "prompt_tokens"):
+        value = _valid_embedding_token(usage.get(key))
+        if value is not None:
+            return value
+    return _valid_embedding_token(usage.get("total_tokens"))
+
+
+def canonical_embedding_tokens(raw: Any) -> dict[str, Any]:
+    """Canonical token mapping for the DashScope text-embedding boundary.
+
+    Accepts the three shapes actually produced in the embedding pipeline:
+
+    1. raw provider usage mappings (``{"total_tokens": 27}``,
+       ``{"prompt_tokens": 23, "total_tokens": 23}``,
+       ``{"input_tokens": 5, "total_tokens": 9}``);
+    2. ``normalize_usage_data`` envelopes (``provider_usage_available`` +
+       ``aggregate`` + raw ``provider_usage``);
+    3. ``combine_usage_data`` envelopes (``provider_usage_available`` +
+       ``aggregate`` with input=0 / total>0 when batches only reported
+       totals).
+
+    Frozen rules:
+
+    - valid token = non-bool, non-negative int (None/str/float/negative
+      are unusable);
+    - raw shape: valid ``input_tokens`` (incl. explicit 0) wins, then
+      ``prompt_tokens``, then ``total_tokens``;
+    - envelope shape: raw ``provider_usage`` wins when present; otherwise
+      the aggregate is used, where input=0 with total>0 means "input was
+      not reported" and total is taken as input;
+    - ``output_tokens`` is always 0 and canonical ``total_tokens``
+      always equals ``input_tokens``;
+    - a legal explicit 0 is available with zero tokens; no usable source
+      is unavailable with zero tokens;
+    - an envelope whose ``provider_usage_available`` flag is explicitly
+      False is unavailable.
+    """
+    if not isinstance(raw, Mapping):
+        return _canonical_embedding_result(False, 0)
+
+    aggregate = raw.get("aggregate")
+    if isinstance(aggregate, Mapping):
+        # Envelope shapes from normalize_usage_data / combine_usage_data.
+        if raw.get("provider_usage_available") is False:
+            return _canonical_embedding_result(False, 0)
+        provider_usage = raw.get("provider_usage")
+        if isinstance(provider_usage, Mapping):
+            # The retained raw provider usage is authoritative when
+            # present: if it has no usable token source (e.g. values are
+            # None / invalid), the batch is unavailable even though the
+            # generic aggregate may have normalised the gap to zeros.
+            flat = _canonical_from_flat_usage(provider_usage)
+            if flat is None:
+                return _canonical_embedding_result(False, 0)
+            return _canonical_embedding_result(True, flat)
+        agg_input = _valid_embedding_token(aggregate.get("input_tokens"))
+        agg_total = _valid_embedding_token(aggregate.get("total_tokens"))
+        if agg_input is not None and agg_input > 0:
+            return _canonical_embedding_result(True, agg_input)
+        if agg_total is not None:
+            return _canonical_embedding_result(True, agg_total)
+        if agg_input is not None:
+            return _canonical_embedding_result(True, agg_input)
+        return _canonical_embedding_result(False, 0)
+
+    # Raw provider usage mapping.
+    flat = _canonical_from_flat_usage(raw)
+    if flat is None:
+        return _canonical_embedding_result(False, 0)
+    return _canonical_embedding_result(True, flat)

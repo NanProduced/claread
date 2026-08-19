@@ -26,7 +26,7 @@ from app.services.ai_usage import (
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
-    record_ai_usage_event,
+    record_reader_failed_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.model_execution_journal import (
@@ -1287,7 +1287,7 @@ class DisplayTitleWorkerService:
     ) -> UUID | None:
         if context is None:
             return None
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_TITLE_GENERATION,
@@ -1308,16 +1308,11 @@ class DisplayTitleWorkerService:
                 planner_kind="llm_worker",
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
-                error_message=(
-                    sanitize_failure_message(
-                        error_message,
-                        default=DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE,
-                    )
-                    or DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE
-                ),
+                error_message=error_message,
                 metadata_json=_usage_metadata(context),
             )
         )
+        return event_id
 
 
 def build_display_title_generation_input(

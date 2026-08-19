@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -12,12 +14,16 @@ import asyncpg
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.ai_usage.execution_diagnostics import (
+    META_USAGE_INVOCATION_OBSERVATION,
     STAGE_EVENT_DTO,
     STAGE_EVENT_PERSIST,
     STAGE_NORMALIZE,
+    USAGE_COMPLETENESS_UNAVAILABLE,
     USAGE_EVENT_PERSIST_FAILED,
     USAGE_EVENT_PERSISTED,
     USAGE_EVENT_PERSISTED_ZERO,
+    USAGE_INVOCATION_CONFLICT,
+    USAGE_INVOCATION_OBSERVATION_SCHEMA_VERSION,
     USAGE_ZERO_AFTER_NORMALIZATION,
     UsageRecordOutcome,
     classify_usage_presence,
@@ -25,6 +31,7 @@ from app.services.ai_usage.execution_diagnostics import (
     log_usage_diagnostic,
     merge_correlation_metadata,
     set_last_usage_outcome,
+    valid_agent_run_usage_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -471,6 +478,266 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Failure-path usage persistence (OBS-01A)
+# ---------------------------------------------------------------------------
+
+# Stable alias: pydantic-ai's exception class name is not a safe error_code
+# semantic; normalise to a fixed lowercase label without claiming retry
+# exhaustion (which requires worker-owned typed evidence).
+_ERROR_CODE_ALIASES: dict[str, str] = {
+    "UnexpectedModelBehavior": "unexpected_model_behavior",
+}
+
+# Disposition: inserted | replayed | conflict | recorded_plain | persist_failed
+ReaderFailedUsageDisposition = str
+
+
+async def record_invocation_keyed_usage_event(
+    event: AIUsageEventCreate,
+    *,
+    invocation_key: str,
+    observation_hash: str,
+    pool: asyncpg.Pool | None = None,
+) -> tuple[UUID | None, str]:
+    """Persist exactly one invocation-keyed usage event — status-agnostic.
+
+    Generic primitive extracted from the OBS-01A failed-usage recorder.
+    The caller owns every domain-specific concern (status semantics, error
+    normalization, correlation / snapshot gates, observation-hash payload);
+    this helper only:
+
+    - merges the schema-versioned ``usage_invocation_observation`` fragment
+      (``{"schema_version": 1, "sha256": observation_hash}``) into a copy of
+      the event's metadata — the caller must NOT write that field itself,
+      and neither the caller's event nor its metadata dict is mutated;
+    - resolves the pool: explicit ``pool`` first, then ``DB_POOL``; neither
+      available -> ``(None, "persist_failed")`` without raising;
+    - owns its own transaction (the caller must not supply one):
+      ``pg_advisory_xact_lock(hashtext(key))`` -> ``SELECT ... FOR UPDATE``
+      -> compare the stored observation sha256 -> ``replayed`` (same hash) /
+      ``conflict`` (different, missing or invalid — the existing row is
+      never touched) / insert via
+      ``insert_ai_usage_event_by_invocation_key_in_transaction`` ->
+      ``inserted``;
+    - never raises to the business caller (DB failures collapse to
+      ``(None, "persist_failed")``).
+
+    Does not read ``current_execution()`` and does not restrict ``status``.
+    Logs carry only invocation_key / capability_code / disposition-category
+    — never event metadata, usage payloads or exception text.
+    """
+    metadata_json = dict(event.metadata_json or {})
+    metadata_json[META_USAGE_INVOCATION_OBSERVATION] = {
+        "schema_version": USAGE_INVOCATION_OBSERVATION_SCHEMA_VERSION,
+        "sha256": observation_hash,
+    }
+    event = replace(event, metadata_json=metadata_json)
+
+    target_pool = pool or db_connection.DB_POOL
+    if target_pool is None:
+        logger.warning(
+            "Skipping invocation-keyed usage event because database "
+            "pool is not initialized (capability=%s)",
+            event.capability_code,
+        )
+        return None, "persist_failed"
+
+    try:
+        async with target_pool.acquire() as conn:
+            async with conn.transaction():
+                # Serialize concurrent first-writers for this key:
+                # SELECT ... FOR UPDATE locks nothing when the row does not
+                # exist, so take a transaction-scoped advisory lock on the
+                # hashed key before the existence check.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    invocation_key,
+                )
+                existing = await conn.fetchrow(
+                    """
+                    SELECT id,
+                           metadata_json->'usage_invocation_observation'
+                               AS observation
+                    FROM ai_usage_events
+                    WHERE invocation_key = $1
+                    FOR UPDATE
+                    """,
+                    invocation_key,
+                )
+                if existing is not None:
+                    stored = existing["observation"]
+                    stored_hash = (
+                        stored.get("sha256")
+                        if isinstance(stored, dict)
+                        else None
+                    )
+                    if stored_hash == observation_hash:
+                        return existing["id"], "replayed"
+                    logger.warning(
+                        "%s invocation_key=%s capability=%s",
+                        USAGE_INVOCATION_CONFLICT,
+                        invocation_key,
+                        event.capability_code,
+                    )
+                    return existing["id"], "conflict"
+                event_id = (
+                    await insert_ai_usage_event_by_invocation_key_in_transaction(
+                        conn,
+                        invocation_key=invocation_key,
+                        event=event,
+                    )
+                )
+                return event_id, "inserted"
+    except Exception as exc:
+        # Fixed structured log only: never logger.exception / exc_info —
+        # the exception payload (message, traceback, args) may carry
+        # sensitive content (DB URI, keys). Only the exception class
+        # name is a safe error category.
+        logger.error(
+            "usage_invocation_persist_failed "
+            "invocation_key=%s capability=%s error_category=%s",
+            invocation_key,
+            event.capability_code,
+            type(exc).__name__,
+        )
+        return None, "persist_failed"
+
+
+def compute_usage_invocation_observation_hash(
+    *,
+    invocation_key: str,
+    event: AIUsageEventCreate,
+    snapshot_fragment: dict[str, Any] | None,
+    execution_id: str | None = None,
+    agent_run_id: str | None = None,
+    attempt_ordinal: int | None = None,
+) -> str:
+    """Deterministic sha256 over the stable observation of one invocation.
+
+    Covers invocation identity, the stable correlation identity
+    (execution_id / agent_run_id / attempt_ordinal), status/error code,
+    capability and model identity, normalized usage totals and the usage
+    snapshot fragment. Never includes prompts, outputs, exception text,
+    duration or any other volatile field.
+    """
+    usage_totals = _extract_usage_totals(event.usage_data)
+    payload = {
+        "invocation_key": invocation_key,
+        "execution_id": execution_id,
+        "agent_run_id": agent_run_id,
+        "attempt_ordinal": attempt_ordinal,
+        "status": event.status,
+        "error_code": event.error_code,
+        "capability_code": event.capability_code,
+        "model_route": event.model_route,
+        "model_profile": event.model_profile,
+        "model_provider": event.model_provider,
+        "model_name": event.model_name,
+        "user_id": str(event.user_id) if event.user_id else None,
+        "reading_record_id": (
+            str(event.reading_record_id) if event.reading_record_id else None
+        ),
+        "reader_run_id": str(event.reader_run_id) if event.reader_run_id else None,
+        "reader_job_id": str(event.reader_job_id) if event.reader_job_id else None,
+        "usage_totals": usage_totals,
+        "snapshot": snapshot_fragment or None,
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def record_reader_failed_usage_event(
+    event: AIUsageEventCreate,
+    *,
+    invocation_key: str | None = None,
+    snapshot_fragment: dict[str, Any] | None = None,
+    pool: asyncpg.Pool | None = None,
+) -> tuple[UUID | None, ReaderFailedUsageDisposition]:
+    """Persist exactly one FAILED usage event for a Reader model invocation.
+
+    - Requires ``status == STATUS_FAILED``. BEFORE any branch: forces
+      ``error_message=None`` (never persists exception text) and
+      normalises pydantic-ai exception class names to the conservative
+      ``unexpected_model_behavior`` label — also on the plain fallback.
+    - With an active Reader execution correlation, derives the durable
+      ``invocation_key`` (same identity family as the model-execution
+      journal), merges the authoritative correlation fragment (execution /
+      attempt / job / run / capability / fingerprint + duration provenance)
+      over caller metadata, computes the observation hash, and delegates
+      the idempotent keyed persistence (advisory lock, replay / conflict,
+      old-row-never-overwritten) to the generic
+      :func:`record_invocation_keyed_usage_event`.
+    - Without a correlation, falls back to the pre-existing plain
+      recorder (no invocation key) for backwards compatibility.
+    - A valid snapshot (double identity gate) with confirmed responses
+      replaces the event's usage_data so real observed tokens are billed;
+      an ``unavailable`` snapshot keeps tokens at zero (never fabricated).
+    """
+    if event.status != "failed":
+        raise ValueError(
+            "record_reader_failed_usage_event requires status='failed'"
+        )
+
+    # Normalisation BEFORE the correlation branch — applies everywhere.
+    normalized_code = _ERROR_CODE_ALIASES.get(event.error_code or "")
+    if normalized_code is not None:
+        event = replace(event, error_code=normalized_code)
+    event = replace(event, error_message=None)
+
+    correlation = current_execution()
+    if correlation is None:
+        event_id = await record_ai_usage_event(event)
+        return event_id, "recorded_plain"
+
+    snapshot = valid_agent_run_usage_snapshot(correlation)
+    if snapshot_fragment is None and snapshot is not None:
+        snapshot_fragment = snapshot.to_metadata()
+        if snapshot.usage_completeness != USAGE_COMPLETENESS_UNAVAILABLE:
+            if snapshot.usage_data:
+                event = replace(event, usage_data=snapshot.usage_data)
+
+    resolved_key = invocation_key or (
+        f"reader:{correlation.capability_code}:"
+        f"{correlation.reader_job_id}:{correlation.attempt_ordinal}:1"
+    )
+
+    # Authoritative correlation fragment (execution / agent-run / attempt /
+    # job / run / capability / fingerprint + duration provenance) overrides
+    # any caller-forged same-name metadata fields.
+    metadata_json = merge_correlation_metadata(
+        event.metadata_json,
+        correlation,
+    )
+    if snapshot_fragment is not None:
+        metadata_json.update(snapshot_fragment)
+    observation_hash = compute_usage_invocation_observation_hash(
+        invocation_key=resolved_key,
+        event=event,
+        snapshot_fragment=snapshot_fragment,
+        execution_id=str(correlation.execution_id),
+        agent_run_id=(
+            str(correlation.agent_run_id)
+            if correlation.agent_run_id is not None
+            else None
+        ),
+        attempt_ordinal=int(correlation.attempt_ordinal),
+    )
+    event = replace(event, metadata_json=metadata_json)
+
+    return await record_invocation_keyed_usage_event(
+        event,
+        invocation_key=resolved_key,
+        observation_hash=observation_hash,
+        pool=pool,
+    )
+
+
 async def update_ai_usage_event_outcome(
     event_id: UUID,
     *,
@@ -518,5 +785,77 @@ async def update_ai_usage_event_outcome(
     except Exception:
         logger.exception(
             "Failed to update ai_usage_event outcome for %s", event_id
+        )
+        return False
+
+
+async def update_ai_usage_event_metadata(
+    event_id: UUID,
+    *,
+    metadata_patch: dict[str, Any],
+    pool: asyncpg.Pool | None = None,
+) -> bool:
+    """Merge a metadata patch into one persisted usage event — metadata ONLY.
+
+    Minimal metadata-only seam for callers that must enrich an
+    already-persisted event (e.g. a publish outcome) WITHOUT touching the
+    provider-invocation semantics carried by the other columns. Executes
+    exactly:
+
+    ``UPDATE ai_usage_events SET metadata_json = metadata_json || $patch
+    WHERE id = $event_id``
+
+    Never updates status, error_code, error_message, token, billing or
+    association columns; never modifies the caller's ``metadata_patch``
+    dict. Idempotent: re-running with the same patch is a no-op merge.
+    Pool resolution: explicit ``pool`` first, then ``DB_POOL``. Returns
+    True iff exactly one row was updated; False on missing pool / row,
+    DB failure (callers may retry), or when the patch attempts to
+    overwrite the frozen observation identity
+    (``usage_invocation_observation`` is a reserved top-level key — the
+    patch is rejected whole, before any pool access or SQL). Never
+    raises to the business caller.
+    """
+    if META_USAGE_INVOCATION_OBSERVATION in metadata_patch:
+        # The observation identity (schema_version + sha256) is frozen at
+        # insert time by the invocation-keyed recorder; a patch that tries
+        # to overwrite it is rejected whole — no partial application of
+        # the remaining keys. Fixed safe warning, no patch payload.
+        logger.warning(
+            "usage_invocation_metadata_patch_rejected_reserved_key "
+            "event_id=%s",
+            event_id,
+        )
+        return False
+
+    target_pool = pool or db_connection.DB_POOL
+    if target_pool is None:
+        logger.warning(
+            "Skipping ai_usage metadata patch because database pool "
+            "is not initialized"
+        )
+        return False
+    try:
+        async with target_pool.acquire() as conn:
+            updated = await conn.execute(
+                """
+                UPDATE ai_usage_events
+                SET metadata_json = metadata_json || $2::jsonb
+                WHERE id = $1
+                """,
+                event_id,
+                jsonb_param(dict(metadata_patch or {})),
+            )
+        return bool(updated == "UPDATE 1")
+    except Exception as exc:
+        # Fixed structured log only: never logger.exception / exc_info —
+        # the exception payload (message, traceback, args) may carry
+        # sensitive content. Only the exception class name is a safe
+        # error category.
+        logger.error(
+            "usage_invocation_metadata_patch_failed "
+            "event_id=%s error_category=%s",
+            event_id,
+            type(exc).__name__,
         )
         return False

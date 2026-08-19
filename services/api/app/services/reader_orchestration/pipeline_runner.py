@@ -17,7 +17,7 @@ from app.services.ai_usage import (
     CAPABILITY_READER_GRAMMAR_BUNDLE,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
-    record_ai_usage_event,
+    record_reader_failed_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import bind_execution_from_claim
 from app.services.reader_orchestration.display_title_worker import (
@@ -2397,7 +2397,7 @@ class ReaderEnhancementPipelineRunner:
         LLM cost even when the window publish failed, so Console's
         cost-per-window panel can surface wasted tokens.
         """
-        return await record_ai_usage_event(
+        event_id, _disposition = await record_reader_failed_usage_event(
             AIUsageEventCreate(
                 usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
                 capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
@@ -2422,6 +2422,7 @@ class ReaderEnhancementPipelineRunner:
                 error_message=message,
             )
         )
+        return event_id
 
     async def _mark_analysis_window_failed(
         self,

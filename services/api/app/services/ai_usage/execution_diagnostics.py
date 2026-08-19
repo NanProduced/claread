@@ -118,6 +118,38 @@ USAGE_SPAN_WRITTEN: Final = "usage_span_written"
 PROVIDER_TIMING_AVAILABLE: Final = "provider_timing_available"
 PROVIDER_TIMING_UNAVAILABLE: Final = "provider_timing_unavailable"
 AGENT_RUN_DURATION_RECORDED: Final = "agent_run_duration_recorded"
+USAGE_INVOCATION_CONFLICT: Final = "usage_invocation_conflict"
+
+# ---------------------------------------------------------------------------
+# AgentRun usage snapshot (OBS-01A) — success and failure paths
+# ---------------------------------------------------------------------------
+
+USAGE_SNAPSHOT_SCHEMA_KIND: Final = "agent_run_usage_snapshot"
+USAGE_SNAPSHOT_SCHEMA_VERSION: Final = "1"
+
+META_USAGE_SNAPSHOT_KIND: Final = "usage_snapshot_schema_kind"
+META_USAGE_SNAPSHOT_VERSION: Final = "usage_snapshot_schema_version"
+META_USAGE_SOURCE: Final = "usage_source"
+USAGE_SOURCE_AGENT_RUN_STATE: Final = "agent_run_state"
+META_USAGE_COMPLETENESS: Final = "usage_completeness"
+
+USAGE_COMPLETENESS_COMPLETE: Final = "complete"
+USAGE_COMPLETENESS_PARTIAL: Final = "partial"
+USAGE_COMPLETENESS_UNAVAILABLE: Final = "unavailable"
+
+META_PROVIDER_RESPONSE_COUNT: Final = "provider_response_count"
+META_PROVIDER_RESPONSES: Final = "provider_responses"
+META_PROVIDER_RESPONSES_TRUNCATED_COUNT: Final = "provider_responses_truncated_count"
+META_RETRY_PROMPT_COUNT: Final = "retry_prompt_count"
+
+META_USAGE_INVOCATION_OBSERVATION: Final = "usage_invocation_observation"
+USAGE_INVOCATION_OBSERVATION_SCHEMA_VERSION: Final = 1
+
+# Hard cap for the durable provider_responses summary array. The Reader
+# output-retry ceiling is 2 (max 3 provider responses per invocation); 4
+# leaves one safety slot. Aggregate usage always covers every observed
+# response regardless of this cap.
+MAX_PROVIDER_RESPONSES_IN_SNAPSHOT: Final = 4
 
 USAGE_DIAGNOSTIC_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -220,6 +252,90 @@ class UsageRecordOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderResponseObservation:
+    """One observed ModelResponse — no content, no raw provider payload."""
+
+    ordinal: int
+    provider_response_id: str | None
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    finish_reason: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ordinal": int(self.ordinal),
+            "provider_response_id": self.provider_response_id,
+            "input_tokens": int(self.input_tokens),
+            "output_tokens": int(self.output_tokens),
+            "cache_read_tokens": int(self.cache_read_tokens),
+            "cache_write_tokens": int(self.cache_write_tokens),
+            "finish_reason": self.finish_reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunUsageSnapshot:
+    """Immutable usage snapshot for one ``agent.iter`` run (OBS-01A).
+
+    Built from public PydanticAI APIs (``AgentRun.usage`` /
+    ``AgentRun.new_messages``) on BOTH success and failure paths. Never
+    stores prompts, model output, raw provider responses or exception text.
+    ``provider_response_count`` counts observed provider responses, NOT
+    HTTP attempted calls.
+    """
+
+    execution_id: UUID
+    agent_run_id: UUID
+    run_completed: bool
+    usage_data: dict[str, Any] | None
+    usage_completeness: str
+    provider_response_count: int
+    provider_responses: tuple[ProviderResponseObservation, ...]
+    provider_responses_truncated_count: int
+    retry_prompt_count: int
+
+    def to_metadata(self) -> dict[str, Any]:
+        return build_snapshot_metadata_fragment(
+            usage_completeness=self.usage_completeness,
+            usage_source=USAGE_SOURCE_AGENT_RUN_STATE,
+            provider_responses=tuple(r.to_dict() for r in self.provider_responses),
+            provider_responses_truncated_count=(
+                self.provider_responses_truncated_count
+            ),
+            retry_prompt_count=self.retry_prompt_count,
+        )
+
+
+def build_snapshot_metadata_fragment(
+    *,
+    usage_completeness: str,
+    usage_source: str,
+    provider_responses: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    provider_responses_truncated_count: int,
+    retry_prompt_count: int,
+) -> dict[str, Any]:
+    """Schema-versioned metadata fragment for usage events / Console."""
+    responses = list(provider_responses)[:MAX_PROVIDER_RESPONSES_IN_SNAPSHOT]
+    truncated = provider_responses_truncated_count + max(
+        0, len(list(provider_responses)) - MAX_PROVIDER_RESPONSES_IN_SNAPSHOT
+    )
+    return {
+        META_USAGE_SNAPSHOT_KIND: USAGE_SNAPSHOT_SCHEMA_KIND,
+        META_USAGE_SNAPSHOT_VERSION: USAGE_SNAPSHOT_SCHEMA_VERSION,
+        META_USAGE_SOURCE: usage_source,
+        META_USAGE_COMPLETENESS: usage_completeness,
+        META_PROVIDER_RESPONSE_COUNT: (
+            truncated + len(responses)
+        ),
+        META_PROVIDER_RESPONSES: responses,
+        META_PROVIDER_RESPONSES_TRUNCATED_COUNT: truncated,
+        META_RETRY_PROMPT_COUNT: int(retry_prompt_count),
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class DurationProvenance:
     """Lineage for agent-run vs provider-request timing.
 
@@ -292,6 +408,11 @@ _LAST_DURATION_PROVENANCE: ContextVar[DurationProvenance | None] = ContextVar(
     default=None,
 )
 
+_LAST_AGENT_RUN_USAGE_SNAPSHOT: ContextVar[AgentRunUsageSnapshot | None] = ContextVar(
+    "claread_reader_last_agent_run_usage_snapshot",
+    default=None,
+)
+
 
 def current_execution() -> ExecutionCorrelation | None:
     return _CURRENT_EXECUTION.get()
@@ -317,18 +438,51 @@ def set_last_duration_provenance(value: DurationProvenance | None) -> None:
     _LAST_DURATION_PROVENANCE.set(value)
 
 
+def current_agent_run_usage_snapshot() -> AgentRunUsageSnapshot | None:
+    return _LAST_AGENT_RUN_USAGE_SNAPSHOT.get()
+
+
+def set_last_agent_run_usage_snapshot(
+    value: AgentRunUsageSnapshot | None,
+) -> None:
+    _LAST_AGENT_RUN_USAGE_SNAPSHOT.set(value)
+
+
+def valid_agent_run_usage_snapshot(
+    correlation: ExecutionCorrelation | None,
+) -> AgentRunUsageSnapshot | None:
+    """Snapshot usable by THIS execution — double identity gate.
+
+    Must match ``execution_id`` AND the correlation must carry the same
+    ``agent_run_id`` as the snapshot (a second mint invalidates the first
+    snapshot). Anything else counts as absent.
+    """
+    snapshot = current_agent_run_usage_snapshot()
+    if correlation is None or snapshot is None:
+        return None
+    if snapshot.execution_id != correlation.execution_id:
+        return None
+    if correlation.agent_run_id is None:
+        return None
+    if snapshot.agent_run_id != correlation.agent_run_id:
+        return None
+    return snapshot
+
+
 @contextmanager
 def execution_scope(correlation: ExecutionCorrelation) -> Iterator[ExecutionCorrelation]:
     """Bind correlation for the duration of one claimed-job execution."""
     token = _CURRENT_EXECUTION.set(correlation)
     outcome_token = _LAST_USAGE_OUTCOME.set(None)
     duration_token = _LAST_DURATION_PROVENANCE.set(None)
+    snapshot_token = _LAST_AGENT_RUN_USAGE_SNAPSHOT.set(None)
     try:
         yield correlation
     finally:
         _CURRENT_EXECUTION.reset(token)
         _LAST_USAGE_OUTCOME.reset(outcome_token)
         _LAST_DURATION_PROVENANCE.reset(duration_token)
+        _LAST_AGENT_RUN_USAGE_SNAPSHOT.reset(snapshot_token)
 
 
 @contextmanager

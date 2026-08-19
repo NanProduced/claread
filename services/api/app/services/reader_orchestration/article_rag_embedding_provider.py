@@ -61,9 +61,17 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from app.infra import bailian_embedding
+from app.infra.bailian_usage import canonical_embedding_tokens
 
 from .article_rag_index_worker import (
+    ARTICLE_RAG_EMBEDDING_COMPLETENESS_COMPLETE,
+    ARTICLE_RAG_EMBEDDING_COMPLETENESS_PARTIAL,
+    ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE,
+    ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES,
     ArticleRagEmbedding,
+    ArticleRagEmbeddingBatchUsage,
+    ArticleRagEmbeddingInvocationResult,
+    ArticleRagEmbeddingUsageReport,
     ArticleRagIndexWorkerError,
     UnconfiguredArticleRagEmbeddingProvider,
 )
@@ -93,6 +101,7 @@ class DashScopeArticleRagEmbeddingProviderError(ArticleRagIndexWorkerError):
         failure_class: str = "embedding",
         rationale_code: str | None = None,
         diagnostics: dict[str, str | int | bool | None] | None = None,
+        embedding_usage_report: ArticleRagEmbeddingUsageReport | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -101,6 +110,7 @@ class DashScopeArticleRagEmbeddingProviderError(ArticleRagIndexWorkerError):
             failure_code=failure_code,
             rationale_code=rationale_code,
             diagnostics=diagnostics,
+            embedding_usage_report=embedding_usage_report,
         )
 
 
@@ -158,14 +168,19 @@ def _safe_embedding_diagnostics(
 class DashScopeArticleRagEmbeddingProvider:
     """Real DashScope (Bailian) embedding provider for the Article RAG worker.
 
-    Implements the :class:`ArticleRagEmbeddingProvider` Protocol defined
-    by the indexing pipeline. Wraps :func:`app.infra.bailian_embedding.embed_texts_with_metadata`
-    and converts the result into ``ArticleRagEmbedding`` records with a
-    *locally-computed* SHA-256.
+    Implements the retrieval-facing :class:`ArticleRagEmbeddingProvider`
+    Protocol (``embed_texts``) AND the index-scoped
+    :class:`ArticleRagIndexEmbeddingProvider` Protocol
+    (``embed_texts_with_usage``, OBS-01B-B). Wraps
+    :func:`app.infra.bailian_embedding.embed_texts_with_metadata` and
+    converts the result into ``ArticleRagEmbedding`` records with a
+    *locally-computed* SHA-256, plus the typed
+    :class:`ArticleRagEmbeddingUsageReport` built from the wrapper's
+    canonical embedding token mapping.
 
     The adapter is constructed eagerly with no I/O; the actual DashScope
-    call only happens inside :meth:`embed_texts`.  Credential resolution
-    is delegated to the underlying wrapper
+    call only happens inside :meth:`embed_texts_with_usage`.
+    Credential resolution is delegated to the underlying wrapper
     (:func:`bailian_embedding.resolve_embedding_config`) so the adapter
     and the wrapper share a single resolution path — the
     ``DASHSCOPE_API_KEY`` env var is **not** consulted here (it is for
@@ -192,24 +207,206 @@ class DashScopeArticleRagEmbeddingProvider:
     def provider_name(self) -> str:
         return READER_ARTICLE_RAG_EMBEDDING_PROVIDER_DASHSCOPE
 
-    async def embed_texts(
+    # ------------------------------------------------------------------
+    # Report construction helpers (safe, bounded, canonical-only)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _batch_summaries(
+        batches: list[dict[str, Any]] | None,
+    ) -> tuple[
+        tuple[ArticleRagEmbeddingBatchUsage, ...],
+        int,
+        int,
+    ]:
+        """Return ``(batches, available_batch_count, truncated_count)``.
+
+        ``batches`` is bounded to
+        ``ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES`` entries; the
+        truncated count is exact. ``input_chars`` and any other
+        non-whitelisted keys from the wrapper's in-memory batch metadata
+        are dropped here — only ordinal / request_id / input_count /
+        total_tokens survive.
+        """
+        entries = list(batches or [])
+        available = sum(
+            1 for entry in entries if entry.get("provider_usage_available")
+        )
+        truncated = max(
+            0, len(entries) - ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES
+        )
+        bounded = entries[:ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES]
+        summaries = tuple(
+            ArticleRagEmbeddingBatchUsage(
+                ordinal=ordinal,
+                request_id=(
+                    str(entry["request_id"])
+                    if entry.get("request_id") is not None
+                    else None
+                ),
+                input_count=int(entry.get("input_count") or 0),
+                total_tokens=int(entry.get("total_tokens") or 0),
+            )
+            for ordinal, entry in enumerate(bounded, start=1)
+        )
+        return summaries, available, truncated
+
+    @staticmethod
+    def _success_completeness(
+        *,
+        completed_batch_count: int,
+        available_batch_count: int,
+    ) -> str:
+        if completed_batch_count == 0:
+            return ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+        if available_batch_count == completed_batch_count:
+            return ARTICLE_RAG_EMBEDDING_COMPLETENESS_COMPLETE
+        if available_batch_count >= 1:
+            return ARTICLE_RAG_EMBEDDING_COMPLETENESS_PARTIAL
+        return ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+
+    @staticmethod
+    def _failure_completeness(
+        *,
+        completed_batch_count: int,
+        available_batch_count: int,
+    ) -> str:
+        if completed_batch_count == 0:
+            return ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+        if available_batch_count >= 1:
+            return ARTICLE_RAG_EMBEDDING_COMPLETENESS_PARTIAL
+        return ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+
+    def _report_from_success(
+        self,
+        call_result: Any,
+        *,
+        effective_model: str | None,
+    ) -> ArticleRagEmbeddingUsageReport:
+        canonical = canonical_embedding_tokens(call_result.usage_data)
+        batch_count = int(call_result.batch_count or 0)
+        batches_meta = (call_result.provider_metadata or {}).get("batches") or []
+        summaries, available, truncated = self._batch_summaries(batches_meta)
+        # Success path: every planned batch completed.
+        completed = len(batches_meta)
+        input_tokens = int(canonical["aggregate"]["input_tokens"])
+        return ArticleRagEmbeddingUsageReport(
+            provider_call_attempted=True,
+            provider_succeeded=True,
+            usage_completeness=self._success_completeness(
+                completed_batch_count=completed,
+                available_batch_count=available,
+            ),
+            input_tokens=input_tokens,
+            output_tokens=0,
+            total_tokens=input_tokens,
+            batch_count=batch_count,
+            completed_batch_count=completed,
+            failed_batch_ordinal=None,
+            batches=summaries,
+            batches_truncated_count=truncated,
+            provider_name=READER_ARTICLE_RAG_EMBEDDING_PROVIDER_DASHSCOPE,
+            # Actual outbound model — never a frozen-contract stand-in.
+            model_name=str(
+                call_result.model or effective_model or "unknown"
+            ),
+        )
+
+    def _report_from_wrapper_error(
+        self,
+        exc: bailian_embedding.EmbeddingError,
+        *,
+        effective_model: str | None,
+    ) -> ArticleRagEmbeddingUsageReport | None:
+        """Build a partial/failure report from a wrapper EmbeddingError.
+
+        Returns ``None`` for pre-provider failures (``provider_call_
+        attempted=False``): no outbound call happened, so no usage may be
+        claimed. Tokens cover the COMPLETED batches only — never
+        fabricated from the planned input.
+        """
+        if not exc.provider_call_attempted:
+            return None
+        canonical = canonical_embedding_tokens(exc.usage_data)
+        batches_meta = (exc.provider_metadata or {}).get("batches") or []
+        summaries, available, truncated = self._batch_summaries(batches_meta)
+        completed = int(exc.completed_batch_count or 0)
+        input_tokens = int(canonical["aggregate"]["input_tokens"])
+        return ArticleRagEmbeddingUsageReport(
+            provider_call_attempted=True,
+            provider_succeeded=False,
+            usage_completeness=self._failure_completeness(
+                completed_batch_count=completed,
+                available_batch_count=available,
+            ),
+            input_tokens=input_tokens,
+            output_tokens=0,
+            total_tokens=input_tokens,
+            batch_count=int(exc.batch_count or 0),
+            completed_batch_count=completed,
+            failed_batch_ordinal=exc.failed_batch_ordinal,
+            batches=summaries,
+            batches_truncated_count=truncated,
+            provider_name=READER_ARTICLE_RAG_EMBEDDING_PROVIDER_DASHSCOPE,
+            # Actual outbound model: wrapper-reported first, then the
+            # adapter-determined effective_model, never the contract.
+            model_name=str(
+                exc.model or effective_model or "unknown"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Index-scoped protocol method (single provider invocation)
+    # ------------------------------------------------------------------
+
+    async def embed_texts_with_usage(
         self,
         texts: list[str],
         *,
         model: str | None = None,
-    ) -> list[ArticleRagEmbedding]:
-        """Embed chunk texts while retaining only safe failure diagnostics."""
+    ) -> ArticleRagEmbeddingInvocationResult:
+        """Embed chunk texts and return embeddings + typed usage report.
+
+        One wrapper invocation. The usage report is built from the
+        successful ``EmbeddingCallResult`` BEFORE local coverage /
+        dimension validation, so a post-provider validation failure still
+        raises a typed error carrying ``provider_succeeded=True`` plus the
+        full report (later stages record provider success +
+        validation-failed-after-embedding). Wrapper failures attach a
+        partial report (or ``None`` for pre-provider failures) to the
+        typed error. The typed error is raised OUTSIDE the except block so
+        ``__cause__`` / ``__context__`` stay None.
+        """
         if not texts:
-            return []
+            return ArticleRagEmbeddingInvocationResult(
+                embeddings=(),
+                usage_report=ArticleRagEmbeddingUsageReport(
+                    provider_call_attempted=False,
+                    provider_succeeded=True,
+                    usage_completeness=(
+                        ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+                    ),
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    batch_count=0,
+                    completed_batch_count=0,
+                    failed_batch_ordinal=None,
+                    batches=(),
+                    batches_truncated_count=0,
+                    provider_name=READER_ARTICLE_RAG_EMBEDDING_PROVIDER_DASHSCOPE,
+                    model_name=str(model or self._model_override or "unknown"),
+                ),
+            )
 
         effective_model = model or self._model_override
 
-        # Extract only the whitelisted diagnostic fields
-        # inside the except block, then raise the safe outer error AFTER
-        # leaving the block.  This ensures both ``__cause__`` (no
-        # ``raise ... from exc``) and ``__context__`` (no implicit chain
-        # from re-raising inside ``except``) are None, so traceback
-        # serialisation cannot echo the lower exception's message.
+        # Extract only the whitelisted diagnostic fields inside the
+        # except block, then raise the safe outer error AFTER leaving the
+        # block. This keeps both ``__cause__`` (no ``raise ... from exc``)
+        # and ``__context__`` (no implicit chain from re-raising inside
+        # ``except``) None, so traceback serialisation cannot echo the
+        # lower exception's message.
         rewrap_error: DashScopeArticleRagEmbeddingProviderError | None = None
         call_result = None
         try:
@@ -232,6 +429,9 @@ class DashScopeArticleRagEmbeddingProvider:
                 failure_class="embedding",
                 failure_code="embedding_backend_failed",
                 diagnostics=diagnostics,
+                embedding_usage_report=self._report_from_wrapper_error(
+                    exc, effective_model=effective_model
+                ),
             )
 
         if rewrap_error is not None:
@@ -239,6 +439,13 @@ class DashScopeArticleRagEmbeddingProvider:
             raise rewrap_error
 
         assert call_result is not None  # narrow type for type checkers
+
+        # Build the FULL usage report BEFORE local validation so any
+        # coverage/dimension failure below can carry provider_succeeded=
+        # True with complete provider-side usage.
+        usage_report = self._report_from_success(
+            call_result, effective_model=effective_model
+        )
 
         embeddings = call_result.embeddings
         resolved_model = call_result.model
@@ -250,6 +457,7 @@ class DashScopeArticleRagEmbeddingProvider:
                 retryable=False,
                 failure_class="embedding_coverage",
                 failure_code="embedding_coverage_mismatch",
+                embedding_usage_report=usage_report,
             )
 
         results: list[ArticleRagEmbedding] = []
@@ -262,6 +470,7 @@ class DashScopeArticleRagEmbeddingProvider:
                     retryable=False,
                     failure_class="embedding_coverage",
                     failure_code="embedding_dimension_mismatch",
+                    embedding_usage_report=usage_report,
                 )
             results.append(
                 ArticleRagEmbedding(
@@ -271,7 +480,24 @@ class DashScopeArticleRagEmbeddingProvider:
                     dim=len(vec_tuple),
                 )
             )
-        return results
+        return ArticleRagEmbeddingInvocationResult(
+            embeddings=tuple(results),
+            usage_report=usage_report,
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy retrieval-facing surface (delegates, never re-invokes)
+    # ------------------------------------------------------------------
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> list[ArticleRagEmbedding]:
+        """Embed chunk texts while retaining only safe failure diagnostics."""
+        result = await self.embed_texts_with_usage(texts, model=model)
+        return list(result.embeddings)
 
 
 def build_default_article_rag_embedding_provider(
