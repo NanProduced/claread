@@ -1,6 +1,6 @@
 # 当前状态
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-17
+> **状态**: `CURRENT` | **最后验证**: 2026-08-19
 
 本文给新会话 agent 提供 Claread 当前事实。它不是迁移日志。
 
@@ -24,6 +24,7 @@
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 当前以 `reader_record_ask` agentic v2 为唯一 Ask 执行链（article-bound、可回源、turn run 持久化、统一 SSE 事件合同）；旧 Analysis Ask 和 Ask legacy lane 已物理删除。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn run 持久化、citation 回源导航、客户端提交幂等 reconcile、thread memory compaction、learner reasoning 投影和文章 RAG / Web search 受控工具。
 - Reader 当前生产链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件已删除）、`analysis_results.render_scene_json` 事实源、旧 `/reader/records/{id}/scene` 和旧 Web Reader 产品页实现（`ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface`）已物理删除。后端代码对旧 `analysis_*` 业务表的引用已全部迁移到 Reading Record 事实，旧表已不在 baseline migration 中；`analysis_windows` 与 `layer_analysis_plans` 是新链在用表，残留本地库旧表清理尚未完成。Academic workflow 尚未实现，后续按新 contract 单独评估；Daily Reader 保持固定 workflow。Reader orchestration 当前架构权威上下文在 `docs/architecture/reader-orchestration.md`。
+- Reader 可恢复解析已入基线：解析失败（`failed`）的正文和已完成内容仍可阅读；Web 在解析失败时提供友好提示与手动恢复；恢复保留 Record、URL、原始输入与历史，只创建新的 successor 任务，恢复不重复计费（successor 执行按 `internal_only` 计费）；纯 provider_timeout 失败支持 bounded automatic recovery（冷却与次数上限内自动重建）。后端已有结构化恢复告警兼容面，Console / 外部投递尚未实现。可恢复解析已完成离线验收；真实 provider、真实浏览器与生产部署验收未执行。
 - Article RAG：`READER_ARTICLE_RAG_ENABLED` 默认 `false`，开启时由 index worker 构建单路径索引并通过 Ask 受控工具消费；真实 provider 的 acceptance 尚未作为本轮验证执行（本地与 CI 均为 offline 测试，offline 测试不是 production acceptance 的证据）；运维 reindex 入口为显式 CLI（默认 dry-run，`--execute` 才写入）。
 - Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现（Collection 仍保留）；旧 Eval Center module、Node Lab、Workflow Lab、Run History、Render Scene Inspector、Parse Run Observability 已物理删除，Console / Eval 治理化控制面尚未实现。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
 - Web Reader 产品页实现为 `apps/web/src/app/(private)/app/reader/[recordId]/plate-page.tsx` + `ReaderRecordPlateSurface`，基于 Plate.js projection；旧 `ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface` 已物理删除。后续 Reader UI 迭代应沿 Plate.js projection 边界推进。

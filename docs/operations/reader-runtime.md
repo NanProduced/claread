@@ -1,6 +1,6 @@
 # Reader 运行时操作
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-17
+> **状态**: `CURRENT` | **最后验证**: 2026-08-19
 >
 > 符号与代码路径优先；过期行号不是当前 authority。
 >
@@ -26,7 +26,7 @@ Reader orchestration 当前共有 3 个进程级 worker entrypoint：
 |---|---|---|
 | API | 接收 submit、写入 durable facts、提供 snapshot/events API | `pnpm reader:api` |
 | Web | 提供 `/app/read` 与 `/app/reader/[recordId]` 页面和 BFF `/api/web/reader/records/*` | `pnpm reader:web` |
-| Reader enhancement worker（默认必启） | 消费 active-base enhancement jobs，发布 translation / vocabulary / grammar layers | `pnpm reader:worker:enhancement` |
+| Reader enhancement worker（默认必启） | 消费 active-base enhancement jobs，发布 translation / vocabulary / grammar layers；每个 cycle 先执行 automatic recovery phase，再推进 enhancement | `pnpm reader:worker:enhancement` |
 | Artifact pipeline worker（文件上传必启） | 消费 `input_artifact_extraction` / `extracted_artifact_materialization`，建立 candidate 或 stable base | `pnpm reader:worker:artifact` |
 | Article RAG index worker（可选） | 在 `READER_ARTICLE_RAG_ENABLED=true` 时构建文章索引 | `pnpm reader:worker:rag` |
 
@@ -116,7 +116,7 @@ uv run reader-enhancement-worker --once    # services/api 下单次扫描诊断
 uv run reader-artifact-pipeline-worker --once
 ```
 
-`--once` 输出 JSON summary，有用字段：`scanned_candidate_count`、`processed_count`、`lock_skipped_count`、`results[].record_id`、`results[].pipeline_summary.bootstrapped_job_counts` / `worker_tick_counts` / `outcome_counts` / `last_event_sequence` / `snapshot_reload_recommended` / `stopped_reason`。
+`--once` 输出 JSON summary，有用字段：`scanned_candidate_count`、`processed_count`、`lock_skipped_count`、`results[].record_id`、`results[].pipeline_summary.bootstrapped_job_counts` / `worker_tick_counts` / `outcome_counts` / `last_event_sequence` / `snapshot_reload_recommended` / `stopped_reason`；另有 `automatic_recovery` 对象（`status` / `batch_size` / `recovered_count` / `noop_count` / `skipped_count` / `error_count`，仅计数，无内部 ID）。
 
 ## Artifact 输入与恢复操作
 
@@ -280,7 +280,9 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/reader/records/$recordId/snapshot"
 | `article_ready` 后只有 `article_ready` event，jobs 停在 `queued`，layers 空 | enhancement worker 未运行或未消费队列 | `uv run reader-enhancement-worker --once` |
 | jobs `claimed` 且 lease 未过期 | 正在真实 LLM 调用 | 看 worker 日志；长文本需要等待 |
 | jobs `claimed` 但 lease 已过期 | 之前 worker 退出/卡死 | 再跑 `--once`，会先做 stale lease recovery |
-| jobs `failed_terminal` | terminal fail-closed | 查 `failure_code` / `failure_message` |
+| jobs `failed_terminal` | terminal fail-closed | 查 `failure_code` / `failure_message`；按下文恢复表处置 |
+| `failed_terminal` 且 code 是 `provider_timeout`（普通增强 lane、无混合失败） | provider 超时 | 冷却 30 分钟后由 automatic recovery 自动重建 successor；用户也可在 Web 手动恢复 |
+| `failed_terminal` 且 code 是 `validation_*` / programmatic / contract 类 | 非 provider_timeout | 继续 fail-closed，不自动恢复；用户可经 Web 手动恢复显式触发 |
 | `failed_terminal` 且 code 是 `model_route_unavailable` / `vocabulary_executor_unconfigured` / `grammar_bundle_executor_unconfigured` | route/profile 缺失 | 检查 model profiles / presets / reader 三 profile env / provider key |
 | jobs `retry_later` 且 `available_at` 在未来 | 暂时性失败 | 等 `available_at` 后再消费 |
 | layer_published + layers `published` 但 Web 不更新 | Web/BFF polling 或 session 问题 | 刷新；查 BFF events/snapshot 响应 |
@@ -297,6 +299,21 @@ Events 诊断还需遵守 cursor 合同：`after_sequence=N` 只消费 `sequence
 - `retry_later`：暂时性失败，worker loop 尊重 `available_at`，不会热循环。
 - `all_workers_no_job`：当前 record/base/generation 已无 claim 的 enhancement job，是正常停止态。
 - `failed_terminal` 的产品状态：默认映射 `failed`；`action_required` 只允许来自显式 user-action allowlist；`publish_fence_failed`、profile/route 缺失等 system/config failure 不映射成 `action_required`；`retry_later`、`all_workers_no_job`、`max_ticks_reached`、`max_jobs_reached` 不改 `product_state`。
+
+## Failed record 恢复（manual / automatic）
+
+恢复入口与顺序：
+
+- 手动恢复：`POST /reader/records/{record_id}/recovery`（要求认证、无请求 body，trigger 由服务端固定为 `manual`，客户端无法伪造）；Web 经 BFF `POST /api/web/reader/records/[recordId]/recovery` 接入。HTTP 200 outcomes：`recovery_started`（已创建 successor 并恢复为 `readable_enhancing`）/ `nothing_to_recover`（无可恢复工作的幂等 no-op）；错误映射 404（不存在/非 owner）、409（当前状态不可恢复）、503（后端暂不可用）。响应不暴露 base/job/run/event 内部 ID。
+- 自动恢复：`reader-enhancement-worker` 每周期先执行一次 automatic recovery scan，再运行 enhancement loop；没有第二个进程、调度器或 worker 入口。创建的 successor jobs 在同一 cycle 即可被 claim。
+- 自动资格（fail-closed）：`product_state='failed'` + article-ready readiness + Active Base / generation / lifecycle fence 有效；普通增强 lane 全部 `failed_terminal` managed jobs 必须精确为 `provider/provider_timeout`（混合任何其他失败即整体跳过）；冷却 30 分钟（自最新 eligible 失败的 `updated_at`）；同一 record + generation 至多 2 次实际 automatic 恢复，按已提交的 automatic 恢复事件计数。analysis-section lane 不由 record-level recovery 重建。
+- 恢复合同：`failed_terminal` 前驱不可变；仅在实际创建 successor 时才翻转 `failed -> readable_enhancing` 并写 `reader_parse_recovery_requested_v1` 恢复事件；恢复入口的入队事务不写计费数据、不调用 provider（usage / credit / journal 零新增），successor 后续执行仍会调用 provider，但按 `internal_only` 计费，不重复扣费。架构不变量见 `docs/architecture/reader-orchestration.md` §failed_terminal 恢复。
+
+### 自动恢复结构化告警（日志兼容面）
+
+- 稳定 message：`reader_automatic_recovery_alert`；稳定字段：`event_schema=reader_automatic_recovery_alert_v1`、`alert_kind`（`candidate_errors` | `scan_failed`）、`error_count`、`batch_size`、`recovered_count`、`noop_count`、`skipped_count`。
+- 每周期至多一条聚合告警；字段只含计数，不含异常正文、traceback、用户内容或内部 job/run/record ID。
+- Console / Sentry / webhook / 邮件等外部投递尚未实现；当前结构化日志是后续接入点。
 
 ## Article RAG 运行
 

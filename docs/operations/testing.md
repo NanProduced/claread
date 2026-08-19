@@ -140,6 +140,29 @@ Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产
 
 仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。Vitest 与 Playwright 是独立验证入口，不得用其中一个替代另一个；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
 
+## Reader 恢复离线验收
+
+可恢复解析（placeholder 防线、`failed_terminal` 不可变 successor 恢复、manual/automatic 门禁、不重复计费、Web 恢复链与告警脱敏）的定向验收命令：
+
+后端（工作目录 `services/api/`）：
+
+```powershell
+uv run pytest tests/test_candidate_document_freeze_plan.py tests/test_reader_failed_terminal_recovery.py tests/test_reader_automatic_recovery.py tests/test_reader_recovery_route.py tests/test_reader_orchestration_worker_cli.py tests/test_reader_orchestration_runtime_wiring.py -q
+```
+
+Web（工作目录 `apps/web/`）：
+
+```powershell
+pnpm exec vitest run 'src/app/api/web/reader/records/[recordId]/recovery/route.test.ts' src/services/bff/reading-records.test.ts src/components/reader/plate/ReaderAnalysisProgressControl.test.tsx
+pnpm typecheck
+```
+
+边界：
+
+- 这些是 **offline integration acceptance**（后端使用隔离 throwaway schema，Web 为组件/route 层离线测试），不等于 real provider、真实浏览器或 production deployment acceptance。
+- 不在本文硬编码历史 passed 数量或耗时；以当前运行结果为准。
+- 涉及真实 provider 的测试仍需显式 owner 授权并满足上文 real-LLM 三重门禁。
+
 ## 小程序验证
 
 工作目录：仓库根目录。

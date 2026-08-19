@@ -44,7 +44,7 @@ uv run uvicorn app.main:app --reload
 
 Reader orchestration 目前有 3 个进程级 worker entrypoint：
 
-- `reader-enhancement-worker`：生成 translation / vocabulary / grammar 等增强层；默认必启。
+- `reader-enhancement-worker`：每个周期先执行 automatic recovery（bounded 扫描 failed records 并创建 successor jobs），再推进 translation / vocabulary / grammar 等增强层；默认必启。
 - `reader-artifact-pipeline-worker`：处理 PDF、Markdown、图片 OCR 等 artifact-backed input 的提取与 materialization；文件上传链路必启。
 - `reader-article-rag-index-worker`：构建文章 RAG 索引；仅在 `READER_ARTICLE_RAG_ENABLED=true` 时启用。
 
@@ -76,7 +76,7 @@ uv run reader-enhancement-worker --once
 uv run reader-artifact-pipeline-worker --once
 ```
 
-如果上传文件已经写入 OSS，但 `input_artifact_extraction` 长时间保持 `queued`、`attempt_count = 0`，且 Reading Record 没有 active base，通常是 artifact worker 未启动或未消费队列。如果纯文本已进入 `article_ready`，但 `translate_unit` 等任务持续排队，则检查 enhancement worker。完整本地链路和诊断 SQL 见 `docs/operations/reader-runtime.md`。
+如果上传文件已经写入 OSS，但 `input_artifact_extraction` 长时间保持 `queued`、`attempt_count = 0`，且 Reading Record 没有 active base，通常是 artifact worker 未启动或未消费队列。如果纯文本已进入 `article_ready`，但 `translate_unit` 等任务持续排队，则检查 enhancement worker。自动恢复的结构化告警（`reader_automatic_recovery_alert`）当前只有日志兼容面，外部告警 sink（Console / Sentry 等）尚未实现。完整本地链路、恢复操作与诊断 SQL 见 `docs/operations/reader-runtime.md`。
 
 运行测试：
 
@@ -162,6 +162,7 @@ Daily Reader 的 workflow、reading unit 语义和后续收口项见 `services/a
 关键 API：
 
 - `POST /reader/records/input`
+- `POST /reader/records/{record_id}/recovery`（failed record 手动恢复；无 body）
 - `GET /reader/records`
 - `GET /reader/records/{record_id}/snapshot`
 - `GET /reader/records/{record_id}/events`

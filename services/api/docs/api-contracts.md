@@ -49,6 +49,7 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 | Reader 读取 | `GET /reader/records/{record_id}/events` | 按 sequence cursor 轮询已提交 reader events |
 | Reader 读取 | `GET /reader/records/{record_id}/stable-document`、`/candidate-document`、`/confirmed-source` | Plate 投影事实源 |
 | Reader 读取 | `POST /reader/records/{record_id}/opened` | 记录打开时间戳 |
+| Reader 恢复 | `POST /reader/records/{record_id}/recovery` | failed record 手动恢复；无 body，trigger 服务端固定 `manual` |
 | Reader 增强 | `POST /reader/records/{record_id}/section-translation` | 显式段落同步翻译 |
 | Article RAG | `GET /reader/records/{record_id}/article-rag-index/status`、`POST /ensure` | 文章 RAG 索引生命周期 |
 | Ask | `GET /reader/records/{reading_record_id}/ask/threads`、`POST .../threads/default`、`GET .../threads/{thread_id}` | 当前文章 Ask 线程 |
@@ -87,6 +88,7 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 
 ## 当前契约状态
 
+- `POST /reader/records/{record_id}/recovery` 是 failed Reading Record 的手动恢复入口：要求认证；无请求 body（trigger 由服务端固定为 `manual`，客户端不能传递或伪造 trigger）；HTTP 200 outcomes 为 `recovery_started` / `nothing_to_recover`；response 字段仅 `record_id`、`outcome`、`previous_product_state`、`next_product_state`、`record_generation`、`successor_job_count`，不暴露 base/job/run/event 内部 ID；404 = 不存在或非 owner，409 = 当前状态不可恢复，503 = 后端暂不可用。Web 经 BFF `POST /api/web/reader/records/[recordId]/recovery` 接入，同样无 body。
 - `/dict`、`/dict/entry` 和 `POST /dict/ai` 都声明了 response model。
 - 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
 - `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。

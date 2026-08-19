@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-17
+> **状态**: `CURRENT` | **最后验证**: 2026-08-19
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -13,6 +13,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Web Reader 标注体系已收口：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；高亮冲突已统一走后端 resolver 合并，SelectionToolbar 已收口为"一级高亮 + inline 颜色条"的单层工具条。
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
+- Reader 可恢复解析已完成并入基线：placeholder-only 内容防线、`failed_terminal` 不可变 successor 恢复（manual + bounded automatic）、不重复计费、Web 友好提示与手动重试、worker 周期内自动恢复调度与脱敏结构化告警兼容面均已完成；验证入口见 `docs/operations/testing.md` §Reader 恢复离线验收。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
 - Reader 当前生产链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）、`analysis_results.render_scene_json` 事实源、旧 Reader 产品页与 BFF route、旧 Directus Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability 已物理删除。旧 `analysis_*` 表的精确状态（legacy 孤儿表 / legacy 仍被只读引用表 / 新链在用表 `analysis_windows` 与 `layer_analysis_plans`）见 `docs/architecture/workflow-history.md`；残留本地库的旧表 DROP 尚未完成。计费写账闭环、统一监测和 Console / Eval 治理化控制面尚未实现。
 - Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除，Console / Eval 治理化控制面尚未实现。
@@ -32,7 +33,8 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 近期重点：
 - 旧 Eval 控制面表与 `analysis_*` 残留本地库清理
 - Console / Eval 治理化控制面建设（规划中）
-- 统一监测、计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环
+- 统一监测：消费现有结构化恢复告警（`reader_automatic_recovery_alert`），建设 Console / Sentry / 外部投递；计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环
+- 可恢复解析的真实 provider、真实浏览器与生产部署验收保留为上线门禁（离线验收已完成，不替代真实验收）
 - 测试治理与代码架构优化
 
 范围边界：

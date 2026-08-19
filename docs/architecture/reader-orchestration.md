@@ -1,6 +1,6 @@
 # Reader 编排架构
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-14
+> **状态**: `CURRENT` | **最后验证**: 2026-08-19
 >
 > 符号与代码路径优先；过期行号不是当前 authority。
 >
@@ -151,6 +151,7 @@
 冻结后的文档事实由 Stable Reading Document、Stable Blocks 与 Canonical Text Layer 共同表达：
 
 - Stable Blocks 保存顺序、稳定 block identity、类型、source refs、结构降级与 interpretation policy；Canonical Text 只由进入主阅读链的叶子文本按确定性规则拼接。
+- 纯 U+200B + 空白的 placeholder-only 派生块在冻结时不贡献 canonical text、offset、翻译任务或 RAG chunk；block identity/provenance 保留；正文内 inline U+200B 原样保留；全占位输入确定性拒绝（无 main reading block 时 fail-closed）。
 - Markdown 标记、DOM/Plate/Slate path 不是 canonical offset 基准；不安全 HTML、link、media 与高风险结构必须 sanitize、降级或转入 Candidate confirmation。
 - 同一 record/base 的稳定文档与 canonical text 不被 enhancement worker 改写。需要修正来源事实时创建新 generation/base 或 supersede 旧 record，而不是原地覆盖 truth。
 
@@ -275,6 +276,7 @@ Reader Run 是一次 bounded background run；Reader Job 是 run 内可 claim、
 - `EnhancementJobBootstrapService` 为当前 record/base/generation 创建缺失的 display title、translation、vocabulary、grammar bundle jobs；drain 顺序固定为 display title -> translation -> vocabulary -> grammar bundle。
 - `ReaderEnhancementPipelineRunner` 把当前 active base 的 enhancement jobs 作为 bounded batch 推进；worker claim 必须带 `reading_record_id`、`base_id`、`expected_generation` scope；runner 只汇总 typed summary 与 attention outcome，不拥有 layer truth，不绕过 Layer Publisher。
 - `ReaderEnhancementWorkerLoopService` 先 coarse scan（`deleted_at IS NULL`、`lifecycle_status='active'`、`product_state IN ('processing','readable_enhancing')`、`readiness_state IN ('article_ready','initial_enhancement_ready')`、`active_base_id IS NOT NULL`，active base join 校验 base 属于 record、`status='active'`、`record_generation` 一致），再以 per-record / per-user advisory locks 串行推进；scanner 跳过 `coverage_complete`，并通过 runnable/tracked job gate 避免 `retry_later` hot-loop 与 `failed_terminal` 反复 bootstrap。
+- 每个 worker cycle 先执行 automatic recovery scan，再运行 enhancement loop；恢复创建的 successor jobs 因此可在同一 cycle 被 claim。
 - 并发口径：同一 record 同一 generation 只有一个 mutating active run；per-user concurrency 默认 1；per-worker process 默认 1，先以增加 worker 进程扩吞吐；Ask sidecar action 与 Reader enhancement 共用同一用户级 concurrency / cost envelope。
 - 运行形态：独立 worker process（`uv run reader-enhancement-worker` / `--once` 单次诊断）；API 服务不在 FastAPI lifespan / startup hook 启动 worker loop；Web submit 只创建 durable `article_ready` facts，不同步执行 runner；不新增 public worker-control endpoint；smoke harness / fake executors 不作为产品 runtime。
 - Artifact-backed input 走独立 `reader-artifact-pipeline-worker`（`input_artifact_extraction` -> provider router -> `extracted_artifact_materialization` -> Input Suitability Gate -> Stable 或 Candidate Document）；extraction 成功只回写 `original_inputs.source_text` 并 enqueue materialization；OSS/PDF/OCR 是 adapter，缺配置时 fail closed，不影响主链。
@@ -344,6 +346,18 @@ route 翻转由 bootstrap supersede + claim 时 `_validate_fence` -> `_check_rou
 - `publish_fence_failed`、executor/profile missing、model route missing 等 system failure 不映射成 `action_required`。
 - profile 缺失保持 fail-closed；不静默 fallback 到 fake executors、annotation profile 或 synthetic layer。
 
+### failed_terminal 恢复（manual / automatic）
+
+`EnhancementJobBootstrapService.recover_failed_enhancement_jobs` 是唯一允许 bootstrap `failed` record 的入口；manual（用户显式 API）与 automatic（worker cycle 扫描）两种 trigger 共用同一恢复核心：
+
+- `failed_terminal` 前驱 jobs 是不可变审计行：不重置、不重开、不删除；恢复创建 same-generation successor run/job（新 id，复用 fingerprint / idempotency / generation fence）。
+- 仅在实际创建 successor 时才把 `failed` 恢复为 `readable_enhancing` 并写一条 `record_state_changed` 恢复事件；无可恢复工作时为确定性幂等 no-op（不翻转状态、不写事件）。
+- 恢复事件 payload schema 为 `reader_parse_recovery_requested_v1`：携带 trigger（`manual` / `automatic`）、`recovery_mode=same_generation_successor_jobs`、`billing_mode=internal_only` 与 predecessor/successor 关联信息（predecessor/successor job IDs、successor run IDs、successor job types）；恢复入口的入队事务不写计费数据、不调用 provider（`ai_usage_events` / `user_credit_ledger` / `ai_model_execution_journal` 零新增）；successor 后续执行仍会调用 provider，但以 `internal_only` 计费，不重复扣费。
+- Automatic 策略 fail-closed：record 必须 `product_state='failed'` 且达到 article-ready readiness、Active Base / generation / lifecycle fence 有效；ordinary enhancement lane 的每个 `failed_terminal` managed job 必须精确为 `failure_class='provider'` / `failure_code='provider_timeout'`（混入 validation / contract / worker_exception 等任何其他失败即整体跳过）；冷却 30 分钟，自最新 eligible 失败的 `updated_at` 起算；同一 record + generation 至多 2 次实际 automatic 恢复，按已提交的 automatic 恢复事件计数（manual 事件、no-op 与其他 generation 不计入）。
+- Automatic 的最终门禁（纯度、冷却、次数上限、fence）在恢复核心的 Record FOR UPDATE 事务内执行，与 successor 创建同事务提交；worker / scanner 竞态不能绕过上限。
+- analysis-section lane（`request_origin` 属于生产 `ANALYSIS_SECTION_ORIGINS`）不由 record-level recovery 重建：不作为 predecessor 上报，也不创建 successor；section 工作走其自身请求流恢复。
+- 明确非能力：无 Active Base 缺失恢复、无 shadow generation rebuild、validation / programmatic failure 不做自动恢复（保持 fail-closed，仅 manual 可显式触发）。
+
 ## 可观测性
 
 双轨设计：PG `reader_runtime_spans` 为事实源，LangSmith 为 dashboard。
@@ -370,7 +384,8 @@ route 翻转由 bootstrap supersede + claim 时 `_validate_fence` -> `_check_rou
 - Semantic outline：`semantic_outline` layer / `build_semantic_outline` job / worker 已实现为 durable layer（`layer_type='semantic_outline'`、`target_scope='record'`），默认 request eligibility = false，默认 generator = `UnconfiguredSemanticOutlineGenerator`（permanent fail-closed）；**无真实 LLM executor**（未注册 outline `MODEL_ROUTE` / prompt agent / profile settings），自动 eligibility 阈值未定。不得宣称 outline 已可产品使用。
 - Reader events 无 SSE；当前为 GET poll `after_sequence`。
 - `projection_ops` incremental applier 未端到端启用；snapshot reload 是当前交付链。
-- 统一监测平台 / 完整跨进程 trace 关联产品化：尚未实现。
+- 统一监测平台 / 完整跨进程 trace 关联产品化：尚未实现。automatic recovery 已有结构化日志告警兼容面（`reader_automatic_recovery_alert`），Console / Sentry / 外部投递尚未实现。
+- Reader 恢复无 Active Base 缺失恢复、无 shadow generation rebuild、无 validation / programmatic failure 自动恢复。
 - 计费归因按代码支持的粒度描述（`ai_usage_events` + span token/link 字段），不推断完整成本平台；standalone enhancement worker 进程当前不调用 `setup_langsmith()`。
 
 ## 相关文档
