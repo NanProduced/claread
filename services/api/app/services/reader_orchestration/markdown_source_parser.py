@@ -461,11 +461,127 @@ def _process_paragraph_inline(
       Non-html_inline unsafe links (javascript:/vbscript:) are still
       categorized via link_open attrs and recorded in ``stripped_links``.
     """
-    return _process_inline_with_marks(token)
+    unsafe_link_spans: list[tuple[int, int]] = []
+    (
+        text,
+        inline_marks,
+        safe_links,
+        unsafe_links,
+        has_inline_html,
+        starts_with_html_inline,
+    ) = _process_inline_with_marks(token, unsafe_link_spans=unsafe_link_spans)
+    # Normalize meaningless trailing whitespace (e.g. the real space
+    # decoded from a trailing ``&#x20;`` HTML entity) at the single
+    # shared boundary where narrative paragraph leaves are produced.
+    # The base builder derives visible unit ranges with per-line
+    # rstrip, so trailing whitespace kept here would make the frozen
+    # annotation span exceed its reading unit and trip
+    # ``annotation_range_mismatch`` (automatic-layer all-off). Literal
+    # trailing spaces are already stripped by the block parser; only
+    # entity-decoded whitespace survives to this point.
+    trimmed = text.rstrip()
+    if trimmed and trimmed != text:
+        # Re-anchor marks / link labels computed against the untrimmed
+        # text so none of them exceeds the trimmed block text
+        # (``annotation_inline_mark_invalid`` downstream) and no link
+        # label keeps the removed tail. A paragraph whose ENTIRE
+        # content is entity-decoded whitespace keeps the original
+        # text: an empty main_reading block would hard-fail the freeze
+        # plan.
+        text, inline_marks, safe_links, unsafe_links = (
+            _clamp_inline_marks_to_trimmed_tail(
+                trimmed=trimmed,
+                inline_marks=inline_marks,
+                safe_links=safe_links,
+                unsafe_links=unsafe_links,
+                unsafe_link_spans=unsafe_link_spans,
+            )
+        )
+    return (
+        text,
+        inline_marks,
+        safe_links,
+        unsafe_links,
+        has_inline_html,
+        starts_with_html_inline,
+    )
+
+
+def _clamp_inline_marks_to_trimmed_tail(
+    *,
+    trimmed: str,
+    inline_marks: list[dict[str, Any]],
+    safe_links: list[dict[str, str]],
+    unsafe_links: list[dict[str, str]],
+    unsafe_link_spans: list[tuple[int, int]],
+) -> tuple[
+    str,
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+]:
+    """Re-anchor inline marks / link labels onto tail-trimmed text.
+
+    ``_process_inline_with_marks`` computes UTF-16 ranges against the
+    untrimmed text. After the paragraph tail is rstripped, a mark whose
+    range reached into the removed trailing whitespace would exceed
+    the trimmed text length (``annotation_inline_mark_invalid``), and
+    a link label — safe payload ``links`` and unsafe audit
+    ``stripped_links`` alike — would keep the removed tail. Marks are
+    clamped to the new length and dropped when the clamp empties them;
+    a clamped link label equals its own ``rstrip()`` because everything
+    past the trim boundary is trailing whitespace of the whole text.
+    """
+    limit = utf16_code_unit_length(trimmed)
+    kept_marks: list[dict[str, Any]] = []
+    kept_safe_links: list[dict[str, str]] = []
+    # Link marks and safe_links entries are appended 1:1 in creation
+    # order by ``_process_inline_with_marks`` (link_close and the
+    # raw-pattern branch), so pair them by position.
+    safe_link_index = 0
+    for mark in inline_marks:
+        is_link = mark["type"] == "link"
+        if mark["end"] <= limit:
+            kept_marks.append(mark)
+            if is_link:
+                kept_safe_links.append(safe_links[safe_link_index])
+        elif mark["start"] < limit:
+            # Partially covered by the trimmed tail: truncate the range.
+            kept_marks.append({**mark, "end": limit})
+            if is_link:
+                source = safe_links[safe_link_index]
+                kept_safe_links.append(
+                    {"text": source["text"].rstrip(), "href": source["href"]}
+                )
+        # else: the mark lies fully inside the trimmed tail — empty
+        # range after clamping, so drop it (and its safe-link entry).
+        if is_link:
+            safe_link_index += 1
+    # Unsafe links never carry an inline mark (their href must not
+    # reach links / inline_marks); ``stripped_links`` is their only
+    # audit record. Realign a label ONLY when its span reaches past
+    # the trim boundary: everything past the boundary is trailing
+    # whitespace of the whole text, so the label's covered tail is
+    # exactly its own trailing whitespace and ``rstrip()`` equals
+    # positional truncation. Labels ending within the trimmed text
+    # keep their internal trailing whitespace (no blanket rstrip).
+    kept_unsafe_links: list[dict[str, str]] = [
+        (
+            {**entry, "text": entry["text"].rstrip()}
+            if span_end > limit
+            else entry
+        )
+        for entry, (_span_start, span_end) in zip(
+            unsafe_links, unsafe_link_spans, strict=True
+        )
+    ]
+    return trimmed, kept_marks, kept_safe_links, kept_unsafe_links
 
 
 def _process_inline_with_marks(
     token: Token,
+    *,
+    unsafe_link_spans: list[tuple[int, int]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -494,6 +610,11 @@ def _process_inline_with_marks(
       safe links left as raw text (rare) both become inline_marks.
       html_inline is always stripped from text and flags has_inline_html
       (no rescue merge).
+
+    ``unsafe_link_spans`` optionally collects the ``(start, end)``
+    UTF-16 span of each unsafe-link label in creation order (paired
+    1:1 with the returned ``unsafe_links``) so tail-trim consumers can
+    realign audit labels positionally instead of blanket-rstripping.
     """
     if not token.children:
         return token.content or "", [], [], [], False, False
@@ -579,6 +700,8 @@ def _process_inline_with_marks(
                                     "reason": "unsafe_protocol",
                                 }
                             )
+                            if unsafe_link_spans is not None:
+                                unsafe_link_spans.append((start, end))
                         if open_link is not None:
                             open_link["label_parts"].append(label)
                         i = next_i
@@ -638,6 +761,8 @@ def _process_inline_with_marks(
                             "reason": "unsafe_protocol",
                         }
                     )
+                    if unsafe_link_spans is not None:
+                        unsafe_link_spans.append((start, end))
                 open_link = None
         elif ctype in ("em_open", "strong_open", "s_open", "del_open"):
             mark_type = {
