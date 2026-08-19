@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -47,6 +48,12 @@ import asyncpg
 from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.services.ai_usage.service import (
+    AIUsageEventCreate,
+    compute_usage_invocation_observation_hash,
+    record_invocation_keyed_usage_event,
+    update_ai_usage_event_metadata,
+)
 
 from .advisory_lock import (
     LOCK_NAMESPACE_VECTOR_MUTATION,
@@ -72,6 +79,8 @@ from .job_runtime import (
     mark_reader_run_running,
     mark_reader_run_status,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -267,6 +276,38 @@ ARTICLE_RAG_EMBEDDING_USAGE_MAX_BATCHES = 8
 ARTICLE_RAG_EMBEDDING_COMPLETENESS_COMPLETE = "complete"
 ARTICLE_RAG_EMBEDDING_COMPLETENESS_PARTIAL = "partial"
 ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE = "unavailable"
+
+# ---------------------------------------------------------------------------
+# Embedding usage accounting (OBS-01B-C)
+#
+# One idempotent ``ai_usage_events`` row per attempted provider embedding
+# invocation (``reader:rag_embedding:{job_id}:{attempt_count}:1``). The
+# event is recorded BEFORE coverage / fence / vector-write / finalization;
+# only the ``index_publish_outcome`` metadata key is patched afterwards,
+# strictly after the business handler's terminal transaction committed.
+# Recorder / patch failures never alter business outcomes.
+# ---------------------------------------------------------------------------
+
+# ``index_publish_outcome`` lifecycle (metadata-only patch).
+INDEX_PUBLISH_OUTCOME_PENDING = "pending"
+INDEX_PUBLISH_OUTCOME_PUBLISHED = "published"
+INDEX_PUBLISH_OUTCOME_ABANDONED_AFTER_EMBEDDING = (
+    "abandoned_after_embedding"
+)
+INDEX_PUBLISH_OUTCOME_SUPERSEDED_AFTER_EMBEDDING = (
+    "superseded_after_embedding"
+)
+INDEX_PUBLISH_OUTCOME_PUBLISH_FAILED = "publish_failed"
+
+# Post-provider failure-class -> outcome mapping. Failure classes NOT
+# listed here (e.g. ``index_run_state``) leave the persisted succeeded
+# event at ``pending`` — no outcome is fabricated.
+_VECTOR_PUBLISH_FAILED_FAILURE_CLASSES = frozenset(
+    {"vector_write", "vector_write_result_collection_mismatch"}
+)
+_ABANDONED_AFTER_EMBEDDING_FAILURE_CLASSES = frozenset(
+    {"embedding_coverage", "embedding_model_mismatch", "embedding_dimension_mismatch"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +730,34 @@ class _JobContext:
     vector_namespace: str
 
 
+@dataclass(frozen=True, slots=True)
+class _UsageEventHandle:
+    """Patchable handle to one persisted succeeded usage event.
+
+    Only ``inserted`` / ``replayed`` dispositions with a concrete
+    ``event_id`` AND event status ``succeeded`` produce a handle; the
+    ``conflict`` disposition (pre-existing different observation) and
+    every failed provider event are never outcome-patched.
+    """
+
+    event_id: UUID
+    invocation_key: str
+
+
+def _post_embedding_failure_outcome(failure_class: str) -> str | None:
+    """Map a post-embedding failure class to a publish outcome label.
+
+    Returns ``None`` when the failure class has no frozen outcome (the
+    persisted succeeded event stays at ``pending`` — no fabricated
+    outcome).
+    """
+    if failure_class in _VECTOR_PUBLISH_FAILED_FAILURE_CLASSES:
+        return INDEX_PUBLISH_OUTCOME_PUBLISH_FAILED
+    if failure_class in _ABANDONED_AFTER_EMBEDDING_FAILURE_CLASSES:
+        return INDEX_PUBLISH_OUTCOME_ABANDONED_AFTER_EMBEDDING
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Worker service
 # ---------------------------------------------------------------------------
@@ -708,7 +777,7 @@ class ArticleRagIndexWorkerService:
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         plan_service: ArticleRagIndexPlanService | None = None,
-        embedding_provider: ArticleRagEmbeddingProvider | None = None,
+        embedding_provider: ArticleRagIndexEmbeddingProvider | None = None,
         vector_writer: ArticleRagVectorWriter | None = None,
         default_vector_collection: str = DEFAULT_FAKE_VECTOR_COLLECTION,
     ) -> None:
@@ -990,6 +1059,21 @@ class ArticleRagIndexWorkerService:
         retry_delay: timedelta,
     ) -> ArticleRagIndexWorkerResult:
         context: _JobContext | None = None
+        usage: _UsageEventHandle | None = None
+
+        # Fail-closed claim identity gate (before _load_job_context and
+        # any provider call): attempt_count must be a non-bool int >= 1
+        # (every real claim increments it). Fixed safe RuntimeError —
+        # no new business failure code is frozen for this, and the
+        # invalid value is never echoed.
+        if (
+            isinstance(claim.attempt_count, bool)
+            or not isinstance(claim.attempt_count, int)
+            or claim.attempt_count < 1
+        ):
+            raise RuntimeError(
+                "article rag index worker claim attempt_count is invalid"
+            )
 
         try:
             context = await self._load_job_context(claim)
@@ -1032,14 +1116,48 @@ class ArticleRagIndexWorkerService:
                 claim, context
             )
 
-            # Embed outside the DB transaction.
-            # Explicitly pass the contract document_embedding_model so
-            # provider factory ``model_override`` / settings cannot
-            # silently substitute a different model.
-            embeddings = await self._embedding_provider.embed_texts(
-                [chunk.text for chunk in plan.chunks],
-                model=context.document_embedding_model,
-            )
+            # Embed outside the DB transaction via the index-scoped typed
+            # surface. Explicitly pass the contract document_embedding_model
+            # so provider factory ``model_override`` / settings cannot
+            # silently substitute a different model. A typed error raised
+            # here may carry the attempted usage report on
+            # ``embedding_usage_report`` — it is recorded BEFORE the error
+            # re-enters the business handlers below.
+            try:
+                invocation = (
+                    await self._embedding_provider.embed_texts_with_usage(
+                        [chunk.text for chunk in plan.chunks],
+                        model=context.document_embedding_model,
+                    )
+                )
+            except ArticleRagIndexWorkerError as exc:
+                error_report = exc.embedding_usage_report
+                if (
+                    error_report is not None
+                    and error_report.provider_call_attempted
+                ):
+                    usage = await self._record_embedding_usage(
+                        claim=claim,
+                        context=context,
+                        report=error_report,
+                        typed_error=exc,
+                    )
+                raise
+
+            # One idempotent usage event per attempted provider invocation,
+            # recorded BEFORE coverage / fence / vector write / finalization.
+            # ``provider_call_attempted=False`` (fakes, preflight inside the
+            # provider) writes NO event.
+            report = invocation.usage_report
+            if report.provider_call_attempted:
+                usage = await self._record_embedding_usage(
+                    claim=claim,
+                    context=context,
+                    report=report,
+                    typed_error=None,
+                )
+
+            embeddings = list(invocation.embeddings)
             self._validate_embedding_coverage(plan, embeddings, context=context)
 
             # Re-check the publish fence before any vector-store side effect.
@@ -1129,7 +1247,7 @@ class ArticleRagIndexWorkerService:
             # vector_collection — NOT embeddings[0].model or
             # write_result.collection (both have already been validated
             # to equal the contract values).
-            return await self._mark_indexed_and_succeed(
+            result = await self._mark_indexed_and_succeed(
                 claim=claim,
                 context=context,
                 plan=plan,
@@ -1141,9 +1259,17 @@ class ArticleRagIndexWorkerService:
                 vector_collection=context.vector_namespace,
                 upserted_count=write_result.upserted_count,
             )
+            # Finalization committed — patch the publish outcome. A
+            # finalization/DB/runtime exception propagates BEFORE this
+            # point, leaving the event at ``pending``.
+            if usage is not None:
+                await self._patch_index_publish_outcome(
+                    usage, INDEX_PUBLISH_OUTCOME_PUBLISHED
+                )
+            return result
 
         except FenceViolationError:
-            return await self._handle_supersede(
+            result = await self._handle_supersede(
                 claim=claim,
                 context=context,
                 rationale_code="publish_fence_failed",
@@ -1151,9 +1277,16 @@ class ArticleRagIndexWorkerService:
                 failure_code="publish_fence_failed",
                 message="publish fence failed during article RAG index build",
             )
+            if usage is not None:
+                await self._patch_index_publish_outcome(
+                    usage, INDEX_PUBLISH_OUTCOME_SUPERSEDED_AFTER_EMBEDDING
+                )
+            return result
         except ArticleRagIndexPlanError as exc:
             # Plan service detected truth-layer drift (stale generation,
             # inactive base, active base mismatch, no eligible chunks).
+            # Plan reload happens BEFORE the provider call, so no usage
+            # event exists on this branch.
             return await self._handle_supersede(
                 claim=claim,
                 context=context,
@@ -1170,7 +1303,7 @@ class ArticleRagIndexWorkerService:
                 # this is content churn, not an infrastructure defect, and
                 # must not pollute failure metrics. Same semantics as the
                 # plan-service-level ArticleRagIndexPlanError branch above.
-                return await self._handle_supersede(
+                result = await self._handle_supersede(
                     claim=claim,
                     context=context,
                     rationale_code=exc.rationale_code or exc.failure_code,
@@ -1178,18 +1311,36 @@ class ArticleRagIndexWorkerService:
                     failure_code=exc.failure_code,
                     message=str(exc),
                 )
+                if usage is not None:
+                    await self._patch_index_publish_outcome(
+                        usage,
+                        INDEX_PUBLISH_OUTCOME_SUPERSEDED_AFTER_EMBEDDING,
+                    )
+                return result
             if exc.retryable:
-                return await self._handle_retry_later(
+                result = await self._handle_retry_later(
                     claim=claim,
                     context=context,
                     retry_delay=retry_delay,
                     exc=exc,
                 )
-            return await self._handle_failed_terminal(
+                if usage is not None:
+                    outcome = _post_embedding_failure_outcome(
+                        exc.failure_class
+                    )
+                    if outcome is not None:
+                        await self._patch_index_publish_outcome(usage, outcome)
+                return result
+            result = await self._handle_failed_terminal(
                 claim=claim,
                 context=context,
                 exc=exc,
             )
+            if usage is not None:
+                outcome = _post_embedding_failure_outcome(exc.failure_class)
+                if outcome is not None:
+                    await self._patch_index_publish_outcome(usage, outcome)
+            return result
         except _InputJsonError as exc:
             return await self._handle_failed_terminal(
                 claim=claim,
@@ -1205,7 +1356,224 @@ class ArticleRagIndexWorkerService:
         # deadlocks, serialization failures) are NOT caught here. They
         # propagate so ``recover_stale_leases`` can requeue the job when
         # the lease expires. The index run stays ``indexing`` transiently
-        # and is re-entered on the next claim.
+        # and is re-entered on the next claim. A persisted succeeded
+        # usage event keeps its ``pending`` outcome on this path.
+
+    # ------------------------------------------------------------------
+    # Embedding usage accounting (OBS-01B-C)
+    # ------------------------------------------------------------------
+
+    async def _record_embedding_usage(
+        self,
+        *,
+        claim: ClaimResult,
+        context: _JobContext,
+        report: ArticleRagEmbeddingUsageReport,
+        typed_error: ArticleRagIndexWorkerError | None,
+    ) -> _UsageEventHandle | None:
+        """Record one idempotent usage event for an attempted provider
+        embedding invocation.
+
+        Event semantics (frozen contract):
+
+        - ``invocation_key`` = ``reader:rag_embedding:{job_id}:
+          {attempt_count}:1`` — one row per real provider invocation;
+        - ``provider_succeeded=True`` -> status ``succeeded`` with the
+          initial ``index_publish_outcome=pending`` metadata;
+        - ``provider_succeeded=False`` -> status ``failed`` with the
+          typed error's safe ``failure_code`` and NO outcome key;
+        - usage totals come ONLY from the typed report (a legal
+          ``complete`` report with 0 tokens still means usage available);
+        - metadata carries only stable identity / completeness / bounded
+          batch summaries — never chunk text, vectors, raw provider
+          usage, ``input_chars``, exception text, SDK payloads, keys or
+          URIs.
+
+        Pure observability: recorder failures collapse to ``None`` and
+        are logged with fixed structured fields only — the business flow
+        (including retry/supersede decisions) is never altered. The
+        ``conflict`` disposition returns ``None`` so the pre-existing
+        row is NEVER patched; only ``inserted`` / ``replayed`` succeeded
+        events produce a patchable handle.
+        """
+        invocation_key = (
+            f"reader:rag_embedding:{claim.job_id}:{claim.attempt_count}:1"
+        )
+        try:
+            succeeded = report.provider_succeeded
+            batches_meta: list[dict[str, Any]] = [
+                {
+                    "ordinal": batch.ordinal,
+                    "request_id": batch.request_id,
+                    "input_count": batch.input_count,
+                    "total_tokens": batch.total_tokens,
+                }
+                for batch in report.batches
+            ]
+            metadata: dict[str, Any] = {
+                "stable_document_id": str(context.stable_document_id),
+                "index_run_id": str(context.index_run_id),
+                "attempt_ordinal": claim.attempt_count,
+                "usage_completeness": report.usage_completeness,
+                "provider_call_attempted": report.provider_call_attempted,
+                "provider_succeeded": report.provider_succeeded,
+                "batch_count": report.batch_count,
+                "completed_batch_count": report.completed_batch_count,
+                "failed_batch_ordinal": report.failed_batch_ordinal,
+                "batches": batches_meta,
+                "batches_truncated_count": report.batches_truncated_count,
+            }
+            error_code: str | None = None
+            if succeeded:
+                metadata["index_publish_outcome"] = (
+                    INDEX_PUBLISH_OUTCOME_PENDING
+                )
+            else:
+                error_code = (
+                    typed_error.failure_code
+                    if typed_error is not None
+                    else None
+                )
+
+            event = AIUsageEventCreate(
+                usage_scope="system_internal",
+                capability_code="rag_embedding",
+                billing_mode="internal_only",
+                status="succeeded" if succeeded else "failed",
+                user_id=context.user_id,
+                reading_record_id=context.reading_record_id,
+                reader_run_id=claim.run_id,
+                reader_job_id=claim.job_id,
+                operation_fingerprint=claim.operation_fingerprint,
+                model_route="rag_embedding",
+                model_provider=report.provider_name,
+                model_name=report.model_name,
+                workflow_name=ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+                workflow_version=ARTICLE_RAG_INDEX_WORKER_VERSION,
+                billed_points=0,
+                usage_data={
+                    "provider_usage_available": (
+                        report.usage_completeness
+                        != ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE
+                    ),
+                    "aggregate": {
+                        "input_tokens": report.input_tokens,
+                        "output_tokens": report.output_tokens,
+                        "total_tokens": report.total_tokens,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                    },
+                },
+                error_code=error_code,
+                error_message=None,
+                metadata_json=metadata,
+            )
+
+            # Immutable observation identity: the report plus the stable
+            # association identity. The mutable ``index_publish_outcome``
+            # is deliberately excluded so replay detection is stable
+            # across outcome patches.
+            snapshot_fragment: dict[str, Any] = {
+                "stable_document_id": str(context.stable_document_id),
+                "index_run_id": str(context.index_run_id),
+                "attempt_ordinal": claim.attempt_count,
+                "provider_call_attempted": report.provider_call_attempted,
+                "provider_succeeded": report.provider_succeeded,
+                "usage_completeness": report.usage_completeness,
+                "input_tokens": report.input_tokens,
+                "output_tokens": report.output_tokens,
+                "total_tokens": report.total_tokens,
+                "batch_count": report.batch_count,
+                "completed_batch_count": report.completed_batch_count,
+                "failed_batch_ordinal": report.failed_batch_ordinal,
+                "batches_truncated_count": report.batches_truncated_count,
+                "batches": batches_meta,
+            }
+            observation_hash = compute_usage_invocation_observation_hash(
+                invocation_key=invocation_key,
+                event=event,
+                snapshot_fragment=snapshot_fragment,
+                attempt_ordinal=claim.attempt_count,
+            )
+
+            event_id, disposition = await record_invocation_keyed_usage_event(
+                event,
+                invocation_key=invocation_key,
+                observation_hash=observation_hash,
+                pool=self.get_pool(),
+            )
+            if disposition == "conflict":
+                # Pre-existing row under the same key with a DIFFERENT
+                # observation: never patch it, never overwrite it.
+                logger.warning(
+                    "rag_embedding_usage_invocation_conflict "
+                    "operation=%s invocation_key=%s",
+                    ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+                    invocation_key,
+                )
+                return None
+            if (
+                not succeeded
+                or event_id is None
+                or disposition not in ("inserted", "replayed")
+            ):
+                return None
+            return _UsageEventHandle(
+                event_id=event_id,
+                invocation_key=invocation_key,
+            )
+        except Exception as exc:
+            # Fixed structured log only — never logger.exception: the
+            # exception payload may carry sensitive content. Only the
+            # exception class name is a safe error category.
+            logger.error(
+                "rag_embedding_usage_record_failed operation=%s "
+                "invocation_key=%s error_category=%s",
+                ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+                invocation_key,
+                type(exc).__name__,
+            )
+            return None
+
+    async def _patch_index_publish_outcome(
+        self,
+        usage: _UsageEventHandle,
+        outcome: str,
+    ) -> None:
+        """Patch ``index_publish_outcome`` on one persisted event.
+
+        Must only be called AFTER the business handler / terminal
+        transaction returned successfully. Pure observability: a patch
+        failure is logged (fixed structured fields only) and never
+        alters the already-committed business outcome, the retry /
+        supersede decision, or triggers a second provider call.
+        """
+        try:
+            patched = await update_ai_usage_event_metadata(
+                usage.event_id,
+                metadata_patch={"index_publish_outcome": outcome},
+                pool=self.get_pool(),
+            )
+            if not patched:
+                logger.error(
+                    "rag_embedding_outcome_patch_failed operation=%s "
+                    "invocation_key=%s event_id=%s error_category=%s",
+                    ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+                    usage.invocation_key,
+                    usage.event_id,
+                    "metadata_patch_returned_false",
+                )
+        except Exception as exc:
+            # Fixed structured log only — never logger.exception: the
+            # exception payload may carry sensitive content.
+            logger.error(
+                "rag_embedding_outcome_patch_failed operation=%s "
+                "invocation_key=%s event_id=%s error_category=%s",
+                ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
+                usage.invocation_key,
+                usage.event_id,
+                type(exc).__name__,
+            )
 
     # ------------------------------------------------------------------
     # Mark indexing / detect idempotent no-op
