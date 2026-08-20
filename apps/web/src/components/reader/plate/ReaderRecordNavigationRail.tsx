@@ -322,40 +322,52 @@ function isDescendantOf(
 // ---------------------------------------------------------------------------
 
 interface VisualTicksProps {
-  tickKeys: string[];
+  ticks: Array<Pick<OutlineItem, "key" | "depth">>;
   activeKey: string | null;
   onTickMouseEnter: () => void;
 }
 
+function tickLengthForDepth(depth: number): "lg" | "md" | "sm" {
+  const clamped = Math.min(Math.max(depth, 1), 3);
+  return clamped === 1 ? "lg" : clamped === 2 ? "md" : "sm";
+}
+
 function VisualTicks({
-  tickKeys,
+  ticks,
   activeKey,
   onTickMouseEnter,
 }: VisualTicksProps) {
   return (
     <span
       data-testid="reader-record-mini-rail"
-      className="reader-record-mini-rail flex h-full w-full flex-col items-end justify-center gap-[2px] overflow-hidden py-4"
+      className="reader-record-mini-rail flex h-full w-full flex-col items-end justify-center gap-px overflow-hidden py-3"
       aria-hidden="true"
     >
-      {tickKeys.map((key) => (
-        <span
-          key={key}
-          className="group relative flex min-h-[7px] w-10 flex-1 max-h-4 shrink items-center justify-end rounded-sm px-1"
-          data-navigation-tick-key={key}
-          data-outline-node-id={key}
-          onMouseEnter={onTickMouseEnter}
-        >
+      {ticks.map((tick) => {
+        const depth = Math.min(Math.max(tick.depth, 1), 3);
+        const active = tick.key === activeKey;
+        return (
           <span
-            className={cn(
-              "block h-[1.5px] rounded-full transition-all duration-150 ease-[var(--cl-ease-standard)]",
-              key === activeKey
-                ? "w-5 bg-lens-blue"
-                : "w-3.5 bg-ink/18 group-hover:bg-ink/40",
-            )}
-          />
-        </span>
-      ))}
+            key={tick.key}
+            className="group relative flex min-h-[3px] w-10 flex-1 max-h-3 shrink items-center justify-end rounded-sm px-1"
+            data-navigation-tick-key={tick.key}
+            data-outline-node-id={tick.key}
+            data-outline-depth={depth}
+            data-tick-active={active ? "true" : undefined}
+            onMouseEnter={onTickMouseEnter}
+          >
+            <span
+              data-tick-length={tickLengthForDepth(depth)}
+              className={cn(
+                "reader-record-mini-rail-tick block h-[1.5px] rounded-full transition-[background-color,opacity] duration-150 ease-[var(--cl-ease-standard)]",
+                active
+                  ? "bg-lens-blue"
+                  : "bg-ink/18 group-hover:bg-ink/40",
+              )}
+            />
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -900,8 +912,6 @@ export function ReaderRecordNavigationRail({
 
   const isCanvas = layout === "canvas";
 
-  const tickKeys = ticks.map((t) => t.key);
-
   // "当前第 N 项" counts navigable sections only — groups are not numbered.
   const sectionItems = items.filter((item) => item.role === "section");
   const activeItemIndex =
@@ -916,18 +926,14 @@ export function ReaderRecordNavigationRail({
     activeIndexForLabel,
   );
 
-  // Highlight the root tick that is the active item or an ancestor of it.
-  const activeTickKey = activeKey
-    ? (ticks.find(
-        (t) =>
-          t.key === activeKey ||
-          items.some(
-            (n) =>
-              n.key === activeKey &&
-              (n.key === t.key || isDescendantOf(items, n.key, t.key)),
-          ),
-      )?.key ?? null)
-    : null;
+  // Prefer the active heading's own tick. Semantic nested items may not have
+  // a tick, so fall back to the nearest ancestor that does.
+  const activeTickKey = !activeKey
+    ? null
+    : ticks.some((t) => t.key === activeKey)
+      ? activeKey
+      : (ticks.find((t) => isDescendantOf(items, activeKey, t.key))?.key ??
+        null);
 
   return (
     <nav
@@ -980,7 +986,7 @@ export function ReaderRecordNavigationRail({
         onKeyDown={handleTriggerKeyDown}
       >
         <VisualTicks
-          tickKeys={tickKeys}
+          ticks={ticks}
           activeKey={activeTickKey}
           onTickMouseEnter={handleTickMouseEnter}
         />
@@ -1029,7 +1035,10 @@ function OutlineRow({
           style={indent}
           className="w-full cursor-default py-1.5 pr-2.5 text-left font-medium text-ink/70"
         >
-          <span className="block truncate text-[11px] leading-snug">
+          <span
+            className="reader-record-outline-row-title"
+            data-outline-type-tier={depth}
+          >
             {item.title}
           </span>
         </div>
@@ -1056,11 +1065,14 @@ function OutlineRow({
           "relative w-full py-1.5 pr-2.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
           "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
           active
-            ? "font-medium text-lens-blue"
+            ? "text-lens-blue"
             : "text-ink/60 hover:bg-ink/[0.035] hover:text-ink",
         )}
       >
-        <span className="block truncate text-[11px] leading-snug">
+        <span
+          className="reader-record-outline-row-title"
+          data-outline-type-tier={depth}
+        >
           {item.title}
         </span>
       </button>
