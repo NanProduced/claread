@@ -8,10 +8,11 @@ import type { DailyReaderParagraph } from "@/types/view/DailyReaderVm";
 interface ReadingNoteProps {
   note: DailyReaderParagraph["readingNote"];
   paragraphNumber: number;
+  defaultOpen?: boolean;
 }
 
-export function ReadingNoteExpander({ note, paragraphNumber }: ReadingNoteProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
+export function ReadingNoteExpander({ note, paragraphNumber, defaultOpen = false }: ReadingNoteProps) {
+  const [isOpen, setIsOpen] = React.useState(defaultOpen);
   const contentId = React.useId();
 
   if (!note) return null;
@@ -71,10 +72,15 @@ export function ReadingNoteExpander({ note, paragraphNumber }: ReadingNoteProps)
 interface TranslationProps {
   translation: string | null;
   paragraphNumber: number;
+  defaultOpen?: boolean;
 }
 
-export function TranslationExpander({ translation, paragraphNumber }: TranslationProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
+export function TranslationExpander({
+  translation,
+  paragraphNumber,
+  defaultOpen = false,
+}: TranslationProps) {
+  const [isOpen, setIsOpen] = React.useState(defaultOpen);
   const contentId = React.useId();
 
   if (!translation) return null;

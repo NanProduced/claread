@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import type {
   DailyReaderArticle,
@@ -10,6 +10,39 @@ import type {
 } from "@/types/view/DailyReaderVm";
 import { ReadingNoteExpander, TranslationExpander } from "./EditorialExpanders";
 import { InteractiveHighlight } from "./InteractiveHighlight";
+
+const READER_MODE_STORAGE_KEY = "claread.daily.reader-mode";
+const READER_MODE_EVENT = "claread:daily-reader-mode-change";
+let inMemoryLearningMode = false;
+
+function subscribeToReaderMode(onStoreChange: () => void) {
+  window.addEventListener(READER_MODE_EVENT, onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    window.removeEventListener(READER_MODE_EVENT, onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
+function getReaderModeSnapshot() {
+  try {
+    inMemoryLearningMode =
+      window.localStorage.getItem(READER_MODE_STORAGE_KEY) === "learning";
+  } catch {
+    // Fall back to the current-tab value when storage is blocked.
+  }
+  return inMemoryLearningMode;
+}
+
+function setReaderMode(learningMode: boolean) {
+  inMemoryLearningMode = learningMode;
+  try {
+    window.localStorage.setItem(READER_MODE_STORAGE_KEY, learningMode ? "learning" : "browse");
+  } catch {
+    // The custom event still keeps this visit usable when storage is blocked.
+  }
+  window.dispatchEvent(new Event(READER_MODE_EVENT));
+}
 
 function renderHighlightedText(
   text: string,
@@ -113,6 +146,11 @@ function InlineImage({ image }: { image: DailyReaderImageBlock }) {
 
 export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
+  const learningMode = useSyncExternalStore(
+    subscribeToReaderMode,
+    getReaderModeSnapshot,
+    () => false,
+  );
   const inlineImage = article.body.images?.find((image) => image.role === "inline");
   const inlineImageAfter = Math.min(2, Math.max(0, Math.floor(article.body.paragraphs.length / 3)));
 
@@ -132,8 +170,52 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
     setActiveHighlightId((current) => (current === highlight.id ? null : highlight.id));
   };
 
+  const toggleLearningMode = () => {
+    setReaderMode(!learningMode);
+  };
+
   return (
     <div className="dr-font-en mt-16 text-[length:var(--dr-type-body-size)] leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
+      <div className="dr-font-ui mb-12 flex flex-col gap-3 border-y border-[color:var(--dr-rule)] py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-ink)]">
+            阅读方式
+          </p>
+          <p className="mt-1 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
+            {learningMode ? "学习模式：默认展开导读与译文" : "浏览模式：需要时逐段展开解析"}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label="学习模式"
+          aria-checked={learningMode}
+          onClick={toggleLearningMode}
+          className="focus-ring grid min-h-11 shrink-0 grid-cols-2 border border-[color:var(--dr-rule)] text-[length:var(--dr-type-caption-size)] font-semibold"
+        >
+          <span
+            className={cn(
+              "flex min-w-16 items-center justify-center px-3",
+              !learningMode
+                ? "bg-[var(--dr-ink)] text-[color:var(--dr-paper)]"
+                : "text-[color:var(--dr-meta)]",
+            )}
+          >
+            浏览
+          </span>
+          <span
+            className={cn(
+              "flex min-w-16 items-center justify-center px-3",
+              learningMode
+                ? "bg-[var(--dr-ink)] text-[color:var(--dr-paper)]"
+                : "text-[color:var(--dr-meta)]",
+            )}
+          >
+            学习
+          </span>
+        </button>
+      </div>
+
       {article.body.paragraphs.map((paragraph, index) => {
         const paragraphNumber = index + 1;
         const hasDropCap = index === 0 && /^[A-Za-z]/.test(paragraph.text);
@@ -149,8 +231,10 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
 
               {paragraph.readingNote ? (
                 <ReadingNoteExpander
+                  key={`guide-${paragraph.id}-${learningMode}`}
                   note={paragraph.readingNote}
                   paragraphNumber={paragraphNumber}
+                  defaultOpen={learningMode}
                 />
               ) : null}
 
@@ -172,8 +256,10 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
 
               {paragraph.translation ? (
                 <TranslationExpander
+                  key={`translation-${paragraph.id}-${learningMode}`}
                   translation={paragraph.translation}
                   paragraphNumber={paragraphNumber}
+                  defaultOpen={learningMode}
                 />
               ) : null}
             </section>

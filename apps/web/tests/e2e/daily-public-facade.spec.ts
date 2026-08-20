@@ -215,6 +215,46 @@ test.describe("daily public facade (C-3)", () => {
     await expect(page.locator("[data-sonner-toast]").first()).toBeVisible({ timeout: 10_000 });
   });
 
+  test("C-4: 学习模式批量展开导读与译文并在刷新后保留", async ({ page }) => {
+    await page.goto(DETAIL_PATH);
+
+    const modeSwitch = page.getByRole("switch", { name: "学习模式" });
+    await expect(modeSwitch).toHaveAttribute("aria-checked", "false");
+    await modeSwitch.click();
+
+    await expect(modeSwitch).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("button", { name: "收起第 1 段导读" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "收起第 1 段译文" })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole("switch", { name: "学习模式" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  test("C-4: 登录态在原页加入阅读记录并获得成功反馈", async ({ page, context }) => {
+    await context.addCookies([
+      { name: "claread_web_session", value: "e2e-session", domain: "127.0.0.1", path: "/" },
+    ]);
+    let favorited = false;
+    await page.route("**/api/web/daily-reader/*/favorite", async (route) => {
+      if (route.request().method() === "POST") favorited = true;
+      if (route.request().method() === "DELETE") favorited = false;
+      await route.fulfill({ json: { ok: true, favorited } });
+    });
+
+    await page.goto(`${DETAIL_PATH}?intent=save`);
+
+    await expect(page.getByRole("link", { name: "进入 Claread" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "已加入阅读记录" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page).toHaveURL(new RegExp(`${DETAIL_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+    await expect(page.getByText("已加入阅读记录", { exact: true }).last()).toBeVisible();
+  });
+
   test("SEO: 详情页 OG/Twitter/JSON-LD 与列表页基础 meta", async ({ page }) => {
     await page.goto(DETAIL_PATH);
     await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", /.+/);

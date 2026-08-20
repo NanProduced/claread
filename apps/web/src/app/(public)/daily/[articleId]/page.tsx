@@ -1,11 +1,12 @@
-import { ArrowLeft, BookMarked, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { dailyArticleRoute, dailyRoute, loginRoute } from "@/lib/routes";
+import { appReadRoute, dailyArticleRoute, dailyRoute, loginRoute } from "@/lib/routes";
 import { fetchDailyReaderArticle } from "@/services/api/daily-reader";
+import { getWebSession } from "@/services/bff/session";
 import type { DailyReaderArticle } from "@/types/view/DailyReaderVm";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ function formatPublishDate(value: string): string {
 }
 
 import { DailyArticleBody } from "./DailyArticleBody";
+import { DailyArticleSaveButton } from "./DailyArticleSaveButton";
 import { DailyArticleShareButton } from "./DailyArticleShareButton";
 
 /* ---------- SEO / 分享元信息（C-3） ---------- */
@@ -45,6 +47,7 @@ function articleDescription(article: DailyReaderArticle): string {
 
 type DailyArticlePageProps = {
   params: Promise<{ articleId: string }>;
+  searchParams: Promise<{ intent?: string | string[] }>;
 };
 
 export async function generateMetadata({ params }: DailyArticlePageProps): Promise<Metadata> {
@@ -81,7 +84,7 @@ export async function generateMetadata({ params }: DailyArticlePageProps): Promi
 
 /* ---------- Publication Header ---------- */
 
-function PublicationHeader() {
+function PublicationHeader({ isSignedIn }: { isSignedIn: boolean }) {
   return (
     <header className="mx-auto grid max-w-7xl grid-cols-[1fr_auto_1fr] items-center px-5 py-5 sm:px-8 lg:px-12">
       <Link
@@ -100,10 +103,10 @@ function PublicationHeader() {
         className="h-auto w-28 opacity-80 sm:w-36"
       />
       <Link
-        href={loginRoute(dailyRoute)}
+        href={isSignedIn ? appReadRoute : loginRoute(dailyRoute)}
         className="dr-font-ui focus-ring ml-auto inline-flex min-h-11 items-center text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-meta)] transition-colors hover:text-[color:var(--dr-accent)]"
       >
-        登录
+        {isSignedIn ? "进入 Claread" : "登录"}
       </Link>
     </header>
   );
@@ -206,13 +209,6 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
         <span>{article.difficulty}</span>
       </div>
       <div className="flex items-center gap-1">
-        <Link
-          href={loginSaveRoute(article.id)}
-          className="focus-ring inline-flex min-h-11 min-w-11 items-center justify-center text-[color:var(--dr-meta)] transition-colors hover:text-[color:var(--dr-accent)]"
-          aria-label="收藏"
-        >
-          <BookMarked aria-hidden="true" className="h-[18px] w-[18px]" />
-        </Link>
         <a
           href={article.sourceUrl}
           target="_blank"
@@ -436,15 +432,20 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
 /* ---------- Main Page ---------- */
 
-export default async function DailyArticlePage({ params }: DailyArticlePageProps) {
+export default async function DailyArticlePage({ params, searchParams }: DailyArticlePageProps) {
   const { articleId } = await params;
-  const result = await fetchDailyReaderArticle(articleId);
+  const { intent } = await searchParams;
+  const [result, session] = await Promise.all([
+    fetchDailyReaderArticle(articleId),
+    getWebSession(),
+  ]);
 
   if (!result.ok) {
     notFound();
   }
 
   const article = result.data;
+  const canFavorite = session.kind === "authenticated" || session.kind === "debug";
 
   // Article 结构化数据（JSON-LD），供搜索引擎与分享卡片识别。
   const jsonLd = {
@@ -464,7 +465,7 @@ export default async function DailyArticlePage({ params }: DailyArticlePageProps
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
-      <PublicationHeader />
+      <PublicationHeader isSignedIn={canFavorite} />
 
       <article>
         <ArticleOpener article={article} />
@@ -502,13 +503,12 @@ export default async function DailyArticlePage({ params }: DailyArticlePageProps
             <p className="dr-font-zh max-w-[34rem] text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-meta)]">
               保存这篇精读，把逐段导读、译文与表达解析带进你的阅读记录。
             </p>
-            <Link
-              href={loginSaveRoute(article.id)}
-              className="dr-font-ui focus-ring mt-5 inline-flex min-h-11 items-center gap-2 bg-[var(--dr-ink)] px-5 text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-paper)] transition-opacity hover:opacity-90"
-            >
-              <BookMarked aria-hidden="true" className="h-4 w-4" />
-              加入我的阅读记录
-            </Link>
+            <DailyArticleSaveButton
+              articleId={article.id}
+              autoSave={canFavorite && intent === "save"}
+              canFavorite={canFavorite}
+              loginHref={loginSaveRoute(article.id)}
+            />
           </div>
         </div>
       </article>

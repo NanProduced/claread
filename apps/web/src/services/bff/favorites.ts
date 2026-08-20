@@ -10,6 +10,7 @@ import type { FavoriteResponseDto } from "@/types/api/favorites";
 import type { FavoriteTargetType } from "@claread/contracts";
 
 const READING_RECORD_TARGET_TYPE: FavoriteTargetType = "reading_record";
+const DAILY_READER_TARGET_TYPE: FavoriteTargetType = "daily_reader_article";
 
 export type FavoriteBffResult =
   | {
@@ -30,8 +31,16 @@ export type FavoriteBffResult =
       message: string;
     };
 
-function normalizeRecordId(recordId: string): string {
-  return recordId.trim();
+function normalizeTargetKey(value: string): string {
+  return value.trim();
+}
+
+function dailyReaderTargetKey(articleId: string): string {
+  return `${DAILY_READER_TARGET_TYPE}:${articleId}`;
+}
+
+function badRequest(message: string): FavoriteBffResult {
+  return { ok: false, status: 400, code: "bad_request", message };
 }
 
 function authError(session: WebSession): FavoriteBffResult {
@@ -57,109 +66,79 @@ function upstreamError(status: number, message: string): FavoriteBffResult {
       : status === 401
         ? "upstream_auth_failed"
         : "upstream_error",
-    message: unavailable ? "收藏服务暂时不可用，请稍后重试。" : message,
+    message: unavailable
+      ? "收藏服务暂时不可用，请稍后重试。"
+      : status === 401
+        ? "登录已失效，请重新登录。"
+        : message,
   };
 }
 
-function findRecordFavorite(items: FavoriteResponseDto[], recordId: string) {
+function findFavorite(
+  items: FavoriteResponseDto[],
+  targetType: FavoriteTargetType,
+  targetKey: string,
+) {
   return items.find(
-    (item) =>
-      item.target_type === READING_RECORD_TARGET_TYPE && item.target_key === recordId,
+    (item) => item.target_type === targetType && item.target_key === targetKey,
   );
 }
 
-export async function getRecordFavoriteState(recordId: string): Promise<FavoriteBffResult> {
-  const normalizedRecordId = normalizeRecordId(recordId);
-
-  if (!normalizedRecordId) {
-    return {
-      ok: false,
-      status: 400,
-      code: "bad_request",
-      message: "Missing record id.",
-    };
-  }
-
+async function getFavoriteState(
+  targetType: FavoriteTargetType,
+  targetKey: string,
+): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
     return authError(session);
   }
 
   const upstreamResult = await listFavorites(session.sessionToken);
-
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);
   }
 
-  const favorite = findRecordFavorite(upstreamResult.data.items, normalizedRecordId);
+  const favorite = findFavorite(upstreamResult.data.items, targetType, targetKey);
 
-  return {
-    ok: true,
-    favorited: Boolean(favorite),
-    favorite,
-  };
+  return { ok: true, favorited: Boolean(favorite), favorite };
 }
 
-export async function favoriteRecord(recordId: string): Promise<FavoriteBffResult> {
-  const normalizedRecordId = normalizeRecordId(recordId);
-
-  if (!normalizedRecordId) {
-    return {
-      ok: false,
-      status: 400,
-      code: "bad_request",
-      message: "Missing record id.",
-    };
-  }
-
+async function favoriteTarget(
+  targetType: FavoriteTargetType,
+  targetKey: string,
+  payload: Record<string, unknown>,
+): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
     return authError(session);
   }
 
   const upstreamResult = await createFavorite(session.sessionToken, {
-    target_type: READING_RECORD_TARGET_TYPE,
-    target_key: normalizedRecordId,
-    payload_json: {},
+    target_type: targetType,
+    target_key: targetKey,
+    payload_json: payload,
   });
-
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);
   }
 
-  return {
-    ok: true,
-    favorited: true,
-    message: "已收藏。",
-  };
+  return { ok: true, favorited: true, message: "已收藏。" };
 }
 
-export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffResult> {
-  const normalizedRecordId = normalizeRecordId(recordId);
-
-  if (!normalizedRecordId) {
-    return {
-      ok: false,
-      status: 400,
-      code: "bad_request",
-      message: "Missing record id.",
-    };
-  }
-
+async function unfavoriteTarget(
+  targetType: FavoriteTargetType,
+  targetKey: string,
+): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-
   if (session.kind === "anonymous" || session.kind === "mock_phone") {
     return authError(session);
   }
 
   const upstreamResult = await deleteFavoriteByTargetKey(
     session.sessionToken,
-    READING_RECORD_TARGET_TYPE,
-    normalizedRecordId,
+    targetType,
+    targetKey,
   );
-
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);
   }
@@ -169,4 +148,50 @@ export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffRes
     favorited: false,
     message: upstreamResult.data.deleted ? "已取消收藏。" : "这条记录尚未收藏。",
   };
+}
+
+export async function getRecordFavoriteState(recordId: string): Promise<FavoriteBffResult> {
+  const normalizedRecordId = normalizeTargetKey(recordId);
+  return normalizedRecordId
+    ? getFavoriteState(READING_RECORD_TARGET_TYPE, normalizedRecordId)
+    : badRequest("Missing record id.");
+}
+
+export async function favoriteRecord(recordId: string): Promise<FavoriteBffResult> {
+  const normalizedRecordId = normalizeTargetKey(recordId);
+  return normalizedRecordId
+    ? favoriteTarget(READING_RECORD_TARGET_TYPE, normalizedRecordId, {})
+    : badRequest("Missing record id.");
+}
+
+export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffResult> {
+  const normalizedRecordId = normalizeTargetKey(recordId);
+  return normalizedRecordId
+    ? unfavoriteTarget(READING_RECORD_TARGET_TYPE, normalizedRecordId)
+    : badRequest("Missing record id.");
+}
+
+export async function getDailyReaderArticleFavoriteState(
+  articleId: string,
+): Promise<FavoriteBffResult> {
+  const normalizedArticleId = normalizeTargetKey(articleId);
+  return normalizedArticleId
+    ? getFavoriteState(DAILY_READER_TARGET_TYPE, dailyReaderTargetKey(normalizedArticleId))
+    : badRequest("Missing article id.");
+}
+
+export async function favoriteDailyReaderArticle(articleId: string): Promise<FavoriteBffResult> {
+  const normalizedArticleId = normalizeTargetKey(articleId);
+  return normalizedArticleId
+    ? favoriteTarget(DAILY_READER_TARGET_TYPE, dailyReaderTargetKey(normalizedArticleId), {
+        article_id: normalizedArticleId,
+      })
+    : badRequest("Missing article id.");
+}
+
+export async function unfavoriteDailyReaderArticle(articleId: string): Promise<FavoriteBffResult> {
+  const normalizedArticleId = normalizeTargetKey(articleId);
+  return normalizedArticleId
+    ? unfavoriteTarget(DAILY_READER_TARGET_TYPE, dailyReaderTargetKey(normalizedArticleId))
+    : badRequest("Missing article id.");
 }
