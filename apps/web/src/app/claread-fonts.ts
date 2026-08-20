@@ -1,4 +1,4 @@
-import { IBM_Plex_Mono, Inter, Newsreader } from "next/font/google";
+import { IBM_Plex_Mono, Inter, Newsreader, Source_Serif_4 } from "next/font/google";
 
 const clareadUiSans = Inter({
   subsets: ["latin"],
@@ -6,9 +6,15 @@ const clareadUiSans = Inter({
   display: "swap",
 });
 
-const clareadReadingSerif = Newsreader({
+const clareadReadingSerif = Source_Serif_4({
   subsets: ["latin"],
   variable: "--font-reading-en",
+  display: "swap",
+});
+
+const clareadDailyReadingSerif = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-daily-reading-en",
   display: "swap",
 });
 
@@ -22,5 +28,6 @@ const clareadMono = IBM_Plex_Mono({
 export const clareadFontVariables = [
   clareadUiSans.variable,
   clareadReadingSerif.variable,
+  clareadDailyReadingSerif.variable,
   clareadMono.variable,
 ].join(" ");

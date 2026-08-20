@@ -272,3 +272,158 @@ describe("Claread Web semantic tokens", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Daily Reader surface (public /daily pages) token and font contract.
+// The Daily magazine surface owns a scoped --dr-* token group; the Daily
+// reading serif is a dedicated next/font variable so the global reading
+// font stays on Source Serif 4 for every non-Daily page.
+// ---------------------------------------------------------------------------
+
+const clareadFontsTs = readFileSync(
+  resolve(__dirname, "../app/claread-fonts.ts"),
+  "utf8",
+);
+const dailyPages = [
+  resolve(__dirname, "../app/(public)/daily/page.tsx"),
+  resolve(__dirname, "../app/(public)/daily/[articleId]/page.tsx"),
+] as const;
+const notoSerifDir = resolve(__dirname, "../../public/fonts/noto-serif-sc");
+
+function cssBlock(source: string, selector: string): string {
+  const start = source.indexOf(selector);
+  if (start === -1) {
+    throw new Error(`Selector not found in CSS source: ${selector}`);
+  }
+  const open = source.indexOf("{", start);
+  let depth = 1;
+  let i = open + 1;
+  while (depth > 0 && i < source.length) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") depth -= 1;
+    i += 1;
+  }
+  return source.slice(start, i);
+}
+
+function notoFontFaceBlock(): string {
+  const idx = globalsCss.indexOf('font-family: "Claread Noto Serif SC";');
+  expect(idx, "Claread Noto Serif SC @font-face must exist").toBeGreaterThanOrEqual(0);
+  const start = globalsCss.lastIndexOf("@font-face", idx);
+  return cssBlock(globalsCss.slice(start), "@font-face");
+}
+
+describe("Daily Reader surface tokens and fonts", () => {
+  it("defines the scoped --dr-* token group on .daily-reader-surface", () => {
+    const block = cssBlock(globalsCss, ".daily-reader-surface {");
+    expect(block).toContain("--dr-paper: #F7F5F2;");
+    expect(block).toContain("--dr-paper-raised: #FFFFFF;");
+    expect(block).toContain("--dr-ink: #1A1A1A;");
+    expect(block).toContain("--dr-ink-zh: #33302C;");
+    expect(block).toContain("--dr-meta: #6B6B6B;");
+    expect(block).toContain("--dr-rule: #D9D4CD;");
+    // Brand blue as an independent literal Daily accent, never an alias
+    // of the workspace action tokens.
+    expect(block).toContain("--dr-accent: #1F5EFF;");
+    expect(block).not.toMatch(/--dr-accent:\s*var\(/);
+    expect(block).toContain("--dr-ratio-hero: 21 / 9;");
+    expect(block).toContain("--dr-ratio-inline: 3 / 2;");
+    expect(block).toContain("--dr-ratio-square: 1 / 1;");
+  });
+
+  it("scopes the Daily reading serif, font stacks, and type ramp to the surface", () => {
+    const block = cssBlock(globalsCss, ".daily-reader-surface {");
+    expect(block).toContain(
+      "--dr-font-en: var(--font-daily-reading-en), Georgia, serif;",
+    );
+    expect(block).toContain(
+      '--dr-font-zh: "Claread Noto Serif SC", var(--font-reading-en), "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;',
+    );
+    expect(block).toContain(
+      "--dr-font-mono: var(--font-mono-en), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;",
+    );
+    // Fluid clamp is reserved for the hero and article headline steps.
+    expect(block).toContain(
+      "--dr-type-hero-size: clamp(2rem, 1.2rem + 4vw, 3.5rem);",
+    );
+    expect(block).toContain(
+      "--dr-type-headline-size: clamp(1.625rem, 1.3rem + 1vw, 2rem);",
+    );
+    expect(block).toContain("--dr-type-zh-size: 0.9375rem;");
+    expect(block).toContain("--dr-type-zh-lh: 1.8;");
+    for (const step of ["deck", "body", "zh", "caption", "mono"]) {
+      expect(block).not.toMatch(
+        new RegExp(`--dr-type-${step}-size:[^;]*clamp\\(`),
+      );
+    }
+    // The Daily serif variable is referenced exactly once in globals.css
+    // (by the surface stack) and the surface class lives only on the two
+    // public Daily pages.
+    expect(globalsCss.match(/var\(--font-daily-reading-en\)/g)).toHaveLength(1);
+    for (const page of dailyPages) {
+      expect(readFileSync(page, "utf8")).toMatch(
+        /<main className="daily-reader-surface /,
+      );
+    }
+  });
+
+  it("keeps the global reading font on Source Serif 4 and wires the Daily fonts via next/font", () => {
+    expect(clareadFontsTs).toContain(
+      'import { IBM_Plex_Mono, Inter, Newsreader, Source_Serif_4 } from "next/font/google";',
+    );
+    expect(clareadFontsTs).toContain("const clareadUiSans = Inter({");
+    expect(clareadFontsTs).toContain('variable: "--font-ui-en",');
+    expect(clareadFontsTs).toContain("const clareadReadingSerif = Source_Serif_4({");
+    expect(clareadFontsTs).toContain('variable: "--font-reading-en",');
+    expect(clareadFontsTs).toContain("const clareadDailyReadingSerif = Newsreader({");
+    expect(clareadFontsTs).toContain('variable: "--font-daily-reading-en",');
+    expect(clareadFontsTs).toContain("const clareadMono = IBM_Plex_Mono({");
+    expect(clareadFontsTs).toContain('weight: ["400", "500"],');
+    expect(clareadFontsTs).toContain('variable: "--font-mono-en",');
+    expect(clareadFontsTs).toContain("clareadReadingSerif.variable,");
+    expect(clareadFontsTs).toContain("clareadDailyReadingSerif.variable,");
+    expect(clareadFontsTs).toContain("clareadMono.variable,");
+
+    // The Tailwind reading utilities resolve at :root, where tokens.css
+    // declares --font-reading-en: Newsreader; a var() reference would
+    // flatten to that phantom name and now match the global Newsreader
+    // face. They must spell out the global serif instead so non-Daily
+    // pages render Source Serif 4.
+    const themeBlock = cssBlock(globalsCss, "@theme {");
+    for (const stack of ["--font-display:", "--font-headline:", "--font-reading:"]) {
+      const decl = themeBlock
+        .split("\n")
+        .find((line) => line.trim().startsWith(stack));
+      expect(decl, `${stack} declaration must exist in @theme`).toBeTruthy();
+      expect(decl).toContain(
+        '"Source Serif 4", "Source Serif 4 Fallback", var(--font-reading-zh), Georgia, "Times New Roman", serif;',
+      );
+      expect(decl).not.toContain("var(--font-reading-en)");
+      expect(decl).not.toContain("Newsreader");
+    }
+  });
+
+  it("self-hosts the Noto Serif SC subset with swap and a CJK-only unicode-range", () => {
+    const face = notoFontFaceBlock();
+    expect(face).toContain(
+      'src: url("/fonts/noto-serif-sc/noto-serif-sc-regular-subset.woff2") format("woff2");',
+    );
+    expect(face).toContain("font-display: swap;");
+    expect(face).toContain("font-weight: 400;");
+    expect(face).toMatch(/unicode-range:[^;]*U\+00D7/);
+    expect(face).toMatch(/unicode-range:[^;]*U\+2103/);
+    expect(face).toMatch(/unicode-range:[^;]*U\+4E00-9FFF/);
+    // Basic Latin stays with the Latin webfonts (Newsreader / Inter).
+    expect(face).not.toMatch(/U\+0000-007F/);
+    expect(face).not.toMatch(/U\+0020-007E/);
+    const woff2 = readFileSync(
+      resolve(notoSerifDir, "noto-serif-sc-regular-subset.woff2"),
+    );
+    expect(woff2.byteLength).toBeGreaterThan(100_000);
+    expect(woff2.byteLength).toBeLessThan(4_000_000);
+    expect(readFileSync(resolve(notoSerifDir, "OFL.txt"), "utf8")).toMatch(
+      /SIL OPEN FONT LICENSE/i,
+    );
+  });
+});

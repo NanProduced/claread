@@ -93,9 +93,15 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --font-display: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
-  --font-headline: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
-  --font-reading: var(--font-reading-en), var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  /* Tailwind resolves @theme values at :root, where tokens.css declares
+   * --font-reading-en: Newsreader; a var() reference here would flatten
+   * to that name before the body-level next/font value applies. Spell
+   * the global reading serif out so non-Daily pages render Source
+   * Serif 4; the Daily surface keeps its own scoped stack via
+   * --dr-font-en. */
+  --font-display: "Source Serif 4", "Source Serif 4 Fallback", var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  --font-headline: "Source Serif 4", "Source Serif 4 Fallback", var(--font-reading-zh), Georgia, "Times New Roman", serif;
+  --font-reading: "Source Serif 4", "Source Serif 4 Fallback", var(--font-reading-zh), Georgia, "Times New Roman", serif;
   --font-sans: var(--font-ui-en), var(--font-ui-zh), -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
 
   --radius-xs: 4px;
@@ -5063,11 +5069,11 @@ select {
 /* ====================================================================
  * Daily Reader surface (public /daily pages).
  *
- * Scoped token group for the bilingual magazine surface defined in
- * tmp/daily-reader-optimization/surface-brief-daily-reader.md. The
- * class is wired to the outermost <main> of /daily and /daily/[articleId]
- * only; --dr-* tokens must not leak into workspace pages. C-2 maps the
- * Daily page components onto these tokens.
+ * Scoped token group for the bilingual Daily Reader magazine surface.
+ * The class is wired to the outermost <main> of /daily and
+ * /daily/[articleId] only; --dr-* tokens must not leak into workspace
+ * pages. Later magazine work maps the Daily page components onto these
+ * tokens.
  * ==================================================================== */
 
 /* Self-hosted Noto Serif SC subset (GB2312 level-1+2 hanzi plus CJK
@@ -5082,7 +5088,7 @@ select {
   font-weight: 400;
   font-style: normal;
   font-display: swap;
-  unicode-range: U+00B7, U+2013-2014, U+2018-201A, U+201C-201E, U+2026, U+3000-303F, U+4E00-9FFF, U+FF01-FF60;
+  unicode-range: U+00B7, U+00D7, U+2013-2014, U+2018-201A, U+201C-201E, U+2026, U+2103, U+3000-303F, U+4E00-9FFF, U+FF01-FF60;
 }
 
 .daily-reader-surface {
@@ -5103,11 +5109,12 @@ select {
   --dr-ratio-inline: 3 / 2;
   --dr-ratio-square: 1 / 1;
 
-  /* Font stacks. English reading serif is Newsreader via next/font
-   * (--font-reading-en); the Chinese stack leads with the subset
+  /* Font stacks. The Daily English reading serif is Newsreader, loaded
+   * through a dedicated Daily next/font variable so the global reading
+   * serif stays untouched; the Chinese stack leads with the subset
    * webfont and falls back to system CJK serifs; mono serves issue
    * numbers, dates, kickers, and marginal numbers. */
-  --dr-font-en: var(--font-reading-en), Georgia, serif;
+  --dr-font-en: var(--font-daily-reading-en), Georgia, serif;
   --dr-font-zh: "Claread Noto Serif SC", var(--font-reading-en), "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
   --dr-font-ui: var(--font-ui-en), var(--font-ui-zh), sans-serif;
   --dr-font-mono: var(--font-mono-en), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
