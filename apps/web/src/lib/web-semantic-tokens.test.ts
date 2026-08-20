@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   clareadTailwindPreset,
@@ -366,6 +366,22 @@ describe("Daily Reader surface tokens and fonts", () => {
         /<main className="daily-reader-surface /,
       );
     }
+  });
+
+  it("keeps the Daily surface class out of every non-Daily app page", () => {
+    const appDir = resolve(__dirname, "../app");
+    const owners = readdirSync(appDir, { recursive: true, encoding: "utf8" })
+      .filter((path) => path.endsWith("page.tsx"))
+      .filter((path) =>
+        readFileSync(resolve(appDir, path), "utf8").includes("daily-reader-surface"),
+      )
+      .map((path) => path.replaceAll("\\", "/"))
+      .sort();
+
+    expect(owners).toEqual([
+      "(public)/daily/[articleId]/page.tsx",
+      "(public)/daily/page.tsx",
+    ]);
   });
 
   it("keeps the global reading font on Source Serif 4 and wires the Daily fonts via next/font", () => {

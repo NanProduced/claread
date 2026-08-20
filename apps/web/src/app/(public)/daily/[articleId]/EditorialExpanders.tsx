@@ -7,48 +7,58 @@ import type { DailyReaderParagraph } from "@/types/view/DailyReaderVm";
 
 interface ReadingNoteProps {
   note: DailyReaderParagraph["readingNote"];
+  paragraphNumber: number;
 }
 
-export function ReadingNoteExpander({ note }: ReadingNoteProps) {
+export function ReadingNoteExpander({ note, paragraphNumber }: ReadingNoteProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const contentId = React.useId();
 
   if (!note) return null;
 
+  const actionLabel = `${isOpen ? "收起" : "展开"}第 ${paragraphNumber} 段导读`;
+
   return (
-    <div className="mb-6">
+    <div className="mb-6 border-t border-[color:var(--dr-rule)] pt-3">
       <button
         type="button"
         onClick={() => setIsOpen((o) => !o)}
-        className="group flex w-full flex-col gap-1 text-left focus:outline-none"
+        className="group flex min-h-11 w-full items-start gap-4 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--dr-accent)]"
         aria-expanded={isOpen}
+        aria-controls={contentId}
+        aria-label={actionLabel}
       >
-        <div className="flex w-full items-center gap-2 border-b border-hairline pb-2 transition-colors group-hover:border-ink/20">
-          <span className="font-reading text-[1.1rem] font-medium italic text-ink-soft transition-colors group-hover:text-ink">
+        <span className="dr-font-mono mt-1 shrink-0 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)]">
+          段落 {String(paragraphNumber).padStart(2, "0")}
+        </span>
+        <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <span className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)] transition-colors group-hover:text-[color:var(--dr-ink)]">
             {note.focusQuestion}
           </span>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <span className="font-sans text-[0.65rem] font-bold tracking-[0.1em] text-muted-foreground transition-colors group-hover:text-ink">
-              {isOpen ? "Close" : "Expand"}
-            </span>
+          <span className="flex min-h-11 shrink-0 items-center gap-1 self-center text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-ink)]">
+            <span>{isOpen ? "收起导读" : "展开导读"}</span>
             <ChevronDown
+              aria-hidden="true"
               className={cn(
-                "h-3 w-3 text-muted-foreground transition-all duration-300 group-hover:text-ink",
-                isOpen && "rotate-180"
+                "h-4 w-4 transition-transform duration-200 motion-reduce:transition-none",
+                isOpen && "rotate-180",
               )}
             />
-          </div>
-        </div>
+          </span>
+        </span>
       </button>
 
       <div
+        id={contentId}
+        aria-hidden={!isOpen}
         className={cn(
-          "grid transition-all duration-300 ease-[cubic-bezier(0.19,1,0.22,1)]",
-          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
         )}
       >
         <div className="overflow-hidden">
-          <div className="mt-4 rounded-md bg-surface-warm/60 px-5 py-4">
-            <p className="font-sans text-[0.95rem] leading-[1.8] text-ink-soft">
+          <div className="mt-3 border-t border-[color:var(--dr-rule)] bg-[var(--dr-paper-raised)] px-4 py-3">
+            <p className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
               {note.microSummary}
             </p>
           </div>
@@ -60,35 +70,50 @@ export function ReadingNoteExpander({ note }: ReadingNoteProps) {
 
 interface TranslationProps {
   translation: string | null;
+  paragraphNumber: number;
 }
 
-export function TranslationExpander({ translation }: TranslationProps) {
+export function TranslationExpander({ translation, paragraphNumber }: TranslationProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const contentId = React.useId();
 
   if (!translation) return null;
 
+  const actionLabel = `${isOpen ? "收起" : "显示"}第 ${paragraphNumber} 段译文`;
+
   return (
-    <div className="mt-8 mb-4">
+    <div className="mt-6">
       <button
         type="button"
         onClick={() => setIsOpen((o) => !o)}
-        className="group flex items-center gap-4 focus:outline-none"
+        className="group flex min-h-11 items-center gap-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[color:var(--dr-accent)]"
         aria-expanded={isOpen}
+        aria-controls={contentId}
+        aria-label={actionLabel}
       >
-        <div className="h-px w-10 bg-hairline transition-all duration-300 group-hover:w-16 group-hover:bg-muted" />
-        <span className="font-sans text-[0.65rem] font-bold tracking-[0.2em] text-muted-foreground transition-colors group-hover:text-ink">
-          {isOpen ? "Hide Translation" : "Show Translation"}
+        <span aria-hidden="true" className="h-px w-8 bg-[var(--dr-rule)]" />
+        <span className="text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-ink)]">
+          {isOpen ? "收起译文" : "显示译文"}
         </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "h-4 w-4 transition-transform duration-200 motion-reduce:transition-none",
+            isOpen && "rotate-180",
+          )}
+        />
       </button>
 
       <div
+        id={contentId}
+        aria-hidden={!isOpen}
         className={cn(
-          "grid transition-all duration-300 ease-[cubic-bezier(0.19,1,0.22,1)]",
-          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
         )}
       >
         <div className="overflow-hidden">
-          <div className="mt-5 font-sans text-[0.95rem] leading-[1.85] text-muted-foreground">
+          <div className="dr-font-zh mt-3 border-t border-[color:var(--dr-rule)] pt-4 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
             <p>{translation}</p>
           </div>
         </div>

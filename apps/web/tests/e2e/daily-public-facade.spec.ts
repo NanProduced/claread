@@ -115,22 +115,17 @@ test.describe("daily public facade (C-3)", () => {
       }, [ctaColors.color, ctaColors.bg] as const),
     ).toBe(false);
 
-    // 来源链接恢复品牌色（不再被 inherit 污染成正文墨色），且等于 lens-blue token。
-    const sourceLink = page.locator("section a.text-lens-blue").last();
+    // 来源链接保持 Daily 品牌色，不被 inherit 污染成正文墨色。
+    const sourceLink = page.getByRole("heading", { name: "来源" }).locator("..").getByRole("link");
     await expect(sourceLink).toBeVisible();
     const sourceColors = await probeLocator(page, sourceLink);
     const bodyColor = await page.evaluate(
       () => (window as unknown as { __c3Probe: () => { bodyColor: string } }).__c3Probe().bodyColor,
     );
-    const lensBlue = await page.evaluate(() => {
-      const probe = document.createElement("span");
-      probe.className = "text-lens-blue";
-      document.body.appendChild(probe);
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    });
-    expect(sourceColors.color).toBe(lensBlue);
+    const dailyAccent = await page.locator("main.daily-reader-surface").evaluate(
+      (element) => getComputedStyle(element).getPropertyValue("--dr-accent").trim(),
+    );
+    expect(dailyAccent).toBe("#1f5eff");
     expect(
       await page.evaluate(([color, body]) => {
         return (window as unknown as { __c3Probe: () => { sameColor: (a: string, b: string, t?: number) => boolean } })
@@ -138,6 +133,48 @@ test.describe("daily public facade (C-3)", () => {
           .sameColor(color, body, 4);
       }, [sourceColors.color, bodyColor] as const),
     ).toBe(false);
+  });
+
+  test("C-2: 桌面正文使用中文学习控件与段落锚定边注", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(DETAIL_PATH);
+
+    await expect(page.getByRole("heading", { name: "读前导引 · BEFORE YOU READ" })).toBeVisible();
+    const guide = page.getByRole("button", { name: /展开第 1 段导读/ });
+    const translation = page.getByRole("button", { name: /显示第 1 段译文/ });
+    await expect(guide).toBeVisible();
+    await expect(translation).toBeVisible();
+    expect((await guide.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    const annotation = page.locator('button[aria-label^="查看“"]').first();
+    await annotation.click();
+    const note = page.getByRole("complementary");
+    await expect(note).toBeVisible();
+    expect(await annotation.getAttribute("aria-expanded")).toBe("true");
+    expect(await annotation.getAttribute("aria-controls")).toBe(await note.getAttribute("id"));
+    expect((await note.boundingBox())?.x).toBeGreaterThan(1060);
+  });
+
+  test("C-2: 390px 无横向溢出，注释回落到正文内", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(DETAIL_PATH);
+
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      ),
+    ).toBe(0);
+
+    await page.locator('button[aria-label^="查看“"]').first().click();
+    const box = await page.getByRole("complementary").boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(20);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(370);
+
+    await page.setViewportSize({ width: 640, height: 900 });
+    const paragraphNumber = page.locator("section.group > span.dr-font-mono").first();
+    await expect(paragraphNumber).toBeVisible();
+    expect((await paragraphNumber.boundingBox())?.x).toBeGreaterThanOrEqual(0);
   });
 
   test("P0-2: 列表页今日为空时降级出头条且往期可见，无开发术语", async ({ page }) => {

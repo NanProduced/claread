@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("../");
 @import "tw-animate-css";
 @import "@claread/design-tokens/web/tokens.css";
 
@@ -5143,4 +5143,28 @@ select {
   /* Mono labels: issue number, date, kicker, marginal numbers. */
   --dr-type-mono-size: 0.75rem;
   --dr-type-mono-lh: 1.4;
+
+  background: var(--dr-paper);
+  color: var(--dr-ink);
+}
+
+.daily-reader-surface .dr-font-en {
+  font-family: var(--dr-font-en);
+}
+
+.daily-reader-surface .dr-font-zh {
+  font-family: var(--dr-font-zh);
+  font-synthesis: none;
+}
+
+.daily-reader-surface .dr-font-ui {
+  font-family: var(--dr-font-ui);
+}
+
+.daily-reader-surface .dr-font-mono {
+  font-family: var(--dr-font-mono);
+}
+
+.daily-reader-surface ::selection {
+  background: color-mix(in srgb, var(--dr-accent) 18%, transparent);
 }

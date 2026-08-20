@@ -36,7 +36,7 @@ export function DailyArticleShareButton({ title }: { title: string }) {
     <button
       type="button"
       onClick={handleShare}
-      className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
+      className="focus-ring inline-flex min-h-11 min-w-11 items-center justify-center text-[color:var(--dr-meta)] transition-colors hover:text-[color:var(--dr-accent)]"
       aria-label="分享"
     >
       <Share2 aria-hidden="true" className="h-[18px] w-[18px]" />
