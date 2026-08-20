@@ -1271,9 +1271,9 @@ function ReaderStableCodeBlockComponent({
   return (
     <pre
       {...attributes}
-      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40 ${
-        attributes?.className ?? ""
-      }`.trim()}
+      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40${
+        language ? " relative" : ""
+      } ${attributes?.className ?? ""}`.trim()}
       {...readerRecordNavigableNodeAttrs({
         nodeKind: "code_block",
         unitId: data?.unitId,
@@ -1285,7 +1285,16 @@ function ReaderStableCodeBlockComponent({
       data-reader-record-markdown-node="code_block"
       data-language={language ?? undefined}
     >
-      <code>{children}</code>
+      {language ? (
+        <span
+          data-testid="code-language-badge"
+          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground/70"
+          {...copyExcludeProps}
+        >
+          {language}
+        </span>
+      ) : null}
+      <code className={language ? "block pt-6" : undefined}>{children}</code>
     </pre>
   );
 }

@@ -889,6 +889,26 @@ async function sendAskComposerMessageAndReadFirstAttachment(
   return body.attachments[0];
 }
 
+function makeStableCodeBlockSnapshot(
+  codeLanguage?: string | null,
+): ReaderPlateSnapshotDto {
+  const unit = makeUnit({ vocabularyMarks: [], grammarMarks: [] });
+  const sourceBlock = unit.children[0];
+  if (sourceBlock?.type !== "reader_source_block") {
+    throw new Error("Expected reader_source_block");
+  }
+  sourceBlock.stableBlockType = "code_block";
+  sourceBlock.stableBlockId = "b_code";
+  if (codeLanguage !== undefined) {
+    sourceBlock.codeLanguage = codeLanguage;
+  }
+  unit.children = [sourceBlock];
+  return {
+    ...makeSnapshot(),
+    value: [unit],
+  };
+}
+
 describe("ReaderRecordPlateSurface", () => {
   it("projects and renders stable source text as paragraph blocks", () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
@@ -898,6 +918,125 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(paragraph?.textContent).toContain(SOURCE_TEXT);
     expect(screen.getByTestId("reader-record-plate-surface")).toBeTruthy();
+  });
+
+  it("renders a unique copy-excluded language badge for a stable code_block with codeLanguage", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeStableCodeBlockSnapshot("python")} />,
+    );
+
+    const pres = container.querySelectorAll("pre");
+    expect(pres).toHaveLength(1);
+    const pre = pres[0];
+    if (!pre) {
+      throw new Error("Expected stable code_block pre");
+    }
+
+    const codes = pre.querySelectorAll("code");
+    expect(codes).toHaveLength(1);
+    const code = codes[0];
+    if (!code) {
+      throw new Error("Expected stable code_block code");
+    }
+
+    expect(pre.getAttribute("data-language")).toBe("python");
+    expect(pre.getAttribute("data-reader-record-stable-block-type")).toBe(
+      "code_block",
+    );
+    expect(pre.getAttribute("data-reader-record-node")).toBe("code_block");
+    expect(pre.getAttribute("data-unit-id")).toBe("unit_1");
+    expect(pre.getAttribute("data-reader-record-unit-start")).toBe("true");
+    expect(pre.getAttribute("data-anchor-segment-id")).toBe("seg_1");
+    expect(pre.className).not.toMatch(/\bpr-\d+\b/);
+    expect(code.textContent).toBe(SOURCE_TEXT);
+    expect(code.className).toMatch(/\bblock\b/);
+    expect(code.className).toMatch(/\bpt-\d+\b/);
+
+    const badges = pre.querySelectorAll('[data-testid="code-language-badge"]');
+    expect(badges).toHaveLength(1);
+    const badge = badges[0];
+    if (!badge) {
+      throw new Error("Expected code language badge");
+    }
+    expect(badge.tagName).toBe("SPAN");
+    expect(badge.textContent).toBe("python");
+    expect(badge.getAttribute("contenteditable")).toBe("false");
+    expect(badge.getAttribute("draggable")).toBe("false");
+    expect(badge.getAttribute("data-reader-record-copy-exclude")).toBe("true");
+    expect(code.contains(badge)).toBe(false);
+
+    selectTextInElement(code, 0, SOURCE_TEXT.length);
+    expect(window.getSelection()?.toString()).toBe(SOURCE_TEXT);
+  });
+
+  it.each([null, undefined, ""] as const)(
+    "does not render a language badge when codeLanguage is %j",
+    (codeLanguage) => {
+      const { container } = render(
+        <ReaderRecordPlateSurface
+          snapshot={makeStableCodeBlockSnapshot(codeLanguage)}
+        />,
+      );
+
+      const pres = container.querySelectorAll("pre");
+      expect(pres).toHaveLength(1);
+      const pre = pres[0];
+      if (!pre) {
+        throw new Error("Expected stable code_block pre");
+      }
+
+      const codes = pre.querySelectorAll("code");
+      expect(codes).toHaveLength(1);
+      expect(codes[0]?.textContent).toBe(SOURCE_TEXT);
+      expect(codes[0]?.className ?? "").not.toMatch(/\bpt-\d+\b/);
+      expect(pre.querySelector('[data-testid="code-language-badge"]')).toBeNull();
+      expect(pre.textContent).not.toContain("null");
+      expect(pre.textContent).not.toContain("undefined");
+    },
+  );
+
+  it("excludes the language badge from mixed-range copy", () => {
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeStableCodeBlockSnapshot("python")} />,
+    );
+
+    const pre = container.querySelector("pre");
+    const badge = pre?.querySelector<HTMLElement>(
+      '[data-testid="code-language-badge"]',
+    );
+    const code = pre?.querySelector("code");
+    if (!pre || !badge || !code) {
+      throw new Error("Expected stable code_block with badge");
+    }
+
+    const badgeText = firstTextNode(badge);
+    const codeText = firstTextNode(code);
+    const range = document.createRange();
+    range.setStart(badgeText, 0);
+    range.setEnd(codeText, codeText.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const clipboardData = {
+      setData: vi.fn(),
+    };
+    fireEvent.copy(pre, { clipboardData });
+
+    const plainTextCall = clipboardData.setData.mock.calls.find(
+      ([type]) => type === "text/plain",
+    );
+    expect(plainTextCall).toBeDefined();
+    const copiedText = String(plainTextCall?.[1] ?? "");
+    expect(copiedText).toBe(SOURCE_TEXT);
+    expect(copiedText).not.toContain("python");
+    const htmlCall = clipboardData.setData.mock.calls.find(
+      ([type]) => type === "text/html",
+    );
+    expect(String(htmlCall?.[1] ?? "")).not.toContain(
+      'data-testid="code-language-badge"',
+    );
+    expect(pre.querySelector("code")?.textContent).toBe(SOURCE_TEXT);
   });
 
   it("renders unit translation as a blockquote block", () => {
