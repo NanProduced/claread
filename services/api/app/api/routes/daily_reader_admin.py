@@ -5,16 +5,19 @@ from __future__ import annotations
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.config.settings import get_settings
 from app.schemas.daily_reader import (
     ArticleActionResponse,
+    DailyReaderAdminUpdateRequest,
+    DailyReaderAdminUpdateResponse,
     DailyReaderGenerateRequest,
     DailyReaderGenerateResponse,
     DailyReaderListResponse,
     DailyReaderPublishRequest,
     DailyReaderRetryRequest,
+    DailyReaderReviewQueueResponse,
     DailyReaderUnpublishRequest,
     RetryWorkflowResponse,
 )
@@ -51,7 +54,7 @@ async def generate_articles(
     async def _run():
         try:
             await run_daily_pipeline(
-                max_count=request.max_count,
+                max_count=1 if request.single else request.max_count,
                 force=request.force,
                 tracker=tracker,
             )
@@ -123,6 +126,46 @@ async def unpublish_article(
     if not success:
         raise HTTPException(status_code=404, detail="Article not found or not published")
     return {"status": "unpublished"}
+
+
+@router.get(
+    "/review-queue",
+    response_model=DailyReaderReviewQueueResponse,
+    summary="日审队列（Claread console 预留）",
+)
+async def review_queue(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    _auth: str = Depends(verify_admin_api_key),
+) -> DailyReaderReviewQueueResponse:
+    """返回待审核草稿及仅由已存数据确定性派生的机器标记。"""
+    return await service.get_review_queue(limit=limit, offset=offset)
+
+
+@router.patch(
+    "/{article_id}",
+    response_model=DailyReaderAdminUpdateResponse,
+    summary="轻量编辑草稿（Claread console 预留）",
+)
+async def update_draft_article(
+    article_id: str,
+    request: DailyReaderAdminUpdateRequest,
+    _auth: str = Depends(verify_admin_api_key),
+) -> DailyReaderAdminUpdateResponse:
+    """仅编辑日审白名单字段；有效编辑会清空旧审批审计。"""
+    result = await service.update_draft_article(
+        article_id,
+        request.model_dump(exclude_unset=True),
+    )
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="Article not found")
+    if result == "not_draft":
+        raise HTTPException(status_code=409, detail="Only draft articles can be edited")
+    return DailyReaderAdminUpdateResponse(
+        id=article_id,
+        status=result,
+        review_status="pending",
+    )
 
 
 @router.delete("/{article_id}", response_model=ArticleActionResponse, summary="删除精读文章")

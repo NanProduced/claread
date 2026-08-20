@@ -12,10 +12,78 @@ Daily Reader 属于 `services/api/` 通用后端能力，不是 Web 或小程序
 
 - 公开读取：`GET /daily-reader/today`、`GET /daily-reader`、`GET /daily-reader/{article_id}`
 - 管理触发：`POST /daily-reader/admin/generate`
+- 日审队列：`GET /daily-reader/admin/review-queue`（Claread console 预留）
+- 草稿轻量编辑：`PATCH /daily-reader/admin/{article_id}`（Claread console 预留）
 - 管理重跑：`POST /daily-reader/admin/retry`（完成后强制 `status='draft'`，已发布文章立即从读者端消失）
 - 管理发布 / 下架：`POST /daily-reader/admin/publish`、`POST /daily-reader/admin/unpublish`（请求体必填 `operator`，缺省 422）
 
 公开详情接口只返回 `status='published'` 的文章；管理端重跑使用 any-status 查询以保留草稿修复能力。
+
+## Claread console 预留接口
+
+本节仅定义后端契约，不包含 Console UI。所有接口继续使用
+`x-admin-api-key`；缺少 header 返回 422，错误 key 返回 401。
+
+### 日审队列
+
+```http
+GET /daily-reader/admin/review-queue?limit=20&offset=0
+x-admin-api-key: ...
+```
+
+- `limit`: 1-100，默认 20。
+- `offset`: 非负整数，默认 0。
+- 只返回 `status='draft' AND review_status='pending'`，按
+  `created_at DESC, id DESC` 排序；多取一行计算 `has_more`。
+- 返回中文标题/副标题、英文原题/来源摘要、来源、难度、标签、候选评分、
+  封面 URL/候选/已选信息及审核字段。
+- `machine_flags.cover_quality`：
+  - `qualified`: 当前封面 URL 与已持久化的像素校验后选中封面一致；
+  - `missing`: 没有封面 URL，前端应展示 editorial fallback；
+  - `unavailable`: 有 URL，但没有可与之对应的已存尺寸证据（旧行或人工 URL）。
+- `machine_flags.boilerplate_*` 只扫描已存 `body/highlights/paragraph_notes/takeaways`
+  JSON，复用 pipeline 的确定性 dirty-data 规则；GET 不调用 LLM 或网络。
+- `selection_score` 来自 `daily_readers.score`。当前 workflow 的最终 review
+  分数没有持久化，因此 `review_score=null` 且
+  `review_score_available=false`，不得把候选评分冒充 review 分。
+
+### 草稿轻量编辑
+
+```http
+PATCH /daily-reader/admin/{article_id}
+x-admin-api-key: ...
+Content-Type: application/json
+
+{
+  "title": "中文主标题",
+  "subtitle_zh": "中文副标题",
+  "cover_image_url": "https://cdn.example/cover.webp",
+  "tags": ["科技", "社会"]
+}
+```
+
+- 白名单仅为 `title`、`subtitle_zh`、`cover_image_url`、`tags`；未知字段、
+  空 body、空标题、非法 URL 或非法标签返回 422。
+- `subtitle_zh=null`、`cover_image_url=null` 可清空对应可空字段；`tags=[]`
+  可清空标签。
+- 只允许编辑 draft。不存在返回 404；published/archived 返回 409。
+- 只有值实际变化时才写库，并原子重置
+  `review_status='pending'`、`reviewed_by=NULL`、`reviewed_at=NULL`；无变化返回
+  `status='unchanged'`，不会清除既有审核记录。
+
+### 单篇触发
+
+`POST /daily-reader/admin/generate` 请求体新增 `single`（默认 `false`）。
+`single=true` 时只把现有 pipeline 的真实 `max_count` seam 强制为 1；不接受
+source URL，也不承诺指定某一候选。原有 `{}`、`max_count` 和 `force` 调用保持兼容。
+
+```json
+{"single": true, "force": false}
+```
+
+publish/unpublish 契约不变：请求体必须有去除首尾空白后非空的 `operator`；
+publish 在同一条 UPDATE 中写入 `approved/reviewed_by/reviewed_at`。B-4 复用已有
+三列，没有新增迁移。
 
 ## 当前数据契约
 
