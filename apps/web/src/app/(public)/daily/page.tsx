@@ -185,7 +185,7 @@ export default async function DailyReaderPage() {
     .slice(0, 5);
 
   return (
-    <main className="min-h-screen overflow-hidden bg-surface-canvas text-ink">
+    <main className="daily-reader-surface min-h-screen overflow-hidden bg-surface-canvas text-ink">
       <div className="relative min-h-screen px-5 py-6 sm:px-8 lg:px-12">
         <PublicSiteHeader currentHref={dailyRoute} priority />
 

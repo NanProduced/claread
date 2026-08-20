@@ -5059,3 +5059,81 @@ select {
     background: color-mix(in srgb, var(--ink) 10%, transparent);
   }
 }
+
+/* ====================================================================
+ * Daily Reader surface (public /daily pages).
+ *
+ * Scoped token group for the bilingual magazine surface defined in
+ * tmp/daily-reader-optimization/surface-brief-daily-reader.md. The
+ * class is wired to the outermost <main> of /daily and /daily/[articleId]
+ * only; --dr-* tokens must not leak into workspace pages. C-2 maps the
+ * Daily page components onto these tokens.
+ * ==================================================================== */
+
+/* Self-hosted Noto Serif SC subset (GB2312 level-1+2 hanzi plus CJK
+ * punctuation, ~7.5k chars) for Chinese reading text on the Daily
+ * surface. Official source: notofonts/noto-cjk Serif SubsetOTF SC
+ * Regular, OFL 1.1 (see public/fonts/noto-serif-sc/OFL.txt). Latin is
+ * intentionally outside unicode-range so Latin glyphs keep rendering
+ * in Newsreader/Inter. */
+@font-face {
+  font-family: "Claread Noto Serif SC";
+  src: url("/fonts/noto-serif-sc/noto-serif-sc-regular-subset.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+00B7, U+2013-2014, U+2018-201A, U+201C-201E, U+2026, U+3000-303F, U+4E00-9FFF, U+FF01-FF60;
+}
+
+.daily-reader-surface {
+  /* Paper-and-ink palette (surface brief section 2). */
+  --dr-paper: #F7F5F2;
+  --dr-paper-raised: #FFFFFF;
+  --dr-ink: #1A1A1A;
+  --dr-ink-zh: #33302C;
+  --dr-meta: #6B6B6B;
+  --dr-rule: #D9D4CD;
+  /* Claread brand blue (DESIGN.md action-primary), declared as an
+   * independent Daily accent; it intentionally does not alias the
+   * workspace action tokens. */
+  --dr-accent: #1F5EFF;
+
+  /* Fixed image ratios (surface brief section 4). */
+  --dr-ratio-hero: 21 / 9;
+  --dr-ratio-inline: 3 / 2;
+  --dr-ratio-square: 1 / 1;
+
+  /* Font stacks. English reading serif is Newsreader via next/font
+   * (--font-reading-en); the Chinese stack leads with the subset
+   * webfont and falls back to system CJK serifs; mono serves issue
+   * numbers, dates, kickers, and marginal numbers. */
+  --dr-font-en: var(--font-reading-en), Georgia, serif;
+  --dr-font-zh: "Claread Noto Serif SC", var(--font-reading-en), "Source Han Serif SC", "Songti SC", "STSong", "Noto Serif SC", serif;
+  --dr-font-ui: var(--font-ui-en), var(--font-ui-zh), sans-serif;
+  --dr-font-mono: var(--font-mono-en), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Semantic type ramp (surface brief section 1). clamp() is reserved
+   * for the two sizes the brief asks to scale fluidly (hero and article
+   * headline); every other step is fixed. */
+  /* Hero headline: 32px floor on mobile up to 56px. */
+  --dr-type-hero-size: clamp(2rem, 1.2rem + 4vw, 3.5rem);
+  --dr-type-hero-lh: 1.08;
+  /* Article headline: 26px floor up to 32px. */
+  --dr-type-headline-size: clamp(1.625rem, 1.3rem + 1vw, 2rem);
+  --dr-type-headline-lh: 1.12;
+  /* Deck: English original title plus one-line Chinese subtitle. */
+  --dr-type-deck-size: 1.25rem;
+  --dr-type-deck-lh: 1.45;
+  /* English body copy. */
+  --dr-type-body-size: 1.125rem;
+  --dr-type-body-lh: 1.65;
+  /* Chinese annotation and translation copy. */
+  --dr-type-zh-size: 0.9375rem;
+  --dr-type-zh-lh: 1.8;
+  /* Caption and meta rows. */
+  --dr-type-caption-size: 0.8125rem;
+  --dr-type-caption-lh: 1.35;
+  /* Mono labels: issue number, date, kicker, marginal numbers. */
+  --dr-type-mono-size: 0.75rem;
+  --dr-type-mono-lh: 1.4;
+}

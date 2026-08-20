@@ -443,7 +443,7 @@ export default async function DailyArticlePage({ params }: DailyArticlePageProps
   };
 
   return (
-    <main className="min-h-screen bg-surface-canvas pb-24 text-ink">
+    <main className="daily-reader-surface min-h-screen bg-surface-canvas pb-24 text-ink">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
