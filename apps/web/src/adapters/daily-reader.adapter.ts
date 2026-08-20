@@ -1,6 +1,7 @@
 import type {
   DailyReaderArticleDto,
   DailyReaderHighlightDto,
+  DailyReaderImageBlockDto,
   DailyReaderListItemDto,
   DailyReaderParagraphNoteDto,
   DailyReaderParagraphNotesDto,
@@ -10,6 +11,7 @@ import type {
   DailyReaderArticle,
   DailyReaderFooterAnalysis,
   DailyReaderHighlight,
+  DailyReaderImageBlock,
   DailyReaderListItem,
 } from "@/types/view/DailyReaderVm";
 function stripHtml(value: string | null | undefined): string | null {
@@ -53,6 +55,24 @@ function buildParagraphNoteMap(
     }
     return acc;
   }, {});
+}
+
+const DAILY_READER_IMAGE_LAYOUTS = ["full-bleed", "two-third", "half-float"] as const;
+
+function dtoToImageBlock(dto: DailyReaderImageBlockDto): DailyReaderImageBlock {
+  const layout = DAILY_READER_IMAGE_LAYOUTS.includes(dto.layout)
+    ? dto.layout
+    : "two-third";
+  return {
+    id: dto.id,
+    role: dto.role === "inline" ? "inline" : "cover",
+    url: dto.url,
+    width: dto.width ?? undefined,
+    height: dto.height ?? undefined,
+    layout,
+    captionZh: dto.caption_zh ? cleanText(dto.caption_zh) : null,
+    sourceCaption: dto.source_caption ? cleanText(dto.source_caption) : null,
+  };
 }
 
 function dtoToHighlight(dto: DailyReaderHighlightDto): DailyReaderHighlight {
@@ -138,6 +158,10 @@ export function dtoToDailyReaderArticle(dto: DailyReaderArticleDto): DailyReader
     id: dto.id,
     title: cleanText(dto.title),
     subtitle: stripHtml(dto.subtitle),
+    // A-3: old articles have neither field; null keeps consumers on the
+    // English-title fallback (title).
+    originalTitle: dto.original_title ? cleanText(dto.original_title) : null,
+    subtitleZh: dto.subtitle_zh ? cleanText(dto.subtitle_zh) : null,
     source: dto.source,
     sourceUrl: dto.source_url,
     publishDate: dto.publish_date,
@@ -167,6 +191,9 @@ export function dtoToDailyReaderArticle(dto: DailyReaderArticleDto): DailyReader
             };
           })
         : [],
+      images: Array.isArray(dto.body?.images)
+        ? dto.body.images.map(dtoToImageBlock)
+        : undefined,
     },
     highlights: Array.isArray(dto.highlights) ? dto.highlights.map(dtoToHighlight) : [],
     footerAnalysis: dtoToFooterAnalysis(dto.takeaways),
@@ -178,6 +205,8 @@ export function dtoToDailyReaderListItem(dto: DailyReaderListItemDto): DailyRead
     id: dto.id,
     title: cleanText(dto.title),
     subtitle: stripHtml(dto.subtitle),
+    originalTitle: dto.original_title ? cleanText(dto.original_title) : null,
+    subtitleZh: dto.subtitle_zh ? cleanText(dto.subtitle_zh) : null,
     source: dto.source,
     publishDate: dto.publish_date,
     difficulty: dto.difficulty,

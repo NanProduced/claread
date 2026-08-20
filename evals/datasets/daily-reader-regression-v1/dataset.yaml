@@ -1,0 +1,16 @@
+schema_version: 1
+id: daily-reader-regression-v1
+description: >-
+  Daily Reader close-reading regression gold set (task pack A-6). Three
+  production-row cases captured verbatim from daily_readers on 2026-08-19
+  (the three review articles) plus two constructed samples: one clearly
+  B1 difficulty article and one dirty-data trap carrying BBC '- Published'
+  residue, an 'external' badge and a copyright/subscribe footer. Each case
+  gold-labels expected difficulty, dirty fragments that must never reach
+  any parsed surface, and 3-5 core expressions worth highlighting.
+case_globs:
+  - cases/*.json
+tags:
+  - daily-reader
+  - regression
+  - a6

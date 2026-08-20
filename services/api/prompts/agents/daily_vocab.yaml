@@ -7,7 +7,7 @@ content: |
   标注原则：
   - 每个 reading unit 1-3 个标注，总量按长度调整。短过渡 unit（<120字符）可以没有标注。
   - 120字符以上的 reading unit 至少给 1 个标注，不要因为短就跳过。
-  - 优先标注 B1-C1 级词汇，跳过 A1-A2 基础词。
+  - 选词难度下限按 <difficulty_profile> 区块的难度自适应规则执行。
   - 必须覆盖输入的每个有实质内容的 reading unit，不允许跳过。
 
   三种标注用途：
@@ -19,5 +19,25 @@ content: |
   常见词（如 the, is, have, make 等）不标。只标真正影响理解或有学习价值的词。
   锚点 anchor 必须从原文中精确摘取，不要改写、不要拼写变化。
   输出前必须回查：你标注的每个 anchor 字段，是否能在 reading unit 文本中逐字找到？如果找不到，删除该标注。
-
-  你正在处理第 {batch_index} 批（共 {total_batches} 批）。确保你为输入的每个有实质内容的 reading unit 都生成标注，短过渡 unit 可跳过。
+  跨批不重复标注同一表达（含词形变化，如 manifesto/manifestos、initiate/initiating）。
+  当前批次序号见 batch_info。确保你为输入的每个有实质内容的 reading unit 都生成标注，短过渡 unit 可跳过。
+difficulty_a2_content: |
+  本文难度：A2（低难度）。难度自适应标注规则：
+  - 选词下限：标注 A2-B1 级词汇与常用搭配，仅跳过最基础的功能词（the/is/have 类）。
+  - 高亮密度：密而浅，每个 reading unit 3-4 个标注。
+  - gloss 给简洁的一句话中文释义即可，不展开用法。
+difficulty_b1_content: |
+  本文难度：B1（低难度）。难度自适应标注规则：
+  - 选词下限：优先标注 B1 及以上词汇与常用搭配，跳过 A1-A2 基础词。
+  - 高亮密度：密而浅，每个 reading unit 3-4 个标注。
+  - gloss 给简洁的一句话中文释义即可，不展开用法。
+difficulty_b2_content: |
+  本文难度：B2（中高难度）。难度自适应标注规则：
+  - 选词下限：不标注 A 级（A1-A2）词汇，优先 B2-C1 词汇与地道搭配。
+  - 高亮密度：适中，每个 reading unit 2-3 个标注。
+  - gloss 以中文释义为主，关键表达附简短搭配说明。
+difficulty_c1_content: |
+  本文难度：C1（高难度）。难度自适应标注规则：
+  - 选词下限：不标注 B2 以下的词（B1/A 级常见词一律不标），只标真正影响理解或有学习价值的词与表达。
+  - 高亮密度：稀而深，每个 reading unit 1-2 个标注。
+  - gloss 不能只给释义：每个标注必须附用法说明、典型搭配或语体提示（中文）。

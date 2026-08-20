@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Claread monorepo",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "directus:up": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml up -d directus",
     "directus:down": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml down",

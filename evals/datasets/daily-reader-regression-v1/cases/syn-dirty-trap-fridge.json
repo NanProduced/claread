@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "case_id": "syn-dirty-trap-fridge",
+  "dataset_id": "daily-reader-regression-v1",
+  "origin": {
+    "kind": "synthetic",
+    "captured_at": "2026-08-19",
+    "note": "Constructed A-6 gold sample: dirty-data trap. Carries the three exposed scrape artefacts - BBC '- Published' head residue, an 'external' link badge mid-text, and a copyright/subscribe footer. After A-1, none of the listed fragments may leak into any parsed surface."
+  },
+  "input": {
+    "title": "The community fridge helping families cut their food bills",
+    "subtitle": "A simple fridge outside a community centre is redistributing hundreds of kilograms of food a month.",
+    "source": "synthetic",
+    "source_url": "synthetic://daily-eval/syn-dirty-trap-fridge",
+    "tags": ["community", "food"],
+    "read_time_minutes": 2,
+    "original_text": "- Published\nFamilies in Hartwell are saving hundreds of pounds a year thanks to a community fridge, according to new figures, external, released by the town council this week.\n\nThe fridge stands outside the community centre on Mill Road. Anyone can pick up food that would otherwise be thrown away, from bread and vegetables to ready meals donated by local supermarkets.\n\nOrganisers say the project was set up two years ago, when the cost of living began to rise sharply. Many households were forced to cut back on basic items, and food waste remained a visible problem behind local shops.\n\n\"We did not want good food to fall behind the bins while neighbours went hungry,\" said Dana Whitfield, who coordinates the volunteers. \"The fridge is a simple idea, but it changes how people think about waste and sharing.\"\n\nThe council estimates that the fridge redistributes about 400 kilograms of food every month. Local businesses donate products near their sell-by date, and a team of twelve volunteers checks each item before it is placed on the shelves.\n\nThe project has also reduced isolation. Residents who come to collect food often stay to talk, and the community centre now runs a weekly cooking class using ingredients from the fridge.\n\nHowever, demand has grown faster than supply. Whitfield says more supermarkets need to take part before winter, when bills traditionally peak. \"This is not charity in the old sense,\" she said. \"It is common sense. Food that is still good should feed people, not landfills.\"\n\nThe council will review the figures next month and decide whether to fund two more fridges in nearby districts.\n\nThis article originally appeared on BBC News Online.\nCopyright \u00a9 2026 BBC. All rights reserved. Subscribe to the BBC Future newsletter for more stories delivered to your inbox."
+  },
+  "gold": {
+    "expected_difficulty": "B2",
+    "dirty_fragments": [
+      "- Published",
+      "figures, external,",
+      "This article originally appeared on BBC News Online",
+      "Copyright \u00a9 2026 BBC. All rights reserved",
+      "Subscribe to the BBC Future newsletter"
+    ],
+    "expected_expressions": [
+      "cost of living",
+      "cut back on",
+      "pick up",
+      "fall behind",
+      "sell-by date"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "case_id": "syn-b1-village-library",
+  "dataset_id": "daily-reader-regression-v1",
+  "origin": {
+    "kind": "synthetic",
+    "captured_at": "2026-08-19",
+    "note": "Constructed A-6 gold sample: clearly B1 difficulty, clean text. Used to verify difficulty-adaptive parsing (A-2) does not over-annotate easy text."
+  },
+  "input": {
+    "title": "The small library that brings a village together",
+    "subtitle": "A volunteer-run reading room in Denton has become the heart of village life.",
+    "source": "synthetic",
+    "source_url": "synthetic://daily-eval/syn-b1-village-library",
+    "tags": ["community", "books"],
+    "read_time_minutes": 2,
+    "original_text": "A small library in the village of Denton is bringing people together. The library sits in an old building next to the church, and it is open every day from nine in the morning until six in the evening.\n\nThe library started two years ago. A group of neighbours decided to set up a reading place because the nearest town library was twelve kilometres away. They asked the village council for help, and they got the old building for free.\n\nToday, the library has more than three thousand books. Visitors can borrow novels, cookbooks and children's stories as well as magazines. There is also a small coffee table where people sit and talk.\n\nMany villagers take part in the weekly activities. On Tuesday evenings, a retired teacher helps children with their reading. On Saturdays, people meet to play board games. Once a month, the library holds a book sale to raise money for new shelves.\n\nThe volunteers are happy with the result. \"We want everyone to feel welcome here,\" said Mary Green, who works at the library three days a week. \"Some people come for the books, but many come because they want to meet their neighbours.\"\n\nThe library also helps older villagers. Volunteers deliver books to people who cannot walk to the building. Mr. Adams, 82, says he looks forward to their visits every Friday. \"They bring me books and news from the village,\" he said. \"It makes my week brighter.\"\n\nThe council recently gave the group a small prize for community work. The volunteers plan to use the prize money to buy a computer, so visitors can use the internet as well as read books.\n\nNext year, the group hopes to open a small garden behind the building. Children can read outside in summer, and visitors can grow vegetables together. \"A library is more than books,\" said Green. \"It is a place where a village becomes a family.\""
+  },
+  "gold": {
+    "expected_difficulty": "B1",
+    "dirty_fragments": [],
+    "expected_expressions": [
+      "set up",
+      "as well as",
+      "take part in",
+      "raise money for",
+      "look forward to"
+    ]
+  }
+}

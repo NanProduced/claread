@@ -17,6 +17,7 @@ from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_paragraph_notes_strategy,
+    difficulty_prompt_section,
 )
 from app.services.prompting.prompt_loader import load_agent_instructions
 
@@ -32,6 +33,7 @@ class DailyFooterAgentDeps:
     title: str
     highlights_summary: str = ""
     paragraphs_info: str = ""
+    difficulty: str = ""
     prompt_strategy: DailyPromptStrategy = field(default_factory=build_paragraph_notes_strategy)
 
 
@@ -39,7 +41,11 @@ def build_daily_footer_prompt(deps: DailyFooterAgentDeps) -> str:
     from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
-    all_sections = list(sections) + [
+    all_sections = list(sections)
+    difficulty_section = difficulty_prompt_section("daily_footer", deps.difficulty)
+    if difficulty_section is not None:
+        all_sections.append(difficulty_section)
+    all_sections += [
         PromptSection("article_info", (
             f"Title: {deps.title}",
         )),

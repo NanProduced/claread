@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     daily_annotation_model_profile: str = ""
     daily_analysis_model_profile: str = ""
     daily_review_model_profile: str = ""
+    daily_cover_model_profile: str = ""
     rag_embedding_model_profile: str = ""
     rag_rerank_model_profile: str = ""
     model_profiles_json: str = ""
@@ -139,9 +140,14 @@ class Settings(BaseSettings):
 
     # 每日精读
     guardian_api_key: str = ""
-    daily_reader_admin_openid: str = ""
     daily_reader_admin_api_key: str = ""
+    daily_reader_alert_webhook_url: str = ""
     server_base_url: str = "http://127.0.0.1:8000"
+    # B-1 封面存储：local（dev，static/covers）| oss（prod 对象存储）。
+    # oss 缺配置/缺 SDK 时优雅回退 local 并告警（cover_storage.get_cover_storage）。
+    cover_storage_backend: str = "local"
+    # OSS/CDN 公开访问 URL 前缀；缺省由 bucket + endpoint 推导。
+    cover_oss_public_url_base: str = ""
 
     # Grammar RAG（默认关闭，Readiness Gate 阶段仅做骨架接入）
     grammar_rag_enabled: bool = False

@@ -8,6 +8,7 @@ dist/
 build/
 coverage/
 .next/
+.next-e2e-test/
 .next-gate-test/
 .next-e2e-spike-test/
 .next-e2e-gate-test/

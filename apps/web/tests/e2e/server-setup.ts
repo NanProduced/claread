@@ -1,18 +1,23 @@
 /**
  * Canonical Playwright server setup for the Web Reader E2E suite.
  *
- * The suite owns one isolated Next dev server on port 3200. Individual specs
- * choose their boundary: current-product specs may use the deterministic
- * FastAPI handoff, while UI contract specs can keep their network mocks.
+ * The suite owns one isolated Next dev server on CLAREAD_E2E_PORT (default
+ * 3200). Individual specs choose their boundary: current-product specs may
+ * use the deterministic FastAPI handoff, while UI contract specs can keep
+ * their network mocks.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 
-const PORT = 3200;
+const PORT = Number(process.env.CLAREAD_E2E_PORT ?? "3200");
 const HOST = "127.0.0.1";
 const BASE_URL = `http://${HOST}:${PORT}`;
 const READY_TIMEOUT_MS = 120_000;
 const POLL_INTERVAL_MS = 1_000;
+
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65_535) {
+  throw new Error("[e2e] CLAREAD_E2E_PORT must be an integer between 1 and 65535.");
+}
 
 function isPortAcceptingConnections(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -82,14 +87,26 @@ function waitForPortClosed(port: number, host: string, timeoutMs: number): Promi
 }
 
 function startServer(env: NodeJS.ProcessEnv): ChildProcess {
-  const command = "pnpm";
-  const args = ["--filter=@claread/web", "dev:e2e"];
-  const executable = process.platform === "win32" ? `${command}.cmd` : command;
+  const pnpmArgs = [
+    "--filter=@claread/web",
+    "exec",
+    "next",
+    "dev",
+    "--hostname",
+    HOST,
+    "--port",
+    String(PORT),
+  ];
+  const executable = process.platform === "win32" ? "pwsh" : "pnpm";
+  const args =
+    process.platform === "win32"
+      ? ["-NoProfile", "-Command", "pnpm", ...pnpmArgs]
+      : pnpmArgs;
   const child = spawn(executable, args, {
     cwd: process.cwd(),
     env,
-    shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
 
   child.stdout?.on("data", (data: Buffer) => {
@@ -140,8 +157,8 @@ async function cleanupServer(child: ChildProcess): Promise<void> {
     if (child.pid !== undefined) {
       await new Promise<void>((resolve) => {
         const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
-          shell: true,
           stdio: "ignore",
+          windowsHide: true,
         });
         killer.once("error", () => resolve());
         killer.once("exit", () => resolve());

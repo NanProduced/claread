@@ -1,4 +1,5 @@
-import { ArrowLeft, BookMarked, ExternalLink, Share2, Star } from "lucide-react";
+import { ArrowLeft, BookMarked, ExternalLink } from "lucide-react";
+import type { Metadata } from "next";
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -40,6 +41,56 @@ function formatShortDate(value: string): string {
 }
 
 import { DailyArticleBody } from "./DailyArticleBody";
+import { DailyArticleShareButton } from "./DailyArticleShareButton";
+
+/* ---------- SEO / 分享元信息（C-3） ---------- */
+
+const FALLBACK_OG_IMAGE = "/brand/claread-horizontal-bilingual.png";
+
+function articleDescription(article: DailyReaderArticle): string {
+  const raw =
+    article.subtitle ||
+    article.footerAnalysis.articleTakeaway ||
+    article.footerAnalysis.summary ||
+    "每天一篇英文精读：原文、译文与逐段解析。";
+  return raw.length > 150 ? `${raw.slice(0, 149)}…` : raw;
+}
+
+type DailyArticlePageProps = {
+  params: Promise<{ articleId: string }>;
+};
+
+export async function generateMetadata({ params }: DailyArticlePageProps): Promise<Metadata> {
+  const { articleId } = await params;
+  const result = await fetchDailyReaderArticle(articleId);
+
+  if (!result.ok) {
+    return { title: "每日精读" };
+  }
+
+  const article = result.data;
+  const description = articleDescription(article);
+  const image = article.coverImageUrl ?? FALLBACK_OG_IMAGE;
+
+  return {
+    title: article.title,
+    description,
+    openGraph: {
+      title: article.title,
+      description,
+      type: "article",
+      locale: "zh_CN",
+      publishedTime: article.publishDate,
+      images: [{ url: image, alt: article.title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: article.title,
+      description,
+      images: [image],
+    },
+  };
+}
 
 /* ---------- Publication Header ---------- */
 
@@ -174,13 +225,7 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
         >
           <ExternalLink aria-hidden="true" className="h-[18px] w-[18px]" />
         </a>
-        <button
-          type="button"
-          className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
-          aria-label="分享"
-        >
-          <Share2 aria-hidden="true" className="h-[18px] w-[18px]" />
-        </button>
+        <DailyArticleShareButton title={article.title} />
       </div>
     </div>
   );
@@ -375,11 +420,7 @@ function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
 
 /* ---------- Main Page ---------- */
 
-export default async function DailyArticlePage({
-  params,
-}: {
-  params: Promise<{ articleId: string }>;
-}) {
+export default async function DailyArticlePage({ params }: DailyArticlePageProps) {
   const { articleId } = await params;
   const result = await fetchDailyReaderArticle(articleId);
 
@@ -389,8 +430,24 @@ export default async function DailyArticlePage({
 
   const article = result.data;
 
+  // Article 结构化数据（JSON-LD），供搜索引擎与分享卡片识别。
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: article.title,
+    description: articleDescription(article),
+    ...(article.coverImageUrl ? { image: article.coverImageUrl } : {}),
+    datePublished: article.publishDate,
+    inLanguage: "en",
+    sourceOrganization: { "@type": "Organization", name: article.source },
+  };
+
   return (
     <main className="min-h-screen bg-surface-canvas pb-24 text-ink">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+      />
       <PublicationHeader />
 
       <article>
@@ -422,7 +479,7 @@ export default async function DailyArticlePage({
             </div>
           </section>
 
-          {/* Bottom actions */}
+          {/* Bottom actions — 单一主行动（P2-11：删除与主 CTA 同 href 的「收藏」） */}
           <div className="mt-12 flex flex-wrap items-center gap-3">
             <Link
               href={loginSaveRoute(article.id)}
@@ -430,13 +487,6 @@ export default async function DailyArticlePage({
             >
               <BookMarked aria-hidden="true" className="h-4 w-4" />
               加入我的阅读记录
-            </Link>
-            <Link
-              href={loginSaveRoute(article.id)}
-              className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-pill border border-hairline bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:border-muted"
-            >
-              <Star aria-hidden="true" className="h-4 w-4 text-lens-blue" />
-              收藏
             </Link>
           </div>
         </div>

@@ -16,6 +16,7 @@ from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_vocab_highlight_strategy,
+    difficulty_prompt_section,
 )
 from app.services.prompting.prompt_loader import load_agent_instructions
 
@@ -25,6 +26,7 @@ class DailyVocabAgentDeps:
     paragraphs: list[dict[str, object]]
     batch_index: int = 0
     total_batches: int = 1
+    difficulty: str = ""
     prompt_strategy: DailyPromptStrategy = field(default_factory=build_vocab_highlight_strategy)
 
 
@@ -38,7 +40,11 @@ def build_daily_vocab_prompt(deps: DailyVocabAgentDeps) -> str:
         text = p.get("text", "")
         paragraph_lines.append(f"{pid}: {text}")
 
-    all_sections = list(sections) + [
+    all_sections = list(sections)
+    difficulty_section = difficulty_prompt_section("daily_vocab", deps.difficulty)
+    if difficulty_section is not None:
+        all_sections.append(difficulty_section)
+    all_sections += [
         PromptSection("input_paragraphs", tuple(paragraph_lines)),
         PromptSection("batch_info", (
             f"当前批次：第 {deps.batch_index + 1} 批（共 {deps.total_batches} 批）",

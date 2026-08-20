@@ -18,6 +18,7 @@ ModelRoute = Literal[
     "daily_annotation",
     "daily_analysis",
     "daily_review",
+    "daily_cover",
     "rag_embedding",
     "rag_rerank",
 ]
@@ -38,6 +39,7 @@ MODEL_ROUTE_READER_ASK_REPLAN: Final[ModelRoute] = "reader_ask_replan"
 MODEL_ROUTE_DAILY_ANNOTATION: Final[ModelRoute] = "daily_annotation"
 MODEL_ROUTE_DAILY_ANALYSIS: Final[ModelRoute] = "daily_analysis"
 MODEL_ROUTE_DAILY_REVIEW: Final[ModelRoute] = "daily_review"
+MODEL_ROUTE_DAILY_COVER: Final[ModelRoute] = "daily_cover"
 MODEL_ROUTE_RAG_EMBEDDING: Final[ModelRoute] = "rag_embedding"
 MODEL_ROUTE_RAG_RERANK: Final[ModelRoute] = "rag_rerank"
 
@@ -54,6 +56,7 @@ ALL_MODEL_ROUTES: tuple[ModelRoute, ...] = (
     MODEL_ROUTE_DAILY_ANNOTATION,
     MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DAILY_REVIEW,
+    MODEL_ROUTE_DAILY_COVER,
     MODEL_ROUTE_RAG_EMBEDDING,
     MODEL_ROUTE_RAG_RERANK,
 )

@@ -13,6 +13,10 @@ class DailyReaderArticleResponse(BaseModel):
     id: str
     title: str
     subtitle: str | None = None
+    # A-3: English source headline (caption-level display) and Chinese
+    # subtitle; None on rows produced before A-3.
+    original_title: str | None = None
+    subtitle_zh: str | None = None
     source: str
     source_url: str
     publish_date: date
@@ -37,6 +41,9 @@ class DailyReaderListItem(BaseModel):
     id: str
     title: str
     subtitle: str | None = None
+    # A-3: see DailyReaderArticleResponse.
+    original_title: str | None = None
+    subtitle_zh: str | None = None
     source: str
     publish_date: date
     difficulty: str
@@ -65,11 +72,17 @@ class DailyReaderGenerateResponse(BaseModel):
 
 
 class DailyReaderPublishRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     id: str
+    operator: str = Field(min_length=1)
 
 
 class DailyReaderUnpublishRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     id: str
+    operator: str = Field(min_length=1)
 
 
 class DailyReaderRetryRequest(BaseModel):

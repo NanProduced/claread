@@ -2,6 +2,10 @@ export interface DailyReaderArticle {
   id: string;
   title: string;
   subtitle: string | null;
+  /** A-3: 英文原题（caption 级展示）；旧文章为 null，展示回退 title。 */
+  originalTitle: string | null;
+  /** A-3: 中文副标题；旧文章为 null。 */
+  subtitleZh: string | null;
   source: string;
   sourceUrl: string;
   publishDate: string;
@@ -23,6 +27,19 @@ export interface DailyReaderPreReadingGuide {
 
 export interface DailyReaderBody {
   paragraphs: DailyReaderParagraph[];
+  /** B-1: curated news images (1 cover + 0-1 inline); rendering is Track C. */
+  images?: DailyReaderImageBlock[];
+}
+
+export interface DailyReaderImageBlock {
+  id: string;
+  role: "cover" | "inline";
+  url: string;
+  width?: number | null;
+  height?: number | null;
+  layout: "full-bleed" | "two-third" | "half-float";
+  captionZh?: string | null;
+  sourceCaption?: string | null;
 }
 
 export interface DailyReaderParagraph {
@@ -88,6 +105,10 @@ export interface DailyReaderListItem {
   id: string;
   title: string;
   subtitle: string | null;
+  /** A-3: 英文原题；旧文章为 null。 */
+  originalTitle: string | null;
+  /** A-3: 中文副标题；旧文章为 null。 */
+  subtitleZh: string | null;
   source: string;
   publishDate: string;
   difficulty: string;

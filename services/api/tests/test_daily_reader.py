@@ -129,6 +129,9 @@ class TestArticleDetail:
         assert data["id"] == "daily_2026_04_28_001"
         assert data["title"] == "Test Article"
         assert "body" in data
+        # A-3: pre-A-3 rows have no zh headline fields — must not crash.
+        assert data["original_title"] is None
+        assert data["subtitle_zh"] is None
 
     @patch("app.services.daily_reader.service.db_connection.DB_POOL")
     def test_article_detail_not_found(self, mock_pool):

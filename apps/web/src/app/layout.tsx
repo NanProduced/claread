@@ -6,6 +6,8 @@ import { clareadFontVariables } from "./claread-fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  // OG/Twitter 相对图片 URL（如 /brand/…）需要 metadataBase 才能解析为绝对地址。
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: {
     default: "Claread",
     template: "%s | Claread",

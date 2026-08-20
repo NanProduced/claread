@@ -14,7 +14,54 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.services.prompting.prompt_composer import PromptSection
-from app.services.prompting.prompt_loader import load_policy_lines
+from app.services.prompting.prompt_loader import load_agent_instructions, load_policy_lines
+
+# A-2: difficulty-adaptive parsing. Prompt text lives in
+# prompts/agents/daily_*.yaml as ``difficulty_{level}_content`` sections.
+_KNOWN_CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
+
+
+def normalize_daily_difficulty(difficulty: str | None) -> str:
+    """Map a difficulty string to a CEFR level key; unknown values default to B2."""
+    level = (difficulty or "").strip().upper()
+    if level in _KNOWN_CEFR_LEVELS:
+        return level
+    return "B2"
+
+
+def load_difficulty_section(agent_name: str, difficulty: str | None) -> tuple[str, ...]:
+    """Load the difficulty-adaptive prompt section for an agent yaml.
+
+    Returns an empty tuple when the section is missing so callers can skip it.
+    """
+    level = normalize_daily_difficulty(difficulty)
+    text = load_agent_instructions(agent_name, section=f"difficulty_{level.lower()}")
+    if not text:
+        return ()
+    return tuple(text.splitlines())
+
+
+def difficulty_prompt_section(agent_name: str, difficulty: str | None) -> PromptSection | None:
+    lines = load_difficulty_section(agent_name, difficulty)
+    if not lines:
+        return None
+    return PromptSection("difficulty_profile", lines)
+
+
+def resolve_refined_difficulty(paragraph_notes: dict | None) -> str | None:
+    """Valid CEFR level from paragraph_notes.refined_difficulty, else None.
+
+    A-2 whole-text re-grading: the paragraph-notes node re-estimates the
+    article level; downstream prompts and the stored difficulty override
+    use it only when it is a well-formed level.
+    """
+    if not isinstance(paragraph_notes, dict):
+        return None
+    refined = paragraph_notes.get("refined_difficulty")
+    if not isinstance(refined, str) or not refined.strip():
+        return None
+    level = normalize_daily_difficulty(refined)
+    return level if level == refined.strip().upper() else None
 
 
 @dataclass

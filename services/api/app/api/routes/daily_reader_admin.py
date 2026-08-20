@@ -107,7 +107,7 @@ async def publish_article(
     _auth: str = Depends(verify_admin_api_key),
 ) -> dict:
     """将草稿状态的精读文章发布上线。"""
-    success = await service.publish_article(request.id)
+    success = await service.publish_article(request.id, operator=request.operator)
     if not success:
         raise HTTPException(status_code=404, detail="Article not found or not in draft status")
     return {"status": "published"}
@@ -119,7 +119,7 @@ async def unpublish_article(
     _auth: str = Depends(verify_admin_api_key),
 ) -> dict:
     """将已发布的精读文章下架为草稿。"""
-    success = await service.unpublish_article(request.id)
+    success = await service.unpublish_article(request.id, operator=request.operator)
     if not success:
         raise HTTPException(status_code=404, detail="Article not found or not published")
     return {"status": "unpublished"}
@@ -173,4 +173,7 @@ async def retry_workflow(
     if result is None:
         return {"status": "retry_aborted", "message": "Workflow aborted; content may not be suitable"}
 
-    return {"status": "retry_completed", "message": "Workflow re-executed successfully; content updated"}
+    return {
+        "status": "retry_completed",
+        "message": "Workflow re-executed successfully; status reset to draft",
+    }

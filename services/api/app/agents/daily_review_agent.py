@@ -29,6 +29,7 @@ class DailyReviewAgentDeps:
     takeaways_json: str
     coverage_report: str = ""
     paragraph_notes_report: str = ""
+    difficulty: str = ""
     prompt_strategy: DailyPromptStrategy = field(default_factory=build_quality_review_strategy)
 
 
@@ -36,7 +37,10 @@ def build_daily_review_prompt(deps: DailyReviewAgentDeps) -> str:
     from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
-    all_sections = list(sections) + [
+    all_sections = list(sections)
+    if deps.difficulty:
+        all_sections.append(PromptSection("article_difficulty", (f"文章难度：{deps.difficulty}",)))
+    all_sections += [
         PromptSection("original_text", (deps.original_text[:4000],)),
         PromptSection("highlights", (deps.highlights_json[:3000],)),
         PromptSection("paragraph_notes", (deps.paragraph_notes_json[:3000],)),

@@ -807,9 +807,14 @@ body {
   --brand-aperture-mark-filter: saturate(0.92) brightness(1.08);
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+/* Must stay in @layer base: an unlayered element selector beats Tailwind v4
+   utilities in the cascade (unlayered > any @layer), which made text-surface /
+   text-lens-blue utilities lose and rendered black-on-black CTAs (C-3 P0-1). */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 }
 
 button,

@@ -1,4 +1,4 @@
-version: "0.0.6"
+version: "0.0.9"
 agents:
   reader_layer_vocabulary:
     file: agents/reader_layer_vocabulary.yaml

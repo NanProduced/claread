@@ -88,6 +88,13 @@ class ParagraphNotesDraft(BaseModel):
         description="1-2 questions for the reader to keep in mind while reading the whole article (Chinese)"
     )
     notes: list[ParagraphReadingNote] = Field(default_factory=list)
+    refined_difficulty: str | None = Field(
+        default=None,
+        description=(
+            "Whole-text CEFR re-grade (A2/B1/B2/C1) from the paragraph-notes pass; "
+            "overrides the scorer coarse difficulty at projection"
+        ),
+    )
 
 
 class ExpressionPoint(BaseModel):
@@ -105,7 +112,9 @@ class SentenceNote(BaseModel):
 
     sentence: str = Field(description="The original English sentence")
     paragraph_id: str = Field(description="Paragraph ID where this sentence appears")
-    translation: str = Field(description="Chinese translation of the sentence")
+    translation: str = Field(
+        description="必须逐字取自对应段的段译（连续片段），不得重新翻译"
+    )
     breakdown: str = Field(description="Structural breakdown explaining why it's hard to parse (Chinese)")
     takeaway: str = Field(description="What the reader can learn from this sentence pattern (Chinese)")
 
@@ -128,6 +137,19 @@ class WritingMove(BaseModel):
 class CloseReadingTakeaways(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
+    title_zh: str = Field(
+        min_length=1,
+        description="中文主标题：刊物级编辑标题而非逐词直译——信雅达，可加工但不得曲解原意",
+    )
+    subtitle_zh: str = Field(
+        min_length=1,
+        description="一句话中文副标题，点出文章核心议题或看点",
+    )
+    tags_zh: list[str] = Field(
+        min_length=2,
+        max_length=4,
+        description="2-4 个全中文主题标签，概括文章主题域（如「人工智能」「公共卫生」）",
+    )
     article_takeaway: str = Field(
         description="One-sentence takeaway: what the reader should remember from this article (Chinese)"
     )

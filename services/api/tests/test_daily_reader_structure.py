@@ -187,7 +187,6 @@ def _make_state(
         "refinement_result": None,
         "abort": False,
         "body_json": {},
-        "content_sec_check": {},
         "usage_summary": None,
     }
     base.update(overrides)

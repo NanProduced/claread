@@ -112,7 +112,8 @@ async def list_articles(
             cursor_id = ""
         params.extend([cursor_date, cursor_id])
         query = """
-            SELECT id, title, subtitle, source, publish_date, difficulty,
+            SELECT id, title, subtitle, original_title, subtitle_zh,
+                   source, publish_date, difficulty,
                    read_time_minutes, tags, cover_image_url, cover_theme
             FROM daily_readers
             WHERE status = 'published'
@@ -122,7 +123,8 @@ async def list_articles(
         """
     else:
         query = """
-            SELECT id, title, subtitle, source, publish_date, difficulty,
+            SELECT id, title, subtitle, original_title, subtitle_zh,
+                   source, publish_date, difficulty,
                    read_time_minutes, tags, cover_image_url, cover_theme
             FROM daily_readers
             WHERE status = 'published'
@@ -148,7 +150,7 @@ async def list_articles(
     return DailyReaderListResponse(items=items, cursor=next_cursor, has_more=has_more)
 
 
-async def publish_article(article_id: str) -> bool:
+async def publish_article(article_id: str, operator: str) -> bool:
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -157,10 +159,15 @@ async def publish_article(article_id: str) -> bool:
             result = await conn.execute(
                 """
                 UPDATE daily_readers
-                SET status = 'published', published_at = NOW()
+                SET status = 'published',
+                    published_at = NOW(),
+                    review_status = 'approved',
+                    reviewed_by = $2,
+                    reviewed_at = NOW()
                 WHERE id = $1 AND status = 'draft'
                 """,
                 article_id,
+                operator,
             )
     except asyncpg.UndefinedTableError:
         logger.warning("daily_readers table does not exist, publish skipped")
@@ -168,7 +175,7 @@ async def publish_article(article_id: str) -> bool:
     return result == "UPDATE 1"
 
 
-async def unpublish_article(article_id: str) -> bool:
+async def unpublish_article(article_id: str, operator: str) -> bool:
     pool = db_connection.DB_POOL
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -177,10 +184,14 @@ async def unpublish_article(article_id: str) -> bool:
             result = await conn.execute(
                 """
                 UPDATE daily_readers
-                SET status = 'draft', published_at = NULL
+                SET status = 'draft',
+                    published_at = NULL,
+                    reviewed_by = $2,
+                    reviewed_at = NOW()
                 WHERE id = $1 AND status = 'published'
                 """,
                 article_id,
+                operator,
             )
     except asyncpg.UndefinedTableError:
         logger.warning("daily_readers table does not exist, unpublish skipped")
@@ -212,7 +223,8 @@ async def get_draft_articles(limit: int = 20) -> list[DailyReaderListItem]:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, title, subtitle, source, publish_date, difficulty,
+                SELECT id, title, subtitle, original_title, subtitle_zh,
+                       source, publish_date, difficulty,
                        read_time_minutes, tags, cover_image_url, cover_theme
                 FROM daily_readers
                 WHERE status = 'draft'
@@ -232,6 +244,9 @@ def _row_to_article_response(row: object) -> DailyReaderArticleResponse:
         id=row["id"],
         title=row["title"],
         subtitle=row["subtitle"],
+        # .get: rows/calls produced before A-3 have neither column value.
+        original_title=row.get("original_title"),
+        subtitle_zh=row.get("subtitle_zh"),
         source=row["source"],
         source_url=row["source_url"],
         publish_date=row["publish_date"],
@@ -252,6 +267,8 @@ def _row_to_list_item(row: object) -> DailyReaderListItem:
         id=row["id"],
         title=row["title"],
         subtitle=row["subtitle"],
+        original_title=row.get("original_title"),
+        subtitle_zh=row.get("subtitle_zh"),
         source=row["source"],
         publish_date=row["publish_date"],
         difficulty=row["difficulty"],

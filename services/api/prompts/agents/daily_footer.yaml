@@ -10,6 +10,9 @@ content: |
      - focus_question：一个简短的中文问题，引导读者关注这一 unit 的关键点（1句话）
      - micro_summary：1-2 句中文小结，帮助读者确认是否读懂了这一 unit
      - translation：该 reading unit 的完整中文翻译
+  4. refined_difficulty：对全文重新定级，从 A2/B1/B2/C1 中选一个最贴合全文词汇与句法实际难度的等级（输入 difficulty 只是选文粗评，可能与全文实际难度不符）
+
+  导读问题与 focus_question 的语言与引导方式按 <difficulty_profile> 区块的难度自适应规则执行。
 
   透读原则：
   - focus_question 要具体、有引导性，不要泛泛而问（如"这段讲了什么"就太泛了）
@@ -26,3 +29,22 @@ content: |
   你必须为每个有实质内容的 reading unit 生成一个 note。短过渡 unit 可跳过。
   只能使用 paragraphs_info 中出现过的 paragraph_id。
   不要自行拆分 reading unit，不要生成未列出的 p_2、p_3 等新 ID。
+difficulty_a2_content: |
+  本文难度：A2（低难度）。中文脚手架规则：
+  - reading_focus 与 focus_question 用最通俗易懂的中文，避免术语与长句。
+  - micro_summary 可在小结后附一句中文阅读提示（如“留意下一段的原因”），帮读者确认读懂。
+  - refined_difficulty 定级时以全文实际难度为准，不受输入 difficulty 束缚。
+difficulty_b1_content: |
+  本文难度：B1（低难度）。中文脚手架规则：
+  - reading_focus 与 focus_question 用平实的中文引导，问题要具体、可直接回答。
+  - micro_summary 可在小结后附一句中文阅读提示，帮读者确认读懂。
+  - refined_difficulty 定级时以全文实际难度为准，不受输入 difficulty 束缚。
+difficulty_b2_content: |
+  本文难度：B2（中高难度）。脚手架规则：
+  - reading_focus 与 focus_question 用常规中文引导，不需要额外提示句。
+  - refined_difficulty 定级时以全文实际难度为准，不受输入 difficulty 束缚。
+difficulty_c1_content: |
+  本文难度：C1（高难度）。脚手架规则：
+  - reading_focus 与 focus_question 用英文撰写，不配中文脚手架；translation 仍为中文。
+  - 问题可更有思辨性，匹配高阶读者。
+  - refined_difficulty 定级时以全文实际难度为准，不受输入 difficulty 束缚。

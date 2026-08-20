@@ -15,6 +15,10 @@ from app.schemas.internal.daily_drafts import (
 
 def _base_takeaways(**overrides):
     defaults = {
+        # A-3 zh headline fields (required since A-3)
+        "title_zh": "测试中文标题",
+        "subtitle_zh": "测试中文副标题",
+        "tags_zh": ["测试", "标签"],
         "article_takeaway": "test takeaway",
         "key_expressions": [],
         "sentence_notes": [],

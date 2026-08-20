@@ -1,0 +1,109 @@
+id: daily-reader-regression-v1
+title: Daily Reader close-reading regression rubric (A-6)
+version: 1
+language: zh+en
+target: daily_reader_workflow
+purpose: >
+  Quantify the quality of one daily-reader close-reading artifact
+  (body_json / highlights_json / paragraph_notes_json / takeaways_json)
+  produced by the daily_reader LangGraph workflow. Mix of deterministic
+  gates (fail-fast, reproducible) and LLM-judge dimensions (semantic
+  quality). Baseline 2026-08-19: the three shipped test articles
+  (daily_2026_08_15_001/002/003).
+
+deterministic_checks:
+  - id: no_boilerplate
+    description: >
+      Gold-listed dirty fragments (scrape boilerplate: "- Published"
+      residue, BBC "external" badges, NPR HOST/BYLINE/SOUNDBITE
+      transcript skeleton, copyright/subscribe footers) must not appear
+      in body paragraphs, paragraph translations, reading guides,
+      highlights or takeaways. Normalized casefold + whitespace match.
+    fail_mode: any_fragment_found
+  - id: highlight_dedup
+    description: >
+      The same normalized expression (casefold, whitespace collapse,
+      naive plural strip) may be highlighted at most once across the
+      whole article (regression: manifesto x4).
+    fail_mode: any_duplicate_key
+  - id: translation_consistency
+    description: >
+      Every takeaways.sentence_notes[].translation must be a verbatim
+      substring (whitespace-insensitive) of the corresponding paragraph
+      note translation — the paragraph translation is the single source
+      of truth; the long-sentence note must not re-translate.
+    fail_mode: any_note_not_contained
+  - id: gold_expression_coverage
+    description: >
+      At least 50% of the gold expected_expressions must be present in
+      highlights or key_expressions (normalized match). Guards against
+      dedup/cleaning changes silently deleting core learning content.
+      Aborted artifacts (e.g. transcript rejection) produce nothing to
+      evaluate, so the check is recorded as n/a and excluded from the
+      deterministic pass ratio instead of failing on coverage=0.
+    fail_mode: coverage_below_threshold
+    threshold: 0.5
+
+judge:
+  gate_env: CLAREAD_ALLOW_REAL_LLM_TESTS
+  endpoint_env: CLAREAD_EVAL_JUDGE_BASE_URL
+  api_key_env: CLAREAD_EVAL_JUDGE_API_KEY
+  model_env: CLAREAD_EVAL_JUDGE_MODEL
+  fallback_api_key_env: DEEPSEEK_API_KEY
+  fallback_base_url: https://api.deepseek.com/v1
+  fallback_model: deepseek-v4-pro
+  temperature: 0.0
+  system_role: >
+    你是英语精读内容质量的严格评审，为中文英语学习产品"每日精读"的
+    解析产物打分。只依据给出的证据打分，不猜测未展示的内容；每个维度
+    给 1-5 整数分并附一句具体依据（引用证据中的词）。
+  dimensions:
+    - id: vocab_difficulty_match
+      label: 选词难度匹配
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        高亮词/关键表达的难度下限应与文章难度匹配：C1 文章不应高亮
+        B2 及以下常见词（如 help/start/important 类），B2 文章不应
+        只高亮 A 级词。给出 difficulty 与 highlights 证据后判断整体
+        选词档位是否相称；出现明显低于难度下限的高亮按数量扣分。
+    - id: sentence_note_complexity
+      label: 长难句句法复杂度
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        sentence_notes 选中的句子应真正困难（从句嵌套、插入语、长距离
+        依存、复杂衔接），而不是简单句或短陈述句；难度越高的文章门槛
+        越高。选中简单句当长难句按数量扣分。
+    - id: title_zh_quality
+      label: 中文标题质量
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        中文标题应信雅达：忠实原题信息、中文表达自然、无 AI 腔（不用
+        "深度解析/一文读懂/揭秘"等套话）。若证据中没有中文标题字段，
+        记 1 分，rationale 写 "中文标题缺失"。
+    - id: learning_value
+      label: 解析整体学习价值
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        综合判断：导读/段译是否帮助理解，高亮释义是否准确有用，关键
+        表达与写作借鉴是否值得学，讨论问题是否引发思考；出现错位、
+        垃圾文本参与解析、明显错译按严重程度扣分。
+  output:
+    format: json
+    schema:
+      dimensions: 'map of dimension_id -> {"score": int 1..5, "rationale": string <= 60 字}'
+
+scoring:
+  deterministic_weight: 0.5
+  judge_weight: 0.5
+  note: >
+    case overall = 0.5 * deterministic_pass_ratio + 0.5 * judge_mean/5.
+    When the judge is skipped (no gate/key), overall = deterministic
+    pass ratio and the report marks judge=skipped.

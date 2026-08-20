@@ -127,6 +127,8 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
+Web 工具链使用根 `package.json` 声明的 Node `24.x`；不要用 Node 25 运行 Next.js/Turbopack 门禁。
+
 Web vitest 门禁以当前运行结果为准：
 
 ```powershell
@@ -139,6 +141,8 @@ pnpm exec vitest run
 Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。Vitest 与 Playwright 是独立验证入口，不得用其中一个替代另一个；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
+
+Playwright 默认独占 `127.0.0.1:3200`，端口被其他工作树占用时可先设置 `$env:CLAREAD_E2E_PORT = '3210'`；runner 仍会拒绝复用或终止未知进程。
 
 ## Reader 恢复离线验收
 

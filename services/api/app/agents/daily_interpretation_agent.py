@@ -17,6 +17,7 @@ from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_close_reading_takeaways_strategy,
+    difficulty_prompt_section,
 )
 from app.services.prompting.prompt_loader import load_agent_instructions
 
@@ -26,7 +27,8 @@ class DailyInterpretationAgentDeps:
     full_text: str
     title: str
     highlights_summary: str = ""
-    notes_summary: str = ""
+    paragraph_translations: str = ""
+    difficulty: str = ""
     prompt_strategy: DailyPromptStrategy = field(default_factory=build_close_reading_takeaways_strategy)
 
 
@@ -34,14 +36,18 @@ def build_daily_interpretation_prompt(deps: DailyInterpretationAgentDeps) -> str
     from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
-    all_sections = list(sections) + [
+    all_sections = list(sections)
+    difficulty_section = difficulty_prompt_section("daily_interpretation", deps.difficulty)
+    if difficulty_section is not None:
+        all_sections.append(difficulty_section)
+    all_sections += [
         PromptSection("article_info", (f"Title: {deps.title}",)),
         PromptSection("full_text", (deps.full_text[:6000],)),
     ]
     if deps.highlights_summary:
         all_sections.append(PromptSection("highlights_context", (deps.highlights_summary,)))
-    if deps.notes_summary:
-        all_sections.append(PromptSection("paragraph_notes_context", (deps.notes_summary[:1500],)))
+    if deps.paragraph_translations:
+        all_sections.append(PromptSection("paragraph_translations", (deps.paragraph_translations,)))
     return render_prompt_sections(all_sections)
 
 

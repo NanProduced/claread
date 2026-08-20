@@ -283,6 +283,8 @@ CREATE TABLE daily_readers (
     id text NOT NULL,
     title text NOT NULL,
     subtitle text,
+    original_title text,
+    subtitle_zh text,
     source text NOT NULL,
     source_url text NOT NULL,
     publish_date date NOT NULL,
@@ -305,18 +307,26 @@ CREATE TABLE daily_readers (
     pipeline_meta jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     published_at timestamp with time zone,
+    review_status text DEFAULT 'pending'::text NOT NULL,
+    reviewed_by text,
+    reviewed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT daily_readers_difficulty_check CHECK ((difficulty = ANY (ARRAY['A2'::text, 'B1'::text, 'B2'::text, 'C1'::text]))),
-    CONSTRAINT daily_readers_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'published'::text, 'archived'::text])))
+    CONSTRAINT daily_readers_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'published'::text, 'archived'::text]))),
+    CONSTRAINT daily_readers_review_status_check CHECK ((review_status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))
 );
 
 COMMENT ON TABLE daily_readers IS '每日精读文章表，存储预生成的精读内容 payload。每天最多 3 篇已发布文章，由应用层保证，数据库不做 UNIQUE 约束。';
 
 COMMENT ON COLUMN daily_readers.id IS '文章 ID，格式 daily_{YYYY}_{MM}_{DD}_{NNN}。';
 
-COMMENT ON COLUMN daily_readers.title IS '文章标题。';
+COMMENT ON COLUMN daily_readers.title IS '文章标题。A-3 起存中文主标题（takeaways.title_zh）；旧行为英文原题。';
 
-COMMENT ON COLUMN daily_readers.subtitle IS '副标题/摘要。';
+COMMENT ON COLUMN daily_readers.subtitle IS '副标题/摘要（来源 description，英文）。';
+
+COMMENT ON COLUMN daily_readers.original_title IS '英文原题（caption 级展示）。旧行由增量脚本回填为原 title 值。';
+
+COMMENT ON COLUMN daily_readers.subtitle_zh IS '中文副标题（takeaways.subtitle_zh，一句话点题），可空。';
 
 COMMENT ON COLUMN daily_readers.source IS '来源媒体名称，如 The Guardian、BBC News。';
 
@@ -328,7 +338,7 @@ COMMENT ON COLUMN daily_readers.difficulty IS 'CEFR 难度等级。';
 
 COMMENT ON COLUMN daily_readers.read_time_minutes IS '预估阅读时长（分钟）。';
 
-COMMENT ON COLUMN daily_readers.tags IS '文章主题标签数组。';
+COMMENT ON COLUMN daily_readers.tags IS '文章主题标签数组。A-3 起存中文 tags（takeaways.tags_zh）；scorer tags 仅存 pipeline_meta.score_tags 作选题参考。';
 
 COMMENT ON COLUMN daily_readers.cover_image_url IS '封面图 URL，优先使用文章自带图。';
 
@@ -350,7 +360,13 @@ COMMENT ON COLUMN daily_readers.status IS '文章状态：draft（草稿）、pu
 
 COMMENT ON COLUMN daily_readers.score IS 'AI 评分（4 维综合，满分 10）。';
 
-COMMENT ON COLUMN daily_readers.content_sec_check IS '微信内容安全检测结果，含 trace_id、suggest、label 等。';
+COMMENT ON COLUMN daily_readers.content_sec_check IS 'DEPRECATED: 历史占位字段，pipeline 不再写入。列保留以免破坏旧行读取。';
+
+COMMENT ON COLUMN daily_readers.review_status IS '日审状态：pending、approved、rejected。publish 时置 approved；retry 回 draft 时置 pending。';
+
+COMMENT ON COLUMN daily_readers.reviewed_by IS '最近一次 publish/unpublish 的 operator 标识。旧已发布行回填 legacy。';
+
+COMMENT ON COLUMN daily_readers.reviewed_at IS '最近一次 publish/unpublish 时间。';
 
 COMMENT ON COLUMN daily_readers.original_text_hash IS '原文 SHA256，用于去重校验。';
 

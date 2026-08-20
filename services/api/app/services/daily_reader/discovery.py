@@ -1,15 +1,20 @@
 """Discovery layer for Daily Reader article pipeline.
 
 Fetches candidate articles from Guardian API and RSS feeds (BBC, NPR).
+
+Also owns the image-candidate data model (B-1): each article carries a list
+of ``ImageCandidate`` entries (og:image / body figure+img) that the cover
+pipeline validates, selects from, and stores.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from html import unescape
 from dataclasses import dataclass, field
 from datetime import datetime
+from html import unescape
+from urllib.parse import urljoin
 
 import feedparser
 import httpx
@@ -17,6 +22,22 @@ import httpx
 from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+IMAGE_POSITION_META = "meta"
+IMAGE_POSITION_BODY = "body"
+
+# Cheap URL-level noise filter; the authoritative gate is pixel validation
+# after download (cover_download.validate_image_dimensions).
+_IMG_URL_NOISE_RE = re.compile(
+    r"(?:icon|logo|sprite|badge|avatar|favicon|tracking|1x1)", re.IGNORECASE
+)
+
+
+@dataclass
+class ImageCandidate:
+    url: str
+    caption: str = ""
+    position: str = IMAGE_POSITION_META  # meta (og:image) | body (figure/img)
 
 
 @dataclass
@@ -28,10 +49,72 @@ class DiscoveredArticle:
     author: str = ""
     published_at: datetime | None = None
     cover_image_url: str | None = None
+    image_candidates: list[ImageCandidate] = field(default_factory=list)
+    # B-1: real pixel-validated cover eligibility (feeds the has_cover
+    # signal); distinct from merely "has a cover URL".
+    has_qualified_cover: bool = False
     tags: list[str] = field(default_factory=list)
     word_count: int = 0
     source: str = ""
     needs_extraction: bool = True
+
+
+def collect_image_candidates_from_html(
+    html: str, base_url: str, max_body_images: int = 6
+) -> list[ImageCandidate]:
+    """Collect image candidates (og:image + body figure/img) from raw HTML.
+
+    Records URL, original caption (figcaption) and position. Relative URLs
+    are resolved against ``base_url``; data:/svg/noise URLs are skipped.
+    """
+    if not html:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as exc:
+        logger.warning("image candidate collection failed for %s: %s", base_url[:80], exc)
+        return []
+
+    candidates: list[ImageCandidate] = []
+    seen: set[str] = set()
+
+    def _add(url: str, caption: str, position: str) -> None:
+        url = (url or "").strip()
+        if not url or url.startswith("data:") or url.lower().endswith(".svg"):
+            return
+        if _IMG_URL_NOISE_RE.search(url):
+            return
+        resolved = urljoin(base_url, url)
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        candidates.append(
+            ImageCandidate(url=resolved, caption=(caption or "").strip(), position=position)
+        )
+
+    for meta in soup.find_all(
+        "meta", attrs={"property": re.compile(r"^(?:og|twitter):image$")}
+    ):
+        _add(meta.get("content", ""), "", IMAGE_POSITION_META)
+
+    body_count = 0
+    for figure in soup.find_all("figure"):
+        if body_count >= max_body_images:
+            break
+        img = figure.find("img")
+        if img is None:
+            continue
+        figcaption = figure.find("figcaption")
+        _add(
+            img.get("src") or img.get("data-src", ""),
+            figcaption.get_text(" ", strip=True) if figcaption else "",
+            IMAGE_POSITION_BODY,
+        )
+        body_count += 1
+
+    return candidates
 
 
 ARTICLE_SOURCES = {
@@ -50,7 +133,8 @@ ARTICLE_SOURCES = {
             "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
             "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
         },
-        "image_width_upgrade": {"from": 240, "to": 640},
+        # B-1: width upgrade is centralized in cover_download.upgrade_image_url.
+        "image_width_upgrade": {"from": 240, "to": 1280},
     },
     "npr": {
         "type": "rss",
@@ -103,14 +187,28 @@ async def discover_guardian() -> list[DiscoveredArticle]:
                 if not text or wc < 400:
                     continue
 
+                web_url = item.get("webUrl", "")
+                thumbnail = fields.get("thumbnail")
+                image_candidates: list[ImageCandidate] = []
+                if thumbnail:
+                    image_candidates.append(
+                        ImageCandidate(url=thumbnail, position=IMAGE_POSITION_META)
+                    )
+                # Guardian skips trafilatura (API body), so collect body
+                # figure/img candidates here (B-1).
+                for cand in collect_image_candidates_from_html(body_html, web_url):
+                    if cand.url != thumbnail:
+                        image_candidates.append(cand)
+
                 articles.append(
                     DiscoveredArticle(
-                        url=item.get("webUrl", ""),
+                        url=web_url,
                         title=fields.get("headline", item.get("webTitle", "")),
                         description=_strip_html(fields.get("standfirst", "")),
                         text=text,
                         author=fields.get("byline", ""),
-                        cover_image_url=fields.get("thumbnail"),
+                        cover_image_url=thumbnail,
+                        image_candidates=image_candidates,
                         tags=[section],
                         word_count=wc,
                         source="guardian",
@@ -202,17 +300,11 @@ def _extract_rss_thumbnail(entry: object) -> str | None:
 
 
 def _upgrade_image_url(url: str, entry: object) -> str:
-    source_name = ""
-    if hasattr(entry, "source") and hasattr(entry.source, "title"):
-        source_name = entry.source.title
+    # B-1: centralized upgrade rules live in cover_download so extraction
+    # candidates and RSS thumbnails share the same patterns (target 1280).
+    from app.services.daily_reader.cover_download import upgrade_image_url
 
-    if "bbc" in source_name.lower() or "bbci" in url:
-        url = re.sub(r"/\d+_(width|height)/", "/640_width/", url)
-        if "_width" not in url and "_height" not in url:
-            url = re.sub(r"\.jpg$", "_640.jpg", url, flags=re.IGNORECASE)
-            url = re.sub(r"\.png$", "_640.png", url, flags=re.IGNORECASE)
-
-    return url
+    return upgrade_image_url(url)
 
 
 def _strip_html(html: str) -> str:

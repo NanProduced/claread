@@ -13,7 +13,7 @@
     },
     "default_profile": "workflow-qwen36-plus",
     "routes": {
-      "_comment": "完整 route 列表：annotation_generation / dict_ai / reader_ask / reader_ask_replan / daily_annotation / daily_analysis / daily_review。",
+      "_comment": "完整 route 列表：annotation_generation / dict_ai / reader_ask / reader_ask_replan / daily_annotation / daily_analysis / daily_review / daily_cover。",
       "annotation_generation": {
         "_field_notes": {
           "profile": "当前 route 的主 profile。",

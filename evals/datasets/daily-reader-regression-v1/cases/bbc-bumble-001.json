@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "case_id": "bbc-bumble-001",
+  "dataset_id": "daily-reader-regression-v1",
+  "origin": {
+    "kind": "production_row",
+    "daily_reader_id": "daily_2026_08_15_001",
+    "captured_at": "2026-08-19",
+    "note": "original_text captured verbatim from daily_readers at review time"
+  },
+  "input": {
+    "title": "Bumble divides users by ditching its signature 'women-first' chat rule",
+    "subtitle": "The dating app's boss says the move is in response to a successful trial and a change in what users want.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cvglzlj81x2o?at_medium=RSS&at_campaign=rss",
+    "tags": [
+      "dating apps",
+      "technology",
+      "society",
+      "business"
+    ],
+    "read_time_minutes": 3,
+    "original_text": "- Published\nDating app Bumble has divided its users by dropping its signature rule which allowed only women to send the first message to a match.\nWhen the app launched in 2014, founder and boss Whitney Wolfe Herd said it distinguished itself from rivals like Tinder by allowing women to \"make the first move\".\nBut the thing that made Bumble famous will now be ditched following a trial which showed more engagement - and a survey among users which found 66% of women prefer men to send the first message.\nReaction across online forums has highlighted a divide among users about whether the update will get more people using Bumble - or if it makes it \"just like any other dating app\".\nPreviously, only same-sex relationships did not have to follow the women-first rule.\nAnother change coming to Bumble will extend the time-limit users have to initiate a conversation after matching.\nUsers will now have three days to begin messaging one another instead of 24 hours.\n\"While women making the first move was a radical idea, being women-first was never about prescribing just one way to connect,\" said Wolfe Herd.\n\"Today, our community is asking for more flexibility, less pressure, and more opportunities to create real, meaningful connections and that is what this new experience provides.\"\nIn an April 2015 interview shortly after Bumble's launch, Wolfe Herd told the Toronto Star it was a \"stereotype to say women like to sit back and want men to come to them\".\nReddit's popular r/Bumble community - where half a million people share dating stories and discuss app features - has largely questioned the platform's rule changes.\nIn particular, users have asked how Bumble was now different from any other dating app.\n\"If you women want men to message first, use a different app,\" one person wrote, while another said they \"really valued\" women making the first move.\n\"Women get swamped with messages, so any woman who messaged me showed real interest,\" they said.\nOthers argued the feature had already been diluted when Bumble introduced \"Opening Moves\" - a feature allowing women to set a pre-written prompt for men to respond to.\nBut some women said they supported the change - or admitted they had grown frustrated with initiating conversations only to receive no reply.\n\"Honestly, men barely responded when I messaged first on Bumble,\" said one person, while another claimed the \"majority\" of men they messaged \"let our matches expire.\"\nProfessional matchmaker Sarah Louise Ryan welcomed the move, saying Bumble's signature feature had \"run its course\".\n\"At first, the idea was empowering, but over time the novelty wore off,\" she told BBC News.\n\"Women were effectively being asked to hold the narrative and energy of the connection, while men were left feeling passive or anxious.\n\"Bumble had real success with that positioning initially, but they relied on it for too long and failed to adapt as the dating landscape shifted.\"\nThe rule change comes amid wider stagnation across the UK online dating market.\nAccording to Ofcom's Online Nation, external figures, Bumble's British audience fell from nearly at 1.5 million monthly users in 2023 to 1.1 million in 2025.\nAlthough Tinder remained the UK's most used dating service, it shed roughly one million users over the same period, whereas Hinge held steady 1.5 million users.\nBumble Inc, the Texas-based parent company which also owns Badoo, laid off nearly a third of its global workforce last year.\n\"People are realising constant swiping isn't actually leading to real-world dates, which only heightens dating fatigue,\" said Ryan.\n\"We're seeing a clear shift towards community and real-life connections—whether that's singles joining run clubs or turning to offline matchmaking because they've simply had enough of online dating.\""
+  },
+  "gold": {
+    "expected_difficulty": "B2",
+    "dirty_fragments": [
+      "- Published",
+      "Online Nation, external figures"
+    ],
+    "expected_expressions": [
+      "make the first move",
+      "run its course",
+      "wore off",
+      "swamped with",
+      "let our matches expire"
+    ]
+  }
+}

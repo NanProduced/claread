@@ -1,4 +1,5 @@
 import { ArrowRight, LogIn } from "lucide-react";
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { ClareadStamp } from "@/components/brand/BrandMarks";
@@ -9,6 +10,17 @@ import { appReadRoute, dailyArticleRoute, dailyRoute, loginRoute, homeRoute } fr
 import type { DailyReaderListItem } from "@/types/view/DailyReaderVm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "每日精读",
+  description: "每天一篇英文精读：原文、译文与逐段解析。一份放在门口的英文报纸。",
+  openGraph: {
+    title: "Claread 每日精读",
+    description: "每天一篇英文精读：原文、译文与逐段解析。一份放在门口的英文报纸。",
+    locale: "zh_CN",
+    images: [{ url: "/brand/claread-horizontal-bilingual.png", alt: "Claread 每日精读" }],
+  },
+};
 
 function formatPublishDate(value: string): string {
   const date = new Date(value);
@@ -41,7 +53,7 @@ function articleMeta(article: DailyReaderListItem): string {
 
 /* ---------- Lead Article (Magazine Cover) ---------- */
 
-function LeadArticle({ article }: { article: DailyReaderListItem }) {
+function LeadArticle({ article, kicker }: { article: DailyReaderListItem; kicker: string }) {
   const hasCover = Boolean(article.coverImageUrl);
 
   return (
@@ -70,7 +82,7 @@ function LeadArticle({ article }: { article: DailyReaderListItem }) {
         {/* Content on top of image */}
         <div className="absolute inset-x-0 bottom-0 p-6 sm:p-8 lg:p-10">
           <p className="text-xs font-semibold tracking-[0.18em] text-white/70">
-            今日精读 · {formatLongDate(article.publishDate)}
+            {kicker} · {formatLongDate(article.publishDate)}
           </p>
           <h2 className="mt-3 max-w-2xl font-headline text-[clamp(1.8rem,3.5vw,2.8rem)] font-semibold leading-[1.1] tracking-normal text-white">
             {article.title}
@@ -104,10 +116,10 @@ function EmptyLeadState() {
         今日精读
       </p>
       <h2 className="mt-4 max-w-xl font-headline text-[clamp(1.6rem,3vw,2.4rem)] font-semibold leading-tight tracking-normal text-ink">
-        今日精读暂未发布
+        今日刊物编辑中
       </h2>
       <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-        Web 已接入真实每日精读数据源。当前上游没有返回今日已发布文章，请稍后再来，或先回到首页。
+        新一期内容正在编辑中。请稍后再来，或先回到首页逛逛。
       </p>
       <Link
         href={homeRoute}
@@ -159,12 +171,18 @@ export default async function DailyReaderPage() {
     fetchDailyReaderList({ limit: 8 }),
   ]);
   const todayArticles = todayResult.ok ? todayResult.data : [];
-  const leadArticle = todayArticles[0] ?? null;
-  const otherTodayArticles = todayArticles.slice(1);
+  const listItems = listResult.ok ? listResult.data.items : [];
   const todayIds = new Set(todayArticles.map((article) => article.id));
-  const archiveItems = listResult.ok
-    ? listResult.data.items.filter((article) => !todayIds.has(article.id)).slice(0, 5)
-    : [];
+  const publishedArchive = listItems.filter((article) => !todayIds.has(article.id));
+
+  // 今日为空时用最新一篇已发布文章降级做头条，往期列表不再依赖头条存在（P0-2）。
+  const leadArticle = todayArticles[0] ?? null;
+  const fallbackLead = leadArticle ? null : (publishedArchive[0] ?? null);
+  const displayLead = leadArticle ?? fallbackLead;
+  const otherTodayArticles = todayArticles.slice(1);
+  const archiveItems = publishedArchive
+    .filter((article) => article.id !== fallbackLead?.id)
+    .slice(0, 5);
 
   return (
     <main className="min-h-screen overflow-hidden bg-surface-canvas text-ink">
@@ -184,10 +202,10 @@ export default async function DailyReaderPage() {
 
           {/* Lead article — magazine cover style */}
           <div className="mt-12">
-            {leadArticle ? (
+            {displayLead ? (
               <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_380px]">
                 {/* Lead article with cover image */}
-                <LeadArticle article={leadArticle} />
+                <LeadArticle article={displayLead} kicker={leadArticle ? "今日精读" : "往期精选"} />
 
                 {/* Sidebar */}
                 <aside id="archive">
@@ -212,7 +230,7 @@ export default async function DailyReaderPage() {
                       <ArticleListItem key={article.id} article={article} />
                     )) : (
                       <p className="py-5 text-sm leading-6 text-muted-foreground">
-                        暂无往期已发布文章。发布后会自动出现在这里。
+                        暂无往期内容。
                       </p>
                     )}
                   </div>

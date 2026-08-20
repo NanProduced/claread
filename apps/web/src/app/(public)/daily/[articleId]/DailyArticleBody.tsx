@@ -57,6 +57,9 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
     <div className="mt-14 max-w-[65ch] space-y-14 font-reading text-[1.22rem] leading-[2] text-ink sm:text-[1.28rem]">
       {article.body.paragraphs.map((paragraph, index) => {
         const isFirst = index === 0;
+        // Drop cap only when the paragraph actually opens with a letter —
+        // dirty head residue like "- Published" would render a lone dash.
+        const hasDropCap = isFirst && /^\p{L}/u.test(paragraph.text);
 
         return (
           <section key={paragraph.id} className="group relative">
@@ -70,7 +73,7 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
 
             <p
               className={cn(
-                isFirst &&
+                hasDropCap &&
                   "first-letter:float-left first-letter:mr-3 first-letter:text-[4rem] first-letter:font-bold first-letter:leading-[0.8] first-letter:text-ink"
               )}
             >

@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import re
+from difflib import SequenceMatcher
 from html import unescape
 from typing import Any, TypedDict
 
@@ -64,6 +65,12 @@ from app.llm.routes import (
     ModelRoute,
 )
 from app.observability.workflow_tracing import build_llm_trace_metadata
+from app.services.daily_reader.extraction import (
+    clean_extracted_article,
+    detect_transcript_markers,
+    find_boilerplate_hits,
+)
+from app.services.prompting.daily_prompt_strategy import resolve_refined_difficulty
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +111,6 @@ class DailyReaderState(TypedDict, total=False):
     abort: bool
 
     body_json: dict
-    content_sec_check: dict
 
     usage_summary: dict | None
 
@@ -258,6 +264,30 @@ async def _run_daily_refinement_llm_span(
 
 def light_normalize_node(state: DailyReaderState) -> dict:
     text = state.get("original_text", "")
+    markers = detect_transcript_markers(text)
+    if markers:
+        # A-1: transcripts are not articles — reject before any LLM spend.
+        meta = dict(state.get("pipeline_meta") or {})
+        meta["rejection"] = {
+            "code": "transcript_rejected",
+            "reason": (
+                "Transcript markers detected (HOST/BYLINE/SOUNDBITE); "
+                "transcripts are not articles"
+            ),
+            "markers": markers,
+        }
+        logger.warning(
+            "daily_reader: candidate rejected as transcript (markers=%s, title=%s)",
+            markers, state.get("title", "")[:60],
+        )
+        return {
+            "abort": True,
+            "normalized_paragraphs": [],
+            "pipeline_meta": meta,
+            "review_result": {"passed": False, "reason": "transcript_rejected"},
+        }
+
+    text = clean_extracted_article(text)
     title = state.get("title", "")
     raw_blocks = _split_into_raw_blocks(text)
     classified_blocks = _classify_raw_blocks(raw_blocks, title)
@@ -266,6 +296,16 @@ def light_normalize_node(state: DailyReaderState) -> dict:
     for i, unit in enumerate(reading_units):
         normalized.append({"paragraph_id": f"p_{i}", "text": unit["text"]})
     return {"normalized_paragraphs": normalized}
+
+
+def _is_aborted(state: DailyReaderState) -> bool:
+    return bool(state.get("abort"))
+
+
+def _effective_difficulty(state: DailyReaderState) -> str:
+    """A-2: refined whole-text grade wins; scorer coarse grade is fallback."""
+    refined = resolve_refined_difficulty(state.get("paragraph_notes_json"))
+    return refined or state.get("difficulty", "")
 
 
 async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
@@ -285,6 +325,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 paragraphs=batch,
                 batch_index=batch_idx,
                 total_batches=len(batches),
+                difficulty=state.get("difficulty", ""),
             )
             prompt = build_daily_vocab_prompt(deps)
             metadata = _build_daily_llm_metadata(
@@ -330,6 +371,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 paragraphs=missing_required,
                 batch_index=len(batches),
                 total_batches=len(batches) + 1,
+                difficulty=state.get("difficulty", ""),
             )
             prompt = build_daily_vocab_prompt(deps)
             metadata = _build_daily_llm_metadata(
@@ -400,6 +442,7 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
             title=title,
             highlights_summary=highlights_summary,
             paragraphs_info=paragraphs_info,
+            difficulty=state.get("difficulty", ""),
         )
         prompt = build_daily_footer_prompt(deps)
         metadata = _build_daily_llm_metadata(
@@ -442,15 +485,14 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
             hl_texts = [h.get("text", "") for h in highlights[:15]]
             highlights_summary = f"已标注的关键词和短语：{', '.join(hl_texts)}"
 
-        notes_summary = ""
-        if paragraph_notes:
-            notes_summary = json.dumps(paragraph_notes, ensure_ascii=False)[:1500]
+        paragraph_translations = _paragraph_translations_context(paragraph_notes)
 
         deps = DailyInterpretationAgentDeps(
             full_text=_reconstruct_numbered_full_text(paragraphs),
             title=title,
             highlights_summary=highlights_summary,
-            notes_summary=notes_summary,
+            paragraph_translations=paragraph_translations,
+            difficulty=_effective_difficulty(state),
         )
         prompt = build_daily_interpretation_prompt(deps)
         metadata = _build_daily_llm_metadata(
@@ -488,6 +530,31 @@ async def quality_review_node(state: DailyReaderState) -> dict:
     takeaways = state.get("takeaways_json", {})
 
     try:
+        # A-1 deterministic gate (no LLM): no highlight/guide/translation may
+        # sit on suspected boilerplate text. Reuses the extraction-layer
+        # detectors; fail routes into the existing refinement path.
+        boilerplate_hits = find_boilerplate_hits(
+            _collect_artifact_surfaces(highlights, paragraph_notes, takeaways)
+        )
+        if boilerplate_hits:
+            unique_hits = sorted(set(boilerplate_hits))
+            logger.warning("quality_review: boilerplate leaked into artifacts: %s", unique_hits[:5])
+            return {
+                "review_result": {
+                    "passed": False,
+                    "reason": "boilerplate_leak",
+                    "issues": [{
+                        "dimension": "boilerplate",
+                        "severity": "major",
+                        "description": (
+                            "疑似脏数据/boilerplate 出现在高亮、导读或译文中: "
+                            + "; ".join(unique_hits[:5])
+                        ),
+                        "suggestion": "删除所有落在 boilerplate 文本上的高亮、导读与译文",
+                    }],
+                }
+            }
+
         coverage_report = _check_highlight_coverage(paragraphs, highlights)
         coverage_report["retry_exhausted"] = bool(state.get("highlight_retry_exhausted", False))
         coverage_report["retry_missing_paragraph_ids"] = state.get("highlight_retry_missing_paragraph_ids", [])
@@ -500,6 +567,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
             takeaways_json=json.dumps(takeaways, ensure_ascii=False),
             coverage_report=json.dumps(coverage_report, ensure_ascii=False),
             paragraph_notes_report=json.dumps(paragraph_notes_report, ensure_ascii=False),
+            difficulty=_effective_difficulty(state),
         )
         prompt = build_daily_review_prompt(deps)
         metadata = _build_daily_llm_metadata(
@@ -614,7 +682,8 @@ def daily_projection_node(state: DailyReaderState) -> dict:
         list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways),
     )
 
-    corrected = _reconcile_highlights(paragraphs, highlights)
+    corrected = _dedupe_highlights(_reconcile_highlights(paragraphs, highlights))
+    takeaways = _snap_sentence_translations(takeaways, paragraphs, paragraph_notes)
 
     coverage = _check_highlight_coverage(paragraphs, corrected)
     logger.info("daily_projection_node: highlight coverage=%s", coverage)
@@ -652,6 +721,45 @@ def _should_refine(state: DailyReaderState) -> bool:
     return not review.get("passed", True)
 
 
+def _collect_artifact_surfaces(
+    highlights: list[dict], paragraph_notes: dict, takeaways: dict
+) -> list[str]:
+    """User-visible artefact surfaces the dirty fragments could leak into."""
+    texts: list[str] = []
+    for h in highlights:
+        if isinstance(h, dict):
+            texts.extend([h.get("text", ""), h.get("gloss", "")])
+    if isinstance(paragraph_notes, dict):
+        texts.append(paragraph_notes.get("article_summary", ""))
+        texts.extend(paragraph_notes.get("reading_focus", []) or [])
+        for n in paragraph_notes.get("notes", []) or []:
+            if isinstance(n, dict):
+                for k in ("focus_question", "micro_summary", "translation"):
+                    texts.append(n.get(k, ""))
+    if isinstance(takeaways, dict):
+        texts.append(takeaways.get("article_takeaway", ""))
+        for e in takeaways.get("key_expressions", []) or []:
+            if isinstance(e, dict):
+                texts.extend([
+                    e.get("expression", ""), e.get("gloss", ""),
+                    e.get("context_sentence", ""), e.get("usage_note", ""),
+                ])
+        for sn in takeaways.get("sentence_notes", []) or []:
+            if isinstance(sn, dict):
+                texts.extend([
+                    sn.get("sentence", ""), sn.get("translation", ""),
+                    sn.get("breakdown", ""), sn.get("takeaway", ""),
+                ])
+        for wm in takeaways.get("writing_moves", []) or []:
+            if isinstance(wm, dict):
+                texts.extend([
+                    wm.get("anchor", ""), wm.get("explanation", ""),
+                    wm.get("reusable_pattern", "") or "",
+                ])
+        texts.extend(takeaways.get("discussion_questions", []) or [])
+    return texts
+
+
 def build_daily_reader_graph() -> Any:
     graph = StateGraph(DailyReaderState)
 
@@ -664,7 +772,11 @@ def build_daily_reader_graph() -> Any:
     graph.add_node("daily_projection", daily_projection_node)
 
     graph.add_edge(START, "light_normalize")
-    graph.add_edge("light_normalize", "highlight_by_paragraph_batches")
+    graph.add_conditional_edges(
+        "light_normalize",
+        _is_aborted,
+        {True: END, False: "highlight_by_paragraph_batches"},
+    )
     graph.add_edge("highlight_by_paragraph_batches", "paragraph_guides_and_translations")
     graph.add_edge("paragraph_guides_and_translations", "close_reading_takeaways")
     graph.add_edge("close_reading_takeaways", "quality_review")
@@ -1138,6 +1250,200 @@ def _reconcile_highlights(
     if fix_count:
         logger.info("_reconcile_highlights: fixed %d highlight positions", fix_count)
     return corrected
+
+
+_VOWELS = set("aeiouy")
+_ZH_SENT_SPLIT = re.compile(r"(?<=[。！？])")
+_ZH_PUNCT = "。！？；"
+
+
+def _simple_stem(word: str) -> str:
+    # ponytail: inflectional suffixes only (plural/tense). Add a lemmatizer
+    # if irregulars (went/go, mice/mouse) start leaking through dedup.
+    w = word
+    if len(w) <= 3:
+        return w
+    if len(w) > 5 and w.endswith("ing"):
+        w = w[:-3]
+        if len(w) > 2 and w[-1] == w[-2] and w[-1] not in _VOWELS:
+            w = w[:-1]
+    elif len(w) > 4 and w.endswith("ied"):
+        w = w[:-3] + "y"
+    elif len(w) > 4 and w.endswith("ed"):
+        w = w[:-2]
+        if len(w) > 2 and w[-1] == w[-2] and w[-1] not in _VOWELS:
+            w = w[:-1]
+    elif len(w) > 4 and w.endswith("ies"):
+        w = w[:-3] + "y"
+    elif len(w) > 4 and w.endswith("es"):
+        w = w[:-2]
+    elif w.endswith("s") and not w.endswith("ss"):
+        w = w[:-1]
+    if len(w) > 4 and w.endswith("e"):
+        w = w[:-1]
+    return w
+
+
+def _normalize_highlight_key(text: str) -> str:
+    collapsed = re.sub(r"\s+", " ", (text or "").strip()).casefold()
+    if not collapsed:
+        return ""
+    return " ".join(_simple_stem(w) for w in collapsed.split(" "))
+
+
+def _dedupe_highlights(highlights: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for hl in highlights:
+        key = _normalize_highlight_key(hl.get("text", ""))
+        if not key:
+            kept.append(hl)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(hl)
+    return kept
+
+
+def _paragraph_translations_context(paragraph_notes: dict) -> str:
+    if not isinstance(paragraph_notes, dict):
+        return ""
+    lines: list[str] = []
+    for note in paragraph_notes.get("notes", []) or []:
+        if not isinstance(note, dict):
+            continue
+        pid = note.get("paragraph_id", "")
+        tr = note.get("translation", "")
+        if pid and tr:
+            lines.append(f"{pid}: {tr}")
+    return "\n".join(lines)
+
+
+def _squash_zh(s: str) -> str:
+    return re.sub(r"\s+", "", s or "")
+
+
+def _zh_sentences(text: str) -> list[str]:
+    return [p for p in _ZH_SENT_SPLIT.split(text or "") if p.strip()]
+
+
+def _find_en_span(paragraph: str, sentence: str) -> tuple[int, int] | None:
+    hay = paragraph or ""
+    needle = (sentence or "").strip()
+    if not hay or not needle:
+        return None
+    i = hay.find(needle)
+    if i >= 0:
+        return i, i + len(needle)
+    short = needle[:48]
+    if len(short) >= 12:
+        i = hay.find(short)
+        if i >= 0:
+            return i, min(len(hay), i + len(needle))
+    return None
+
+
+def _snap_zh_window(zh: str, start_ratio: float, end_ratio: float) -> str:
+    if not zh:
+        return ""
+    a = max(0, min(len(zh) - 1, int(start_ratio * len(zh))))
+    b = max(a + 1, min(len(zh), int(end_ratio * len(zh))))
+    left = 0
+    for i in range(a - 1, -1, -1):
+        if zh[i] in _ZH_PUNCT:
+            left = i + 1
+            break
+    right = len(zh)
+    for i in range(b, len(zh)):
+        if zh[i] in _ZH_PUNCT:
+            right = i + 1
+            break
+    return zh[left:right].strip()
+
+
+def _best_zh_span_by_overlap(query: str, zh_para: str) -> str:
+    sents = _zh_sentences(zh_para)
+    if not sents:
+        return ""
+    q = _squash_zh(query)
+    if not q:
+        return ""
+    best, best_score = "", 0.0
+    for i in range(len(sents)):
+        acc = ""
+        for j in range(i, len(sents)):
+            acc += sents[j]
+            score = SequenceMatcher(None, q, _squash_zh(acc)).ratio()
+            if score > best_score:
+                best_score = score
+                best = acc.strip()
+    return best if best_score >= 0.35 else ""
+
+
+def _align_one_sentence_translation(
+    sentence: str,
+    sent_tr: str,
+    en_para: str,
+    zh_para: str,
+) -> str:
+    if not zh_para:
+        return sent_tr
+    if sent_tr and _squash_zh(sent_tr) in _squash_zh(zh_para):
+        return sent_tr
+    span = _find_en_span(en_para, sentence)
+    if span is not None and en_para:
+        snapped = _snap_zh_window(zh_para, span[0] / len(en_para), span[1] / len(en_para))
+        if snapped:
+            return snapped
+    return _best_zh_span_by_overlap(sent_tr or sentence, zh_para) or sent_tr
+
+
+def _snap_sentence_translations(
+    takeaways: dict,
+    paragraphs: list[dict],
+    paragraph_notes: dict,
+) -> dict:
+    if not isinstance(takeaways, dict):
+        return takeaways
+    notes = takeaways.get("sentence_notes") or []
+    if not notes:
+        return takeaways
+    en_by_pid = {
+        p.get("paragraph_id", ""): p.get("text", "") for p in paragraphs or []
+    }
+    zh_by_pid: dict[str, str] = {}
+    if isinstance(paragraph_notes, dict):
+        for n in paragraph_notes.get("notes", []) or []:
+            if isinstance(n, dict) and n.get("paragraph_id"):
+                zh_by_pid[n["paragraph_id"]] = n.get("translation", "") or ""
+    new_notes = []
+    for sn in notes:
+        if not isinstance(sn, dict):
+            new_notes.append(sn)
+            continue
+        pid = sn.get("paragraph_id", "")
+        sentence = sn.get("sentence", "")
+        if not zh_by_pid.get(pid):
+            needle = (sentence or "").strip()[:40]
+            retarget = ""
+            if needle:
+                for other_pid, en in en_by_pid.items():
+                    if zh_by_pid.get(other_pid) and needle in (en or ""):
+                        retarget = other_pid
+                        break
+            if not retarget:
+                continue
+            pid = retarget
+            sn = {**sn, "paragraph_id": pid}
+        aligned = _align_one_sentence_translation(
+            sentence,
+            sn.get("translation", ""),
+            en_by_pid.get(pid, ""),
+            zh_by_pid.get(pid, ""),
+        )
+        new_notes.append({**sn, "translation": aligned} if aligned != sn.get("translation") else sn)
+    return {**takeaways, "sentence_notes": new_notes}
 
 
 def _choose_refined_highlights(

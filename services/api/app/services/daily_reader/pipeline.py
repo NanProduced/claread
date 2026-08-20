@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from time import perf_counter
 
+import httpx
 import orjson
 
 from app.config.settings import get_settings
@@ -25,29 +26,37 @@ from app.llm.routes import (
     MODEL_ROUTE_DAILY_REVIEW,
 )
 from app.services.ai_usage import (
-    AIUsageEventCreate,
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_DAILY_READER_PIPELINE,
     STATUS_FAILED,
     STATUS_SKIPPED,
     STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
+    AIUsageEventCreate,
     record_ai_usage_event,
     resolve_model_metadata,
 )
-from app.services.prompting.prompt_loader import get_prompt_version
-from app.services.daily_reader.discovery import DiscoveredArticle, discover_guardian, discover_rss_sources
-from app.services.daily_reader.extraction import apply_extraction_to_article, extract_with_trafilatura
-from app.services.daily_reader.cover_download import download_cover_image
+from app.services.daily_reader.cover_download import probe_cover_eligible, process_article_covers
+from app.services.daily_reader.discovery import (
+    DiscoveredArticle,
+    discover_guardian,
+    discover_rss_sources,
+)
+from app.services.daily_reader.extraction import (
+    apply_extraction_to_article,
+    extract_with_trafilatura,
+)
 from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
 from app.services.daily_reader.scoring import (
+    SCORE_THRESHOLD,
     ArticleScore,
     deduplicate,
     filter_by_word_count,
     score_article,
-    SCORE_THRESHOLD,
 )
 from app.services.daily_reader.service import business_today
+from app.services.prompting.daily_prompt_strategy import resolve_refined_difficulty
+from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +79,62 @@ class PipelineResult:
     candidates_scored: int = 0
     candidates_selected: int = 0
     errors: list[str] = field(default_factory=list)
+    rejections: list[str] = field(default_factory=list)
+
+
+ALERT_ZERO_OUTPUT = "zero_output"
+ALERT_WORKFLOW_FAILURE = "workflow_failure"
+ALERT_ALL_CANDIDATES_FILTERED = "all_candidates_filtered"
+
+
+def collect_pipeline_alert_reasons(result: PipelineResult) -> list[str]:
+    reasons: list[str] = []
+    if not result.articles:
+        reasons.append(ALERT_ZERO_OUTPUT)
+    if result.errors:
+        reasons.append(ALERT_WORKFLOW_FAILURE)
+    if result.candidates_found > 0 and result.candidates_scored == 0:
+        reasons.append(ALERT_ALL_CANDIDATES_FILTERED)
+    return reasons
+
+
+async def emit_pipeline_alerts(
+    result: PipelineResult,
+    run_id: str | None = None,
+) -> None:
+    reasons = collect_pipeline_alert_reasons(result)
+    if not reasons:
+        return
+
+    payload = {
+        "run_id": run_id,
+        "reasons": reasons,
+        "articles_generated": len(result.articles),
+        "candidates_found": result.candidates_found,
+        "candidates_extracted": result.candidates_extracted,
+        "candidates_scored": result.candidates_scored,
+        "workflow_errors": result.errors,
+        "rejections": result.rejections,
+    }
+    logger.error(
+        "Daily reader pipeline alert run_id=%s reasons=%s",
+        run_id,
+        reasons,
+    )
+
+    webhook_url = get_settings().daily_reader_alert_webhook_url
+    if not webhook_url:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(webhook_url, json=payload)
+    except Exception as exc:
+        logger.error(
+            "Daily reader alert webhook failed run_id=%s: %s",
+            run_id,
+            exc,
+        )
 
 
 def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dict[str, dict[str, str]]]:
@@ -162,7 +227,17 @@ async def run_daily_pipeline(
     async def _extract_one(article: DiscoveredArticle) -> None:
         if article.needs_extraction:
             extraction = await extract_with_trafilatura(article.url)
-            if extraction:
+            if extraction and extraction.rejection_reason:
+                article.text = ""
+                rejection_msg = (
+                    f"Rejected candidate '{article.title[:60]}' "
+                    f"({article.source}): {extraction.rejection_reason}"
+                )
+                logger.warning("Pipeline extraction rejection: %s", rejection_msg)
+                result.rejections.append(rejection_msg)
+                if tracker:
+                    await tracker.add_error("extraction_rejected", rejection_msg)
+            elif extraction:
                 apply_extraction_to_article(article, extraction)
             else:
                 article.text = ""
@@ -181,8 +256,19 @@ async def run_daily_pipeline(
     candidates = filter_by_word_count(candidates)
     logger.info("Pipeline word count filter: %d articles in range", len(candidates))
 
+    # B-1: cover eligibility probe — real pixel validation of the primary
+    # candidate feeds the has_cover signal (previously mere URL presence).
+    # B-2 owns the sort priority; this only makes the signal truthful.
+    cover_sem = asyncio.Semaphore(8)
+
+    async def _probe_cover(article: DiscoveredArticle) -> None:
+        async with cover_sem:
+            article.has_qualified_cover = await probe_cover_eligible(article)
+
+    await asyncio.gather(*[_probe_cover(a) for a in candidates])
+
     # Heuristic pre-filter: only LLM-score articles that pass heuristic threshold
-    from app.services.daily_reader.scoring import heuristic_score, HEURISTIC_THRESHOLD
+    from app.services.daily_reader.scoring import HEURISTIC_THRESHOLD, heuristic_score
     pre_filtered: list[DiscoveredArticle] = []
     for a in candidates:
         h_score = heuristic_score(a)
@@ -216,7 +302,7 @@ async def run_daily_pipeline(
         if score and score.score >= SCORE_THRESHOLD:
             scored.append((article, score))
 
-    scored.sort(key=lambda x: (x[0].cover_image_url is not None, x[1].score), reverse=True)
+    scored.sort(key=lambda x: (x[0].has_qualified_cover, x[1].score), reverse=True)
     result.candidates_scored = len(scored)
     logger.info("Pipeline scoring: %d articles passed threshold", len(scored))
 
@@ -265,6 +351,7 @@ async def run_daily_pipeline(
 
     if tracker:
         await tracker.complete(success_count)
+    await emit_pipeline_alerts(result, run_id=tracker.run_id if tracker else None)
     return result
 
 
@@ -301,12 +388,15 @@ def select_diverse_candidates(
 async def _run_workflow_and_store(
     article: DiscoveredArticle, score: ArticleScore, tracker: PipelineRunTracker | None = None
 ) -> dict | None:
+    from app.observability.workflow_tracing import (
+        build_workflow_root_metadata,
+        build_workflow_root_tags,
+    )
     from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
         build_daily_reader_graph,
     )
-    from app.observability.workflow_tracing import build_workflow_root_metadata, build_workflow_root_tags
 
     graph = build_daily_reader_graph()
 
@@ -400,6 +490,7 @@ async def _run_workflow_and_store(
                 "article_source": article.source,
                 "article_word_count": article.word_count,
                 "pipeline_score": score.score,
+                "pipeline_meta": final_state.get("pipeline_meta", {}),
             },
         )
         return None
@@ -413,13 +504,23 @@ async def _run_workflow_and_store(
     try:
         if tracker:
             await tracker.update_stage("cover_download")
-        local_cover_url = None
-        if article.cover_image_url:
-            local_cover_url = await download_cover_image(article.cover_image_url)
+        # B-1: multi-candidate validation + LLM selection + storage. Never
+        # raises for image failures — fallback is cover_url=None + tracker
+        # errors + pipeline_meta.cover (no silent failures).
+        cover_outcome = await process_article_covers(article, tracker=tracker)
 
         if tracker:
             await tracker.update_stage("storing")
-        payload = await _assemble_payload(article, score, final_state, local_cover_url)
+        payload = await _assemble_payload(article, score, final_state, cover_outcome.cover_url)
+        # B-1: null when no qualified candidate (editorial theme fallback);
+        # _assemble_payload would otherwise leak the raw remote URL.
+        payload["cover_image_url"] = cover_outcome.cover_url
+        if cover_outcome.image_blocks:
+            payload["body_json"] = {**payload["body_json"], "images": cover_outcome.image_blocks}
+        payload["pipeline_meta"] = {
+            **(payload.get("pipeline_meta") or {}),
+            "cover": cover_outcome.meta,
+        }
         await _store_daily_reader(payload)
     except Exception as e:
         await _record_daily_pipeline_event(
@@ -455,7 +556,7 @@ async def _run_workflow_and_store(
             "stored_status": payload["status"],
         },
     )
-    logger.info("Article stored: %s (cover=%s)", article.title[:50], bool(local_cover_url))
+    logger.info("Article stored: %s (cover=%s)", article.title[:50], bool(cover_outcome.cover_url))
     return payload
 
 
@@ -476,18 +577,26 @@ async def run_workflow_only(article_id: str) -> dict | None:
     if not original_text:
         raise ValueError(f"Article {article_id} has no original_text stored; retry not possible")
 
+    from app.observability.workflow_tracing import (
+        build_workflow_root_metadata,
+        build_workflow_root_tags,
+    )
     from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
         build_daily_reader_graph,
     )
-    from app.observability.workflow_tracing import build_workflow_root_metadata, build_workflow_root_tags
 
     graph = build_daily_reader_graph()
 
+    # A-3: title now stores the Chinese headline; the English source
+    # headline lives in original_title. Workflow prompts (takeaways
+    # title_zh, highlight context) must keep seeing the English original.
+    english_title = row.get("original_title") or row["title"]
+
     input_state = {
         "original_text": original_text,
-        "title": row["title"],
+        "title": english_title,
         "subtitle": row["subtitle"],
         "source": row["source"],
         "source_url": row["source_url"],
@@ -556,17 +665,33 @@ async def run_workflow_only(article_id: str) -> dict | None:
         return None
 
     async with pool.acquire() as conn:
+        # A-3: retry refreshes the localized headline columns alongside the
+        # analysis payload. Missing takeaways fields keep the stored values.
+        retry_takeaways = final_state.get("takeaways_json") or {}
+        retry_title = (retry_takeaways.get("title_zh") or "").strip() or row["title"]
+        retry_subtitle_zh = (retry_takeaways.get("subtitle_zh") or "").strip() or None
+        retry_tags = retry_takeaways.get("tags_zh") or _decode_jsonb(row["tags"], [])
         await conn.execute(
             """
             UPDATE daily_readers
             SET body_json = $1, highlights_json = $2, paragraph_notes_json = $3,
-                takeaways_json = $4, updated_at = NOW()
-            WHERE id = $5
+                takeaways_json = $4, difficulty = $5,
+                title = $6, original_title = $7, subtitle_zh = $8, tags = $9,
+                status = 'draft', published_at = NULL,
+                review_status = 'pending', updated_at = NOW()
+            WHERE id = $10
             """,
             final_state.get("body_json", {"paragraphs": []}),
             final_state.get("highlights_json", []),
             final_state.get("paragraph_notes_json", {}),
             final_state.get("takeaways_json", {}),
+            # A-2: refined whole-text grade overrides the stored coarse grade.
+            resolve_refined_difficulty(final_state.get("paragraph_notes_json"))
+            or row["difficulty"],
+            retry_title,
+            english_title,
+            retry_subtitle_zh,
+            retry_tags,
             article_id,
         )
 
@@ -601,16 +726,33 @@ async def _assemble_payload(
 ) -> dict:
     today = business_today()
     nnn = await _next_sequence_number(today)
+    takeaways = state.get("takeaways_json") or {}
+    # A-3: the Chinese editorial headline from takeaways is the stored
+    # title; the English source headline moves to original_title.
+    # takeaways may be empty when the takeaways node failed — then keep
+    # the English headline so the row stays renderable.
+    title_zh = (takeaways.get("title_zh") or "").strip() or article.title
+    subtitle_zh = (takeaways.get("subtitle_zh") or "").strip() or None
+    # A-3 tags verdict: takeaways tags_zh wins; score.tags stays in
+    # pipeline_meta as candidate-selection reference only.
+    tags_zh = takeaways.get("tags_zh") or article.tags
+    pipeline_meta = dict(state.get("pipeline_meta") or {})
+    pipeline_meta.setdefault("score_tags", score.tags)
     return {
         "id": f"daily_{today.strftime('%Y')}_{today.strftime('%m')}_{today.strftime('%d')}_{nnn:03d}",
-        "title": article.title,
+        "title": title_zh,
         "subtitle": article.description,
+        "original_title": article.title,
+        "subtitle_zh": subtitle_zh,
         "source": article.source,
         "source_url": article.url,
         "publish_date": today,
-        "difficulty": score.difficulty,
+        # A-2: scorer coarse grade is only for candidate selection; the
+        # paragraph-notes refined whole-text grade wins at projection.
+        "difficulty": resolve_refined_difficulty(state.get("paragraph_notes_json"))
+        or score.difficulty,
         "read_time_minutes": max(1, article.word_count // 200),
-        "tags": score.tags or article.tags,
+        "tags": tags_zh,
         "cover_image_url": local_cover_url or article.cover_image_url,
         "cover_theme": "editorial_warm",
         "body_json": state.get("body_json", {"paragraphs": []}),
@@ -620,11 +762,10 @@ async def _assemble_payload(
         "takeaways_json": state.get("takeaways_json", {}),
         "status": "draft",
         "score": score.score,
-        "content_sec_check": {"source_verified": True, "source": article.source},
         "original_text_hash": hashlib.sha256(article.text.encode()).hexdigest(),
         "original_text": article.text,
         "pipeline_source": article.source,
-        "pipeline_meta": state.get("pipeline_meta", {}),
+        "pipeline_meta": pipeline_meta,
     }
 
 
@@ -689,17 +830,20 @@ async def _store_daily_reader(payload: dict) -> None:
         await conn.execute(
             """
             INSERT INTO daily_readers (
-                id, title, subtitle, source, source_url, publish_date,
+                id, title, subtitle, original_title, subtitle_zh, source, source_url, publish_date,
                 difficulty, read_time_minutes, tags, cover_image_url, cover_theme,
                 body_json, highlights_json, footer_analysis_json, paragraph_notes_json, takeaways_json,
-                status, score, content_sec_check, original_text_hash, original_text,
+                status, score, original_text_hash, original_text,
                 pipeline_source, pipeline_meta
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+                      $22, $23, $24)
             """,
             payload["id"],
             payload["title"],
             payload["subtitle"],
+            payload.get("original_title"),
+            payload.get("subtitle_zh"),
             payload["source"],
             payload["source_url"],
             payload["publish_date"],
@@ -715,7 +859,6 @@ async def _store_daily_reader(payload: dict) -> None:
             payload["takeaways_json"],
             payload["status"],
             payload["score"],
-            payload["content_sec_check"],
             payload["original_text_hash"],
             payload.get("original_text"),
             payload["pipeline_source"],
