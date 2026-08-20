@@ -4,7 +4,8 @@ Locks the B-2 selection contract:
 
 - scored candidates order by content score first; a qualified cover only
   breaks ties;
-- workflow candidates are attempted strictly in that scored order;
+- workflow candidates are scheduled from that scored order and successful
+  outputs are returned in score-first order;
   topic/source constraints are evaluated at attempt time against the
   current success state, so a failed candidate consumes no quota and a
   lower-ranked same-topic peer can still win a slot;
@@ -82,7 +83,7 @@ async def _run_pipeline(
     async def _fake_score(article: DiscoveredArticle) -> ArticleScore:
         return score_by_url[article.url]
 
-    async def _fake_workflow(article, score, tracker=None):
+    async def _fake_workflow(article, score, tracker=None, **_kwargs):
         if article.url in failing_urls:
             raise RuntimeError(f"workflow failed: {article.url}")
         return {"url": article.url, "source": article.source, "score_tags": score.tags}
@@ -222,6 +223,26 @@ class TestFailedCandidateQuota:
         )
         assert [art["url"] for art in result.articles] == ["b"]
         assert _attempted_urls(workflow_mock) == ["a", "b"]
+
+    async def test_parallel_failure_refill_is_returned_in_score_order(self):
+        a = _candidate(
+            url="a", title="Candidate A", source="s1", score=9.0, tags=["topic-x"],
+        )
+        b = _candidate(
+            url="b", title="Candidate B", source="s2", score=8.9, tags=["topic-x"],
+        )
+        c = _candidate(
+            url="c", title="Candidate C", source="s3", score=8.0, tags=["topic-y"],
+        )
+
+        result, workflow_mock, _ = await _run_pipeline(
+            [a, b, c], max_count=2, failing_urls={"a"},
+        )
+
+        # A and independent C may run together. Once A fails, B may fill
+        # topic-x; the returned successes still follow score order B → C.
+        assert _attempted_urls(workflow_mock) == ["a", "c", "b"]
+        assert [art["url"] for art in result.articles] == ["b", "c"]
 
 
 class TestFailureRefill:

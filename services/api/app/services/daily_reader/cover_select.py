@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config.settings import get_settings
 from app.llm.call_guard import assert_real_llm_allowed
-from app.llm.routes import MODEL_ROUTE_DAILY_COVER
+from app.llm.routes import DAILY_READER_MODEL_PRESET, MODEL_ROUTE_DAILY_COVER
+from app.llm.types import ModelSelection
 from app.services.daily_reader.cover_download import ValidatedCandidate
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,11 @@ async def select_cover_images(
         from app.llm.router import build_model_for_route
 
         settings = get_settings()
-        model, model_config = build_model_for_route(settings, MODEL_ROUTE_DAILY_COVER)
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_DAILY_COVER,
+            ModelSelection(preset=DAILY_READER_MODEL_PRESET),
+        )
     except Exception as exc:
         logger.warning("daily_cover model resolution failed: %s", exc)
 

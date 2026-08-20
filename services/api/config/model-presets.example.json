@@ -13,7 +13,7 @@
     },
     "default_profile": "workflow-qwen36-plus",
     "routes": {
-      "_comment": "完整 route 列表：annotation_generation / dict_ai / reader_ask / reader_ask_replan / daily_annotation / daily_analysis / daily_review / daily_cover。",
+      "_comment": "完整 route 列表见 app/llm/routes.py；Daily Reader 使用独立 daily_reader preset。",
       "annotation_generation": {
         "_field_notes": {
           "profile": "当前 route 的主 profile。",
@@ -45,6 +45,29 @@
       },
       "daily_review": {
         "profile": "workflow-deepseek-v4-pro"
+      }
+    }
+  },
+  "daily_reader": {
+    "_field_notes": "A-5P: scoring/annotation/translation/cover use flash; takeaways and semantic review use pro.",
+    "routes": {
+      "daily_annotation": {
+        "profile": "workflow-deepseek-v4-flash"
+      },
+      "daily_translation": {
+        "profile": "workflow-deepseek-v4-flash"
+      },
+      "daily_analysis": {
+        "profile": "workflow-deepseek-v4-flash"
+      },
+      "daily_takeaways": {
+        "profile": "workflow-deepseek-v4-pro"
+      },
+      "daily_review": {
+        "profile": "workflow-deepseek-v4-pro"
+      },
+      "daily_cover": {
+        "profile": "workflow-deepseek-v4-flash"
       }
     }
   },

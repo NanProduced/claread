@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""
     daily_annotation_model_profile: str = ""
+    daily_translation_model_profile: str = ""
     daily_analysis_model_profile: str = ""
+    daily_takeaways_model_profile: str = ""
     daily_review_model_profile: str = ""
     daily_cover_model_profile: str = ""
     rag_embedding_model_profile: str = ""

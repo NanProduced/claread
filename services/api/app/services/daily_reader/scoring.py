@@ -16,7 +16,8 @@ from langsmith import traceable
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.llm.call_guard import assert_real_llm_allowed
-from app.llm.routes import MODEL_ROUTE_DAILY_ANALYSIS
+from app.llm.routes import DAILY_READER_MODEL_PRESET, MODEL_ROUTE_DAILY_ANALYSIS
+from app.llm.types import ModelSelection
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_DAILY_READER_SCORING,
@@ -28,8 +29,8 @@ from app.services.ai_usage import (
     build_model_metadata,
     record_ai_usage_event,
 )
-from app.services.prompting.prompt_loader import get_prompt_version
 from app.services.daily_reader.discovery import DiscoveredArticle
+from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,11 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
         from app.llm.router import build_model_for_route
 
         settings = get_settings()
-        model, model_config = build_model_for_route(settings, MODEL_ROUTE_DAILY_ANALYSIS)
+        model, model_config = build_model_for_route(
+            settings,
+            MODEL_ROUTE_DAILY_ANALYSIS,
+            ModelSelection(preset=DAILY_READER_MODEL_PRESET),
+        )
         model_metadata = build_model_metadata(model_config)
         fallback_model_metadata = {
             **model_metadata,

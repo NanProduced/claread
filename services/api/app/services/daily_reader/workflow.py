@@ -19,6 +19,7 @@ Key changes from v1:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -60,11 +61,14 @@ from app.config.settings import get_settings
 from app.llm.agent_runner import extract_run_usage, run_agent_with_route
 from app.llm.router import resolve_model_config
 from app.llm.routes import (
-    MODEL_ROUTE_DAILY_ANALYSIS,
+    DAILY_READER_MODEL_PRESET,
     MODEL_ROUTE_DAILY_ANNOTATION,
     MODEL_ROUTE_DAILY_REVIEW,
+    MODEL_ROUTE_DAILY_TAKEAWAYS,
+    MODEL_ROUTE_DAILY_TRANSLATION,
     ModelRoute,
 )
+from app.llm.types import ModelSelection
 from app.observability.workflow_tracing import build_llm_trace_metadata
 from app.services.daily_reader.extraction import (
     clean_extracted_article,
@@ -80,8 +84,10 @@ logger = logging.getLogger(__name__)
 
 WORKFLOW_NAME = "daily_reader"
 WORKFLOW_VERSION = "2.0.0"
+DAILY_MODEL_SELECTION = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
 
-HIGHLIGHT_BATCH_SIZE = 3
+HIGHLIGHT_BATCH_SIZE = 6
+HIGHLIGHT_CONCURRENCY = 2
 MAX_PARAGRAPH_CHARS = 900
 MAX_PARAGRAPH_SENTENCES = 8
 MIN_REQUIRED_HIGHLIGHT_CHARS = 120
@@ -113,6 +119,12 @@ class DailyReaderState(TypedDict, total=False):
     review_result: dict | None
     refinement_result: dict | None
     abort: bool
+
+    vocab_usage: dict[str, object]
+    paragraph_notes_usage: dict[str, object]
+    takeaways_usage: dict[str, object]
+    review_usage: dict[str, object]
+    refinement_usage: dict[str, object]
 
     body_json: dict
 
@@ -161,7 +173,11 @@ def _build_daily_llm_metadata(
     route: ModelRoute,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, object]:
-    model_config = resolve_model_config(get_settings(), route)
+    try:
+        model_config = resolve_model_config(get_settings(), route, DAILY_MODEL_SELECTION)
+    except Exception as exc:
+        logger.warning("daily model metadata resolution failed for route=%s: %s", route, exc)
+        model_config = None
     return build_llm_trace_metadata(
         workflow_name=WORKFLOW_NAME,
         workflow_version=WORKFLOW_VERSION,
@@ -193,6 +209,7 @@ async def _run_daily_highlight_llm_span(
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_ANNOTATION,
+        model_selection=DAILY_MODEL_SELECTION,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -209,7 +226,8 @@ async def _run_daily_paragraph_notes_llm_span(
         agent=get_daily_footer_agent(),
         prompt=prompt,
         deps=deps,
-        route=MODEL_ROUTE_DAILY_ANALYSIS,
+        route=MODEL_ROUTE_DAILY_TRANSLATION,
+        model_selection=DAILY_MODEL_SELECTION,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -226,7 +244,8 @@ async def _run_daily_takeaways_llm_span(
         agent=get_daily_interpretation_agent(),
         prompt=prompt,
         deps=deps,
-        route=MODEL_ROUTE_DAILY_ANALYSIS,
+        route=MODEL_ROUTE_DAILY_TAKEAWAYS,
+        model_selection=DAILY_MODEL_SELECTION,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -244,6 +263,7 @@ async def _run_daily_review_llm_span(
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
+        model_selection=DAILY_MODEL_SELECTION,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -261,6 +281,7 @@ async def _run_daily_refinement_llm_span(
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
+        model_selection=DAILY_MODEL_SELECTION,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -323,8 +344,10 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
 
     batches = _make_batches(paragraphs, HIGHLIGHT_BATCH_SIZE)
 
-    for batch_idx, batch in enumerate(batches):
-        try:
+    semaphore = asyncio.Semaphore(HIGHLIGHT_CONCURRENCY)
+
+    async def _run_batch(batch_idx: int, batch: list[dict]) -> dict[str, Any]:
+        async with semaphore:
             deps = DailyVocabAgentDeps(
                 paragraphs=batch,
                 batch_index=batch_idx,
@@ -348,25 +371,49 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 metadata=metadata,
                 langsmith_extra={"metadata": metadata},
             )
-            draft = result.get("output")
-            usage = result.get("usage_metadata")
+        return result
 
-            if draft:
-                batch_highlights = _extract_highlights_from_vocab_draft(draft)
-                all_highlights.extend(batch_highlights)
-                for para in getattr(draft, "paragraphs", []):
-                    all_para_drafts.append(para.model_dump() if hasattr(para, "model_dump") else para)
+    batch_results = await asyncio.gather(
+        *[_run_batch(batch_idx, batch) for batch_idx, batch in enumerate(batches)],
+        return_exceptions=True,
+    )
 
-            if usage:
-                for k in total_usage:
-                    total_usage[k] += int(usage.get(k, 0) or 0)
-
-            logger.info(
-                "highlight batch %d/%d: %d paragraphs, %d highlights",
-                batch_idx + 1, len(batches), len(batch), len(batch_highlights) if draft else 0,
+    for batch_idx, (batch, result) in enumerate(zip(batches, batch_results, strict=True)):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, Exception):
+            logger.error(
+                "highlight batch %d/%d failed: %s",
+                batch_idx + 1,
+                len(batches),
+                result,
+                exc_info=(type(result), result, result.__traceback__),
             )
-        except Exception as e:
-            logger.error("highlight batch %d/%d failed: %s", batch_idx + 1, len(batches), e, exc_info=True)
+            continue
+        if isinstance(result, BaseException):
+            raise result
+
+        draft = result.get("output")
+        usage = result.get("usage_metadata")
+
+        batch_highlights: list[dict] = []
+        if draft:
+            batch_highlights = _extract_highlights_from_vocab_draft(draft)
+            all_highlights.extend(batch_highlights)
+            for para in getattr(draft, "paragraphs", []):
+                all_para_drafts.append(para.model_dump() if hasattr(para, "model_dump") else para)
+
+        if usage:
+            for k in total_usage:
+                total_usage[k] += int(usage.get(k, 0) or 0)
+
+        logger.info(
+            "highlight batch %d/%d: %d paragraphs, %d highlights",
+            batch_idx + 1,
+            len(batches),
+            len(batch),
+            len(batch_highlights),
+        )
 
     missing_required = _paragraphs_requiring_highlight(paragraphs, all_highlights)
     if missing_required:
@@ -452,7 +499,7 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
         metadata = _build_daily_llm_metadata(
             state,
             node_name="paragraph_guides_and_translations",
-            route=MODEL_ROUTE_DAILY_ANALYSIS,
+            route=MODEL_ROUTE_DAILY_TRANSLATION,
             extra={"paragraph_count": len(paragraphs), "highlight_count": len(highlights)},
         )
 
@@ -502,7 +549,7 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
         metadata = _build_daily_llm_metadata(
             state,
             node_name="close_reading_takeaways",
-            route=MODEL_ROUTE_DAILY_ANALYSIS,
+            route=MODEL_ROUTE_DAILY_TAKEAWAYS,
             extra={"paragraph_count": len(paragraphs), "highlight_count": len(highlights)},
         )
 

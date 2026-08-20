@@ -16,7 +16,9 @@ ModelRoute = Literal[
     "reader_ask",
     "reader_ask_replan",
     "daily_annotation",
+    "daily_translation",
     "daily_analysis",
+    "daily_takeaways",
     "daily_review",
     "daily_cover",
     "rag_embedding",
@@ -37,11 +39,14 @@ MODEL_ROUTE_READER_TITLE_GENERATION: Final[ModelRoute] = "reader_title_generatio
 MODEL_ROUTE_READER_ASK: Final[ModelRoute] = "reader_ask"
 MODEL_ROUTE_READER_ASK_REPLAN: Final[ModelRoute] = "reader_ask_replan"
 MODEL_ROUTE_DAILY_ANNOTATION: Final[ModelRoute] = "daily_annotation"
+MODEL_ROUTE_DAILY_TRANSLATION: Final[ModelRoute] = "daily_translation"
 MODEL_ROUTE_DAILY_ANALYSIS: Final[ModelRoute] = "daily_analysis"
+MODEL_ROUTE_DAILY_TAKEAWAYS: Final[ModelRoute] = "daily_takeaways"
 MODEL_ROUTE_DAILY_REVIEW: Final[ModelRoute] = "daily_review"
 MODEL_ROUTE_DAILY_COVER: Final[ModelRoute] = "daily_cover"
 MODEL_ROUTE_RAG_EMBEDDING: Final[ModelRoute] = "rag_embedding"
 MODEL_ROUTE_RAG_RERANK: Final[ModelRoute] = "rag_rerank"
+DAILY_READER_MODEL_PRESET: Final[str] = "daily_reader"
 
 ALL_MODEL_ROUTES: tuple[ModelRoute, ...] = (
     MODEL_ROUTE_ANNOTATION_GENERATION,
@@ -54,7 +59,9 @@ ALL_MODEL_ROUTES: tuple[ModelRoute, ...] = (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
     MODEL_ROUTE_DAILY_ANNOTATION,
+    MODEL_ROUTE_DAILY_TRANSLATION,
     MODEL_ROUTE_DAILY_ANALYSIS,
+    MODEL_ROUTE_DAILY_TAKEAWAYS,
     MODEL_ROUTE_DAILY_REVIEW,
     MODEL_ROUTE_DAILY_COVER,
     MODEL_ROUTE_RAG_EMBEDDING,

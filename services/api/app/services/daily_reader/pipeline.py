@@ -20,12 +20,16 @@ import orjson
 
 from app.config.settings import get_settings
 from app.database import connection as db_connection
-from app.llm.router import resolve_model_config
 from app.llm.routes import (
+    DAILY_READER_MODEL_PRESET,
     MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DAILY_ANNOTATION,
+    MODEL_ROUTE_DAILY_COVER,
     MODEL_ROUTE_DAILY_REVIEW,
+    MODEL_ROUTE_DAILY_TAKEAWAYS,
+    MODEL_ROUTE_DAILY_TRANSLATION,
 )
+from app.llm.types import ModelSelection
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_DAILY_READER_PIPELINE,
@@ -67,6 +71,7 @@ SOURCE_ROTATION_POLICY = {
 }
 
 SCORING_MAX_CANDIDATES = 10  # B-2: agreed 8-10 band shared with A-5
+ARTICLE_WORKFLOW_CONCURRENCY = 2
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
 DAILY_READER_WORKFLOW_VERSION = "2.0.0"
 DAILY_READER_SCHEMA_VERSION = "1.0.0"
@@ -139,6 +144,7 @@ async def emit_pipeline_alerts(
 
 def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dict[str, dict[str, str]]]:
     settings = get_settings()
+    selection = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
     resolved_models: dict[str, dict[str, str]] = {}
     primary_model_metadata = {
         "model_route": MODEL_ROUTE_DAILY_ANALYSIS,
@@ -149,10 +155,13 @@ def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dic
 
     for route in (
         MODEL_ROUTE_DAILY_ANNOTATION,
+        MODEL_ROUTE_DAILY_TRANSLATION,
         MODEL_ROUTE_DAILY_ANALYSIS,
+        MODEL_ROUTE_DAILY_TAKEAWAYS,
         MODEL_ROUTE_DAILY_REVIEW,
+        MODEL_ROUTE_DAILY_COVER,
     ):
-        metadata = resolve_model_metadata(settings, route)
+        metadata = resolve_model_metadata(settings, route, selection)
         if metadata["model_profile"] is None:
             continue
         resolved_models[route] = {
@@ -320,31 +329,78 @@ async def run_daily_pipeline(
     used_topics: set[str] = set()
     success_source_counts: Counter[str] = Counter()
     max_same_source_per_day = SOURCE_ROTATION_POLICY["max_same_source_per_day"]
+    pending = list(enumerate(scored))
+    successful_payloads: list[tuple[int, dict]] = []
+    finalize_lock = asyncio.Lock()
 
-    for article, score in scored:
-        if success_count >= max_count:
+    while pending and success_count < max_count:
+        batch: list[tuple[int, DiscoveredArticle, ArticleScore, str, set[str]]] = []
+        remaining: list[tuple[int, tuple[DiscoveredArticle, ArticleScore]]] = []
+        tentative_topics = set(used_topics)
+        tentative_source_counts = success_source_counts.copy()
+        batch_limit = min(ARTICLE_WORKFLOW_CONCURRENCY, max_count - success_count)
+
+        for scored_index, (article, score) in pending:
+            source = _normalize_source(article.source)
+            candidate_topics = _normalized_score_topics(score)
+            if success_source_counts[source] >= max_same_source_per_day:
+                continue
+            if SOURCE_ROTATION_POLICY["topic_diversity"] and used_topics & candidate_topics:
+                continue
+            if (
+                len(batch) >= batch_limit
+                or tentative_source_counts[source] >= max_same_source_per_day
+                or (
+                    SOURCE_ROTATION_POLICY["topic_diversity"]
+                    and tentative_topics & candidate_topics
+                )
+            ):
+                remaining.append((scored_index, (article, score)))
+                continue
+
+            batch.append((scored_index, article, score, source, candidate_topics))
+            tentative_source_counts[source] += 1
+            tentative_topics |= candidate_topics
+
+        pending = remaining
+        if not batch:
             break
 
-        source = _normalize_source(article.source)
-        candidate_topics = _normalized_score_topics(score)
-        if success_source_counts[source] >= max_same_source_per_day:
-            continue
-        if SOURCE_ROTATION_POLICY["topic_diversity"] and used_topics & candidate_topics:
-            continue
-
-        try:
-            payload = await _run_workflow_and_store(article, score, tracker=tracker)
+        outcomes = await asyncio.gather(
+            *[
+                _run_workflow_and_store(
+                    article,
+                    score,
+                    tracker=tracker,
+                    finalize_lock=finalize_lock,
+                )
+                for _, article, score, _, _ in batch
+            ],
+            return_exceptions=True,
+        )
+        for (scored_index, article, _score, source, candidate_topics), payload in zip(
+            batch,
+            outcomes,
+            strict=True,
+        ):
+            if isinstance(payload, asyncio.CancelledError):
+                raise payload
+            if isinstance(payload, Exception):
+                error_msg = f"Workflow failed for '{article.title[:30]}': {payload}"
+                logger.error(error_msg)
+                result.errors.append(error_msg)
+                if tracker:
+                    await tracker.add_error("workflow", error_msg)
+                continue
+            if isinstance(payload, BaseException):
+                raise payload
             if payload is not None:
-                result.articles.append(payload)
+                successful_payloads.append((scored_index, payload))
                 success_count += 1
                 success_source_counts[source] += 1
                 used_topics |= candidate_topics
-        except Exception as e:
-            error_msg = f"Workflow failed for '{article.title[:30]}': {e}"
-            logger.error(error_msg)
-            result.errors.append(error_msg)
-            if tracker:
-                await tracker.add_error("workflow", error_msg)
+
+    result.articles = [payload for _, payload in sorted(successful_payloads)]
 
     if tracker:
         await tracker.complete(success_count)
@@ -367,7 +423,10 @@ def _normalized_score_topics(score: ArticleScore) -> set[str]:
 
 
 async def _run_workflow_and_store(
-    article: DiscoveredArticle, score: ArticleScore, tracker: PipelineRunTracker | None = None
+    article: DiscoveredArticle,
+    score: ArticleScore,
+    tracker: PipelineRunTracker | None = None,
+    finalize_lock: asyncio.Lock | None = None,
 ) -> dict | None:
     from app.observability.workflow_tracing import (
         build_workflow_root_metadata,
@@ -376,6 +435,7 @@ async def _run_workflow_and_store(
     from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
+        _aggregate_usage,
         build_daily_reader_graph,
     )
 
@@ -452,6 +512,8 @@ async def _run_workflow_and_store(
         )
         return None
 
+    usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
+
     if final_state.get("abort"):
         review = final_state.get("review_result", {})
         abort_reason = review.get("reason", "quality_review_rejected")
@@ -461,7 +523,7 @@ async def _run_workflow_and_store(
         await _record_daily_pipeline_event(
             request_id=article.url,
             status=STATUS_SKIPPED,
-            usage_data=final_state.get("usage_summary"),
+            usage_data=usage_summary,
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_code="workflow_abort",
             error_message=str(abort_reason),
@@ -483,31 +545,35 @@ async def _run_workflow_and_store(
                 list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways))
 
     try:
-        if tracker:
-            await tracker.update_stage("cover_download")
-        # B-1: multi-candidate validation + LLM selection + storage. Never
-        # raises for image failures — fallback is cover_url=None + tracker
-        # errors + pipeline_meta.cover (no silent failures).
-        cover_outcome = await process_article_covers(article, tracker=tracker)
+        async with (finalize_lock or asyncio.Lock()):
+            if tracker:
+                await tracker.update_stage("cover_download")
+            # B-1: multi-candidate validation + LLM selection + storage. Never
+            # raises for image failures — fallback is cover_url=None + tracker
+            # errors + pipeline_meta.cover (no silent failures).
+            cover_outcome = await process_article_covers(article, tracker=tracker)
 
-        if tracker:
-            await tracker.update_stage("storing")
-        payload = await _assemble_payload(article, score, final_state, cover_outcome.cover_url)
-        # B-1: null when no qualified candidate (editorial theme fallback);
-        # _assemble_payload would otherwise leak the raw remote URL.
-        payload["cover_image_url"] = cover_outcome.cover_url
-        if cover_outcome.image_blocks:
-            payload["body_json"] = {**payload["body_json"], "images": cover_outcome.image_blocks}
-        payload["pipeline_meta"] = {
-            **(payload.get("pipeline_meta") or {}),
-            "cover": cover_outcome.meta,
-        }
-        await _store_daily_reader(payload)
+            if tracker:
+                await tracker.update_stage("storing")
+            payload = await _assemble_payload(article, score, final_state, cover_outcome.cover_url)
+            # B-1: null when no qualified candidate (editorial theme fallback);
+            # _assemble_payload would otherwise leak the raw remote URL.
+            payload["cover_image_url"] = cover_outcome.cover_url
+            if cover_outcome.image_blocks:
+                payload["body_json"] = {
+                    **payload["body_json"],
+                    "images": cover_outcome.image_blocks,
+                }
+            payload["pipeline_meta"] = {
+                **(payload.get("pipeline_meta") or {}),
+                "cover": cover_outcome.meta,
+            }
+            await _store_daily_reader(payload)
     except Exception as e:
         await _record_daily_pipeline_event(
             request_id=article.url,
             status=STATUS_FAILED,
-            usage_data=final_state.get("usage_summary"),
+            usage_data=usage_summary,
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_code=type(e).__name__,
             error_message=str(e),
@@ -525,7 +591,7 @@ async def _run_workflow_and_store(
         request_id=article.url,
         daily_reader_article_id=payload["id"],
         status=STATUS_SUCCEEDED,
-        usage_data=final_state.get("usage_summary"),
+        usage_data=usage_summary,
         latency_ms=int((perf_counter() - started_at) * 1000),
         metadata_json={
             "entrypoint": "daily_reader_pipeline",
