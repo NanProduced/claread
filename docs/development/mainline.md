@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-19
+> **状态**: `CURRENT` | **最后验证**: 2026-08-20
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -10,6 +10,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 - 微信小程序仍是稳定客户端，继续作为回归约束。
 - Web 已形成可用产品基线，通过 Next.js BFF 接入真实 FastAPI 链路，不再依赖产品路径 mock/demo fixture。公共区、认证区和私有区路由已完整覆盖，command palette 已实现。
+- Daily Reader 的固定生产 workflow 与公开刊物 surface 已完成本轮收口：选题多样性、质量闸门/单次 refinement、模型路由与 usage 观测、日审 API、响应式精读页、学习模式和登录返回收藏均已入基线；真实 provider 与连续生产验收仍是上线门禁。
 - Web Reader 标注体系已收口：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；高亮冲突已统一走后端 resolver 合并，SelectionToolbar 已收口为"一级高亮 + inline 颜色条"的单层工具条。
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
@@ -40,7 +41,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 范围边界：
 
 - 当前包含：用户提交内容的 `learning workflow` 已使用 bounded agentic orchestration 生产链
-- 当前产品范围不包括：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；小程序 Reader orchestration 当前未实现
+- 当前产品范围不包括：`academic workflow` 与小程序 Reader orchestration。`daily_reader_workflow` 是已实现的独立固定生产链，不属于用户提交内容的 Reader orchestration planner
 - 数据策略：项目未上线，不做旧开发记录迁移；本地数据可重置，但保留 `dict_entries`、`dict_lookup_targets`、`dict_redirects`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger
 - 兼容对象：Daily Reader 公共页面、Reader API、Library、Ask Claread；旧开发数据不作为迁移约束
 
@@ -67,6 +68,7 @@ Web 主产品链路已形成可用基线，后续重点是次要功能补齐、�
 - Web Reader UI/UX 继续打磨：句侧 note marker、selection draft popover 和浮出式 note panel 的交互与视觉层级
 - 公共区页面设计收口
 - 移动 Web 适配
+- Daily Reader 只保留真实 provider 成本/质量、连续 3 天自动生产和量化 Nielsen 复评，不再继续搭建基础 UI
 
 ### 副线：Claread Console 控制面治理化建设
 

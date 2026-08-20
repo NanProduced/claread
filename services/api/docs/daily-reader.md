@@ -136,12 +136,28 @@ Daily Reader 不再把抓取文本的原始换行直接当成页面段落。当�
 - review 使用 `unit_coherence`、`heading_handling`、`note_density` 等维度，而不是逐段补齐。
 - refinement 不再为覆盖率机械补高亮/补 note。
 
+完整质量链为：确定性闸门 → 难度自适应语义 review → 最多一次定向 refinement。确定性闸门负责脏数据、覆盖、去重、译文对齐和结构红线；语义 review 使用全文二次定级后的 CEFR 难度检查内容价值与密度。refinement 后仍不满足红线时 workflow abort，不保存成品。
+
 `writing_moves` 当前语义为“写作借鉴”：
 
 - 数量允许 `0-2` 个。
 - `move_type` 是面向用户的中文短标签，不是修辞术语。
 - `reusable_pattern` 是“可借句式”，为空时客户端不应占位展示。
 - Web 和小程序展示文案均使用“写作借鉴 / 可借句式”。
+
+## 选题、多样性与执行成本
+
+- 启发式过滤后最多 10 篇进入模型评分。
+- 最终排序按 `(score, has_qualified_cover)` 降序：内容分第一，合格封面只破同分。
+- 话题来自 `score.tags`，按 `strip().casefold()` 归一；任一标签重叠即视为同话题，无标签时不猜测主题。
+- 来源同样按 `strip().casefold()` 归一，每日成功产出最多 2 篇。
+- 话题/来源额度只在 workflow 成功并形成 payload 后占用；异常或 abort 不阻塞低分同话题候选补位。
+- 文章 workflow 最多 2 篇并发，最终结果仍按评分顺序输出；封面处理和写库存储通过 finalize lock 串行收口。
+- 高亮每批 6 个 reading units、最多 2 批并发，合并顺序保持稳定。
+
+模型使用显式 `daily_reader` preset：scoring、annotation、translation、analysis 与 cover 走 flash profile；takeaways 与 semantic review/refinement 走 pro profile。`services/api/config/model-presets.example.json` 是无密钥模板；实际 runtime 的 `MODEL_PRESETS_JSON` 必须包含同名 preset，所引用 profile 必须存在于 `MODEL_PROFILES_JSON`。
+
+workflow 会把每个 agent 的 input/output/total tokens 聚合到 `usage_summary.per_agent` 与 aggregate，并写入 Daily pipeline usage event。该观测只证明字段已采集；真实成本、时延和供应商分布仍需生产运行确认。
 
 ## 分页与日期语义
 
@@ -260,6 +276,6 @@ rtk test uv run pytest services/api/tests -q
    - 选中图片按 `DAILY_READER_COVER_STORAGE_BACKEND=local|oss` 落地。生产仍需验证多模态 profile、派生尺寸与 CDN 配置。
    - `content_security.py` 与 `content_sec_check` 占位写入已删除；列保留为 DEPRECATED，pipeline 不再写入。
 
-6. 长文 takeaways 上下文
+6. 真实 provider 与生产观测
    - close reading takeaways 已接收完整段译，不再使用 1500 字符 notes summary 截断；句译严格复用对应段译片段。
-   - 真实 provider 的长文上下文成本、质量与 route/profile 拆分仍需在 A-5 验收。
+   - route/profile 拆分、并发和 per-agent usage 采集已经落地；真实 provider 的长文上下文成本、质量、延迟及失败分布仍需生产验收。

@@ -19,6 +19,7 @@
 
 - Reader 标注体系的数据层已收口为"文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用"；数据库基线为单一 `0001_initial.sql`。当前验证入口见 `docs/operations/testing.md`。
 - Web 已接入手机号登录、Reader 提交、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验；公共区已覆盖首页、每日精读、示例文章和分享页；command palette 已实现。旧"分析任务"流程已物理删除。
+- Daily Reader 已形成公开刊物基线：候选按内容分优先、成功产出绑定来源/话题多样性，正文按 reading unit 生成难度自适应精读；Web 提供独立刊物 surface、“浏览 / 学习”切换与登录返回自动收藏。当前事实见 `daily-reader.md`、`../../services/api/docs/daily-reader.md` 和 `../../apps/web/docs/design/surface-daily-reader.md`；真实 provider 成本/质量、连续 3 天自动生产和量化 Nielsen 复评仍是上线门禁。
 - Reading Record 生命周期：最近阅读支持"从最近阅读中移除"（只隐藏最近阅读入口，全部阅读记录中仍存在；用户再次打开记录后 `recent_hidden_at` 被清除并重新进入最近阅读）；用户删除记录为产品层不可恢复操作——PostgreSQL 软删除（`deleted_at` / `lifecycle_status='deleted'` / `product_state='deleted'`），解析数据、原始输入、Stable Document、Base、Units、Anchors、Enhancement Layers、Ask 历史、批注与审计行全部保留，不物理删除 PostgreSQL 数据；删除后所有用户入口 fail closed；同事务收敛任务/运行并写入 Vector GC intent，向量由后台异步精确删除。Web 提供行级操作菜单（Sidebar 最近阅读与 Library 全部记录共享同一菜单组件）与删除前危险操作确认。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 通过 `@claread/contracts` 常量对齐，后端按 UTF-16 offset、`fnv1a32-utf16` hash、Anchor Segment / Reading Unit 切片和 unit/segment 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
@@ -79,6 +80,8 @@ Ask Claread 作为 consumer / sidecar integration 接入 Stable Reading Base 和
 ### 副线：Web 次要功能补齐与页面设计收口
 
 Web 主产品链路已形成可用基线，公共区、认证区和私有区路由已完整覆盖。后续重点是次要功能补齐、页面设计收口和体验打磨，而不是继续搭建基础框架。
+
+Daily Reader 的代码与离线/本地浏览器收口已完成；后续只在真实生产验收发现问题时做针对性修正，不再扩展第二套 surface 或解析框架。
 
 ### 副线：Claread Console 控制面治理化建设
 

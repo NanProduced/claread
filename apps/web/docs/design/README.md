@@ -1,6 +1,6 @@
 # Claread Web Design
 
-> **状态**: `CURRENT` | **最后更新**: 2026-07-13
+> **状态**: `CURRENT` | **最后更新**: 2026-08-20
 
 本目录记录 Claread Web 第一版 UI/UX 的设计方向。这里的图片是页面形态和视觉语言参考，不是 mock 数据页、demo fixture 或可直接照抄的像素稿。Web 开发仍必须接入真实 Next.js BFF / FastAPI 链路。
 
@@ -8,6 +8,7 @@
 
 1. `../DESIGN.md` 是 Web 设计系统、token、组件契约与页面模式的唯一治理入口。
 2. `component-system.md` 是 Reader 专项补充规范，只处理 Reader 画布、锚点、组件与交互特例。
+3. `surface-daily-reader.md` 是公开 Daily Reader scoped surface 的排版、字体、响应式和交互契约。
 
 当前组件库实施状态：
 
@@ -23,6 +24,7 @@ Claread Web 当前稳定方向已经沉淀到：
 - `../DESIGN.md`
 - `../reader-ia.md`
 - `component-system.md`
+- `surface-daily-reader.md`
 
 ## 品牌资产入口
 
@@ -58,5 +60,6 @@ PNG 方向图和截图只作为本地评审参考，不作为长期事实来源�
 | --- | --- |
 | `../DESIGN.md` | 全站设计系统、token、组件契约、页面模式与迁移边界 |
 | `component-system.md` | Reader UI/UX 组件使用规范、画布/锚点特例和验证要求 |
+| `surface-daily-reader.md` | Daily Reader 独立刊物 surface、学习模式、登录返回收藏与响应式红线 |
 
 组件预览图可以在本地生成或保留，但最终结论必须压缩回 `../DESIGN.md`、`component-system.md`、`reader-ia.md` 与 `../PRODUCT.md`。方向图不构成当前规范。

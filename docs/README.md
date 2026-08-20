@@ -1,6 +1,6 @@
 # Claread 文档
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-08
+> **状态**: `CURRENT` | **最后验证**: 2026-08-20
 
 本目录是 Claread 的全局文档入口。
 
@@ -24,6 +24,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `DESIGN.md` | impeccable 跨端设计系统，定义 Claread 品牌调性、视觉规则和组件角色 |
 | `docs/product/overview.md` | 产品定位、用户、核心链路 |
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
+| `docs/product/daily-reader.md` | Daily Reader 产品边界、选题生产、内容解析、阅读体验与上线验收门 |
 | `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
 | `docs/product/product-page-direction.md` | Claread public product page 的定位、信息架构、签名 Demo、文案和视觉方向 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
@@ -69,6 +70,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `packages/README.md` | contracts、shared-utils、design-tokens 边界 |
 | `apps/miniprogram/README.md` | 微信小程序客户端启动、结构和平台限制 |
 | `apps/web/README.md` | Web 客户端启动、路由边界和 BFF 接入 |
+| `apps/web/docs/design/surface-daily-reader.md` | Daily Reader scoped surface、排版、学习模式和收藏交互契约 |
 | `apps/directus/README.md` | Claread Console 本地 runtime 与扩展工作区 |
 
 ### 治理与历史
