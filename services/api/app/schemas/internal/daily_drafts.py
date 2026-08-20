@@ -155,7 +155,10 @@ class CloseReadingTakeaways(BaseModel):
     )
     key_expressions: list[ExpressionPoint] = Field(
         default_factory=list,
-        description="3-5 key expressions worth learning"
+        max_length=7,
+        description=(
+            "3-5 key expressions worth learning; hard maximum 7"
+        ),
     )
     sentence_notes: list[SentenceNote] = Field(
         default_factory=list,

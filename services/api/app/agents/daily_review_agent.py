@@ -1,9 +1,4 @@
-"""Quality review agent for Daily Reader workflow.
-
-Redesigned: reviews highlights coverage, paragraph notes completeness,
-takeaways quantity control, and content overload — instead of the old
-6-dimension review focused on footer_analysis and full_interpretation.
-"""
+"""Fuzzy/semantic quality review agent for the Daily Reader workflow."""
 
 from __future__ import annotations
 
@@ -17,8 +12,12 @@ from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_quality_review_strategy,
+    difficulty_prompt_section,
 )
 from app.services.prompting.prompt_loader import load_agent_instructions
+
+MAX_REVIEW_ORIGINAL_TEXT_CHARS = 20_000
+MAX_REVIEW_ARTIFACT_CHARS = 3_000
 
 
 @dataclass
@@ -27,29 +26,28 @@ class DailyReviewAgentDeps:
     highlights_json: str
     paragraph_notes_json: str
     takeaways_json: str
-    coverage_report: str = ""
-    paragraph_notes_report: str = ""
     difficulty: str = ""
     prompt_strategy: DailyPromptStrategy = field(default_factory=build_quality_review_strategy)
 
 
 def build_daily_review_prompt(deps: DailyReviewAgentDeps) -> str:
-    from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
+    from app.services.prompting.prompt_composer import PromptSection, render_prompt_sections
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
     all_sections = list(sections)
+    difficulty_section = difficulty_prompt_section("daily_review", deps.difficulty)
+    if difficulty_section is not None:
+        all_sections.append(difficulty_section)
     if deps.difficulty:
         all_sections.append(PromptSection("article_difficulty", (f"文章难度：{deps.difficulty}",)))
     all_sections += [
-        PromptSection("original_text", (deps.original_text[:4000],)),
-        PromptSection("highlights", (deps.highlights_json[:3000],)),
-        PromptSection("paragraph_notes", (deps.paragraph_notes_json[:3000],)),
-        PromptSection("takeaways", (deps.takeaways_json[:3000],)),
+        # Daily discovery accepts at most 2,500 English words; 20k chars
+        # normally exposes the full article while bounding review cost.
+        PromptSection("original_text", (deps.original_text[:MAX_REVIEW_ORIGINAL_TEXT_CHARS],)),
+        PromptSection("highlights", (deps.highlights_json[:MAX_REVIEW_ARTIFACT_CHARS],)),
+        PromptSection("paragraph_notes", (deps.paragraph_notes_json[:MAX_REVIEW_ARTIFACT_CHARS],)),
+        PromptSection("takeaways", (deps.takeaways_json[:MAX_REVIEW_ARTIFACT_CHARS],)),
     ]
-    if deps.coverage_report:
-        all_sections.append(PromptSection("coverage_report", (deps.coverage_report,)))
-    if deps.paragraph_notes_report:
-        all_sections.append(PromptSection("paragraph_notes_report", (deps.paragraph_notes_report,)))
     return render_prompt_sections(all_sections)
 
 

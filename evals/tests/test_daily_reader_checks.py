@@ -14,7 +14,7 @@ from claread_eval.daily_reader.checks import (
     normalize_expression,
     run_deterministic_checks,
 )
-from claread_eval.daily_reader.judge import resolve_judge_config
+from claread_eval.daily_reader.judge import build_judge_messages, resolve_judge_config
 
 EVALS_ROOT = Path(__file__).resolve().parents[1]
 RUBRIC_PATH = EVALS_ROOT / "rubrics" / "daily-reader-regression-v1.yaml"
@@ -211,3 +211,21 @@ def test_judge_config_resolves_with_gate_and_key(monkeypatch):
     assert cfg is not None
     assert cfg["base_url"] == "https://api.deepseek.com/v1"
     assert cfg["model"] == "deepseek-v4-pro"
+
+
+def test_judge_prompt_uses_expected_difficulty_calibration():
+    rubric = yaml.safe_load(RUBRIC_PATH.read_text(encoding="utf-8"))
+    artifact = _artifact()
+
+    prompts = {
+        difficulty: build_judge_messages(
+            rubric,
+            {"gold": {"expected_difficulty": difficulty}},
+            artifact,
+        )[0]["content"]
+        for difficulty in ("A2", "B1", "B2", "C1")
+    }
+
+    for difficulty, prompt in prompts.items():
+        assert f"{difficulty} 分档门槛" in prompt
+    assert len(set(prompts.values())) == 4

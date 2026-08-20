@@ -42,6 +42,8 @@ def resolve_judge_config(rubric: dict[str, Any]) -> dict[str, Any] | None:
 def build_judge_messages(rubric: dict[str, Any], case: dict[str, Any],
                          artifact: dict[str, Any]) -> list[dict[str, str]]:
     j = rubric["judge"]
+    gold = case.get("gold", {})
+    expected_difficulty = str(gold.get("expected_difficulty") or "").upper()
     dims_lines = []
     for d in j["dimensions"]:
         dims_lines.append(
@@ -50,11 +52,12 @@ def build_judge_messages(rubric: dict[str, Any], case: dict[str, Any],
         )
     system = (
         f"{j['system_role'].strip()}\n\n评分维度：\n" + "\n".join(dims_lines)
+        + "\n\n本案例难度分档：\n"
+        + str(j.get("difficulty_calibration", {}).get(expected_difficulty, "")).strip()
         + "\n\n输出必须是单个 JSON 对象，无其他文字，schema："
         + json.dumps(j["output"]["schema"], ensure_ascii=False)
     )
 
-    gold = case.get("gold", {})
     evidence = {
         "article_title": artifact.get("title", ""),
         "expected_difficulty": gold.get("expected_difficulty"),

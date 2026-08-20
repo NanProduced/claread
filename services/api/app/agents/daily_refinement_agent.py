@@ -22,7 +22,9 @@ from app.services.prompting.prompt_loader import load_agent_instructions
 # Refinement receives original text, review issues, and current drafts together.
 # These caps keep the prompt bounded while preserving enough local context for
 # targeted fixes identified by the review agent.
-MAX_REFINEMENT_ORIGINAL_TEXT_CHARS = 4000
+# Match the bounded semantic-review window so a back-half deterministic
+# failure can be repaired without rerunning the full workflow.
+MAX_REFINEMENT_ORIGINAL_TEXT_CHARS = 20_000
 MAX_REFINEMENT_HIGHLIGHTS_CHARS = 8000
 MAX_REFINEMENT_PARAGRAPH_NOTES_CHARS = 9000
 MAX_REFINEMENT_TAKEAWAYS_CHARS = 3000
@@ -39,7 +41,7 @@ class DailyRefinementAgentDeps:
 
 
 def build_daily_refinement_prompt(deps: DailyRefinementAgentDeps) -> str:
-    from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
+    from app.services.prompting.prompt_composer import PromptSection, render_prompt_sections
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
     all_sections = list(sections) + [

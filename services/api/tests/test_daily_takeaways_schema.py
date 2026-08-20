@@ -1,16 +1,15 @@
 """T-03: CloseReadingTakeaways schema validation tests.
 
-Covers: writing_moves 0-2, move_type Chinese labels, reusable_pattern optional.
+Covers: writing_moves 0-2, key_expressions hard max, Chinese move labels,
+and optional reusable_pattern.
 """
 
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from app.schemas.internal.daily_drafts import (
-    CloseReadingTakeaways,
-    WritingMove,
-)
+from app.schemas.internal.daily_drafts import CloseReadingTakeaways
 
 
 def _base_takeaways(**overrides):
@@ -88,7 +87,7 @@ def test_writing_moves_exceeds_max():
             for i in range(3)
         ]
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CloseReadingTakeaways.model_validate(data)
 
 
@@ -115,3 +114,19 @@ def test_default_factory_writing_moves():
     del data["writing_moves"]
     obj = CloseReadingTakeaways.model_validate(data)
     assert obj.writing_moves == []
+
+
+def test_key_expressions_exceeds_review_contract_max():
+    data = _base_takeaways(key_expressions=[
+        {
+            "expression": f"expression {i}",
+            "paragraph_id": "p_0",
+            "gloss": "释义",
+            "context_sentence": "Context sentence.",
+            "usage_note": "Usage note.",
+        }
+        for i in range(8)
+    ])
+
+    with pytest.raises(ValidationError):
+        CloseReadingTakeaways.model_validate(data)

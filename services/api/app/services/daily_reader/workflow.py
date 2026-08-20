@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 from html import unescape
 from typing import Any, TypedDict
@@ -70,7 +71,10 @@ from app.services.daily_reader.extraction import (
     detect_transcript_markers,
     find_boilerplate_hits,
 )
-from app.services.prompting.daily_prompt_strategy import resolve_refined_difficulty
+from app.services.prompting.daily_prompt_strategy import (
+    normalize_daily_difficulty,
+    resolve_refined_difficulty,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -522,6 +526,161 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
         return {"takeaways_json": {}}
 
 
+def _boilerplate_quality_issues(
+    highlights: list[dict],
+    paragraph_notes: dict,
+    takeaways: dict,
+) -> list[dict[str, str]]:
+    hits = sorted(set(find_boilerplate_hits(
+        _collect_artifact_surfaces(highlights, paragraph_notes, takeaways)
+    )))
+    if not hits:
+        return []
+    return [{
+        "dimension": "boilerplate",
+        "severity": "major",
+        "description": (
+            "疑似脏数据/boilerplate 出现在高亮、导读或译文中: "
+            + "; ".join(hits[:5])
+        ),
+        "suggestion": "删除所有落在 boilerplate 文本上的高亮、导读与译文",
+    }]
+
+
+def _apply_local_quality_repairs(
+    paragraphs: list[dict],
+    highlights: list[dict],
+    paragraph_notes: dict,
+    takeaways: dict,
+) -> tuple[list[dict], dict, dict, list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+
+    repaired_highlights = _dedupe_highlights(_reconcile_highlights(paragraphs, highlights))
+    original_anchors = [(h.get("paragraph_id"), h.get("text")) for h in highlights]
+    repaired_anchors = [(h.get("paragraph_id"), h.get("text")) for h in repaired_highlights]
+    if repaired_anchors != original_anchors:
+        issues.append({
+            "dimension": "highlight_anchor",
+            "severity": "minor",
+            "description": (
+                f"高亮锚点已确定性纠正或删除（{len(highlights)}→{len(repaired_highlights)}）"
+            ),
+            "suggestion": "后续生成必须逐字复用对应 reading unit 中的原文锚点",
+        })
+
+    repaired_notes = _align_paragraph_notes(paragraph_notes, paragraphs)
+    original_note_ids = [
+        note.get("paragraph_id")
+        for note in paragraph_notes.get("notes", [])
+        if isinstance(note, dict)
+    ] if isinstance(paragraph_notes, dict) else []
+    repaired_note_ids = [
+        note.get("paragraph_id")
+        for note in repaired_notes.get("notes", [])
+        if isinstance(note, dict)
+    ]
+    if repaired_note_ids != original_note_ids:
+        issues.append({
+            "dimension": "paragraph_note_anchor",
+            "severity": "minor",
+            "description": "已删除 paragraph_id 不存在的透读 note",
+            "suggestion": "透读 note 只能引用当前 normalized reading unit 的 paragraph_id",
+        })
+
+    repaired_takeaways = _snap_sentence_translations(takeaways, paragraphs, repaired_notes)
+    if repaired_takeaways != takeaways:
+        issues.append({
+            "dimension": "translation_consistency",
+            "severity": "minor",
+            "description": "长难句译文已确定性吸附到对应段落译文",
+            "suggestion": "长难句译文必须逐字取自对应 paragraph note translation",
+        })
+
+    repaired_takeaways = dict(repaired_takeaways) if isinstance(repaired_takeaways, dict) else {}
+    limits = (
+        ("key_expressions", 7, "key_expressions_count", "重点表达"),
+        ("writing_moves", 2, "writing_moves_count", "写作借鉴"),
+        ("discussion_questions", 2, "discussion_questions_count", "讨论问题"),
+    )
+    for field_name, limit, dimension, label in limits:
+        values = repaired_takeaways.get(field_name)
+        if isinstance(values, list) and len(values) > limit:
+            repaired_takeaways[field_name] = values[:limit]
+            issues.append({
+                "dimension": dimension,
+                "severity": "minor",
+                "description": f"{label}超出上限，已从 {len(values)} 项截断为 {limit} 项",
+                "suggestion": f"只保留最有学习价值的 {limit} 项",
+            })
+
+    return repaired_highlights, repaired_notes, repaired_takeaways, issues
+
+
+def _deterministic_quality_issues(
+    paragraphs: list[dict],
+    highlights: list[dict],
+    paragraph_notes: dict,
+    takeaways: dict,
+    difficulty: str,
+) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    coverage = _check_highlight_coverage(paragraphs, highlights)
+    missing_highlights = coverage.get("uncovered_required_paragraph_ids", [])
+    if missing_highlights:
+        issues.append({
+            "dimension": "highlight_coverage",
+            "severity": "major",
+            "description": (
+                "有实质内容的 reading unit 缺少高亮: " + ", ".join(missing_highlights)
+            ),
+            "suggestion": "仅为这些 reading unit 补充 1 个准确且有学习价值的高亮",
+        })
+
+    difficulty_level = normalize_daily_difficulty(difficulty)
+    density_limit = {"A2": 4, "B1": 4, "B2": 3, "C1": 2}[difficulty_level]
+    highlight_counts = Counter(
+        h.get("paragraph_id", "") for h in highlights if h.get("paragraph_id")
+    )
+    over_limit = [
+        f"{pid}={highlight_counts[pid]}"
+        for pid in (p.get("paragraph_id", "") for p in paragraphs)
+        if highlight_counts[pid] > density_limit
+    ]
+    if over_limit:
+        issues.append({
+            "dimension": "highlight_density",
+            "severity": "major",
+            "description": (
+                f"reading unit 高亮密度超过 {difficulty_level} 上限 {density_limit}: "
+                + ", ".join(over_limit)
+            ),
+            "suggestion": "仅保留各超量 reading unit 中最有学习价值的高亮",
+        })
+
+    notes_report = _check_paragraph_notes_coverage(paragraphs, paragraph_notes)
+    missing_notes = notes_report.get("missing_required_note_ids", [])
+    if missing_notes:
+        issues.append({
+            "dimension": "paragraph_note_coverage",
+            "severity": "major",
+            "description": (
+                "有实质内容的 reading unit 缺少完整透读 note: "
+                + ", ".join(missing_notes)
+            ),
+            "suggestion": "仅为这些 reading unit 补充导读、摘要和段落译文",
+        })
+
+    question_count = len(takeaways.get("discussion_questions", []))
+    if question_count != 2:
+        issues.append({
+            "dimension": "discussion_questions_count",
+            "severity": "major",
+            "description": f"讨论问题必须恰好 2 项，当前 {question_count} 项",
+            "suggestion": "仅补充缺失的讨论问题，不重写其他文末内容",
+        })
+    return issues
+
+
 async def quality_review_node(state: DailyReaderState) -> dict:
     original_text = state.get("original_text", "")
     paragraphs = state.get("normalized_paragraphs", [])
@@ -533,25 +692,53 @@ async def quality_review_node(state: DailyReaderState) -> dict:
         # A-1 deterministic gate (no LLM): no highlight/guide/translation may
         # sit on suspected boilerplate text. Reuses the extraction-layer
         # detectors; fail routes into the existing refinement path.
-        boilerplate_hits = find_boilerplate_hits(
-            _collect_artifact_surfaces(highlights, paragraph_notes, takeaways)
+        boilerplate_issues = _boilerplate_quality_issues(
+            highlights,
+            paragraph_notes,
+            takeaways,
         )
-        if boilerplate_hits:
-            unique_hits = sorted(set(boilerplate_hits))
-            logger.warning("quality_review: boilerplate leaked into artifacts: %s", unique_hits[:5])
+        if boilerplate_issues:
+            logger.warning("quality_review: boilerplate leaked into artifacts")
             return {
                 "review_result": {
                     "passed": False,
                     "reason": "boilerplate_leak",
-                    "issues": [{
-                        "dimension": "boilerplate",
-                        "severity": "major",
-                        "description": (
-                            "疑似脏数据/boilerplate 出现在高亮、导读或译文中: "
-                            + "; ".join(unique_hits[:5])
-                        ),
-                        "suggestion": "删除所有落在 boilerplate 文本上的高亮、导读与译文",
-                    }],
+                    "issues": boilerplate_issues,
+                }
+            }
+
+        highlights, paragraph_notes, takeaways, local_issues = _apply_local_quality_repairs(
+            paragraphs,
+            highlights,
+            paragraph_notes,
+            takeaways,
+        )
+
+        deterministic_issues = _deterministic_quality_issues(
+            paragraphs,
+            highlights,
+            paragraph_notes,
+            takeaways,
+            _effective_difficulty(state),
+        )
+        if deterministic_issues:
+            retry_exhausted = bool(state.get("highlight_retry_exhausted")) and any(
+                issue["dimension"] == "highlight_coverage"
+                for issue in deterministic_issues
+            )
+            return {
+                **({"abort": True} if retry_exhausted else {}),
+                "highlights_json": highlights,
+                "paragraph_notes_json": paragraph_notes,
+                "takeaways_json": takeaways,
+                "review_result": {
+                    "passed": False,
+                    "reason": (
+                        "deterministic_retry_exhausted"
+                        if retry_exhausted
+                        else "deterministic_quality_gate"
+                    ),
+                    "issues": local_issues + deterministic_issues,
                 }
             }
 
@@ -565,8 +752,6 @@ async def quality_review_node(state: DailyReaderState) -> dict:
             highlights_json=json.dumps(highlights, ensure_ascii=False),
             paragraph_notes_json=json.dumps(paragraph_notes, ensure_ascii=False),
             takeaways_json=json.dumps(takeaways, ensure_ascii=False),
-            coverage_report=json.dumps(coverage_report, ensure_ascii=False),
-            paragraph_notes_report=json.dumps(paragraph_notes_report, ensure_ascii=False),
             difficulty=_effective_difficulty(state),
         )
         prompt = build_daily_review_prompt(deps)
@@ -591,14 +776,35 @@ async def quality_review_node(state: DailyReaderState) -> dict:
         review = result.get("output")
         usage = result.get("usage_metadata")
 
-        review_dict = review.model_dump() if review else {}
-        updates: dict[str, Any] = {"review_result": review_dict}
+        if not review:
+            raise RuntimeError("semantic review returned no output")
+
+        review_dict = review.model_dump()
+        review_dict["issues"] = local_issues + list(review_dict.get("issues", []))
+        updates: dict[str, Any] = {
+            "highlights_json": highlights,
+            "paragraph_notes_json": paragraph_notes,
+            "takeaways_json": takeaways,
+            "review_result": review_dict,
+        }
         if usage:
             updates["review_usage"] = usage
         return updates
     except Exception as e:
         logger.error("quality_review_node failed: %s", e, exc_info=True)
-        return {"review_result": {"passed": True}}
+        return {
+            "abort": True,
+            "review_result": {
+                "passed": False,
+                "reason": "semantic_review_unavailable",
+                "issues": [{
+                    "dimension": "semantic_review",
+                    "severity": "major",
+                    "description": "语义质量审核执行失败",
+                    "suggestion": "保留草稿并由后续重试或人工审核处理",
+                }],
+            },
+        }
 
 
 async def refinement_node(state: DailyReaderState) -> dict:
@@ -610,10 +816,15 @@ async def refinement_node(state: DailyReaderState) -> dict:
     takeaways = state.get("takeaways_json", {})
 
     try:
-        issues_text = json.dumps(review.get("issues", []), ensure_ascii=False)
+        unresolved_issues = [
+            issue
+            for issue in review.get("issues", [])
+            if issue.get("severity") == "major"
+        ]
+        issues_text = json.dumps(unresolved_issues, ensure_ascii=False)
 
         deps = DailyRefinementAgentDeps(
-            original_text=original_text,
+            original_text=_reconstruct_numbered_full_text(paragraphs) or original_text,
             review_issues=issues_text,
             current_highlights=json.dumps(highlights, ensure_ascii=False),
             current_paragraph_notes=json.dumps(paragraph_notes, ensure_ascii=False),
@@ -639,7 +850,21 @@ async def refinement_node(state: DailyReaderState) -> dict:
         refinement = result.get("output")
         usage = result.get("usage_metadata")
 
-        refinement_dict = refinement.model_dump() if refinement else {}
+        if not refinement:
+            return {
+                "abort": True,
+                "refinement_result": {
+                    "abort": True,
+                    "remaining_issues": [{
+                        "dimension": "refinement_unavailable",
+                        "severity": "major",
+                        "description": "定向修正未返回可验证结果",
+                        "suggestion": "保留草稿并由后续重试或人工审核处理",
+                    }],
+                },
+            }
+
+        refinement_dict = refinement.model_dump()
         updates: dict[str, Any] = {"refinement_result": refinement_dict}
 
         if refinement and refinement.abort:
@@ -648,25 +873,68 @@ async def refinement_node(state: DailyReaderState) -> dict:
                 updates["refinement_usage"] = usage
             return updates
 
-        if refinement:
-            if refinement.refined_highlights is not None:
-                refined_highlights = [h.model_dump() for h in refinement.refined_highlights]
-                updates["highlights_json"] = _choose_refined_highlights(
-                    paragraphs=paragraphs,
-                    current=highlights,
-                    refined=refined_highlights,
-                )
-            if refinement.refined_paragraph_notes is not None:
-                updates["paragraph_notes_json"] = refinement.refined_paragraph_notes.model_dump()
-            if refinement.refined_takeaways is not None:
-                updates["takeaways_json"] = refinement.refined_takeaways.model_dump()
+        if refinement.refined_highlights is not None:
+            refined_highlights = [h.model_dump() for h in refinement.refined_highlights]
+            updates["highlights_json"] = _choose_refined_highlights(
+                paragraphs=paragraphs,
+                current=highlights,
+                refined=refined_highlights,
+            )
+        if refinement.refined_paragraph_notes is not None:
+            updates["paragraph_notes_json"] = refinement.refined_paragraph_notes.model_dump()
+        if refinement.refined_takeaways is not None:
+            updates["takeaways_json"] = refinement.refined_takeaways.model_dump()
+
+        repaired_highlights, repaired_notes, repaired_takeaways, local_issues = (
+            _apply_local_quality_repairs(
+                paragraphs,
+                updates.get("highlights_json", highlights),
+                updates.get("paragraph_notes_json", paragraph_notes),
+                updates.get("takeaways_json", takeaways),
+            )
+        )
+        updates.update({
+            "highlights_json": repaired_highlights,
+            "paragraph_notes_json": repaired_notes,
+            "takeaways_json": repaired_takeaways,
+        })
+        remaining_issues = _boilerplate_quality_issues(
+            repaired_highlights,
+            repaired_notes,
+            repaired_takeaways,
+        ) + _deterministic_quality_issues(
+            paragraphs,
+            repaired_highlights,
+            repaired_notes,
+            repaired_takeaways,
+            _effective_difficulty(state),
+        )
+        if remaining_issues:
+            updates["abort"] = True
+            updates["refinement_result"] = {
+                **refinement_dict,
+                "abort": True,
+                "local_repairs": local_issues,
+                "remaining_issues": remaining_issues,
+            }
 
         if usage:
             updates["refinement_usage"] = usage
         return updates
     except Exception as e:
         logger.error("refinement_node failed: %s", e, exc_info=True)
-        return {"refinement_result": {}}
+        return {
+            "abort": True,
+            "refinement_result": {
+                "abort": True,
+                "remaining_issues": [{
+                    "dimension": "refinement_failed",
+                    "severity": "major",
+                    "description": "定向修正执行失败",
+                    "suggestion": "保留草稿并由后续重试或人工审核处理",
+                }],
+            },
+        }
 
 
 def daily_projection_node(state: DailyReaderState) -> dict:
@@ -719,6 +987,12 @@ def _should_refine(state: DailyReaderState) -> bool:
     if review is None:
         return False
     return not review.get("passed", True)
+
+
+def _quality_review_route(state: DailyReaderState) -> str:
+    if state.get("abort", False):
+        return "abort"
+    return "refine" if _should_refine(state) else "project"
 
 
 def _collect_artifact_surfaces(
@@ -782,10 +1056,14 @@ def build_daily_reader_graph() -> Any:
     graph.add_edge("close_reading_takeaways", "quality_review")
     graph.add_conditional_edges(
         "quality_review",
-        _should_refine,
-        {True: "refinement", False: "daily_projection"},
+        _quality_review_route,
+        {"abort": END, "refine": "refinement", "project": "daily_projection"},
     )
-    graph.add_edge("refinement", "daily_projection")
+    graph.add_conditional_edges(
+        "refinement",
+        _is_aborted,
+        {True: END, False: "daily_projection"},
+    )
     graph.add_edge("daily_projection", END)
 
     return graph.compile()
