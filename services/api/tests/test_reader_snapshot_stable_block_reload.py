@@ -36,15 +36,28 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.contracts.annotation import slice_by_utf16_offsets, utf16_code_unit_length
 from app.database.connection import init_connection
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
+)
+from app.services.reader_orchestration.base_builder import (
+    build_reading_base_from_canonical_text,
 )
 from app.services.reader_orchestration.markdown_source_parser import (
     MarkdownSourceParser,
 )
 from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
+)
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    ANNOTATION_CONFLICTING_DUPLICATE,
+    ANNOTATION_MULTI_UNIT_OVERLAP,
+    ANNOTATION_RANGE_EMPTY,
+    ANNOTATION_RANGE_MISMATCH,
+    ANNOTATION_RANGE_NON_INTEGER,
+    ANNOTATION_RANGE_OUT_OF_BOUNDS,
+    StableBlockAnnotation,
 )
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationService,
@@ -75,6 +88,9 @@ After the changes are complete, we recommend performing a canary deployment on a
 STABLE_FIELD_KEYS = (
     "stableBlockType",
     "stableBlockId",
+    "codeLanguage",
+    "base_start_utf16",
+    "base_end_utf16",
     "headingLevel",
     "inlineMarks",
     "tableRole",
@@ -1596,3 +1612,497 @@ async def test_ordinary_blockquote_fixture_survives_base_reload_and_plate(
     )
     assert fresh_plate_text[link_mark["start"] : link_mark["end"]] == "safe label"
     assert "unsafe label" in fresh_plate_text
+
+
+# ===========================================================================
+# G3C — code block atomic unit conservation.
+# Fresh/reload source projections and base units must preserve stable code
+# ranges, language, and the all-off automatic-layer policy.
+# ===========================================================================
+
+CODE_ATOMIC_UNIT_MARKDOWN = """# Atomic Code Blocks
+
+This document exercises fenced code blocks with internal blank lines so the
+structure conservation contract can be verified through the public freeze
+and reload path. The surrounding prose paragraphs carry enough English words
+to pass the input suitability gate while the two fenced Python blocks below
+exercise the code_block stable block type with exact range matching.
+
+```python
+def first():
+    value = 1
+
+    return value
+```
+
+A middle paragraph keeps the two code blocks independent and prevents any
+accidental merging of neighbouring prose across the separator boundary.
+
+```python
+def second():
+    return 2
+```
+
+After the code blocks, a final paragraph ensures the document has trailing
+prose context so the last code block is not the terminal chunk of the
+canonical text layer.
+"""
+
+CODE_ALL_OFF_POLICY = {
+    "translation": False,
+    "vocabulary": False,
+    "grammar_note": False,
+    "sentence_analysis": False,
+}
+
+
+async def test_code_block_with_internal_blank_line_is_atomic_unit(
+    reload_env: asyncpg.Pool,
+) -> None:
+    """G3C 核心：内部含空行的 fenced code block 必须保持一个 atomic
+    reading unit，unit range 与 stable code block range 精确相等，fresh
+    与 reload 两侧 stable code / associated code unit / structured source
+    code node 三者 N/N 守恒。"""
+    pool = reload_env
+    user_id = await _insert_user(pool)
+    result = await _freeze_markdown(pool, user_id, CODE_ATOMIC_UNIT_MARKDOWN)
+    record_id = result.reading_record_id
+
+    blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
+    code_blocks = [b for b in blocks if b["block_type"] == "code_block"]
+    assert len(code_blocks) == 2, (
+        f"expected 2 stable code blocks, got {len(code_blocks)}"
+    )
+    code_ranges = sorted(
+        (b["start_utf16"], b["end_utf16"]) for b in code_blocks
+    )
+
+    # 邻近正文分段不受影响：1 heading + 3 paragraph。
+    block_types = [b["block_type"] for b in blocks]
+    assert block_types.count("heading") == 1
+    assert block_types.count("paragraph") == 3
+
+    # Fresh 侧：落在两个 code ranges 内的 reading units 必须 = 2（每个
+    # code block 恰一个 atomic unit），且 range 精确相等。
+    fresh_units = list(result.snapshot.navigation.units)
+    fresh_code_units = [
+        u
+        for u in fresh_units
+        if any(
+            s <= u.base_start_utf16 and u.base_end_utf16 <= e
+            for s, e in code_ranges
+        )
+    ]
+    assert len(fresh_code_units) == 2, (
+        f"expected 2 atomic code units in fresh snapshot, "
+        f"got {len(fresh_code_units)}: "
+        f"{[(u.base_start_utf16, u.base_end_utf16) for u in fresh_code_units]}"
+    )
+    assert sorted(
+        (u.base_start_utf16, u.base_end_utf16) for u in fresh_code_units
+    ) == code_ranges
+
+    # Fresh 侧：structured code source nodes = 2，携带 language 与全 OFF
+    # policy，与 stable block id 一一对应。
+    fresh_code_nodes = [
+        node
+        for node in _source_blocks_by_unit(result.snapshot).values()
+        if node.get("stableBlockType") == "code_block"
+    ]
+    assert len(fresh_code_nodes) == 2, (
+        f"expected 2 structured code source nodes fresh, "
+        f"got {len(fresh_code_nodes)}: {fresh_code_nodes}"
+    )
+    assert sorted(
+        n["base_start_utf16"] for n in fresh_code_nodes
+    ) == sorted(s for s, _ in code_ranges)
+    for node in fresh_code_nodes:
+        assert node["codeLanguage"] == "python"
+        assert node["automaticLayerPolicy"] == {
+            "translation": False,
+            "vocabulary": False,
+            "grammarNote": False,
+            "sentenceAnalysis": False,
+        }
+
+    # Reload 侧：持久化 units 重新 exact association。
+    facts = await _load_facts(pool, record_id, user_id)
+    reload_code_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "code_block"
+    ]
+    assert len(reload_code_units) == 2, (
+        f"expected 2 associated code units after reload, "
+        f"got {len(reload_code_units)}: "
+        f"{[(u.unit_id, u.base_start_utf16, u.base_end_utf16) for u in reload_code_units]}"
+    )
+    assert sorted(
+        (u.base_start_utf16, u.base_end_utf16) for u in reload_code_units
+    ) == code_ranges
+
+    blocks_by_range = {
+        (b["start_utf16"], b["end_utf16"]): b for b in code_blocks
+    }
+    for unit in reload_code_units:
+        block = blocks_by_range[
+            (unit.base_start_utf16, unit.base_end_utf16)
+        ]
+        assert unit.stable_block_id == block["block_id"]
+        assert unit.code_language == "python"
+        assert unit.automatic_layer_policy == CODE_ALL_OFF_POLICY
+        # unit 文本与 stable block 的 canonical 文本逐字一致（含内部空行）。
+        assert unit.text == block["text_content"]
+    first_block = next(
+        b for b in code_blocks if "def first():" in b["text_content"]
+    )
+    first_unit = next(
+        u
+        for u in reload_code_units
+        if (u.base_start_utf16, u.base_end_utf16)
+        == (first_block["start_utf16"], first_block["end_utf16"])
+    )
+    assert first_unit.text == "def first():\n    value = 1\n\n    return value"
+
+    # Reload 侧 snapshot：structured code source nodes = 2 且与 fresh 投影
+    # 完全一致。
+    reloaded = await _load_snapshot(pool, record_id, user_id)
+    reload_code_nodes = [
+        node
+        for node in _source_blocks_by_unit(reloaded).values()
+        if node.get("stableBlockType") == "code_block"
+    ]
+    assert len(reload_code_nodes) == 2, (
+        f"expected 2 structured code source nodes after reload, "
+        f"got {len(reload_code_nodes)}: {reload_code_nodes}"
+    )
+    assert {
+        n["stableBlockId"]: n for n in reload_code_nodes
+    } == {
+        n["stableBlockId"]: n for n in fresh_code_nodes
+    }, (
+        f"fresh code nodes != reloaded: "
+        f"fresh={fresh_code_nodes}\nreloaded={reload_code_nodes}"
+    )
+
+
+LONG_CODE_MARKDOWN = """# Long Code Block Document
+
+This document exercises one long fenced code block that clearly exceeds the
+normal anchor window size for segmentation. The block contains multiple
+internal blank lines plus Unicode characters inside a comment and a string
+literal, so the atomic unit contract and its anchor coverage contract can
+both be verified together through the public freeze and reload path with
+real PostgreSQL persistence standing behind every single assertion below.
+
+```python
+alpha_value = 1
+beta_value = 2
+gamma_value = 3
+delta_value = 4
+epsilon_value = 5
+zeta_value = 6
+
+# 注释 with 🎯 unicode marker
+rho_value = "hello 世界"
+
+eta_value = 8
+theta_value = 9
+iota_value = 10
+kappa_value = 11
+lambda_value = 12
+mu_value = 13
+```
+
+After the long code block, a closing paragraph keeps the document ending in
+plain prose so the code chunk is never the terminal slice of the canonical
+text layer of the frozen stable document, and the trailing separator keeps
+its own independent structural meaning.
+"""
+
+
+async def test_long_code_block_is_atomic_unit_with_full_anchor_coverage(
+    reload_env: asyncpg.Pool,
+) -> None:
+    """G3C 长代码块边界：明显超过普通 anchor 窗口、含多个内部空行与
+    Unicode 的 fenced code block 仍是单一 atomic code unit；anchor
+    segments 继续按现有 fallback/window 逻辑分成多个，合并后完整覆盖
+    unit（不重叠、不缺失）；snapshot 只有一个 structured code node。"""
+    pool = reload_env
+    user_id = await _insert_user(pool)
+    result = await _freeze_markdown(pool, user_id, LONG_CODE_MARKDOWN)
+    record_id = result.reading_record_id
+
+    blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
+    code_blocks = [b for b in blocks if b["block_type"] == "code_block"]
+    assert len(code_blocks) == 1
+    code_block = code_blocks[0]
+    code_range = (code_block["start_utf16"], code_block["end_utf16"])
+    assert "🎯" in (code_block["text_content"] or "")
+    assert "世界" in (code_block["text_content"] or "")
+
+    facts = await _load_facts(pool, record_id, user_id)
+    units_in_range = [
+        u
+        for u in facts.build_result.units
+        if code_range[0] <= u.base_start_utf16
+        and u.base_end_utf16 <= code_range[1]
+    ]
+    assert len(units_in_range) == 1, (
+        f"long code block must be ONE atomic unit, got {len(units_in_range)}: "
+        f"{[(u.base_start_utf16, u.base_end_utf16) for u in units_in_range]}"
+    )
+    code_unit = units_in_range[0]
+    assert (code_unit.base_start_utf16, code_unit.base_end_utf16) == code_range
+    assert code_unit.stable_block_type == "code_block"
+    assert code_unit.text == code_block["text_content"]
+
+    # Anchor segments：可以分成多个（现有 fallback/window 逻辑），合并后
+    # 覆盖完整 unit，不重叠、不缺失（间隙只允许纯空白）。
+    anchors = sorted(
+        (
+            a
+            for a in facts.build_result.anchor_segments
+            if a.unit_id == code_unit.unit_id
+        ),
+        key=lambda a: a.unit_order_index,
+    )
+    assert len(anchors) >= 2, (
+        f"long code unit should keep multiple anchor segments, "
+        f"got {len(anchors)}"
+    )
+    cursor = 0
+    for anchor in anchors:
+        gap = slice_by_utf16_offsets(
+            code_unit.text, cursor, anchor.unit_start_utf16
+        )
+        assert gap is None or not gap.strip(), (
+            f"non-whitespace anchor gap before {anchor.anchor_segment_id}"
+        )
+        assert anchor.unit_start_utf16 >= cursor
+        cursor = anchor.unit_end_utf16
+    trailing = slice_by_utf16_offsets(
+        code_unit.text, cursor, utf16_code_unit_length(code_unit.text)
+    )
+    assert trailing is None or not trailing.strip()
+
+    # Snapshot：只有一个 structured code node（fresh 与 reload 一致）。
+    assert len([
+        node
+        for node in _source_blocks_by_unit(result.snapshot).values()
+        if node.get("stableBlockType") == "code_block"
+    ]) == 1
+    reloaded = await _load_snapshot(pool, record_id, user_id)
+    assert len([
+        node
+        for node in _source_blocks_by_unit(reloaded).values()
+        if node.get("stableBlockType") == "code_block"
+    ]) == 1
+
+
+def test_invalid_code_annotations_never_reshape_units() -> None:
+    """G3C annotation 信任边界：base builder 收到的 stable annotations
+    尚未经过 analyzer 合法性分析（raw）。非整数（含 bool）/反向/越界/
+    切入可见文本的 code_block annotation 一律不得重塑 unit 边界 ——
+    units 必须与无 annotation 的纯 splitter 输出完全一致。"""
+    # bool 陷阱：True == 1。若 merge 未拒绝 bool，(True, 12) 会把
+    # "Alpha" 与 "Beta" 两个 span 合并成一个跨空行 unit。
+    bool_text = " Alpha\n\nBeta"
+    bool_result = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-bool",
+        base_id="b-g3c-bool",
+        canonical_text=bool_text,
+        stable_block_annotations=[
+            StableBlockAnnotation(
+                start_utf16=True,  # type: ignore[arg-type]
+                end_utf16=12,
+                block_type="code_block",
+                block_id="cb-bool",
+                payload_json={"language": "python"},
+            )
+        ],
+    )
+    assert [u.text for u in bool_result.units] == ["Alpha", "Beta"], (
+        f"bool-offset code annotation must not reshape units, got "
+        f"{[u.text for u in bool_result.units]}"
+    )
+    assert all(u.stable_block_type is None for u in bool_result.units)
+    assert (
+        bool_result.annotation_analysis is not None
+        and any(
+            d.code == ANNOTATION_RANGE_NON_INTEGER
+            for d in bool_result.annotation_analysis.diagnostics
+        )
+    )
+
+    # 反向 / 越界 / 切入可见文本：同样不得重塑。
+    text = "Alpha paragraph text.\n\nBeta paragraph text."
+    result = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-invalid",
+        base_id="b-g3c-invalid",
+        canonical_text=text,
+        stable_block_annotations=[
+            # 反向 range。
+            StableBlockAnnotation(
+                start_utf16=40,
+                end_utf16=10,
+                block_type="code_block",
+                block_id="cb-reversed",
+                payload_json={"language": "python"},
+            ),
+            # 越界 range。
+            StableBlockAnnotation(
+                start_utf16=0,
+                end_utf16=10**6,
+                block_type="code_block",
+                block_id="cb-oob",
+                payload_json={"language": "python"},
+            ),
+            # 切入可见文本的部分重叠 range（从 span 中间开始）。
+            StableBlockAnnotation(
+                start_utf16=5,
+                end_utf16=15,
+                block_type="code_block",
+                block_id="cb-midtext",
+                payload_json={"language": "python"},
+            ),
+        ],
+    )
+    assert [u.text for u in result.units] == [
+        "Alpha paragraph text.",
+        "Beta paragraph text.",
+    ], (
+        f"invalid code annotations must not reshape units, got "
+        f"{[u.text for u in result.units]}"
+    )
+    assert all(u.stable_block_type is None for u in result.units)
+    codes = {
+        d.code
+        for d in (result.annotation_analysis.diagnostics if result.annotation_analysis else ())
+    }
+    assert ANNOTATION_RANGE_EMPTY in codes
+    assert ANNOTATION_RANGE_OUT_OF_BOUNDS in codes
+    assert ANNOTATION_RANGE_MISMATCH in codes
+
+
+def test_conflicting_duplicate_code_annotation_keeps_diagnostics() -> None:
+    """冲突 duplicate 不得在 analyzer 前改变纯 splitter 的 unit 边界。"""
+    text = "Alpha\n\nBeta"
+    result = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-conflict",
+        base_id="b-g3c-conflict",
+        canonical_text=text,
+        stable_block_annotations=[
+            StableBlockAnnotation(
+                start_utf16=0,
+                end_utf16=11,
+                block_type="code_block",
+                block_id="cb-first",
+                payload_json={"language": "python"},
+            ),
+            StableBlockAnnotation(
+                start_utf16=0,
+                end_utf16=11,
+                block_type="code_block",
+                block_id="cb-second",
+                payload_json={"language": "javascript"},
+            ),
+        ],
+    )
+    plain = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-conflict-plain",
+        base_id="b-g3c-conflict-plain",
+        canonical_text=text,
+    )
+    assert [
+        (u.text, u.base_start_utf16, u.base_end_utf16) for u in result.units
+    ] == [
+        (u.text, u.base_start_utf16, u.base_end_utf16) for u in plain.units
+    ]
+    assert [u.text for u in result.units] == ["Alpha", "Beta"]
+    assert all(u.stable_block_type is None for u in result.units)
+    analysis = result.annotation_analysis
+    assert analysis is not None
+    assert analysis.accepted_annotations == ()
+    assert any(
+        d.code == ANNOTATION_CONFLICTING_DUPLICATE
+        for d in analysis.diagnostics
+    )
+    assert [o.unit_id for o in analysis.policy_overrides] == ["u1", "u2"]
+    assert all(o.reason_code == ANNOTATION_CONFLICTING_DUPLICATE for o in analysis.policy_overrides)
+
+
+def test_partially_overlapping_code_candidates_keep_original_units() -> None:
+    """相互部分重叠的 code candidates 全部交给 analyzer，不得 first-wins fuse。"""
+    text = "Alpha\n\nBeta\n\nGamma"
+    result = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-partial-overlap",
+        base_id="b-g3c-partial-overlap",
+        canonical_text=text,
+        stable_block_annotations=[
+            StableBlockAnnotation(
+                start_utf16=0,
+                end_utf16=11,
+                block_type="code_block",
+                block_id="cb-alpha-beta",
+                payload_json={"language": "python"},
+            ),
+            StableBlockAnnotation(
+                start_utf16=7,
+                end_utf16=18,
+                block_type="code_block",
+                block_id="cb-beta-gamma",
+                payload_json={"language": "javascript"},
+            ),
+        ],
+    )
+    assert [u.text for u in result.units] == ["Alpha", "Beta", "Gamma"]
+    assert all(u.stable_block_type is None for u in result.units)
+    analysis = result.annotation_analysis
+    assert analysis is not None
+    assert analysis.accepted_annotations == ()
+    assert sum(
+        d.code == ANNOTATION_MULTI_UNIT_OVERLAP for d in analysis.diagnostics
+    ) == 2
+    assert [o.unit_id for o in analysis.policy_overrides] == ["u1", "u2", "u3"]
+    assert all(o.reason_code == ANNOTATION_MULTI_UNIT_OVERLAP for o in analysis.policy_overrides)
+
+
+def test_code_candidate_overlapping_non_code_annotation_keeps_original_units() -> None:
+    """code candidate 与非 code annotation 重叠时不得单独 fuse。"""
+    text = "Alpha\n\nBeta"
+    result = build_reading_base_from_canonical_text(
+        reading_record_id="r-g3c-non-code-overlap",
+        base_id="b-g3c-non-code-overlap",
+        canonical_text=text,
+        stable_block_annotations=[
+            StableBlockAnnotation(
+                start_utf16=0,
+                end_utf16=11,
+                block_type="code_block",
+                block_id="cb-code",
+                payload_json={"language": "python"},
+            ),
+            StableBlockAnnotation(
+                start_utf16=7,
+                end_utf16=11,
+                block_type="paragraph",
+                block_id="p-beta",
+            ),
+        ],
+    )
+    assert [u.text for u in result.units] == ["Alpha", "Beta"]
+    assert all(u.stable_block_type != "code_block" for u in result.units)
+    analysis = result.annotation_analysis
+    assert analysis is not None
+    assert all(
+        accepted.annotation.block_type != "code_block"
+        for accepted in analysis.accepted_annotations
+    )
+    assert [
+        accepted.annotation.block_type for accepted in analysis.accepted_annotations
+    ] == ["paragraph"]
+    assert sum(
+        d.code == ANNOTATION_MULTI_UNIT_OVERLAP for d in analysis.diagnostics
+    ) == 1
+    assert [o.unit_id for o in analysis.policy_overrides] == ["u1", "u2"]
+    assert all(o.reason_code == ANNOTATION_MULTI_UNIT_OVERLAP for o in analysis.policy_overrides)

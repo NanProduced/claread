@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import hashlib
 import logging
 import re
@@ -450,6 +451,24 @@ def _build_reading_base_core(
     if not block_spans:
         raise ValueError("non-empty canonical text must produce at least one structure block")
 
+    # G3C: a fenced code block contributes its full content (internal
+    # blank lines included) to the canonical text as ONE chunk with ONE
+    # stable range. The blank-line splitter above cuts such a chunk into
+    # several spans, none of which then exactly matches the stable
+    # code_block range, so the annotation association and the structured
+    # source projection are lost and reload degrades code to plain
+    # paragraphs. Fuse the spans covered by each code_block annotation
+    # back into one atomic span BEFORE the analyzer builds unit ranges.
+    # The fuse is boundary-safe by construction (see
+    # ``_fuse_atomic_code_spans``): only native-int, in-bounds ranges
+    # that cover whole spans may reshape units — everything else keeps
+    # the analyzer's existing diagnostics.
+    block_spans = _fuse_atomic_code_spans(
+        block_spans,
+        utf16_prefix=utf16_prefix,
+        annotations=stable_block_annotations,
+    )
+
     sentence_policy, spacy_pipeline = _resolve_sentence_policy(
         requested_segmenter_version=segmenter_version,
         language=language,
@@ -733,6 +752,123 @@ def _split_structure_blocks(text: str) -> list[tuple[int, int]]:
         block_spans.append((block_start, block_end))
 
     return block_spans
+
+
+def _char_index_for_utf16(utf16_prefix: list[int], offset: int) -> int | None:
+    """Map a UTF-16 offset to its char index in the base text.
+
+    Returns ``None`` when the offset is negative, beyond the text, or
+    lands inside a surrogate pair — none of those are legal block
+    boundaries, and the caller must treat the annotation as unusable.
+    """
+
+    index = bisect.bisect_left(utf16_prefix, offset)
+    if index < len(utf16_prefix) and utf16_prefix[index] == offset:
+        return index
+    return None
+
+
+def _fuse_atomic_code_spans(
+    block_spans: list[tuple[int, int]],
+    *,
+    utf16_prefix: list[int],
+    annotations: Sequence[StableBlockAnnotation] | None,
+) -> list[tuple[int, int]]:
+    """Fuse blank-line-split spans into atomic ``code_block`` spans.
+
+    Raw stable annotations reach this point BEFORE
+    :func:`analyze_stable_annotations` has validated them, so this fuse
+    must not blindly trust any ``block_type`` / range. A span run is
+    reshaped only when the annotation is a ``code_block`` whose UTF-16
+    range:
+
+    - is built from native integers (``bool`` rejected — the same rule
+      the analyzer applies to offsets, not a second validator);
+    - lies inside the base text on exact UTF-16 boundaries;
+    - covers at least one whole span and never cuts through visible
+      text — the range may only extend across whitespace gaps (blank
+      lines, indentation, trailing whitespace) beyond the covered run.
+
+    Empty / reversed / out-of-bounds / partially overlapping ranges and
+    non-code conflicts stay on the original splitter. The analyzer still
+    owns acceptance, diagnostics, and policy overrides.
+    """
+
+    if not annotations:
+        return block_spans
+
+    fuses: list[tuple[int, int, int, int]] = []
+    # (first_span_index, last_span_index, start_char, end_char)
+    for annotation in annotations:
+        if annotation.block_type != "code_block":
+            continue
+        start = annotation.start_utf16
+        end = annotation.end_utf16
+        if isinstance(start, bool) or isinstance(end, bool):
+            continue
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if any(
+            other != annotation
+            and isinstance(other.start_utf16, int)
+            and not isinstance(other.start_utf16, bool)
+            and isinstance(other.end_utf16, int)
+            and not isinstance(other.end_utf16, bool)
+            and other.start_utf16 < other.end_utf16
+            and other.start_utf16 < end
+            and start < other.end_utf16
+            for other in annotations
+        ):
+            continue
+        start_char = _char_index_for_utf16(utf16_prefix, start)
+        end_char = _char_index_for_utf16(utf16_prefix, end)
+        if start_char is None or end_char is None or start_char >= end_char:
+            continue
+        # Spans overlapping [start_char, end_char) are contiguous by
+        # construction (spans are sorted and disjoint).
+        first_index: int | None = None
+        last_index: int | None = None
+        for index, (span_start, span_end) in enumerate(block_spans):
+            if span_start < end_char and span_end > start_char:
+                if first_index is None:
+                    first_index = index
+                last_index = index
+        if first_index is None or last_index is None:
+            continue
+        # The range must not cut through visible text: it may only
+        # extend across whitespace beyond the covered span run.
+        if (
+            block_spans[first_index][0] < start_char
+            or block_spans[last_index][1] > end_char
+        ):
+            continue
+        if any(
+            start_char < fuse_end and fuse_start < end_char
+            for _, _, fuse_start, fuse_end in fuses
+        ):
+            continue
+        fuses.append((first_index, last_index, start_char, end_char))
+
+    if not fuses:
+        return block_spans
+
+    fuse_by_first: dict[int, tuple[int, int, int]] = {
+        first_index: (last_index, start_char, end_char)
+        for first_index, last_index, start_char, end_char in fuses
+    }
+    fused: list[tuple[int, int]] = []
+    skip_until = -1
+    for index, span in enumerate(block_spans):
+        if index <= skip_until:
+            continue
+        fuse = fuse_by_first.get(index)
+        if fuse is not None:
+            last_index, start_char, end_char = fuse
+            fused.append((start_char, end_char))
+            skip_until = last_index
+        else:
+            fused.append(span)
+    return fused
 
 
 def _build_segment_spans(
