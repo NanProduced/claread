@@ -1,7 +1,8 @@
 """Daily Reader Pipeline orchestrator.
 
 Coordinates the four-layer pipeline: Discovery → Extraction → Scoring,
-then selects diverse candidates and runs the Daily Reader Workflow.
+then runs the Daily Reader Workflow over the scored candidates under
+daily topic/source diversity constraints.
 """
 
 from __future__ import annotations
@@ -77,7 +78,6 @@ class PipelineResult:
     candidates_found: int = 0
     candidates_extracted: int = 0
     candidates_scored: int = 0
-    candidates_selected: int = 0
     errors: list[str] = field(default_factory=list)
     rejections: list[str] = field(default_factory=list)
 
@@ -307,27 +307,21 @@ async def run_daily_pipeline(
     result.candidates_scored = len(scored)
     logger.info("Pipeline scoring: %d articles passed threshold", len(scored))
 
-    # Select diverse candidates (oversample to allow for workflow failures)
+    # Execute workflows for candidates in the scored score-first order
+    # until enough succeed. B-2 follow-up: the daily diversity constraints
+    # are evaluated at attempt time against the current success state, so
+    # a failed (or aborted) candidate consumes no topic/source quota and a
+    # lower-ranked same-topic peer can still win the slot; the previous
+    # pre-selection oversample dropped such peers up front and re-ordered
+    # this walk.
     if tracker:
-        await tracker.update_stage("selection", candidates_scored=len(scored))
-    selected = select_diverse_candidates(scored, max_count=max_count + 2)
-    result.candidates_selected = len(selected)
-    logger.info("Pipeline selection: %d candidates selected (target: %d)", len(selected), max_count)
-
-    # Execute workflow for each candidate until we have enough. B-2: the
-    # daily diversity constraints bind the final successful output, so they
-    # are enforced at the success boundary across both the diverse
-    # oversample and the remaining scored fallback pool (workflow failures
-    # previously bypassed them).
-    if tracker:
-        await tracker.update_stage("workflow")
+        await tracker.update_stage("workflow", candidates_scored=len(scored))
     success_count = 0
     used_topics: set[str] = set()
     success_source_counts: Counter[str] = Counter()
     max_same_source_per_day = SOURCE_ROTATION_POLICY["max_same_source_per_day"]
 
-    ordered_candidates = [*selected, *(s for s in scored if s not in selected)]
-    for article, score in ordered_candidates:
+    for article, score in scored:
         if success_count >= max_count:
             break
 
@@ -370,41 +364,6 @@ def _normalized_score_topics(score: ArticleScore) -> set[str]:
         if normalized:
             topics.add(normalized)
     return topics
-
-
-def select_diverse_candidates(
-    scored: list[tuple[DiscoveredArticle, ArticleScore]],
-    max_count: int = 3,
-    max_same_source: int = 2,
-) -> list[tuple[DiscoveredArticle, ArticleScore]]:
-    selected: list[tuple[DiscoveredArticle, ArticleScore]] = []
-    source_counts: Counter[str] = Counter()
-    selected_topics: set[str] = set()
-
-    for article, score in scored:
-        if len(selected) >= max_count:
-            break
-
-        source = _normalize_source(article.source)
-        if source_counts[source] >= max_same_source:
-            continue
-
-        # B-2: the topic constraint uses the scorer's fine-grained
-        # score.tags (article.tags only carries the feed section); any
-        # normalized overlap means same topic, so at most one per day.
-        # Candidates without score.tags are never topic-guessed.
-        candidate_topics = _normalized_score_topics(score)
-        if (
-            SOURCE_ROTATION_POLICY["topic_diversity"]
-            and selected_topics & candidate_topics
-        ):
-            continue
-
-        selected.append((article, score))
-        source_counts[source] += 1
-        selected_topics |= candidate_topics
-
-    return selected
 
 
 async def _run_workflow_and_store(

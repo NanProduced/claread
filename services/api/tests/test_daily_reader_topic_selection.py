@@ -4,13 +4,15 @@ Locks the B-2 selection contract:
 
 - scored candidates order by content score first; a qualified cover only
   breaks ties;
+- workflow candidates are attempted strictly in that scored order;
+  topic/source constraints are evaluated at attempt time against the
+  current success state, so a failed candidate consumes no quota and a
+  lower-ranked same-topic peer can still win a slot;
 - "same topic at most once per daily run" is computed from scorer
   ``score.tags`` (not ``article.tags``) with minimal normalization
   (strip + casefold, drop empty tags);
 - same source at most twice per daily run (source compared after
   strip + casefold);
-- the constraints bind the final successful output, including the
-  workflow-failure fallback pool, not just the initial oversample;
 - independent candidate pools (separate daily runs) may each pick the
   same topic — no cross-run state;
 - discovery source config and the SCORING_MAX_CANDIDATES cap.
@@ -27,7 +29,6 @@ from app.services.daily_reader.discovery import ARTICLE_SOURCES, DiscoveredArtic
 from app.services.daily_reader.pipeline import (
     SCORING_MAX_CANDIDATES,
     run_daily_pipeline,
-    select_diverse_candidates,
 )
 from app.services.daily_reader.scoring import ArticleScore
 
@@ -111,8 +112,13 @@ async def _run_pipeline(
     return result, workflow_mock, score_mock
 
 
-class TestSelectDiverseCandidates:
-    def test_score_tag_overlap_blocks_second_same_topic(self):
+def _attempted_urls(workflow_mock: AsyncMock) -> list[str]:
+    """Candidate urls sent to the workflow, in attempt order."""
+    return [call.args[0].url for call in workflow_mock.call_args_list]
+
+
+class TestDailyDiversityConstraints:
+    async def test_score_tag_overlap_blocks_second_same_topic(self):
         # article.tags differ, but score.tags overlap after normalization.
         c1 = _candidate(
             url="u1", title="Alpha", source="s1", score=9.0,
@@ -122,38 +128,44 @@ class TestSelectDiverseCandidates:
             url="u2", title="Beta", source="s2", score=8.5,
             tags=["artificial intelligence "], article_tags=["space"],
         )
-        result = select_diverse_candidates([c1, c2], max_count=3)
-        assert [a.url for a, _ in result] == ["u1"]
+        result, workflow_mock, _ = await _run_pipeline([c1, c2], max_count=2)
+        assert [a["url"] for a in result.articles] == ["u1"]
+        assert _attempted_urls(workflow_mock) == ["u1"]
 
-    def test_tag_normalization_case_and_whitespace(self):
+    async def test_tag_normalization_case_and_whitespace(self):
         c1 = _candidate(
-            url="u1", title="Alpha", source="s1", score=9.0, tags=["  Technology  ", "AI"],
+            url="u1", title="Alpha", source="s1", score=9.0,
+            tags=["  Technology  ", "AI"],
         )
         c2 = _candidate(
             url="u2", title="Beta", source="s2", score=8.5, tags=["technology"],
         )
-        result = select_diverse_candidates([c1, c2], max_count=3)
-        assert [a.url for a, _ in result] == ["u1"]
+        result, workflow_mock, _ = await _run_pipeline([c1, c2], max_count=2)
+        assert [a["url"] for a in result.articles] == ["u1"]
+        assert _attempted_urls(workflow_mock) == ["u1"]
 
-    def test_empty_tags_do_not_create_pseudo_conflicts(self):
+    async def test_empty_tags_do_not_create_pseudo_conflicts(self):
         c1 = _candidate(url="u1", title="Alpha", source="s1", score=9.0, tags=["", "   "])
         c2 = _candidate(url="u2", title="Beta", source="s2", score=8.5, tags=[""])
-        result = select_diverse_candidates([c1, c2], max_count=3)
-        assert [a.url for a, _ in result] == ["u1", "u2"]
+        result, workflow_mock, _ = await _run_pipeline([c1, c2], max_count=2)
+        assert [a["url"] for a in result.articles] == ["u1", "u2"]
+        assert _attempted_urls(workflow_mock) == ["u1", "u2"]
 
-    def test_candidates_without_score_tags_are_not_topic_blocked(self):
+    async def test_candidates_without_score_tags_are_not_topic_blocked(self):
         # No score.tags → we do not guess a topic, so nothing conflicts.
         c1 = _candidate(url="u1", title="Alpha", source="s1", score=9.0, tags=[])
         c2 = _candidate(url="u2", title="Beta", source="s2", score=8.5, tags=[])
-        result = select_diverse_candidates([c1, c2], max_count=3)
-        assert [a.url for a, _ in result] == ["u1", "u2"]
+        result, workflow_mock, _ = await _run_pipeline([c1, c2], max_count=2)
+        assert [a["url"] for a in result.articles] == ["u1", "u2"]
+        assert _attempted_urls(workflow_mock) == ["u1", "u2"]
 
-    def test_source_cap_uses_normalized_source(self):
+    async def test_source_cap_uses_normalized_source(self):
         c1 = _candidate(url="u1", title="Alpha", source="BBC", score=9.0, tags=["t1"])
         c2 = _candidate(url="u2", title="Beta", source=" bbc ", score=8.5, tags=["t2"])
         c3 = _candidate(url="u3", title="Gamma", source="BbC", score=8.0, tags=["t3"])
-        result = select_diverse_candidates([c1, c2, c3], max_count=3)
-        assert [a.url for a, _ in result] == ["u1", "u2"]
+        result, workflow_mock, _ = await _run_pipeline([c1, c2, c3], max_count=3)
+        assert [a["url"] for a in result.articles] == ["u1", "u2"]
+        assert _attempted_urls(workflow_mock) == ["u1", "u2"]
 
 
 class TestPipelineOrdering:
@@ -171,7 +183,7 @@ class TestPipelineOrdering:
             max_count=1,
             covers={"u-low": True, "u-high": False},
         )
-        assert workflow_mock.call_args_list[0].args[0].url == "u-high"
+        assert _attempted_urls(workflow_mock) == ["u-high"]
         assert result.articles[0]["url"] == "u-high"
 
     async def test_cover_only_breaks_equal_score_tie(self):
@@ -186,15 +198,37 @@ class TestPipelineOrdering:
         result, workflow_mock, _ = await _run_pipeline(
             [no_cover, with_cover], max_count=1, covers={"u-a": False, "u-b": True},
         )
-        assert workflow_mock.call_args_list[0].args[0].url == "u-b"
+        assert _attempted_urls(workflow_mock) == ["u-b"]
         assert result.articles[0]["url"] == "u-b"
 
 
-class TestFallbackConstraints:
-    async def test_fallback_respects_topic_and_source_constraints(self):
-        # selected oversample: c1..c5; c3/c4/c5 fail their workflows, so the
-        # fallback pool (c6/c7/c8) must refill under the same constraints:
-        # c6 → source S1 already has 2 successes; c7 → topic-b already used.
+class TestFailedCandidateQuota:
+    async def test_failed_top_candidate_does_not_block_same_topic_peer(self):
+        # A (9.0, topic-x) fails its workflow and must consume no topic or
+        # source quota; B (8.9, same topic-x) is then attempted next in
+        # scored order and wins the single slot. C (8.0, topic-y) must
+        # never be attempted before B.
+        a = _candidate(
+            url="a", title="Candidate A", source="s1", score=9.0, tags=["topic-x"],
+        )
+        b = _candidate(
+            url="b", title="Candidate B", source="s2", score=8.9, tags=["topic-x"],
+        )
+        c = _candidate(
+            url="c", title="Candidate C", source="s3", score=8.0, tags=["topic-y"],
+        )
+        result, workflow_mock, _ = await _run_pipeline(
+            [a, b, c], max_count=1, failing_urls={"a"},
+        )
+        assert [art["url"] for art in result.articles] == ["b"]
+        assert _attempted_urls(workflow_mock) == ["a", "b"]
+
+
+class TestFailureRefill:
+    async def test_workflow_failures_refill_under_constraints(self):
+        # c3/c4/c5 fail; the walk continues in scored order under the same
+        # constraints: c6 → source S1 already has 2 successes; c7 → topic-b
+        # already used by a success; c8 refills the third slot.
         candidates = [
             _candidate(url="c1", title="C One", source="S1", score=9.0, tags=["topic-a"]),
             _candidate(url="c2", title="C Two", source="S1", score=8.8, tags=["topic-b"]),
@@ -210,8 +244,7 @@ class TestFallbackConstraints:
         )
 
         assert [a["url"] for a in result.articles] == ["c1", "c2", "c8"]
-        called_urls = [call.args[0].url for call in workflow_mock.call_args_list]
-        assert called_urls == ["c1", "c2", "c3", "c4", "c5", "c8"]
+        assert _attempted_urls(workflow_mock) == ["c1", "c2", "c3", "c4", "c5", "c8"]
 
         topics = [tag for a in result.articles for tag in a["score_tags"]]
         assert len(topics) == len(set(topics))

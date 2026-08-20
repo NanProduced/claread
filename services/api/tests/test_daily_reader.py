@@ -1,6 +1,6 @@
 """T-01: Daily Reader workflow/pipeline critical path tests.
 
-Covers: today articles, article list, article detail, 404, pipeline selection logic.
+Covers: today articles, article list, article detail, 404.
 All DB interactions are mocked.
 """
 
@@ -142,70 +142,6 @@ class TestArticleDetail:
 
         response = client.get("/daily-reader/nonexistent_id")
         assert response.status_code == 404
-
-
-class TestPipelineSelection:
-    def test_select_diverse_candidates_basic(self):
-        from app.services.daily_reader.pipeline import select_diverse_candidates
-        from app.services.daily_reader.discovery import DiscoveredArticle
-        from app.services.daily_reader.scoring import ArticleScore
-
-        articles = []
-        for i in range(5):
-            a = DiscoveredArticle(
-                title=f"Article {i}",
-                url=f"https://example.com/{i}",
-                source="The Guardian",
-                description=f"Desc {i}",
-                tags=["science"] if i % 2 == 0 else ["politics"],
-                text=f"Text content {i} " * 50,
-                word_count=200 + i * 10,
-            )
-            s = ArticleScore(
-                score=8.0 - i * 0.5,
-                difficulty="intermediate",
-                tags=["science"] if i % 2 == 0 else ["politics"],
-                language_richness=7.0,
-                topic_interest=8.0,
-                structure_clarity=7.0,
-                cultural_value=6.0,
-            )
-            articles.append((a, s))
-
-        result = select_diverse_candidates(articles, max_count=3)
-        assert len(result) <= 3
-        assert len(result) > 0
-
-    def test_select_diverse_candidates_source_limit(self):
-        from app.services.daily_reader.pipeline import select_diverse_candidates
-        from app.services.daily_reader.discovery import DiscoveredArticle
-        from app.services.daily_reader.scoring import ArticleScore
-
-        articles = []
-        for i in range(5):
-            a = DiscoveredArticle(
-                title=f"Article {i}",
-                url=f"https://example.com/{i}",
-                source="SameSource",
-                description=f"Desc {i}",
-                tags=["topic_a"],
-                text=f"Text {i} " * 50,
-                word_count=200,
-            )
-            s = ArticleScore(
-                score=9.0 - i * 0.5,
-                difficulty="intermediate",
-                tags=["topic_a"],
-                language_richness=7.0,
-                topic_interest=8.0,
-                structure_clarity=7.0,
-                cultural_value=6.0,
-            )
-            articles.append((a, s))
-
-        result = select_diverse_candidates(articles, max_count=5, max_same_source=2)
-        sources = [a.source for a, _ in result]
-        assert sources.count("SameSource") <= 2
 
 
 @pytest.mark.anyio
