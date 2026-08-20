@@ -65,7 +65,7 @@ SOURCE_ROTATION_POLICY = {
     "topic_diversity": True,
 }
 
-SCORING_MAX_CANDIDATES = 15
+SCORING_MAX_CANDIDATES = 10  # B-2: agreed 8-10 band shared with A-5
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
 DAILY_READER_WORKFLOW_VERSION = "2.0.0"
 DAILY_READER_SCHEMA_VERSION = "1.0.0"
@@ -302,7 +302,8 @@ async def run_daily_pipeline(
         if score and score.score >= SCORE_THRESHOLD:
             scored.append((article, score))
 
-    scored.sort(key=lambda x: (x[0].has_qualified_cover, x[1].score), reverse=True)
+    # B-2: content score leads; a qualified cover only breaks ties.
+    scored.sort(key=lambda x: (x[1].score, x[0].has_qualified_cover), reverse=True)
     result.candidates_scored = len(scored)
     logger.info("Pipeline scoring: %d articles passed threshold", len(scored))
 
@@ -313,18 +314,37 @@ async def run_daily_pipeline(
     result.candidates_selected = len(selected)
     logger.info("Pipeline selection: %d candidates selected (target: %d)", len(selected), max_count)
 
-    # Execute workflow for each candidate until we have enough
+    # Execute workflow for each candidate until we have enough. B-2: the
+    # daily diversity constraints bind the final successful output, so they
+    # are enforced at the success boundary across both the diverse
+    # oversample and the remaining scored fallback pool (workflow failures
+    # previously bypassed them).
     if tracker:
         await tracker.update_stage("workflow")
     success_count = 0
-    for article, score in selected:
+    used_topics: set[str] = set()
+    success_source_counts: Counter[str] = Counter()
+    max_same_source_per_day = SOURCE_ROTATION_POLICY["max_same_source_per_day"]
+
+    ordered_candidates = [*selected, *(s for s in scored if s not in selected)]
+    for article, score in ordered_candidates:
         if success_count >= max_count:
             break
+
+        source = _normalize_source(article.source)
+        candidate_topics = _normalized_score_topics(score)
+        if success_source_counts[source] >= max_same_source_per_day:
+            continue
+        if SOURCE_ROTATION_POLICY["topic_diversity"] and used_topics & candidate_topics:
+            continue
+
         try:
             payload = await _run_workflow_and_store(article, score, tracker=tracker)
             if payload is not None:
                 result.articles.append(payload)
                 success_count += 1
+                success_source_counts[source] += 1
+                used_topics |= candidate_topics
         except Exception as e:
             error_msg = f"Workflow failed for '{article.title[:30]}': {e}"
             logger.error(error_msg)
@@ -332,27 +352,24 @@ async def run_daily_pipeline(
             if tracker:
                 await tracker.add_error("workflow", error_msg)
 
-    if success_count < max_count and len(scored) > len(selected):
-        remaining = [s for s in scored if s not in selected]
-        for article, score in remaining:
-            if success_count >= max_count:
-                break
-            try:
-                payload = await _run_workflow_and_store(article, score, tracker=tracker)
-                if payload is not None:
-                    result.articles.append(payload)
-                    success_count += 1
-            except Exception as e:
-                error_msg = f"Workflow failed for '{article.title[:30]}': {e}"
-                logger.error(error_msg)
-                result.errors.append(error_msg)
-                if tracker:
-                    await tracker.add_error("workflow", error_msg)
-
     if tracker:
         await tracker.complete(success_count)
     await emit_pipeline_alerts(result, run_id=tracker.run_id if tracker else None)
     return result
+
+
+def _normalize_source(source: str) -> str:
+    return source.strip().casefold()
+
+
+def _normalized_score_topics(score: ArticleScore) -> set[str]:
+    """B-2: minimal topic normalization (strip, casefold, drop empty tags)."""
+    topics: set[str] = set()
+    for tag in score.tags:
+        normalized = tag.strip().casefold()
+        if normalized:
+            topics.add(normalized)
+    return topics
 
 
 def select_diverse_candidates(
@@ -362,25 +379,30 @@ def select_diverse_candidates(
 ) -> list[tuple[DiscoveredArticle, ArticleScore]]:
     selected: list[tuple[DiscoveredArticle, ArticleScore]] = []
     source_counts: Counter[str] = Counter()
-    selected_topics: list[str] = []
+    selected_topics: set[str] = set()
 
     for article, score in scored:
         if len(selected) >= max_count:
             break
 
-        source = article.source
+        source = _normalize_source(article.source)
         if source_counts[source] >= max_same_source:
             continue
 
-        if SOURCE_ROTATION_POLICY["topic_diversity"] and selected_topics:
-            article_topics = set(article.tags)
-            overlap = sum(1 for t in selected_topics if t in article_topics)
-            if overlap >= len(selected_topics) and len(selected) >= 2:
-                continue
+        # B-2: the topic constraint uses the scorer's fine-grained
+        # score.tags (article.tags only carries the feed section); any
+        # normalized overlap means same topic, so at most one per day.
+        # Candidates without score.tags are never topic-guessed.
+        candidate_topics = _normalized_score_topics(score)
+        if (
+            SOURCE_ROTATION_POLICY["topic_diversity"]
+            and selected_topics & candidate_topics
+        ):
+            continue
 
         selected.append((article, score))
         source_counts[source] += 1
-        selected_topics.extend(article.tags)
+        selected_topics |= candidate_topics
 
     return selected
 

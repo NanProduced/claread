@@ -121,7 +121,11 @@ ARTICLE_SOURCES = {
     "guardian": {
         "type": "api",
         "base_url": "https://content.guardianapis.com",
-        "sections": ["science", "technology", "culture"],
+        # B-2: society carries Guardian health/NHS coverage (their content
+        # API has no top-level "health" section); artanddesign/lifeandstyle
+        # widen the topic mix beyond science/tech/culture.
+        "sections": ["science", "technology", "culture", "society", "artanddesign",
+                     "lifeandstyle"],
         "show_fields": "headline,standfirst,thumbnail,wordcount,body,byline",
         "wordcount_range": (500, 2000),
         "page_size": 5,
@@ -132,6 +136,10 @@ ARTICLE_SOURCES = {
             "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
             "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
             "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+            "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+            "entertainment_and_arts": (
+                "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml"
+            ),
         },
         # B-1: width upgrade is centralized in cover_download.upgrade_image_url.
         "image_width_upgrade": {"from": 240, "to": 1280},
