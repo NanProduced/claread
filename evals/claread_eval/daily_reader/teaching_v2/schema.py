@@ -46,8 +46,12 @@ def _anchors(case: dict[str, Any], ids: list[str], where: str, errs: list[str]) 
 
 
 def _quote_substring(case: dict[str, Any], quote: str, where: str, errs: list[str]) -> None:
+    normalized = collapse_whitespace(quote)
+    if not normalized:
+        errs.append(f"{where}: source_quote is empty after whitespace normalization")
+        return
     original = collapse_whitespace(case.get("input", {}).get("original_text", ""))
-    if collapse_whitespace(quote) not in original:
+    if normalized not in original:
         errs.append(f"{where}: source_quote is not a verbatim (whitespace-normalized) "
                     f"substring of original_text: {str(quote)[:80]!r}")
 
@@ -131,17 +135,19 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
     meta = artifact.get("run_meta") or {}
     if meta.get("outcome") not in EXPECTED_OUTCOMES:
         errs.append(f"run_meta.outcome must be one of {EXPECTED_OUTCOMES}")
-    if not isinstance(meta.get("refinement_count", 0), int) or meta.get(
-            "refinement_count", 0) < 0:
-        errs.append("run_meta.refinement_count must be a non-negative int")
+    rc = meta.get("refinement_count", 0)
+    if not isinstance(rc, int) or isinstance(rc, bool) or rc < 0:
+        errs.append("run_meta.refinement_count must be a non-negative int (bool forbidden)")
     if meta.get("outcome") == "reject":
         return errs  # rejected runs carry no teaching package
 
     bp = artifact.get("lesson_blueprint") or {}
     if bp.get("article_type") not in ARTICLE_TYPES:
-        errs.append(f"lesson_blueprint.article_type must be one of {ARTICLE_TYPES}")
+        errs.append(f"lesson_blueprint.article_type {bp.get('article_type')!r} "
+                    f"must be one of {ARTICLE_TYPES}")
     if bp.get("effective_difficulty") not in DIFFICULTIES:
-        errs.append(f"lesson_blueprint.effective_difficulty must be one of {DIFFICULTIES}")
+        errs.append(f"lesson_blueprint.effective_difficulty "
+                    f"{bp.get('effective_difficulty')!r} must be one of {DIFFICULTIES}")
     pkg = artifact.get("learning_package") or {}
     for cp in pkg.get("comprehension_checkpoints") or []:
         if cp.get("skill") not in CHECKPOINT_SKILLS:
@@ -150,38 +156,45 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
 
 
 def validate_dataset_coverage(cases: list[dict[str, Any]]) -> list[str]:
-    """Dataset coverage matrix per the sample contract. [] == valid."""
+    """Dataset coverage matrix per the sample contract. [] == valid.
+    Malformed cases (missing gold/input) land in the error list — this
+    function never raises."""
     errs: list[str] = []
     n = len(cases)
     if not 8 <= n <= 12:
         errs.append(f"dataset must contain 8-12 frozen real articles, got {n}")
 
-    producible = [c for c in cases
-                  if c["gold"].get("expected_outcome") == "cleaned_publish"]
+    golds = [c.get("gold") or {} for c in cases]
+    inputs = [c.get("input") or {} for c in cases]
+    producible = [g for g in golds if g.get("expected_outcome") == "cleaned_publish"]
     for t in ARTICLE_TYPES:
-        if sum(1 for c in producible if c["gold"].get("article_type") == t) < 2:
+        if sum(1 for g in producible if g.get("article_type") == t) < 2:
             errs.append(f"article_type {t} needs >=2 producible cases "
                         f"(reject cases do not count toward quotas)")
     for d in DIFFICULTIES:
-        if sum(1 for c in cases if c["gold"].get("expected_difficulty") == d) < (
+        if sum(1 for g in golds if g.get("expected_difficulty") == d) < (
                 3 if d in ("B1", "B2") else 2):
             errs.append(f"difficulty {d} below minimum ({'3' if d in ('B1', 'B2') else '2'})")
-    if any(c["gold"].get("expected_difficulty") == "A2" for c in cases):
+    if any(g.get("expected_difficulty") == "A2" for g in golds):
         errs.append("A2 cases are forbidden in the v2 dataset")
 
-    sources = {c["input"].get("source") for c in cases}
+    sources = {inp.get("source") for inp in inputs}
     if len(sources) < 2:
-        errs.append(f"need >=2 sources (bbc/guardian/npr), got {sorted(sources)}")
+        errs.append(f"need >=2 sources (bbc/guardian/npr), got {sorted(sources, key=str)}")
+    outside = sources - {"bbc", "guardian", "npr"}
+    if outside:
+        errs.append(f"sources outside the bbc/guardian/npr allowlist: "
+                    f"{sorted(outside, key=str)}")
 
-    if not any(c["gold"].get("dirty_fragments") or c["gold"].get("expected_outcome") == "reject"
-               for c in cases):
+    if not any(g.get("dirty_fragments") or g.get("expected_outcome") == "reject"
+               for g in golds):
         errs.append("need >=1 dirty-data case declaring expected_outcome")
-    counts = [english_word_count(c["input"].get("original_text", "")) for c in cases]
+    counts = [english_word_count(inp.get("original_text", "")) for inp in inputs]
     if not any(w < SHORT_ARTICLE_MAX_WORDS for w in counts):
         errs.append(f"need >=1 short article (<{SHORT_ARTICLE_MAX_WORDS} words)")
     if not any(w >= LONG_ARTICLE_MIN_WORDS for w in counts):
         errs.append(f"need >=1 long article (>={LONG_ARTICLE_MIN_WORDS} words)")
-    if any(c["gold"].get("annotation_status") != "DRAFT_PM_REVIEW" for c in cases):
+    if any(g.get("annotation_status") != "DRAFT_PM_REVIEW" for g in golds):
         errs.append("all golds must be DRAFT_PM_REVIEW")
     for case in cases:
         errs.extend(validate_case(case))

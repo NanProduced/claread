@@ -93,18 +93,23 @@ def parse_judge_output(rubric: dict[str, Any], raw_text: str) -> dict[str, Any]:
                 "reason": f"dimension set mismatch: missing={missing} extra={extra}"}
     valid: dict[str, Any] = {}
     for dim_id, (lo, hi) in expected.items():
-        entry = dims.get(dim_id) or {}
+        entry = dims.get(dim_id)
+        if not isinstance(entry, dict):
+            return {"status": "error",
+                    "reason": f"dimension {dim_id}: entry {entry!r} is not an object"}
         score = entry.get("score")
-        rationale = str(entry.get("rationale", "")).strip()
+        rationale = entry.get("rationale")
         # bool is an int subclass -> reject explicitly; floats rejected (no clamp)
         if isinstance(score, bool) or not isinstance(score, int) or not lo <= score <= hi:
             return {"status": "error",
                     "reason": f"dimension {dim_id}: score {score!r} is not an int in "
                               f"{lo}-{hi} (clamping forbidden)"}
-        if not rationale:
+        # null/true/number rationales must not stringify into a pass ("None")
+        if not isinstance(rationale, str) or not rationale.strip():
             return {"status": "error",
-                    "reason": f"dimension {dim_id}: empty rationale"}
-        valid[dim_id] = {"score": score, "rationale": rationale}
+                    "reason": f"dimension {dim_id}: rationale {rationale!r} is not a "
+                              f"non-empty string"}
+        valid[dim_id] = {"score": score, "rationale": rationale.strip()}
     return {"status": "ok", "dimensions": valid}
 
 

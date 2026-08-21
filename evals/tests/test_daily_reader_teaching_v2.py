@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -604,6 +605,18 @@ def _review_items(decisions: list[str], factual_errors: int = 0) -> list[dict]:
     return items
 
 
+def _full_review_doc(artifact: dict, decision: str = "keep", drop: int = 0) -> dict:
+    """A reviewed doc covering every expected teaching point of the artifact."""
+    ids = rv.expected_review_item_ids(artifact)
+    items = [{"item_id": i, "kind": i.split(":")[0], "decision": decision,
+              "reviewer": "pm", "reviewed_at": "2026-08-21",
+              "factual_major_error": False, "reason": "r",
+              "suggested_edit": None} for i in ids]
+    if drop:
+        items = items[:-drop]
+    return {"case_id": artifact["case_id"], "status": "reviewed", "items": items}
+
+
 def test_review_acceptance_thresholds():
     ok = rv.evaluate_review(_review_items(["keep"] * 17 + ["minor_edit"] * 3))
     assert ok["accepted"] is True
@@ -624,8 +637,7 @@ def test_review_pending_and_validation():
     assert rv.review_status(case, art, None)["status"] == rv.HUMAN_REVIEW_PENDING
     pending = {"case_id": "fx-b1", "status": rv.HUMAN_REVIEW_PENDING, "items": []}
     assert rv.review_status(case, art, pending)["status"] == rv.HUMAN_REVIEW_PENDING
-    reviewed = {"case_id": "fx-b1", "status": "reviewed",
-                "items": _review_items(["keep"] * 10)}
+    reviewed = _full_review_doc(art)
     st = rv.review_status(case, art, reviewed)
     assert st["status"] == "REVIEWED" and st["accepted"] is True
 
@@ -707,8 +719,7 @@ def test_runner_human_pending_verdict(rubric):
 
 def test_runner_pass_requires_all_gates_and_scores(rubric):
     mod = _runner()
-    reviewed = {"case_id": "fx-b1", "status": "reviewed",
-                "items": _review_items(["keep"] * 10)}
+    reviewed = _full_review_doc(_b1_artifact())
     judged_ok = {"status": "ok", "dimensions": {
         d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
     res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
@@ -780,3 +791,160 @@ def test_green_fixtures_pass_all_gates_on_real_dataset_cases():
         res = _run(case, art)
         failing = {k: v for k, v in res["gates"].items() if v["passed"] is False}
         assert failing == {}, f"{case['case_id']}: {failing}"
+
+
+# ---------------------------------------------------------------------------
+# review round 2 — 三维评审修复（B1-B7 / M1-M7）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("entry", ["good", 5, ["score"], None, True])
+def test_parse_judge_output_non_dict_dimension_entry_fails(rubric, entry):
+    out = _judge_output(rubric)
+    out["dimensions"]["source_fidelity"] = entry
+    assert j2.parse_judge_output(rubric, json.dumps(out))["status"] == "error"
+
+
+@pytest.mark.parametrize("bad", [None, True, 3, ["x"]])
+def test_parse_judge_output_non_string_rationale_fails(rubric, bad):
+    out = _judge_output(rubric)
+    out["dimensions"]["transfer_value"]["rationale"] = bad
+    assert j2.parse_judge_output(rubric, json.dumps(out))["status"] == "error"
+
+
+def test_review_unknown_decision_fails_closed():
+    res = rv.evaluate_review(_review_items(["keep"] * 19 + ["banana"]))
+    assert res["accepted"] is False
+
+
+def test_runner_schema_violation_artifact_fails(rubric):
+    mod = _runner()
+    judged_ok = {"status": "ok", "dimensions": {
+        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+    art = _b1_artifact()
+    art["lesson_blueprint"]["effective_difficulty"] = "A2"
+    res = mod.score_case(rubric, _b1_case(), art,
+                         review_doc=_full_review_doc(art), judge_result=judged_ok)
+    assert res["verdict"] == "FAIL"
+    assert res["schema_errors"]
+    art2 = _b1_artifact()
+    art2["learning_package"]["comprehension_checkpoints"][0]["skill"] = "banana"
+    res2 = mod.score_case(rubric, _b1_case(), art2, review_doc=None, skip_judge=True)
+    assert res2["verdict"] == "FAIL"
+    assert res2["schema_errors"]
+
+
+def test_dataset_coverage_malformed_case_returns_errors_not_raises():
+    errs = sc.validate_dataset_coverage([{"input": {}}])
+    assert isinstance(errs, list) and errs
+    errs2 = sc.validate_dataset_coverage([{}])
+    assert isinstance(errs2, list) and errs2
+
+
+def test_review_partial_coverage_not_accepted():
+    case, art = _b1_case(), _b1_artifact()
+    st = rv.review_status(case, art, _full_review_doc(art, drop=3))
+    assert st["accepted"] is False
+    assert st["status"] in ("REVIEW_INCOMPLETE", rv.HUMAN_REVIEW_PENDING)
+
+
+def test_review_expected_item_ids_cover_all_teaching_points():
+    ids = rv.expected_review_item_ids(_b1_artifact())
+    assert ids == ["checkpoint:0", "checkpoint:1", "language_target:0",
+                   "language_target:1", "language_target:2", "sentence_map:0",
+                   "transfer_task:0"]
+
+
+def test_runner_main_end_to_end_writes_tmp_path(rubric, tmp_path, monkeypatch):
+    mod = _runner()
+    runs_root = EVALS_ROOT / "runs"
+    before = {p.name for p in runs_root.glob("*")} if runs_root.exists() else set()
+    monkeypatch.setattr(sys, "argv", [
+        "runner", "--dataset-dir", str(DATASET_DIR),
+        "--artifacts-dir", str(FIXTURE_DIR / "artifacts"),
+        "--runs-dir", str(tmp_path), "--run-id", "tmp-e2e", "--no-judge"])
+    mod.main()
+    run_dir = tmp_path / "tmp-e2e"
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    assert run["aggregate"]["case_count"] == 10
+    for section in ("矩阵覆盖", "逐篇硬门禁", "八维 Judge 状态", "人工审阅状态",
+                    "分层", "失败证据", "成本状态"):
+        assert section in report, f"report missing section {section}"
+    after = {p.name for p in runs_root.glob("*")} if runs_root.exists() else set()
+    assert after == before, "runner must not write into the shared evals/runs/"
+
+
+def test_refinement_bool_rejected():
+    art = _b1_artifact()
+    art["run_meta"]["refinement_count"] = True
+    assert _gate(_run(_b1_case(), art), "refinement_bounded")["passed"] is False
+    assert sc.validate_artifact(_b1_case(), art) != []
+
+
+def test_validate_case_empty_source_quote_fails():
+    case = _b1_case()
+    case["gold"]["key_evidence"][0]["source_quote"] = "   "
+    assert any("source_quote" in e and "empty" in e for e in sc.validate_case(case))
+
+
+def test_cost_block_invalid_values_nulled_not_passthrough():
+    block = rp.cost_block({"provider_requests": -5, "logical_llm_calls": 5,
+                           "end_to_end_latency_ms": "fast", "retry_count": True})
+    assert block["provider_requests"] is None
+    assert block["end_to_end_latency_ms"] is None
+    assert block["retry_count"] is None
+    assert block["logical_llm_calls"] == 5
+    assert block["status"] == "measured"
+    assert block.get("warnings")
+
+
+def test_runner_reviewed_but_rejected_is_fail_not_pending(rubric):
+    mod = _runner()
+    judged_ok = {"status": "ok", "dimensions": {
+        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+    doc = _full_review_doc(_b1_artifact(), decision="major_edit")
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                         review_doc=doc, judge_result=judged_ok)
+    assert res["verdict"] == "FAIL"
+    assert res["verdict"] != rv.HUMAN_REVIEW_PENDING
+
+
+def test_dataset_coverage_source_whitelist():
+    cases = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    assert sc.validate_dataset_coverage(cases) == []
+    bad = copy.deepcopy(cases)
+    bad[0]["input"]["source"] = "nytimes"
+    errs = sc.validate_dataset_coverage(bad)
+    assert any("nytimes" in e for e in errs)
+
+
+def test_report_md_contains_cost_status_lines(rubric):
+    mod = _runner()
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                         review_doc=None, skip_judge=True)
+    run = rp.build_run(run_id="cost-t", dataset_id="daily-reader-teaching-v2",
+                       dataset_dir=".", rubric=rubric,
+                       case_results=[mod.decorate(_b1_case(), res)],
+                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    md = rp.render_report_md(run)
+    assert "成本状态" in md and "NOT_RUN_OWNER_REQUIRED" in md
+
+
+def test_runner_default_runs_dir_is_v2_specific():
+    mod = _runner()
+    assert Path(str(mod.DEFAULT_RUNS_DIR)) == EVALS_ROOT / "runs" / "teaching-v2"
+
+
+def test_schema_errors_surface_in_failure_evidence(rubric):
+    mod = _runner()
+    art = _b1_artifact()
+    art["lesson_blueprint"]["effective_difficulty"] = "A2"
+    res = mod.score_case(rubric, _b1_case(), art, review_doc=None, skip_judge=True)
+    run = rp.build_run(run_id="se-t", dataset_id="daily-reader-teaching-v2",
+                       dataset_dir=".", rubric=rubric,
+                       case_results=[mod.decorate(_b1_case(), res)],
+                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    md = rp.render_report_md(run)
+    assert "schema" in md and "A2" in md

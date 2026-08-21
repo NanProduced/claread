@@ -21,13 +21,35 @@ _COST_FIELDS = (
     "per_agent_latency_ms", "end_to_end_latency_ms",
     "accepted_teaching_points", "keep_points_per_1000_output_tokens",
 )
+_DICT_FIELDS = {"per_agent_tokens", "per_agent_latency_ms"}
+
+
+def _valid_cost_value(field: str, value: Any) -> bool:
+    """Measured cost values must be non-negative numbers (dicts for the two
+    per-agent breakdown fields); bools are not numbers here."""
+    if value is None:
+        return True
+    if field in _DICT_FIELDS:
+        return isinstance(value, dict)
+    return isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
 
 
 def cost_block(usage: dict[str, Any] | None) -> dict[str, Any]:
     if not usage:
         return {"status": "NOT_RUN_OWNER_REQUIRED",
                 **{f: None for f in _COST_FIELDS}}
-    return {"status": "measured", **{f: usage.get(f) for f in _COST_FIELDS}}
+    block: dict[str, Any] = {"status": "measured"}
+    warnings: list[str] = []
+    for f in _COST_FIELDS:
+        value = usage.get(f)
+        if _valid_cost_value(f, value):
+            block[f] = value  # measured non-negative values pass through
+        else:
+            block[f] = None  # invalid -> nulled, never trusted
+            warnings.append(f"{f}: invalid value {value!r} nulled")
+    if warnings:
+        block["warnings"] = warnings
+    return block
 
 
 def build_strata(case_results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -130,6 +152,16 @@ def render_report_md(run: dict[str, Any]) -> str:
     for cr in run["cases"]:
         lines.append(f"| {cr['case_id']} | {cr['review']['status']} "
                      f"| {cr['review']['accepted']} | {cr['overall']} |")
+    lines += ["", "## 成本状态", ""]
+    for cr in run["cases"]:
+        c = cr.get("cost") or {}
+        if c.get("status") == "measured":
+            lines.append(f"- {cr['case_id']}: measured · provider_requests="
+                         f"{c.get('provider_requests')} · logical_llm_calls="
+                         f"{c.get('logical_llm_calls')} · end_to_end_latency_ms="
+                         f"{c.get('end_to_end_latency_ms')}")
+        else:
+            lines.append(f"- {cr['case_id']}: {c.get('status')}")
     lines += ["", "## 分层（独立判定，不平均）", ""]
     for axis, groups in run["strata"].items():
         for key, s in groups.items():
@@ -140,13 +172,17 @@ def render_report_md(run: dict[str, Any]) -> str:
               f"{agg['overall_mean_note']}", "", "## 失败证据", ""]
     any_evidence = False
     for cr in run["cases"]:
-        evidences = [f"{gid}: {json.dumps(g['detail'], ensure_ascii=False)}"
-                     for gid, g in cr["gates"]["gates"].items() if g["passed"] is False]
+        evidences = []
+        if cr.get("schema_errors"):
+            evidences.append(f"schema: {json.dumps(cr['schema_errors'], ensure_ascii=False)}")
+        evidences += [f"{gid}: {json.dumps(g['detail'], ensure_ascii=False)}"
+                      for gid, g in cr["gates"]["gates"].items() if g["passed"] is False]
         if cr["judge"].get("status") not in ("ok", "SEMANTIC_NOT_RUN",
                                              "not_applicable_rejected"):
             evidences.append(f"judge: {cr['judge']}")
         if not cr["review"]["accepted"] and cr["review"]["status"] != rv.HUMAN_REVIEW_PENDING:
-            evidences.append(f"review: {cr['review'].get('problems')}")
+            review_issue = cr["review"].get("problems") or cr["review"].get("missing_items")
+            evidences.append(f"review: {review_issue}")
         if evidences:
             any_evidence = True
             lines.append(f"### {cr['case_id']}")

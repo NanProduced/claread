@@ -36,8 +36,11 @@ from claread_eval.daily_reader.teaching_v2 import gates as g2  # noqa: E402
 from claread_eval.daily_reader.teaching_v2 import judge as j2  # noqa: E402
 from claread_eval.daily_reader.teaching_v2 import report as rp  # noqa: E402
 from claread_eval.daily_reader.teaching_v2 import review as rv  # noqa: E402
+from claread_eval.daily_reader.teaching_v2 import schema as sc  # noqa: E402
 
 DEFAULT_DATASET_DIR = EVALS_ROOT / "datasets" / "daily-reader-teaching-v2"
+# v2 runs never share the v1 baseline runs/ root (review finding M7)
+DEFAULT_RUNS_DIR = EVALS_ROOT / "runs" / "teaching-v2"
 RUBRIC_PATH = EVALS_ROOT / "rubrics" / "daily-reader-teaching-v2.yaml"
 OVERALL_PASS_THRESHOLD = 0.90
 JUDGE_PASS_SCORE = 4
@@ -79,10 +82,12 @@ def _is_reject(case: dict[str, Any], artifact: dict[str, Any]) -> bool:
 def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str, Any],
                review_doc: dict[str, Any] | None = None, skip_judge: bool = False,
                judge_result: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Score one case offline. Verdict ladder: reject handled by gold ->
-    PASS; any hard gate failing -> FAIL; judge absent -> SEMANTIC_NOT_RUN;
-    human gate incomplete -> HUMAN_REVIEW_PENDING; otherwise PASS requires
-    every judge dimension >= 4 and overall >= 0.90."""
+    """Score one case offline. Verdict ladder: schema violations -> FAIL;
+    reject handled by gold -> PASS; any hard gate failing -> FAIL; judge
+    absent -> SEMANTIC_NOT_RUN; human gate incomplete ->
+    HUMAN_REVIEW_PENDING; reviewed but rejected -> FAIL; otherwise PASS
+    requires every judge dimension >= 4 and overall >= 0.90."""
+    schema_errors = sc.validate_case(case) + sc.validate_artifact(case, artifact)
     gates = g2.run_hard_gates(case, artifact)
     det_ratio = (gates["passed_count"] / gates["scored_count"]
                  if gates["scored_count"] else 1.0)
@@ -107,14 +112,18 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
 
     review = rv.review_status(case, artifact, review_doc)
 
-    if reject:
+    if schema_errors:
+        verdict = "FAIL"  # enum/shape violations never pass the hard layer
+    elif reject:
         verdict = "PASS" if gates["all_passed"] else "FAIL"
     elif not gates["all_passed"]:
         verdict = "FAIL"
     elif judge.get("status") != "ok":
         verdict = j2.SEMANTIC_NOT_RUN
     elif not review["accepted"]:
-        verdict = rv.HUMAN_REVIEW_PENDING
+        # reviewed-but-rejected is a hard FAIL, only incomplete review pends
+        verdict = ("FAIL" if review["status"] == "REVIEWED"
+                   else rv.HUMAN_REVIEW_PENDING)
     else:
         dims_ok = all(d["score"] >= JUDGE_PASS_SCORE
                       for d in judge.get("dimensions", {}).values())
@@ -123,6 +132,7 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
 
     return {
         "verdict": verdict,
+        "schema_errors": schema_errors,
         "gates": gates,
         "deterministic_pass_ratio": round(det_ratio, 4),
         "judge": judge,
@@ -149,7 +159,7 @@ def main() -> None:
     ap.add_argument("--dataset-dir", default=str(DEFAULT_DATASET_DIR))
     ap.add_argument("--artifacts-dir", required=True,
                     help="directory containing <case_id>.artifact.json")
-    ap.add_argument("--runs-dir", default=str(EVALS_ROOT / "runs"))
+    ap.add_argument("--runs-dir", default=str(DEFAULT_RUNS_DIR))
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--case", action="append", default=[],
                     help="case id (repeatable); default all")

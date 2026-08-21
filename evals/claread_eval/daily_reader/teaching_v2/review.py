@@ -28,6 +28,11 @@ def evaluate_review(items: list[dict[str, Any]]) -> dict[str, Any]:
     factual = [it.get("item_id") for it in items if it.get("factual_major_error")]
     if factual:
         problems.append(f"factual_major_error on items: {factual}")
+    unknown = [it.get("item_id") for it in items
+               if it.get("decision") not in DECISIONS]
+    if unknown:
+        # fail-closed: unknown decisions must never dilute the ratios
+        problems.append(f"unknown decision on items: {unknown}")
     if n == 0:
         problems.append("no reviewed items")
         keep_minor_ratio = 0.0
@@ -52,13 +57,30 @@ def evaluate_review(items: list[dict[str, Any]]) -> dict[str, Any]:
             "factual_major_errors": len(factual)}
 
 
+def expected_review_item_ids(artifact: dict[str, Any]) -> list[str]:
+    """Stable ids of every teaching point that must be reviewed 1:1:
+    checkpoints, language targets, sentence maps and the transfer task."""
+    pkg = artifact.get("learning_package") or {}
+    ids = [f"checkpoint:{i}"
+           for i in range(len(pkg.get("comprehension_checkpoints") or []))]
+    ids += [f"language_target:{i}"
+            for i in range(len(pkg.get("language_targets") or []))]
+    ids += [f"sentence_map:{i}"
+            for i in range(len(pkg.get("sentence_maps") or []))]
+    if pkg.get("transfer_task"):
+        ids.append("transfer_task:0")
+    return ids
+
+
 def review_status(case: dict[str, Any], artifact: dict[str, Any],
                   review_doc: dict[str, Any] | None) -> dict[str, Any]:
     """Status of the human gate for one case.
 
     Rejected runs carry no teaching points: the review gate is recorded
     as ``not_applicable_reject`` and counts as satisfied. Anything else
-    without a completed review document stays HUMAN_REVIEW_PENDING.
+    without a completed review document stays HUMAN_REVIEW_PENDING; a
+    reviewed document that does not cover every teaching point 1:1 is
+    REVIEW_INCOMPLETE and never accepted.
     """
     rejected = (case.get("gold", {}).get("expected_outcome") == "reject"
                 or (artifact.get("run_meta") or {}).get("outcome") == "reject")
@@ -67,6 +89,12 @@ def review_status(case: dict[str, Any], artifact: dict[str, Any],
     if not review_doc or review_doc.get("status") != "reviewed" \
             or not review_doc.get("items"):
         return {"status": HUMAN_REVIEW_PENDING, "accepted": False}
+    expected = set(expected_review_item_ids(artifact))
+    got = {str(it.get("item_id")) for it in review_doc.get("items") or []}
+    missing, extra = sorted(expected - got), sorted(got - expected)
+    if missing or extra:
+        return {"status": "REVIEW_INCOMPLETE", "accepted": False,
+                "missing_items": missing, "extra_items": extra}
     verdict = evaluate_review(review_doc.get("items") or [])
     return {"status": "REVIEWED", "accepted": verdict["accepted"], **verdict}
 

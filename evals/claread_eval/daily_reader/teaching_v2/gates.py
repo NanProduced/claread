@@ -278,7 +278,8 @@ def gate_source_caption_preserved(case: dict[str, Any], artifact: dict[str, Any]
 
 def gate_refinement_bounded(case: dict[str, Any], artifact: dict[str, Any]) -> dict[str, Any]:
     count = (artifact.get("run_meta") or {}).get("refinement_count", 0)
-    ok = isinstance(count, int) and 0 <= count <= 1
+    ok = (isinstance(count, int) and not isinstance(count, bool)
+          and 0 <= count <= 1)
     return {"passed": ok, "detail": {"refinement_count": count}}
 
 
