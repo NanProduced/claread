@@ -149,6 +149,8 @@ def _aggregate_usage(state: DailyReaderState) -> dict[str, Any]:
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
+                "model_requests": 0,
+                "tool_calls": 0,
             },
         }
 
@@ -162,6 +164,8 @@ def _aggregate_usage(state: DailyReaderState) -> dict[str, Any]:
             "input_tokens": _sum("input_tokens"),
             "output_tokens": _sum("output_tokens"),
             "total_tokens": _sum("total_tokens"),
+            "model_requests": _sum("model_requests"),
+            "tool_calls": _sum("tool_calls"),
         },
     }
 
@@ -340,7 +344,13 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
 
     all_highlights: list[dict] = []
     all_para_drafts: list[dict] = []
-    total_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    total_usage: dict[str, int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "model_requests": 0,
+        "tool_calls": 0,
+    }
 
     batches = _make_batches(paragraphs, HIGHLIGHT_BATCH_SIZE)
 

@@ -58,7 +58,13 @@ async def test_graph_preserves_per_agent_usage_snapshot() -> None:
                     gloss="实质性的",
                 )],
             )]),
-            "usage_metadata": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            "usage_metadata": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "total_tokens": 12,
+                "model_requests": 2,
+                "tool_calls": 1,
+            },
         }
 
     async def fake_notes(**_kwargs):
@@ -74,7 +80,13 @@ async def test_graph_preserves_per_agent_usage_snapshot() -> None:
                 )],
                 refined_difficulty="B2",
             ),
-            "usage_metadata": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
+            "usage_metadata": {
+                "input_tokens": 20,
+                "output_tokens": 4,
+                "total_tokens": 24,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
         }
 
     async def fake_takeaways(**_kwargs):
@@ -89,13 +101,25 @@ async def test_graph_preserves_per_agent_usage_snapshot() -> None:
                 writing_moves=[],
                 discussion_questions=["What evidence is strongest?", "What remains unclear?"],
             ),
-            "usage_metadata": {"input_tokens": 30, "output_tokens": 6, "total_tokens": 36},
+            "usage_metadata": {
+                "input_tokens": 30,
+                "output_tokens": 6,
+                "total_tokens": 36,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
         }
 
     async def fake_review(**_kwargs):
         return {
             "output": DailyReviewDraft(passed=True, overall_score=0.95, issues=[]),
-            "usage_metadata": {"input_tokens": 40, "output_tokens": 8, "total_tokens": 48},
+            "usage_metadata": {
+                "input_tokens": 40,
+                "output_tokens": 8,
+                "total_tokens": 48,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
         }
 
     with (
@@ -122,12 +146,42 @@ async def test_graph_preserves_per_agent_usage_snapshot() -> None:
     assert final_state["usage_summary"] == {
         "available": True,
         "per_agent": {
-            "vocab": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
-            "paragraph_notes": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
-            "takeaways": {"input_tokens": 30, "output_tokens": 6, "total_tokens": 36},
-            "review": {"input_tokens": 40, "output_tokens": 8, "total_tokens": 48},
+            "vocab": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "total_tokens": 12,
+                "model_requests": 2,
+                "tool_calls": 1,
+            },
+            "paragraph_notes": {
+                "input_tokens": 20,
+                "output_tokens": 4,
+                "total_tokens": 24,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
+            "takeaways": {
+                "input_tokens": 30,
+                "output_tokens": 6,
+                "total_tokens": 36,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
+            "review": {
+                "input_tokens": 40,
+                "output_tokens": 8,
+                "total_tokens": 48,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
         },
-        "aggregate": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        "aggregate": {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "model_requests": 5,
+            "tool_calls": 1,
+        },
     }
 
 
@@ -193,6 +247,8 @@ async def test_highlight_batches_are_bounded_concurrent_and_deterministic() -> N
         "input_tokens": 20,
         "output_tokens": 4,
         "total_tokens": 24,
+        "model_requests": 0,
+        "tool_calls": 0,
     }
 
 
@@ -386,5 +442,11 @@ async def test_aborted_workflow_records_usage_snapshot() -> None:
             "vocab": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
             "review": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
         },
-        "aggregate": {"input_tokens": 30, "output_tokens": 6, "total_tokens": 36},
+        "aggregate": {
+            "input_tokens": 30,
+            "output_tokens": 6,
+            "total_tokens": 36,
+            "model_requests": 0,
+            "tool_calls": 0,
+        },
     }
