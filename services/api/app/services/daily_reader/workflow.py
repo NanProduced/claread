@@ -399,6 +399,10 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 result,
                 exc_info=(type(result), result, result.__traceback__),
             )
+            usage = extract_run_usage(result)
+            if usage:
+                for k in total_usage:
+                    total_usage[k] += int(usage.get(k, 0) or 0)
             continue
         if isinstance(result, BaseException):
             raise result
@@ -464,6 +468,10 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                     total_usage[k] += int(retry_usage.get(k, 0) or 0)
         except Exception as e:
             logger.error("highlight required retry failed: %s", e, exc_info=True)
+            usage = extract_run_usage(e)
+            if usage:
+                for k in total_usage:
+                    total_usage[k] += int(usage.get(k, 0) or 0)
 
     missing_after_retry = _paragraphs_requiring_highlight(paragraphs, all_highlights)
     coverage = _check_highlight_coverage(paragraphs, all_highlights)
@@ -531,7 +539,11 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
         return updates
     except Exception as e:
         logger.error("paragraph_guides_and_translations_node failed: %s", e, exc_info=True)
-        return {"paragraph_notes_json": {}}
+        updates: dict[str, Any] = {"paragraph_notes_json": {}}
+        usage = extract_run_usage(e)
+        if usage:
+            updates["paragraph_notes_usage"] = usage
+        return updates
 
 
 async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
@@ -580,7 +592,11 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
         return updates
     except Exception as e:
         logger.error("close_reading_takeaways_node failed: %s", e, exc_info=True)
-        return {"takeaways_json": {}}
+        updates: dict[str, Any] = {"takeaways_json": {}}
+        usage = extract_run_usage(e)
+        if usage:
+            updates["takeaways_usage"] = usage
+        return updates
 
 
 def _boilerplate_quality_issues(
@@ -849,7 +865,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
         return updates
     except Exception as e:
         logger.error("quality_review_node failed: %s", e, exc_info=True)
-        return {
+        updates: dict[str, Any] = {
             "abort": True,
             "review_result": {
                 "passed": False,
@@ -862,6 +878,10 @@ async def quality_review_node(state: DailyReaderState) -> dict:
                 }],
             },
         }
+        usage = extract_run_usage(e)
+        if usage:
+            updates["review_usage"] = usage
+        return updates
 
 
 async def refinement_node(state: DailyReaderState) -> dict:
@@ -980,7 +1000,7 @@ async def refinement_node(state: DailyReaderState) -> dict:
         return updates
     except Exception as e:
         logger.error("refinement_node failed: %s", e, exc_info=True)
-        return {
+        updates: dict[str, Any] = {
             "abort": True,
             "refinement_result": {
                 "abort": True,
@@ -992,6 +1012,10 @@ async def refinement_node(state: DailyReaderState) -> dict:
                 }],
             },
         }
+        usage = extract_run_usage(e)
+        if usage:
+            updates["refinement_usage"] = usage
+        return updates
 
 
 def daily_projection_node(state: DailyReaderState) -> dict:

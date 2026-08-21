@@ -9,14 +9,19 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from app.llm.routes import (
     MODEL_ROUTE_DAILY_TAKEAWAYS,
     MODEL_ROUTE_DAILY_TRANSLATION,
 )
+from app.llm.types import ResolvedModelConfig
 from app.schemas.internal.daily_drafts import (
     CloseReadingTakeaways,
     DailyParagraphDraft,
+    DailyRefinementDraft,
     DailyReviewDraft,
     DailyVocabDraft,
     DailyVocabHighlight,
@@ -450,3 +455,240 @@ async def test_aborted_workflow_records_usage_snapshot() -> None:
             "tool_calls": 0,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# P-3C: structured-output failure must keep confirmed provider usage
+# ---------------------------------------------------------------------------
+
+_FAILED_REQUEST_INPUT_TOKENS = 11
+_FAILED_REQUEST_OUTPUT_TOKENS = 7
+_FAILED_USAGE_TOTAL = {
+    "input_tokens": 44,
+    "output_tokens": 28,
+    "total_tokens": 72,
+    "model_requests": 4,
+    "tool_calls": 0,
+}
+
+
+def _fake_resolved_config(route: str) -> ResolvedModelConfig:
+    return ResolvedModelConfig(
+        route=route,  # type: ignore[arg-type]
+        profile_name="test-function",
+        provider="dashscope",
+        adapter="openai_compatible",
+        model_name="function-model",
+        api_key="",
+    )
+
+
+def _invalid_structured_model() -> FunctionModel:
+    calls = {"n": 0}
+
+    async def model_fn(messages, info: AgentInfo):
+        del messages
+        calls["n"] += 1
+        usage = RequestUsage(
+            input_tokens=_FAILED_REQUEST_INPUT_TOKENS,
+            output_tokens=_FAILED_REQUEST_OUTPUT_TOKENS,
+        )
+        if info.output_tools:
+            tool_name = info.output_tools[0].name
+            return ModelResponse(
+                parts=[ToolCallPart(
+                    tool_name=tool_name,
+                    args="definitely-not-json",
+                    tool_call_id=f"bad-{calls['n']}",
+                )],
+                usage=usage,
+                finish_reason="stop",
+                model_name="function-model",
+            )
+        return ModelResponse(
+            parts=[TextPart(content='{"article_summary":')],
+            usage=usage,
+            finish_reason="stop",
+            model_name="function-model",
+        )
+
+    return FunctionModel(model_fn)
+
+
+def _timeout_before_response_model() -> FunctionModel:
+    async def model_fn(messages, info: AgentInfo):
+        del messages, info
+        raise TimeoutError("no provider response")
+
+    return FunctionModel(model_fn)
+
+
+def _translation_node_state() -> dict:
+    return {
+        "normalized_paragraphs": [{
+            "paragraph_id": "p_0",
+            "text": (
+                "Substantive analysis explains a complex policy choice with "
+                "evidence and context for readers who want to understand it."
+            ),
+        }],
+        "title": "Policy analysis",
+        "difficulty": "B1",
+        "highlights_json": [],
+    }
+
+
+@pytest.mark.anyio
+async def test_translation_structured_output_failure_records_retry_usage() -> None:
+    with patch(
+        "app.llm.agent_runner.build_model_for_route",
+        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_translation")),
+    ):
+        out = await paragraph_guides_and_translations_node(_translation_node_state())
+
+    assert out["paragraph_notes_json"] == {}
+    assert out["paragraph_notes_usage"] == _FAILED_USAGE_TOTAL
+
+
+@pytest.mark.anyio
+async def test_pre_provider_failure_does_not_fabricate_usage() -> None:
+    with patch(
+        "app.llm.agent_runner.build_model_for_route",
+        return_value=(
+            _timeout_before_response_model(),
+            _fake_resolved_config("daily_translation"),
+        ),
+    ):
+        out = await paragraph_guides_and_translations_node(_translation_node_state())
+
+    assert out["paragraph_notes_json"] == {}
+    assert "paragraph_notes_usage" not in out
+
+
+@pytest.mark.anyio
+async def test_takeaways_structured_output_failure_records_retry_usage() -> None:
+    with patch(
+        "app.llm.agent_runner.build_model_for_route",
+        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_takeaways")),
+    ):
+        out = await close_reading_takeaways_node(_translation_node_state())
+
+    assert out["takeaways_json"] == {}
+    assert out["takeaways_usage"] == _FAILED_USAGE_TOTAL
+
+
+@pytest.mark.anyio
+async def test_failed_translation_usage_aggregates_with_refinement() -> None:
+    article = (
+        "Substantive analysis explains a complex policy choice with evidence and "
+        "context for readers who want to understand its wider consequences."
+    )
+    notes = ParagraphNotesDraft(
+        article_summary="文章摘要",
+        reading_focus=["关注论证方式"],
+        notes=[ParagraphReadingNote(
+            paragraph_id="p_0",
+            focus_question="作者如何论证？",
+            micro_summary="作者结合证据解释政策选择。",
+            translation="这篇分析用证据解释了一项复杂的政策选择及其广泛影响。",
+        )],
+        refined_difficulty="B1",
+    )
+    takeaways = CloseReadingTakeaways(
+        title_zh="复杂政策如何影响读者",
+        subtitle_zh="一篇以证据解释后果的分析",
+        tags_zh=["公共政策", "论证"],
+        article_takeaway="证据帮助读者理解复杂政策的后果。",
+        key_expressions=[],
+        sentence_notes=[],
+        writing_moves=[],
+        discussion_questions=["What evidence is strongest?", "What remains unclear?"],
+    )
+
+    async def fake_highlight(*, deps, **_kwargs):
+        paragraph = deps.paragraphs[0]
+        text = str(paragraph["text"])
+        anchor = "Substantive"
+        start = text.index(anchor)
+        return {
+            "output": DailyVocabDraft(paragraphs=[DailyParagraphDraft(
+                paragraph_id=str(paragraph["paragraph_id"]),
+                text=text,
+                highlights=[DailyVocabHighlight(
+                    anchor=anchor,
+                    start=start,
+                    end=start + len(anchor),
+                    type="vocab_highlight",
+                    gloss="实质性的",
+                )],
+            )]),
+            "usage_metadata": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "total_tokens": 12,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
+        }
+
+    async def fake_takeaways(**_kwargs):
+        return {
+            "output": takeaways,
+            "usage_metadata": {
+                "input_tokens": 30,
+                "output_tokens": 6,
+                "total_tokens": 36,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
+        }
+
+    async def fake_refinement(**_kwargs):
+        return {
+            "output": DailyRefinementDraft(
+                abort=False,
+                refined_paragraph_notes=notes,
+                refined_takeaways=takeaways,
+            ),
+            "usage_metadata": {
+                "input_tokens": 40,
+                "output_tokens": 8,
+                "total_tokens": 48,
+                "model_requests": 1,
+                "tool_calls": 0,
+            },
+        }
+
+    with (
+        patch(
+            "app.services.daily_reader.workflow._run_daily_highlight_llm_span",
+            new=fake_highlight,
+        ),
+        patch(
+            "app.services.daily_reader.workflow._run_daily_takeaways_llm_span",
+            new=fake_takeaways,
+        ),
+        patch(
+            "app.services.daily_reader.workflow._run_daily_refinement_llm_span",
+            new=fake_refinement,
+        ),
+        patch(
+            "app.llm.agent_runner.build_model_for_route",
+            return_value=(
+                _invalid_structured_model(),
+                _fake_resolved_config("daily_translation"),
+            ),
+        ),
+    ):
+        final_state = await build_daily_reader_graph().ainvoke({
+            "original_text": article,
+            "title": "Policy analysis",
+            "difficulty": "B1",
+        })
+
+    per_agent = final_state["usage_summary"]["per_agent"]
+    assert per_agent["paragraph_notes"] == _FAILED_USAGE_TOTAL
+    assert per_agent["refinement"]["model_requests"] == 1
+    assert final_state["usage_summary"]["aggregate"]["model_requests"] == 7
+    assert final_state["usage_summary"]["aggregate"]["input_tokens"] == 124
+    assert final_state["paragraph_notes_json"]["article_summary"] == "文章摘要"
