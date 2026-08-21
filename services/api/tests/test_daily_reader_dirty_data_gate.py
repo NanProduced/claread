@@ -273,14 +273,21 @@ class TestReviewBoilerplateGate:
 
 class TestFindBoilerplateHits:
     def test_hits_on_dirty_surfaces(self):
-        hits = find_boilerplate_hits(
-            [
-                "letter, external entitled",
-                "JUANA SUMMERS, HOST:",
-                "Copyright © 2026 NPR. All rights reserved.",
-            ]
-        )
-        assert len(hits) == 3
+        inputs = [
+            "letter, external entitled",
+            "JUANA SUMMERS, HOST:",
+            "Copyright © 2026 NPR. All rights reserved.",
+            "(SOUNDBITE OF MUSIC)",
+        ]
+        hits = find_boilerplate_hits(inputs)
+        assert len(hits) == len(inputs)
+        # single speaker cue is still detected as a surface leak
+        assert any("JUANA SUMMERS, HOST:" in hit for hit in hits)
+        # single soundbite is still detected as a surface leak
+        assert any("SOUNDBITE OF" in hit for hit in hits)
+        # copyright and external-link badges are still detected
+        assert any("external" in hit for hit in hits)
+        assert any("Copyright" in hit for hit in hits)
 
     def test_clean_surfaces_no_hits(self):
         assert find_boilerplate_hits(["The study cited external factors.", ""]) == []
