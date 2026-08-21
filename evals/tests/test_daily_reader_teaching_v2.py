@@ -1151,3 +1151,115 @@ def test_cleaned_publish_transfer_kinds_follow_p1_types():
     assert kinds == set(sc.TRANSFER_TASK_KINDS)
     assert opinion_kinds == {"counter"}
     assert explainer_kinds == {"explain"}
+
+
+# ---------------------------------------------------------------------------
+# P-2R2 — artifact identity, runner fail-closed, quality strata
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_identity_mismatch_legal_enums_cannot_pass(rubric):
+    """Legal but wrong article_type / difficulty / case_id must FAIL."""
+    mod = _runner()
+    case, art = _b1_case(), _b1_artifact()
+    art["case_id"] = "someone-else"
+    art["lesson_blueprint"]["article_type"] = "explainer"
+    art["lesson_blueprint"]["effective_difficulty"] = "C1"
+    res = mod.score_case(rubric, case, art,
+                         review_doc=_full_review_doc(art),
+                         judge_result=_judged_ok(rubric))
+    assert res["verdict"] == "FAIL"
+    joined = " ".join(res["schema_errors"])
+    assert "case_id" in joined
+    assert "article_type" in joined
+    assert "effective_difficulty" in joined
+
+
+def test_artifact_empty_case_id_cannot_pass(rubric):
+    mod = _runner()
+    art = _b1_artifact()
+    art["case_id"] = ""
+    res = mod.score_case(rubric, _b1_case(), art, review_doc=None, skip_judge=True)
+    assert res["verdict"] == "FAIL"
+    assert any("case_id" in e for e in res["schema_errors"])
+
+
+@pytest.mark.parametrize("mutate", [
+    "gold_list", "run_meta_list", "learning_package_list",
+    "source_assets_list", "usage_list",
+])
+def test_score_case_malformed_nested_returns_fail_not_traceback(rubric, mutate):
+    mod = _runner()
+    case, art = _b1_case(), _b1_artifact()
+    if mutate == "gold_list":
+        case["gold"] = ["not", "a", "dict"]
+    elif mutate == "run_meta_list":
+        art["run_meta"] = ["measured"]
+    elif mutate == "learning_package_list":
+        art["learning_package"] = ["checkpoint"]
+    elif mutate == "source_assets_list":
+        art["source_assets"] = ["caption"]
+    else:
+        art["run_meta"]["usage"] = ["tokens"]
+    res = mod.score_case(rubric, case, art, review_doc=None, skip_judge=True)
+    assert res["verdict"] == "FAIL"
+    assert res["schema_errors"]
+
+
+@pytest.mark.parametrize("payload", [
+    "not-a-list",
+    [None],
+    [{"gold": ["x"], "input": 3}],
+    [{"gold": {}, "input": {"original_text": ["not", "str"]}}],
+])
+def test_validate_dataset_coverage_malformed_top_level_not_raises(payload):
+    errs = sc.validate_dataset_coverage(payload)
+    assert isinstance(errs, list) and errs
+
+
+def test_evaluate_review_non_dict_item_accepted_false():
+    res = rv.evaluate_review(["not-an-item", None, 3])
+    assert res["accepted"] is False
+    assert res["problems"]
+
+
+def test_quality_strata_ignore_expected_reject(rubric):
+    mod = _runner()
+    ok = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                        review_doc=_full_review_doc(_b1_artifact()),
+                        judge_result=_judged_ok(rubric))
+    reject = mod.score_case(rubric, _reject_case(), _reject_artifact(),
+                            review_doc=None, skip_judge=True)
+    run = rp.build_run(
+        run_id="strata-q", dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".", rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), ok),
+                      mod.decorate(_reject_case(), reject)],
+        judge_status="ok", created_at="2026-08-21T00:00:00")
+    assert ok["verdict"] == "PASS"
+    assert reject["verdict"] == "EXPECTED_REJECT"
+    assert run["aggregate"]["expected_reject_count"] == 1
+    assert run["aggregate"]["pass_count"] == 1
+    for axis, groups in run["strata"].items():
+        for key, s in groups.items():
+            assert s["accepted"] is True, f"{axis}={key} should ignore EXPECTED_REJECT"
+            assert "EXPECTED_REJECT" not in s["verdicts"]
+    assert run["strata_all_accepted"] is True
+    md = rp.render_report_md(run)
+    assert "EXPECTED_REJECT" in md
+
+
+def test_no_judge_quality_strata_not_accepted(rubric):
+    mod = _runner()
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                         review_doc=None, skip_judge=True)
+    run = rp.build_run(
+        run_id="strata-nj", dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".", rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), res)],
+        judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    assert res["verdict"] == j2.SEMANTIC_NOT_RUN
+    assert run["strata_all_accepted"] is False
+    for groups in run["strata"].values():
+        for s in groups.values():
+            assert s["accepted"] is False

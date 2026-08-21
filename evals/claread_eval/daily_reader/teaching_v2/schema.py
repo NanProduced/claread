@@ -37,10 +37,12 @@ LONG_ARTICLE_MIN_WORDS = 1500   # execution default: long >= 1500 English words
 UNIT_ID_RE = re.compile(r"^u\d{2,3}$")
 
 
-def english_word_count(text: str) -> int:
+def english_word_count(text: Any) -> int:
     """Deterministic word count: whitespace split (the single source of truth
-    for the short/long article thresholds)."""
-    return len((text or "").split())
+    for the short/long article thresholds). Non-strings count as 0."""
+    if not isinstance(text, str):
+        return 0
+    return len(text.split())
 
 
 def collapse_whitespace(s: str) -> str:
@@ -245,6 +247,14 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
     errs: list[str] = []
     if not isinstance(artifact, dict):
         return ["artifact must be an object"]
+    case = case if isinstance(case, dict) else {}
+    case_id = _nonempty_str(case.get("case_id"))
+    art_id = artifact.get("case_id")
+    if _nonempty_str(art_id) is None:
+        errs.append("artifact.case_id is required")
+    elif case_id is not None and art_id != case_id:
+        errs.append(f"artifact.case_id {art_id!r} != case.case_id {case_id!r}")
+
     meta = _as_dict(artifact.get("run_meta")) or {}
     if artifact.get("run_meta") is not None and _as_dict(artifact.get("run_meta")) is None:
         errs.append("run_meta must be an object")
@@ -253,9 +263,15 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
     rc = meta.get("refinement_count", 0)
     if not isinstance(rc, int) or isinstance(rc, bool) or rc < 0:
         errs.append("run_meta.refinement_count must be a non-negative int (bool forbidden)")
+    if meta.get("usage") is not None and _as_dict(meta.get("usage")) is None:
+        errs.append("run_meta.usage must be an object")
+    if artifact.get("source_assets") is not None and _as_dict(
+            artifact.get("source_assets")) is None:
+        errs.append("source_assets must be an object")
     if meta.get("outcome") == "reject":
         return errs  # rejected runs carry no teaching package
 
+    gold = _as_dict(case.get("gold")) or {}
     bp = _as_dict(artifact.get("lesson_blueprint")) or {}
     if artifact.get("lesson_blueprint") is not None and _as_dict(
             artifact.get("lesson_blueprint")) is None:
@@ -263,9 +279,16 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
     if bp.get("article_type") not in ARTICLE_TYPES:
         errs.append(f"lesson_blueprint.article_type {bp.get('article_type')!r} "
                     f"must be one of {ARTICLE_TYPES}")
+    elif bp.get("article_type") != gold.get("article_type"):
+        errs.append(f"lesson_blueprint.article_type {bp.get('article_type')!r} "
+                    f"must equal gold.article_type {gold.get('article_type')!r}")
     if bp.get("effective_difficulty") not in DIFFICULTIES:
         errs.append(f"lesson_blueprint.effective_difficulty "
                     f"{bp.get('effective_difficulty')!r} must be one of {DIFFICULTIES}")
+    elif bp.get("effective_difficulty") != gold.get("expected_difficulty"):
+        errs.append(f"lesson_blueprint.effective_difficulty "
+                    f"{bp.get('effective_difficulty')!r} must equal "
+                    f"gold.expected_difficulty {gold.get('expected_difficulty')!r}")
     pkg = _as_dict(artifact.get("learning_package")) or {}
     if artifact.get("learning_package") is not None and _as_dict(
             artifact.get("learning_package")) is None:
@@ -292,17 +315,35 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
     return errs
 
 
-def validate_dataset_coverage(cases: list[dict[str, Any]]) -> list[str]:
+def validate_dataset_coverage(cases: Any) -> list[str]:
     """Dataset coverage matrix per the sample contract. [] == valid.
     Malformed cases (missing gold/input) land in the error list — this
     function never raises."""
+    if not isinstance(cases, list):
+        return [f"dataset must be a list of cases, got {type(cases).__name__}"]
     errs: list[str] = []
     n = len(cases)
     if not 8 <= n <= 12:
         errs.append(f"dataset must contain 8-12 frozen real articles, got {n}")
 
-    golds = [c.get("gold") or {} for c in cases]
-    inputs = [c.get("input") or {} for c in cases]
+    golds: list[dict[str, Any]] = []
+    inputs: list[dict[str, Any]] = []
+    for i, c in enumerate(cases):
+        if not isinstance(c, dict):
+            errs.append(f"cases[{i}] must be an object")
+            golds.append({})
+            inputs.append({})
+            continue
+        gold = _as_dict(c.get("gold"))
+        inp = _as_dict(c.get("input"))
+        if gold is None:
+            errs.append(f"cases[{i}].gold must be an object")
+            gold = {}
+        if inp is None:
+            errs.append(f"cases[{i}].input must be an object")
+            inp = {}
+        golds.append(gold)
+        inputs.append(inp)
     producible = [g for g in golds if g.get("expected_outcome") == "cleaned_publish"]
     for t in ARTICLE_TYPES:
         if sum(1 for g in producible if g.get("article_type") == t) < 2:
@@ -335,5 +376,6 @@ def validate_dataset_coverage(cases: list[dict[str, Any]]) -> list[str]:
     if any(g.get("annotation_status") != "DRAFT_PM_REVIEW" for g in golds):
         errs.append("all golds must be DRAFT_PM_REVIEW")
     for case in cases:
-        errs.extend(validate_case(case))
+        if isinstance(case, dict):
+            errs.extend(validate_case(case))
     return errs

@@ -22,15 +22,25 @@ KEEP_MINOR_MIN_RATIO = 0.85
 HEAVY_EDIT_MAX_RATIO = 0.15
 
 
-def evaluate_review(items: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate_review(items: Any) -> dict[str, Any]:
     """Acceptance thresholds for one reviewed case. Pure, never raises."""
     problems: list[str] = []
+    if not isinstance(items, list):
+        return {"accepted": False, "problems": ["items must be a list"],
+                "item_count": 0, "keep_minor_ratio": 0.0, "heavy_edit_ratio": 1.0,
+                "factual_major_errors": 0}
     n = len(items)
-    factual = [it.get("item_id") for it in items
-               if isinstance(it, dict) and it.get("factual_major_error") is True]
+    dicts = []
+    for i, it in enumerate(items):
+        if isinstance(it, dict):
+            dicts.append(it)
+        else:
+            problems.append(f"item[{i}] is not an object")
+    factual = [it.get("item_id") for it in dicts
+               if it.get("factual_major_error") is True]
     if factual:
         problems.append(f"factual_major_error on items: {factual}")
-    unknown = [it.get("item_id") for it in items
+    unknown = [it.get("item_id") for it in dicts
                if it.get("decision") not in DECISIONS]
     if unknown:
         # fail-closed: unknown decisions must never dilute the ratios
@@ -40,9 +50,9 @@ def evaluate_review(items: list[dict[str, Any]]) -> dict[str, Any]:
         keep_minor_ratio = 0.0
         heavy_ratio = 1.0
     else:
-        keep_minor = sum(1 for it in items
+        keep_minor = sum(1 for it in dicts
                          if it.get("decision") in ("keep", "minor_edit"))
-        heavy = sum(1 for it in items
+        heavy = sum(1 for it in dicts
                     if it.get("decision") in ("major_edit", "delete"))
         keep_minor_ratio = keep_minor / n
         heavy_ratio = heavy / n

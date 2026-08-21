@@ -35,7 +35,7 @@ def _valid_cost_value(field: str, value: Any) -> bool:
 
 
 def cost_block(usage: dict[str, Any] | None) -> dict[str, Any]:
-    if not usage:
+    if not isinstance(usage, dict) or not usage:
         return {"status": "NOT_RUN_OWNER_REQUIRED",
                 **{f: None for f in _COST_FIELDS}}
     block: dict[str, Any] = {"status": "measured"}
@@ -53,12 +53,15 @@ def cost_block(usage: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def build_strata(case_results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """type/difficulty/source strata, computed once. A stratum is accepted
-    only if every case inside it is PASS — never averaged."""
+    """type/difficulty/source quality strata over cleaned_publish only.
+    A stratum is accepted only if every quality case inside it is PASS —
+    EXPECTED_REJECT is tracked separately and never averaged in."""
+    quality = [cr for cr in case_results
+               if cr.get("expected_outcome") == "cleaned_publish"]
     strata: dict[str, dict[str, Any]] = {}
     for axis in ("article_type", "difficulty", "source"):
         groups: dict[str, list[dict[str, Any]]] = {}
-        for cr in case_results:
+        for cr in quality:
             groups.setdefault(str(cr.get(axis)), []).append(cr)
         strata[axis] = {
             key: {

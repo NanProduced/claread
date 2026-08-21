@@ -74,9 +74,14 @@ def load_review(dataset_dir: Path, case_id: str) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _is_reject(case: dict[str, Any], artifact: dict[str, Any]) -> bool:
-    return (case.get("gold", {}).get("expected_outcome") == "reject"
-            or (artifact.get("run_meta") or {}).get("outcome") == "reject")
+    gold = _as_dict(case.get("gold") if isinstance(case, dict) else None)
+    meta = _as_dict(artifact.get("run_meta") if isinstance(artifact, dict) else None)
+    return gold.get("expected_outcome") == "reject" or meta.get("outcome") == "reject"
 
 
 def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str, Any],
@@ -89,6 +94,20 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
     HUMAN_REVIEW_PENDING; reviewed but rejected -> FAIL; otherwise PASS
     requires every judge dimension >= 4 and overall >= 0.90."""
     schema_errors = sc.validate_case(case) + sc.validate_artifact(case, artifact)
+    if schema_errors:
+        # Do not re-enter the same nested values after schema has failed.
+        return {
+            "verdict": "FAIL",
+            "schema_errors": schema_errors,
+            "gates": {"all_passed": False, "passed_count": 0, "scored_count": 0,
+                      "gates": {}},
+            "deterministic_pass_ratio": 0.0,
+            "judge": {"status": "error", "reason": "schema_errors"},
+            "judge_mean": None,
+            "overall": None,
+            "review": {"status": "not_run_schema_failed", "accepted": False},
+            "cost": rp.cost_block(None),
+        }
     try:
         gates = g2.run_hard_gates(case, artifact)
     except (TypeError, AttributeError, KeyError) as exc:
@@ -147,7 +166,7 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
         "judge_mean": round(judge_mean, 3) if judge_mean is not None else None,
         "overall": overall,
         "review": review,
-        "cost": rp.cost_block((artifact.get("run_meta") or {}).get("usage")),
+        "cost": rp.cost_block(_as_dict(artifact.get("run_meta")).get("usage")),
     }
 
 
