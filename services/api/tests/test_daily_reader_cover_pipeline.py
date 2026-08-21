@@ -591,6 +591,14 @@ class TestSelectCoverImages:
         assert selection.cover_index == 0
         assert not hasattr(selection, "inline")
 
+    def test_cover_selection_is_minimal_frozen_dataclass(self):
+        from dataclasses import fields, is_dataclass
+
+        selection = select_cover_images([_validated(1600, 900, "https://a/1.jpg")])
+        assert is_dataclass(selection)
+        assert {field.name for field in fields(selection)} == {"mode", "cover_index"}
+        assert selection.__dataclass_params__.frozen
+
     def test_cover_select_has_no_llm_path(self):
         import inspect
 
@@ -886,6 +894,9 @@ class TestProcessArticleCovers:
         outcome = await process_article_covers(article, tracker=tracker)
         assert outcome.cover_url is None
         assert outcome.meta["selection_mode"] == SELECTION_MODE_NONE
+        # P-0R: audit metadata structure stays stable even with zero candidates.
+        assert outcome.meta["visual_fallback_eligible"] is False
+        assert outcome.meta["visual_fallback_reason"] is None
         tracker.add_error.assert_awaited()
 
     async def test_download_failure_recorded(self):

@@ -12,6 +12,8 @@ reader surface brief (full-bleed / two-third / half-float); Track C renders.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.services.daily_reader.cover_download import ValidatedCandidate
 from app.services.daily_reader.discovery import IMAGE_POSITION_META
 
@@ -66,17 +68,12 @@ def build_image_block(
     }
 
 
+@dataclass(frozen=True)
 class CoverSelection:
-    """Result of a deterministic selection: mode + the selected candidate."""
+    """Deterministic selection result: machine mode + the selected cover index."""
 
-    def __init__(self, *, mode: str, cover_index: int | None, source_caption: str = ""):
-        self.mode = mode
-        self.cover_index = cover_index
-        self.source_caption = source_caption
-
-    @property
-    def selected(self) -> bool:
-        return self.cover_index is not None
+    mode: str
+    cover_index: int | None
 
 
 def cover_pool_indices(candidates: list[ValidatedCandidate]) -> list[int]:
@@ -118,7 +115,6 @@ def select_cover_images(candidates: list[ValidatedCandidate]) -> CoverSelection:
     return CoverSelection(
         mode=SELECTION_MODE_DETERMINISTIC_SOURCE,
         cover_index=selected_index,
-        source_caption=(candidates[selected_index].caption or "").strip(),
     )
 
 

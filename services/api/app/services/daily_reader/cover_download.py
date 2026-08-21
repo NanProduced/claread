@@ -357,7 +357,13 @@ async def process_article_covers(
         if tracker:
             await tracker.add_error("cover", error)
         return CoverOutcome(
-            meta={"selection_mode": "none", "candidates": [], "errors": [error]},
+            meta={
+                "selection_mode": SELECTION_MODE_NONE,
+                "visual_fallback_eligible": False,
+                "visual_fallback_reason": None,
+                "candidates": [],
+                "errors": [error],
+            },
             errors=[error],
         )
 
