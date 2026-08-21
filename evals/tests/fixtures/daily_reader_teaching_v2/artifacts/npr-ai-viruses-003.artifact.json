@@ -1,0 +1,13 @@
+{
+  "case_id": "npr-ai-viruses-003",
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "reject",
+    "abort": true,
+    "rejection_reason": "transcript_skeleton",
+    "refinement_count": 0,
+    "usage": null
+  }
+}

@@ -40,3 +40,25 @@ uv run python scripts/run_daily_reader_eval.py --mode baseline `
 - workflow 模式用 `services/api/.venv` 子进程跑 `daily_reader_workflow_harness.py`，复用 `build_daily_reader_graph()` 调用链，只 dump final state 为 artifact，不写库。
 - 综合分 = 0.5×确定性通过率 + 0.5×judge 均分/5；judge 缺位时只算确定性并在报告标注。
 - 基线分：`runs/daily-reader-baseline-20260819/`。
+
+## 每日精读教学合同 v2 评测（daily-reader-teaching-v2，任务包 P-2）
+
+独立 v2 模块组（`claread_eval/daily_reader/teaching_v2/`）+ 最小 artifact runner，v1 文件零改动（仅 import 复用 `normalize_text`/`normalize_expression`）。金标集 10 篇冻结真实文章（BBC x8 + NPR x2；三篇自 v1 回归快照逐字重铸，七篇 2026-08-21 只读抓取）；gold 全部 `annotation_status: DRAFT_PM_REVIEW`，人工批准不由本包写入。
+
+合同构成：
+
+- 12 条硬门禁（`teaching_v2/gates.py` 的 `HARD_GATES` 有序注册表）：确定性层只验锚点/结构/声明关系，不做语义启发式；翻译覆盖按 gold policy 分派（B1 all_units 全部实质 units 恰一份共享译文；B2 关联单元必须有译文；C1 只要求明确选中的高难单元）。
+- 八维 Judge（`teaching_v2/judge.py`）：一次调用评 source_fidelity / pedagogical_focus / difficulty_fit / article_type_fit / evidence_retrieval / transfer_value / chinese_quality / learning_sequence；`parse_judge_output` fail-closed（恰好 8 维、整数 1-5、禁 clamp、空 rationale 即 error）；未跑状态 `SEMANTIC_NOT_RUN`；本包不含任何网络调用路径。
+- 人工审阅验收（`teaching_v2/review.py`）：逐教学点 keep/minor_edit/major_edit/delete；事实性 major error=0、keep+minor_edit≥85%、单篇 major_edit+delete≤15%，type/difficulty 分层独立判定；未审阅 → `HUMAN_REVIEW_PENDING`。
+- 成本占位/透传（`teaching_v2/report.py` 的 `cost_block`）：artifact 携带真实非负 usage/latency 时逐字段原样透传，完全缺失才输出 `NOT_RUN_OWNER_REQUIRED` 占位。
+
+运行（结构性零 DB 零网络，artifact 从目录读 JSON；judge 未接入，`--no-judge`）：
+
+```powershell
+uv run python scripts/run_daily_reader_teaching_eval.py `
+    --dataset-dir datasets/daily-reader-teaching-v2 `
+    --artifacts-dir <artifacts 目录> `
+    --runs-dir <输出目录> --run-id <id> --no-judge
+```
+
+verdict 合同：全部硬门禁通过 ∧ 八维每项≥4 ∧ overall≥0.90 ∧ 人工门禁完成 → PASS；judge 缺位 → `SEMANTIC_NOT_RUN`；人工缺位 → `HUMAN_REVIEW_PENDING`。overall = 0.5×确定性 + 0.5×judge 均分/5（judge 未跑不给 PASS；报告中的 overall mean 仅观察）。rubric 单一来源：`rubrics/daily-reader-teaching-v2.yaml`。

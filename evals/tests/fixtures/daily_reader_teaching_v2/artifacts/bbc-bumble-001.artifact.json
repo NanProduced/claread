@@ -1,0 +1,189 @@
+{
+  "case_id": "bbc-bumble-001",
+  "lesson_blueprint": {
+    "article_type": "news_report",
+    "effective_difficulty": "B1",
+    "reading_mission": "带着“Bumble 为什么放弃招牌规则、各方怎么看”读这篇短新闻。",
+    "learning_objectives": [
+      "抓住新闻中的变化内容、原因与各方反应",
+      "学会转述直接引语里的核心观点"
+    ],
+    "structure_map": [
+      {
+        "label": "变化与背景",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03",
+          "u04",
+          "u05",
+          "u06",
+          "u07",
+          "u08"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "官方说法与用户争论",
+        "paragraph_ids": [
+          "u09",
+          "u10",
+          "u11",
+          "u12",
+          "u13",
+          "u14",
+          "u15",
+          "u16",
+          "u17",
+          "u18"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "市场背景与专家解读",
+        "paragraph_ids": [
+          "u19",
+          "u20",
+          "u21",
+          "u22",
+          "u23",
+          "u24",
+          "u25",
+          "u26",
+          "u27",
+          "u28"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u02",
+      "u09",
+      "u19"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "Bumble 取消了哪条招牌规则？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u02"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u02"
+        ],
+        "reference_answer": "只允许女性向匹配对象先发送第一条消息的规则。",
+        "explanation_zh": "第二段第一句直接说明被取消的规则。"
+      },
+      {
+        "prompt": "匹配之后，用户现在有多少天开始对话？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u07",
+          "u08"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u08"
+        ],
+        "reference_answer": "三天，取代原来的 24 小时。",
+        "explanation_zh": "第七、八段交代时限调整，答案落在第八段。"
+      },
+      {
+        "prompt": "约会专家 Ryan 为什么欢迎这次改变？",
+        "skill": "claim_evidence",
+        "evidence_paragraph_ids": [
+          "u19",
+          "u20"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u19",
+          "u20"
+        ],
+        "reference_answer": "她认为这一招牌功能已经走完它的历程，新鲜感逐渐消退。",
+        "explanation_zh": "第十九段给出 run its course 的判断，第二十段补充理由。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "make the first move",
+        "paragraph_id": "u03",
+        "meaning_zh": "主动迈出第一步",
+        "usage_note": "常用于约会、谈判等语境，指率先采取行动",
+        "reusable_pattern": "allow sb to make the first move"
+      },
+      {
+        "expression": "run its course",
+        "paragraph_id": "u19",
+        "meaning_zh": "自然发展完毕、不再有效",
+        "usage_note": "描述事物走到尽头，无需人为干预",
+        "reusable_pattern": "sth has run its course"
+      },
+      {
+        "expression": "swamped with",
+        "paragraph_id": "u16",
+        "meaning_zh": "被……淹没、应接不暇",
+        "usage_note": "强调数量过大而难以处理",
+        "reusable_pattern": "get swamped with + 名词"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "But the thing that made Bumble famous will now be ditched following a trial which showed more engagement",
+        "paragraph_id": "u04",
+        "structure_zh": "主语(the thing)+被动谓语(will be ditched)+时间状语从句",
+        "translation": "不过，让 Bumble 成名的做法如今将被放弃，因为一次试验显示出更高的参与度"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u01": "发布时间",
+      "u02": "约会应用 Bumble 放弃了它的招牌规则——此前只有女性可以向匹配对象发送第一条消息——这一举动在用户中引发分歧。",
+      "u03": "2014 年应用上线时，创始人兼老板惠特尼·沃尔夫·赫德表示，正是允许女性“主动出击”让它与 Tinder 等对手区分开来。",
+      "u04": "不过，让 Bumble 成名的做法如今将被放弃，因为一次试验显示出更高的参与度，且一项用户调查发现 66% 的女性更愿意由男方先发第一条消息。",
+      "u05": "网络论坛上的反应凸显出用户间的分歧：这次更新是会吸引更多人使用 Bumble，还是让它变得“和其他约会应用没两样”。",
+      "u06": "此前，只有同性关系不必遵守女性优先规则。",
+      "u07": "Bumble 即将推出的另一项改变，将延长用户匹配后发起对话的时限。",
+      "u08": "用户现在将有三天时间开始互相发消息，而不是原来的 24 小时。",
+      "u09": "沃尔夫·赫德说：“虽然由女性主动是个激进的想法，但女性优先从来不是要规定唯一的连接方式。”",
+      "u10": "“如今，我们的社区在要求更多灵活性、更少压力，以及更多机会去建立真实而有意义的连接，这正是新体验所提供的。”",
+      "u11": "在 2015 年 4 月 Bumble 上线后不久的一次采访中，沃尔夫·赫德对《多伦多星报》表示，说“女性喜欢坐等男性主动上门”是一种刻板印象。",
+      "u12": "Reddit 上拥有五十万成员的热门社区 r/Bumble——人们在那里分享约会故事、讨论应用功能——大体上对平台的规则改动提出质疑。",
+      "u13": "尤其有用户追问：Bumble 现在和其他约会应用还有什么不同。",
+      "u14": "有人写道：“女士们如果想让男人先发消息，就用别的应用吧”；也有人表示自己“非常看重”女性主动这一点。",
+      "u15": "他们说：“女性会被大量消息淹没，所以主动给我发消息的女性，说明她是真的有兴趣。”",
+      "u16": "也有人认为，当 Bumble 推出“开场问题”——允许女性预先设置一条让男方回应的话题——这一功能其实早已被稀释。",
+      "u17": "但一些女性表示支持这一改变，或者承认她们早已厌倦主动开口却石沉大海。",
+      "u18": "一位用户说：“说实话，我在 Bumble 上先发消息时，男性几乎不回复”；另一位则称她发消息的男性“大多数”都“让匹配过期了”。",
+      "u19": "专业红娘萨拉·路易丝·瑞安欢迎这一改变，称 Bumble 的招牌功能“已经走完它的历程”。",
+      "u20": "她告诉 BBC 新闻：“起初这个想法很赋权，但随着时间推移，新鲜感消退了。”",
+      "u21": "“女性实际上一直被要求承担这段连接的叙事和能量，而男性则显得被动或焦虑。”",
+      "u22": "“Bumble 最初靠这种定位取得了真正的成功，但他们依赖它太久，在约会格局转变时没能跟上。”",
+      "u23": "规则变化之际，英国在线约会市场正经历更广泛的停滞。",
+      "u24": "根据 Ofcom《线上国家》报告的数据，Bumble 的英国用户从 2023 年近 150 万月活跌至 2025 年的 110 万。",
+      "u25": "虽然 Tinder 仍是英国使用最多的约会服务，但同期也流失了约一百万用户，而 Hinge 稳定保持在 150 万用户。",
+      "u26": "总部位于得克萨斯州的母公司 Bumble Inc 还拥有 Badoo，去年裁减了近三分之一的全球员工。",
+      "u27": "瑞安说：“人们正意识到，不停滑动并没有真正带来线下约会，只会加重约会疲劳。”",
+      "u28": "“我们看到人们明显转向社群和现实中的连接——无论是单身人士加入跑团，还是转向线下相亲，因为他们受够了在线约会。”"
+    },
+    "post_read_summary": "Bumble 放弃女性先发消息的招牌规则并把对话时限延长到三天，用户反应两极：有人担心失去差异化，也有人认可减压；专家认为旧功能已过时，公司用户数正持续下滑。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 run its course 复述约会专家对 Bumble 旧功能的评价。",
+      "scaffold": "The matchmaker says the feature has run its course because ...",
+      "reference_points": [
+        "起初令人赋权",
+        "新鲜感逐渐消退",
+        "需要跟随市场转变"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "case_id": "bbc-manifestos-002",
+  "lesson_blueprint": {
+    "article_type": "explainer",
+    "effective_difficulty": "C1",
+    "reading_mission": "带着“科技高管为什么热衷写宣言、这背后是什么立场之争”读这篇解释性报道。",
+    "learning_objectives": [
+      "梳理宣言潮流的来龙去脉与各方立场",
+      "辨析乐观叙事与批评证据之间的张力"
+    ],
+    "structure_map": [
+      {
+        "label": "宣言登场与先例",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03",
+          "u04",
+          "u05",
+          "u06",
+          "u07",
+          "u08",
+          "u09",
+          "u10"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "乐观叙事与反面证据",
+        "paragraph_ids": [
+          "u11",
+          "u12",
+          "u13",
+          "u14",
+          "u15",
+          "u16",
+          "u17",
+          "u18",
+          "u19",
+          "u20",
+          "u21",
+          "u22",
+          "u23",
+          "u24",
+          "u25",
+          "u26",
+          "u27",
+          "u28"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "开源之问与学者评析",
+        "paragraph_ids": [
+          "u29",
+          "u30",
+          "u31",
+          "u32",
+          "u33",
+          "u34",
+          "u35",
+          "u36",
+          "u37",
+          "u38",
+          "u39",
+          "u40"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u03",
+      "u29"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "2023 年写下《技术乐观主义宣言》的是谁？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u06"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u06"
+        ],
+        "reference_answer": "网景（Netscape）联合创始人 Marc Andreessen。",
+        "explanation_zh": "第六段点明 Andreessen 在 2023 年写了 5000 词的文章。"
+      },
+      {
+        "prompt": "IMF 的警告与扎克伯格的说法形成了什么反差？",
+        "skill": "claim_evidence",
+        "evidence_paragraph_ids": [
+          "u12"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u12"
+        ],
+        "reference_answer": "IMF 警告 AI 可能影响近四成岗位并加剧不平等，扎克伯格却声称未来工作会很多。",
+        "explanation_zh": "第十二段把 IMF 数据与扎克伯格的表态并置。"
+      },
+      {
+        "prompt": "Noah Smith 为什么认为这些宣言值得重视？",
+        "skill": "inference",
+        "evidence_paragraph_ids": [
+          "u23",
+          "u24"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u24"
+        ],
+        "reference_answer": "高管们感到时刻关键，觉得自己有责任去影响技术走向。",
+        "explanation_zh": "第二十四段引用 Smith 的话解释了高管的动机。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "put a positive spin on",
+        "paragraph_id": "u15",
+        "meaning_zh": "给……做正面包装、往好处引导",
+        "usage_note": "常见于媒体与公关语境，略带怀疑色彩",
+        "reusable_pattern": "put a positive spin on sth"
+      },
+      {
+        "expression": "put pen to paper",
+        "paragraph_id": "u22",
+        "meaning_zh": "动笔写下、正式成文",
+        "usage_note": "强调郑重其事地写作",
+        "reusable_pattern": "put pen to paper to do sth"
+      },
+      {
+        "expression": "incumbent upon",
+        "paragraph_id": "u24",
+        "meaning_zh": "（责任）责无旁贷地落在……身上",
+        "usage_note": "正式语体，多用于道义责任",
+        "reusable_pattern": "it is incumbent upon sb to do sth"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "To others, it's little more than a verbose public relations exercise.",
+        "paragraph_id": "u03",
+        "structure_zh": "介词短语前置(To others)+主语(it)+系表结构(little more than)",
+        "translation": "也有人认为，这不过是一场冗长的公关秀。"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u03": "有人认为，这是对 AI 前景的一种希望表达；也有人认为，这不过是一场冗长的公关秀。",
+      "u15": "扎克伯格的宣言是又一篇涌入我们社交媒体信息流、试图给 AI 做正面包装的文章。",
+      "u22": "后来在 2021 年，他又动笔撰文，解释公司那场无疾而终的元宇宙转型。",
+      "u24": "“我认为他们都觉得这是一个极其重要的时刻，以至于他们责无旁贷，要尽一切所能去影响这项技术发展的方向，”史密斯说。",
+      "u29": "“我们应该把一种有能力毁灭人类的东西开源吗？”他问道。"
+    },
+    "post_read_summary": "从 Andreessen 到扎克伯格，科技高管接连撰写长篇宣言，为 AI 描绘乐观图景；但裁员数据、IMF 警告与开源风险提醒人们，这些文章既是立场表达，也是话语权的争夺。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 put a positive spin on 复述这些企业宣言的传播动机。",
+      "scaffold": "These manifestos land in our feeds in an effort to ...",
+      "reference_points": [
+        "回应公众疑虑",
+        "塑造乐观叙事",
+        "争夺话语权"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "schema_version": 2,
+  "case_id": "npr-europe-heat-010",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "npr",
+    "source_url": "https://www.npr.org/transcripts/nx-s1-5916351",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Opinion: Europe's summer of heat",
+    "subtitle": "Scott Simon on the deadly heat waves across Europe and what they portend.",
+    "source": "npr",
+    "source_url": "https://www.npr.org/transcripts/nx-s1-5916351",
+    "original_text": "SCOTT SIMON, HOST:\nThis is Europe's summer of heat. All 27 cities Italy's health ministry monitors, including Rome, Naples, Venice and Bologna, are on red alert this week. People have been advised to avoid sunlight, sweet carbonated drinks, coffee and alcohol. Imagine trying to avoid sunlight, fizz, wine and espresso in Italy.\nThe World Meteorological Organization says this was the hottest June ever recorded in Western Europe, and now the heat has returned. Great cities like London, Paris, Madrid, Florence and Rome that draw tourists to museums, markets, theaters and restaurants are considered especially open and exposed. Those beautiful cities are sculpted out of brick and stone and connected by monumental asphalt avenues which absorb the heat and hold onto it at night.\nOfficials in France are just beginning to get hold of the toll of the June heat wave. They count at least 5,700 excess deaths during the swelter that climbed to 111 degrees Fahrenheit in the early part of the summer. Many of those who died were elderly, often alone in a stifling house or apartment. Germany recorded nearly 100 drownings during the worst of the June heat, many of them young men.\nFuneral homes have at times run out of space to store and prepare bodies for burial. Zouhaier Hertelli, a Paris funeral director, told the AP this summer he's had to gently inform grieving families there was no room for their loved ones. Families are suffering, he said. We have no solution to offer them because the funeral homes are full. We are really facing a problem, a big problem.\nIt's hard for me to hear those words and not think of funeral homes in war zones I have covered that have also been full. Scientists say the steady rise of heat caused by climate change may ignite more fires like the ones that swept France and Spain last month and those raging in the U.S., Canada and across the world.\nThe European Investment Bank and the European Commission released a study this summer that predicts farm losses in the EU will climb in the coming decades, with droughts, heat and storms damaging crop yields and stressing animals. 2026 has been Europe's summer of heat until perhaps next summer and summers to come. Americans, along with the rest of the world, know that feeling too.\n(SOUNDBITE OF HERMANOS GUTIERREZ'S \"MESA REDONDA\")\nCopyright © 2026 NPR. All rights reserved. Visit our website terms of use and permissions pages at www.npr.org for further information.\nAccuracy and availability of NPR transcripts may vary. Transcript text may be revised to correct errors or match updates to audio. Audio on npr.org may be edited after its original broadcast or publication. The authoritative record of NPR's programming is the audio record.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "SCOTT SIMON, HOST:"
+      },
+      {
+        "id": "u02",
+        "text": "This is Europe's summer of heat. All 27 cities Italy's health ministry monitors, including Rome, Naples, Venice and Bologna, are on red alert this week. People have been advised to avoid sunlight, sweet carbonated drinks, coffee and alcohol. Imagine trying to avoid sunlight, fizz, wine and espresso in Italy."
+      },
+      {
+        "id": "u03",
+        "text": "The World Meteorological Organization says this was the hottest June ever recorded in Western Europe, and now the heat has returned. Great cities like London, Paris, Madrid, Florence and Rome that draw tourists to museums, markets, theaters and restaurants are considered especially open and exposed. Those beautiful cities are sculpted out of brick and stone and connected by monumental asphalt avenues which absorb the heat and hold onto it at night."
+      },
+      {
+        "id": "u04",
+        "text": "Officials in France are just beginning to get hold of the toll of the June heat wave. They count at least 5,700 excess deaths during the swelter that climbed to 111 degrees Fahrenheit in the early part of the summer. Many of those who died were elderly, often alone in a stifling house or apartment. Germany recorded nearly 100 drownings during the worst of the June heat, many of them young men."
+      },
+      {
+        "id": "u05",
+        "text": "Funeral homes have at times run out of space to store and prepare bodies for burial. Zouhaier Hertelli, a Paris funeral director, told the AP this summer he's had to gently inform grieving families there was no room for their loved ones. Families are suffering, he said. We have no solution to offer them because the funeral homes are full. We are really facing a problem, a big problem."
+      },
+      {
+        "id": "u06",
+        "text": "It's hard for me to hear those words and not think of funeral homes in war zones I have covered that have also been full. Scientists say the steady rise of heat caused by climate change may ignite more fires like the ones that swept France and Spain last month and those raging in the U.S., Canada and across the world."
+      },
+      {
+        "id": "u07",
+        "text": "The European Investment Bank and the European Commission released a study this summer that predicts farm losses in the EU will climb in the coming decades, with droughts, heat and storms damaging crop yields and stressing animals. 2026 has been Europe's summer of heat until perhaps next summer and summers to come. Americans, along with the rest of the world, know that feeling too."
+      },
+      {
+        "id": "u08",
+        "text": "(SOUNDBITE OF HERMANOS GUTIERREZ'S \"MESA REDONDA\")"
+      },
+      {
+        "id": "u09",
+        "text": "Copyright © 2026 NPR. All rights reserved. Visit our website terms of use and permissions pages at www.npr.org for further information."
+      },
+      {
+        "id": "u10",
+        "text": "Accuracy and availability of NPR transcripts may vary. Transcript text may be revised to correct errors or match updates to audio. Audio on npr.org may be edited after its original broadcast or publication. The authoritative record of NPR's programming is the audio record."
+      }
+    ],
+    "source_caption": null
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "B2",
+    "article_type": "opinion_commentary",
+    "dirty_fragments": [
+      "SCOTT SIMON, HOST:",
+      "(SOUNDBITE OF HERMANOS GUTIERREZ",
+      "Copyright © 2026 NPR",
+      "Accuracy and availability of NPR transcripts"
+    ],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "the hottest June ever recorded in Western Europe",
+        "acceptable_answer_points_zh": [
+          "这是西欧有记录以来最热的六月"
+        ],
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "source_quote": "at least 5,700 excess deaths during the swelter",
+        "acceptable_answer_points_zh": [
+          "法国统计六月酷暑至少 5700 人超额死亡"
+        ],
+        "paragraph_ids": [
+          "u04"
+        ]
+      },
+      {
+        "source_quote": "predicts farm losses in the EU will climb in the coming decades",
+        "acceptable_answer_points_zh": [
+          "研究预测欧盟农业损失未来几十年将攀升"
+        ],
+        "paragraph_ids": [
+          "u07"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "hold onto",
+        "source_quote": "absorb the heat and hold onto it at night",
+        "meaning_zh": "留住、保住（热量）",
+        "teaching_value": "形象化动词短语",
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "expression": "ignite more fires",
+        "source_quote": "may ignite more fires",
+        "meaning_zh": "点燃更多火灾",
+        "teaching_value": "因果隐喻搭配",
+        "paragraph_ids": [
+          "u06"
+        ]
+      },
+      {
+        "expression": "climb",
+        "source_quote": "farm losses in the EU will climb",
+        "meaning_zh": "攀升、上涨",
+        "teaching_value": "数据报道常用动词",
+        "paragraph_ids": [
+          "u07"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "六月热浪在德国没有造成任何死亡",
+        "reason": "原文记录了近百起溺水死亡"
+      },
+      {
+        "claim_zh": "热浪中的死者全部是独居老人",
+        "reason": "原文还提到许多溺亡者是年轻男子"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "hold onto",
+        "acceptable_direction_zh": "用 hold onto 复述欧洲城市夜晚仍酷热的原因"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "selected_units",
+      "required_paragraph_ids": [
+        "u02",
+        "u04",
+        "u06"
+      ],
+      "allowed_paragraph_ids": [
+        "u02",
+        "u03",
+        "u04",
+        "u06",
+        "u07"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

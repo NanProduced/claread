@@ -1,0 +1,155 @@
+{
+  "case_id": "bbc-blind-smart-glasses-009",
+  "lesson_blueprint": {
+    "article_type": "narrative_profile",
+    "effective_difficulty": "B2",
+    "reading_mission": "带着“智能眼镜如何改变一位盲人的生活、又引来什么争议”读这篇人物报道。",
+    "learning_objectives": [
+      "抓住 Ramsey 的个人体验与具体使用场景",
+      "理解便利与隐私争议之间的张力"
+    ],
+    "structure_map": [
+      {
+        "label": "人物与改变",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03",
+          "u04"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "使用场景",
+        "paragraph_ids": [
+          "u05",
+          "u06",
+          "u07",
+          "u08",
+          "u09",
+          "u10",
+          "u11"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "争议与担忧",
+        "paragraph_ids": [
+          "u12",
+          "u13",
+          "u14",
+          "u15",
+          "u16",
+          "u17"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u01",
+      "u04",
+      "u15"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "Meta 眼镜能帮 Ramsey 做什么？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u03"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u03"
+        ],
+        "reference_answer": "朗读餐厅菜单等文字，并帮助追踪步行路线。",
+        "explanation_zh": "第三段列举了演示中展示的功能。"
+      },
+      {
+        "prompt": "迷路时，Ramsey 可以用眼镜做什么？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u08"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u08"
+        ],
+        "reference_answer": "他可以询问周围有什么，眼镜会告诉他。",
+        "explanation_zh": "第八段直接引用 Ramsey 的话。"
+      },
+      {
+        "prompt": "Ramsey 对更多场所禁戴智能眼镜有什么担忧？",
+        "skill": "stance",
+        "evidence_paragraph_ids": [
+          "u14",
+          "u15"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u15"
+        ],
+        "reference_answer": "他担心禁令会波及依赖这些眼镜的视障人士。",
+        "explanation_zh": "第十五段说明了他的顾虑。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "track walking routes",
+        "paragraph_id": "u03",
+        "meaning_zh": "追踪、记录步行路线",
+        "usage_note": "出行与健身应用语境",
+        "reusable_pattern": "track + 路线/行程类名词"
+      },
+      {
+        "expression": "without their knowledge or consent",
+        "paragraph_id": "u13",
+        "meaning_zh": "在对方不知情或未经同意的情况下",
+        "usage_note": "隐私与法律报道固定短语",
+        "reusable_pattern": "do sth without sb's knowledge or consent"
+      },
+      {
+        "expression": "have done the same",
+        "paragraph_id": "u14",
+        "meaning_zh": "也采取了同样的做法",
+        "usage_note": "承接前文行为，避免重复",
+        "reusable_pattern": "sb have done the same"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "Ramsey decided to invest in a pair and said the technology had completely changed his life.",
+        "paragraph_id": "u04",
+        "structure_zh": "主语(Ramsey)+并列谓语(decided/said)+宾语从句",
+        "translation": "Ramsey 决定入手一副，并称这项技术彻底改变了他的生活。"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u01": "一名失明的男子表示，智能眼镜帮助他应对生活，是“改变游戏规则”的存在。",
+      "u03": "他是视力丧失慈善机构 Suffolk Sight 的志愿者，该机构最近为他演示了一款 Meta 眼镜，能朗读餐厅菜单之类的文字，还能帮助追踪步行路线。",
+      "u04": "Ramsey 决定入手一副，并称这项技术彻底改变了他的生活。",
+      "u08": "他说：“如果我迷路了，我可以问周围有什么，它会告诉我。”",
+      "u13": "其中包括一些报道：有男子戴着这种眼镜，在对方不知情或未经同意的情况下，拍摄自己上前搭讪、问些随意问题或使用搭讪套路的画面，再把视频发到社交媒体。",
+      "u14": "英国法院最近禁止人们在其建筑内使用这种眼镜，不少餐厅和剧院也采取了同样做法。",
+      "u15": "Ramsey 担心更多地方可能会禁用它们，这可能会负面影响依赖它们的视障人士。"
+    },
+    "post_read_summary": "对完全失明的 Ramsey 来说，智能眼镜读菜单、记路线、保手机安全，是实实在在的生活改善；但当同款眼镜因偷拍争议被法院和场所禁戴时，他担心真正需要它们的人会被一并挡在门外。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 have done the same 复述餐厅和剧院跟随法院的做法。",
+      "scaffold": "UK courts banned the glasses, and restaurants and theatres ...",
+      "reference_points": [
+        "法院率先禁戴",
+        "餐厅剧院跟进",
+        "视障用户担心被波及"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": "ContributedKevin Ramsey said smart glasses have changed his life."
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

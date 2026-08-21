@@ -1,0 +1,190 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-iphone-motion-sickness-006",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.com/future/article/20260728-dancing-dots-the-motion-sickness-cure-hidden-in-your-iphone-settings",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "The iPhone's hidden fix for motion sickness",
+    "subtitle": "A buried iPhone setting is turning heads and saving stomachs. But does relief just mean more time staring at your screen?",
+    "source": "bbc",
+    "source_url": "https://www.bbc.com/future/article/20260728-dancing-dots-the-motion-sickness-cure-hidden-in-your-iphone-settings",
+    "original_text": "A buried iPhone setting is turning heads and saving stomachs. But does relief just mean more time staring at your screen?\nI try not to look at other people's phones, but you get unintentional glances jammed in the crowds on the New York subway, bodies lurching around as the train blasts through tunnels. Lately I've noticed something strange. I keep seeing people with dots dancing across their screens.\nThe more I saw it, the more I needed to know. It turns out all these people have something in common: they get motion sickness.\nThis choreographed dot ballet is a lesser-known iPhone setting called \"Vehicle Motion Cues\" that's supposed to help. It puts animated dots on the edges of your screen, which move in sync with the motion of the vehicle you're in, thanks to the phone's accelerometer.\nReviews are mixed, but over the past few months, some people have gone wild for it. One man I met on the subway told me he loves the feature so much he keeps it on 24 hours a day, even when he's not moving – though he declined to share his name with the strange journalist asking questions on his commute.\nThe dots could be an antidote if you're cursed with a history of queasy car rides. I was born with an iron stomach, so I'm afraid I can't relate. But I think there's something more interesting happening. Bit by bit, our devices are adapting to infiltrate more of our lives.\nHere's some trivia I learned talking to doctors for this story: it seems like most of the people who study motion sickness get motion sickness.\n\"When I go on a cruise, I'm in my bunk for like 72 to 96 hours. I can't eat, I can't get up,\" says Tom Stoffregen, professor emeritus at the University of Minnesota, US, who's been studying motion sickness since the 1980s.\nExperts disagree about what causes motion sickness. The classic explanation is \"sensory conflict theory\": your inner ear detects movement, but other senses (like your sight) see a bunch of fixed objects that seem like they aren't going anywhere.\nStoffregen doesn't buy it. Instead, he says the issue is your muscles and other bodily systems are constantly guessing where you're about to move to control your posture, and you get discombobulated when the prediction fails. That might explain why passengers get sick but drivers usually don't, because they're controlling the car.\nEither way, the confusion makes some of us nauseous, says Kristen Steenerson, a clinical associate professor at Stanford University, US, who studies the vestibular system, which controls balance.\n\"That deviation is what makes people feel dizzy, or disoriented,\" says Steenerson. \"And probably due to some interesting evolutionary coincidences, that elicits a lot of nausea.\" We may have evolved to assume we've eaten something toxic when we feel disoriented, she says, so your body thinks it a good time to vomit.\nIf you can give your body signals that demonstrate how you're moving through space, it can mitigate motion sickness, Steenerson says. The iPhone's dots seem to follow the same logic. \"They give you a sense of how you are moving in space,\" she says.\n\"There is some research that has looked into visual feedback and found it can be very helpful,\" says Steenerson. For example, you can buy phenomenally goofy anti-nausea glasses that are filled with liquid that sloshes around in a similar fashion, and there's evidence they work.\nSteenerson says the dots help a little with her own motion sickness. \"Everyone thinks there's something wrong with my screen. These dots are so cool,\" she says.\nTo turn it on, open your iPhone Settings > Accessibility > Motion > Vehicle Motion Cues. You can leave the dots on perpetually or have them turn on automatically when your phone detects motion. Android apps can replicate the setting, and there are rumours a similar feature is coming to Pixel phones.\nYou can also change the size and colour. I've been walking around with big purple dots on my screen that make for great conversation starters.\nSome motion sickness victims told me vehicle motion cues didn't help, but some people call them a miracle.\nZandie Brockett, a curator from New York City, swears by them. \"It's been a game changer,\" she says, enough to turn her into an iPhone-dots evangelist. \"I'm not screaming about them from the rooftops. But I recommend them anytime someone tells me they get car sick.\"\nI heard the same from my old boss, Rory Carroll. His car sickness is particularly ironic, as he spends a lot of time in the passenger's seat for work: he's editor-in-chief of Alloy, a car enthusiast news publication. \"It's a bit of an occupational hazard,\" Caroll says. \"It's solving a very specific problem that I've had my whole life. The dots really work.\"\nFans of the iPhone dots kept telling me the same observation. They are only useful when you get motion sick because you're looking at your phone.\nIn other words, your reward is yet another opportunity to look at your screen. Which isn't a reward at all, perhaps, when so many people worry about screen time. \"It is a bit of a bummer to have one less reason not to look at Instagram,\" says Carroll.\nPhones consume modern life, and new developments are letting them creep into the few remaining times we can't use them. Ever-growing battery life means screens stay on for longer. Elon Musk and his competitors have blanketed the sky with satellites that beam Wi-Fi and phone service to once disconnected areas.\nThere's even a rumour that Apple is working AirPods with cameras in them, not for taking photos, but to serve as eyes for new AI voice tools you can use screen-free. It may allow for new computing opportunities in those rare phoneless moments, like when you're walking down the street.\nIf looking at screens makes you car sick, you might want to try the iPhone dots. Or – stop me if this sounds crazy – you could just put your phone down and enjoy the ride.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "A buried iPhone setting is turning heads and saving stomachs. But does relief just mean more time staring at your screen?"
+      },
+      {
+        "id": "u02",
+        "text": "I try not to look at other people's phones, but you get unintentional glances jammed in the crowds on the New York subway, bodies lurching around as the train blasts through tunnels. Lately I've noticed something strange. I keep seeing people with dots dancing across their screens.\nThe more I saw it, the more I needed to know. It turns out all these people have something in common: they get motion sickness."
+      },
+      {
+        "id": "u03",
+        "text": "This choreographed dot ballet is a lesser-known iPhone setting called \"Vehicle Motion Cues\" that's supposed to help. It puts animated dots on the edges of your screen, which move in sync with the motion of the vehicle you're in, thanks to the phone's accelerometer.\nReviews are mixed, but over the past few months, some people have gone wild for it. One man I met on the subway told me he loves the feature so much he keeps it on 24 hours a day, even when he's not moving – though he declined to share his name with the strange journalist asking questions on his commute."
+      },
+      {
+        "id": "u04",
+        "text": "The dots could be an antidote if you're cursed with a history of queasy car rides. I was born with an iron stomach, so I'm afraid I can't relate. But I think there's something more interesting happening. Bit by bit, our devices are adapting to infiltrate more of our lives."
+      },
+      {
+        "id": "u05",
+        "text": "Here's some trivia I learned talking to doctors for this story: it seems like most of the people who study motion sickness get motion sickness.\n\"When I go on a cruise, I'm in my bunk for like 72 to 96 hours. I can't eat, I can't get up,\" says Tom Stoffregen, professor emeritus at the University of Minnesota, US, who's been studying motion sickness since the 1980s."
+      },
+      {
+        "id": "u06",
+        "text": "Experts disagree about what causes motion sickness. The classic explanation is \"sensory conflict theory\": your inner ear detects movement, but other senses (like your sight) see a bunch of fixed objects that seem like they aren't going anywhere.\nStoffregen doesn't buy it. Instead, he says the issue is your muscles and other bodily systems are constantly guessing where you're about to move to control your posture, and you get discombobulated when the prediction fails. That might explain why passengers get sick but drivers usually don't, because they're controlling the car."
+      },
+      {
+        "id": "u07",
+        "text": "Either way, the confusion makes some of us nauseous, says Kristen Steenerson, a clinical associate professor at Stanford University, US, who studies the vestibular system, which controls balance.\n\"That deviation is what makes people feel dizzy, or disoriented,\" says Steenerson. \"And probably due to some interesting evolutionary coincidences, that elicits a lot of nausea.\" We may have evolved to assume we've eaten something toxic when we feel disoriented, she says, so your body thinks it a good time to vomit."
+      },
+      {
+        "id": "u08",
+        "text": "If you can give your body signals that demonstrate how you're moving through space, it can mitigate motion sickness, Steenerson says. The iPhone's dots seem to follow the same logic. \"They give you a sense of how you are moving in space,\" she says.\n\"There is some research that has looked into visual feedback and found it can be very helpful,\" says Steenerson. For example, you can buy phenomenally goofy anti-nausea glasses that are filled with liquid that sloshes around in a similar fashion, and there's evidence they work."
+      },
+      {
+        "id": "u09",
+        "text": "Steenerson says the dots help a little with her own motion sickness. \"Everyone thinks there's something wrong with my screen. These dots are so cool,\" she says.\nTo turn it on, open your iPhone Settings > Accessibility > Motion > Vehicle Motion Cues. You can leave the dots on perpetually or have them turn on automatically when your phone detects motion. Android apps can replicate the setting, and there are rumours a similar feature is coming to Pixel phones."
+      },
+      {
+        "id": "u10",
+        "text": "You can also change the size and colour. I've been walking around with big purple dots on my screen that make for great conversation starters.\nSome motion sickness victims told me vehicle motion cues didn't help, but some people call them a miracle."
+      },
+      {
+        "id": "u11",
+        "text": "Zandie Brockett, a curator from New York City, swears by them. \"It's been a game changer,\" she says, enough to turn her into an iPhone-dots evangelist. \"I'm not screaming about them from the rooftops. But I recommend them anytime someone tells me they get car sick.\"\nI heard the same from my old boss, Rory Carroll. His car sickness is particularly ironic, as he spends a lot of time in the passenger's seat for work: he's editor-in-chief of Alloy, a car enthusiast news publication. \"It's a bit of an occupational hazard,\" Caroll says. \"It's solving a very specific problem that I've had my whole life. The dots really work.\""
+      },
+      {
+        "id": "u12",
+        "text": "Fans of the iPhone dots kept telling me the same observation. They are only useful when you get motion sick because you're looking at your phone.\nIn other words, your reward is yet another opportunity to look at your screen. Which isn't a reward at all, perhaps, when so many people worry about screen time. \"It is a bit of a bummer to have one less reason not to look at Instagram,\" says Carroll."
+      },
+      {
+        "id": "u13",
+        "text": "Phones consume modern life, and new developments are letting them creep into the few remaining times we can't use them. Ever-growing battery life means screens stay on for longer. Elon Musk and his competitors have blanketed the sky with satellites that beam Wi-Fi and phone service to once disconnected areas.\nThere's even a rumour that Apple is working AirPods with cameras in them, not for taking photos, but to serve as eyes for new AI voice tools you can use screen-free. It may allow for new computing opportunities in those rare phoneless moments, like when you're walking down the street.\nIf looking at screens makes you car sick, you might want to try the iPhone dots. Or – stop me if this sounds crazy – you could just put your phone down and enjoy the ride."
+      }
+    ],
+    "source_caption": null
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "B1",
+    "article_type": "explainer",
+    "dirty_fragments": [],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "a lesser-known iPhone setting called",
+        "acceptable_answer_points_zh": [
+          "圆点来自一个叫车辆运动提示的隐藏设置"
+        ],
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "source_quote": "most of the people who study motion sickness get motion sickness",
+        "acceptable_answer_points_zh": [
+          "研究晕动症的学者大多自己也晕车"
+        ],
+        "paragraph_ids": [
+          "u05"
+        ]
+      },
+      {
+        "source_quote": "you could just put your phone down and enjoy the ride",
+        "acceptable_answer_points_zh": [
+          "作者建议不妨放下手机享受旅程"
+        ],
+        "paragraph_ids": [
+          "u13"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "gone wild for",
+        "source_quote": "some people have gone wild for it",
+        "meaning_zh": "为之疯狂",
+        "teaching_value": "口语化热度表达",
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "expression": "swears by",
+        "source_quote": "swears by them",
+        "meaning_zh": "笃信其效、赞不绝口",
+        "teaching_value": "地道推荐用语",
+        "paragraph_ids": [
+          "u11"
+        ]
+      },
+      {
+        "expression": "creep into",
+        "source_quote": "letting them creep into the few remaining times",
+        "meaning_zh": "悄然渗入",
+        "teaching_value": "形象化动词搭配",
+        "paragraph_ids": [
+          "u13"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "该设置只对 Pixel 手机有效",
+        "reason": "原文说 Android 应用可以复刻，Pixel 只是传闻将有类似功能"
+      },
+      {
+        "claim_zh": "所有晕车的人都觉得圆点有效",
+        "reason": "原文明确说有人觉得没用，也有人称之为奇迹"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "swears by",
+        "acceptable_direction_zh": "用 swears by 复述 Brockett 对圆点的评价"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "all_units",
+      "required_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13"
+      ],
+      "allowed_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "schema_version": 2,
+  "case_id": "npr-ai-viruses-003",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "npr",
+    "source_url": "https://www.npr.org/2026-08-11/nx-s1-5927074/researchers-have-successfully-used-ai-to-create-brand-new-viruses",
+    "captured_at": "2026-08-19",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Researchers have successfully used AI to create brand new viruses",
+    "subtitle": "NPR broadcast transcript with host, byline and soundbite scaffolding.",
+    "source": "npr",
+    "source_url": "https://www.npr.org/2026-08-11/nx-s1-5927074/researchers-have-successfully-used-ai-to-create-brand-new-viruses",
+    "original_text": "Researchers have successfully used AI to create brand new viruses\nFor the first time, researchers have used artificial intelligence to generate novel viruses in a laboratory setting, according to a paper in the journal Science.\nJUANA SUMMERS, HOST:\nHere's a new addition to the list of things AI can do - create new viruses not found in nature. That is according to a new paper in the journal Science. This development actually brings a great deal of promise for helping humans. Some fear it could also be used for harm. NPR's Katia Riddle reports.\nKATIA RIDDLE, BYLINE: Researchers have long been able to engineer certain viruses. But using AI to design brand-new ones has, until now, mostly been the stuff of science fiction. Brian Hie of Stanford University is one of the researchers that worked on this project. He remembers the day they first presented their successful results to their colleagues.\nBRIAN HIE: The lab spontaneously broke into applause, which is the first time that's ever happened in my lab meeting.\nRIDDLE: He is a computational biologist. After he got a Ph.D. from MIT, he worked at Facebook on AI projects. Now at Stanford, he uses artificial intelligence to design biological systems. Instead of training his models on enormous amounts of text, he's doing it with DNA.\nHIE: We developed these DNA language models trained on genomic sequences.\nRIDDLE: The researchers then asked the AI to use genomic sequences to make entirely new viruses. Then they introduce that viral DNA to bacteria, turning them into little factories that pumped out viruses, which went on to infect other bacteria. He imagines a time in the future when we could use this kind of technology to tailor viruses in order to help fight formidable biological foes.\nHIE: It could be something like multi-drug resistant infections.\nRIDDLE: He stresses that we're a long way off from this kind of thing. But eventually, this sort of technology could even be used to help treat cancer or Alzheimer's. Tom Inglesby is the director of the Johns Hopkins Center for Health Security. He was not involved in this study.\nTOM INGLESBY: It's a big breakthrough, and it has the potential to do good in the world.\nRIDDLE: Inglesby studies biological threats. He cowrote a commentary on this work, published in the journal Science. He stresses that this project was done responsibly. But he says once this technology becomes more widely available, that is not a guarantee.\nINGLESBY: The problem is that we don't really have any governance in place to prevent the either accidental or deliberate misuse of the technology.\nRIDDLE: Inglesby says he can imagine a day when people intentionally mass produce viruses that could, say, cause the next pandemic. Kevin Esvelt is a genetic engineer at MIT who also studies biological threats and how to regulate them.\nKEVIN ESVELT: This is hard because governments are broadly reluctant to pass laws regarding what kinds of experiments can be done, period.\nRIDDLE: Esvelt says rather than control who has access to this technology, it would be more helpful to focus on regulating how it could be mass produced.\nESVELT: Better is just to prepare for the world where it's easy to cause pandemics.\nRIDDLE: Even though lawmakers have been reluctant, some are starting to recognize the threats posed by this technology. Already, there is a bipartisan bill proposed in the Senate on this issue.\nESVELT: And this bill would require companies that make and sell custom DNA sequences to screen their orders for dangerous sequences.\nRIDDLE: Researcher Brian Hie, who is behind this work, says he's optimistic it will do more good than harm. Nature, he points out, is not necessarily a good actor, either.\nHIE: If you think about it, nature itself is constantly producing viruses with pandemic potential.\nRIDDLE: The ultimate goal of their research, says Hie, is to develop biological technologies that can rapidly respond to something like the next pandemic.\nHIE: If the technology is allowed to develop, we can have very, very powerful means of defense against dangerous biology.\nRIDDLE: It's a fine line, he says. But when it comes to using artificial intelligence to manipulate biology, he's betting the advantage will belong to the good guys.\nKatia Riddle, NPR News.\n(SOUNDBITE OF DORIAN CONCEPT'S \"HIDE (RAW)\")\nCopyright © 2026 NPR. All rights reserved. Visit our website terms of use and permissions pages at www.npr.org for further information.\nAccuracy and availability of NPR transcripts may vary. Transcript text may be revised to correct errors or match updates to audio. Audio on npr.org may be edited after its original broadcast or publication. The authoritative record of NPR’s programming is the audio record.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "Researchers have successfully used AI to create brand new viruses"
+      },
+      {
+        "id": "u02",
+        "text": "For the first time, researchers have used artificial intelligence to generate novel viruses in a laboratory setting, according to a paper in the journal Science."
+      },
+      {
+        "id": "u03",
+        "text": "JUANA SUMMERS, HOST:"
+      },
+      {
+        "id": "u04",
+        "text": "Here's a new addition to the list of things AI can do - create new viruses not found in nature. That is according to a new paper in the journal Science. This development actually brings a great deal of promise for helping humans. Some fear it could also be used for harm. NPR's Katia Riddle reports."
+      },
+      {
+        "id": "u05",
+        "text": "KATIA RIDDLE, BYLINE: Researchers have long been able to engineer certain viruses. But using AI to design brand-new ones has, until now, mostly been the stuff of science fiction. Brian Hie of Stanford University is one of the researchers that worked on this project. He remembers the day they first presented their successful results to their colleagues."
+      },
+      {
+        "id": "u06",
+        "text": "BRIAN HIE: The lab spontaneously broke into applause, which is the first time that's ever happened in my lab meeting."
+      },
+      {
+        "id": "u07",
+        "text": "RIDDLE: He is a computational biologist. After he got a Ph.D. from MIT, he worked at Facebook on AI projects. Now at Stanford, he uses artificial intelligence to design biological systems. Instead of training his models on enormous amounts of text, he's doing it with DNA."
+      },
+      {
+        "id": "u08",
+        "text": "HIE: We developed these DNA language models trained on genomic sequences."
+      },
+      {
+        "id": "u09",
+        "text": "RIDDLE: The researchers then asked the AI to use genomic sequences to make entirely new viruses. Then they introduce that viral DNA to bacteria, turning them into little factories that pumped out viruses, which went on to infect other bacteria. He imagines a time in the future when we could use this kind of technology to tailor viruses in order to help fight formidable biological foes."
+      },
+      {
+        "id": "u10",
+        "text": "HIE: It could be something like multi-drug resistant infections."
+      },
+      {
+        "id": "u11",
+        "text": "RIDDLE: He stresses that we're a long way off from this kind of thing. But eventually, this sort of technology could even be used to help treat cancer or Alzheimer's. Tom Inglesby is the director of the Johns Hopkins Center for Health Security. He was not involved in this study."
+      },
+      {
+        "id": "u12",
+        "text": "TOM INGLESBY: It's a big breakthrough, and it has the potential to do good in the world."
+      },
+      {
+        "id": "u13",
+        "text": "RIDDLE: Inglesby studies biological threats. He cowrote a commentary on this work, published in the journal Science. He stresses that this project was done responsibly. But he says once this technology becomes more widely available, that is not a guarantee."
+      },
+      {
+        "id": "u14",
+        "text": "INGLESBY: The problem is that we don't really have any governance in place to prevent the either accidental or deliberate misuse of the technology."
+      },
+      {
+        "id": "u15",
+        "text": "RIDDLE: Inglesby says he can imagine a day when people intentionally mass produce viruses that could, say, cause the next pandemic. Kevin Esvelt is a genetic engineer at MIT who also studies biological threats and how to regulate them."
+      },
+      {
+        "id": "u16",
+        "text": "KEVIN ESVELT: This is hard because governments are broadly reluctant to pass laws regarding what kinds of experiments can be done, period."
+      },
+      {
+        "id": "u17",
+        "text": "RIDDLE: Esvelt says rather than control who has access to this technology, it would be more helpful to focus on regulating how it could be mass produced."
+      },
+      {
+        "id": "u18",
+        "text": "ESVELT: Better is just to prepare for the world where it's easy to cause pandemics."
+      },
+      {
+        "id": "u19",
+        "text": "RIDDLE: Even though lawmakers have been reluctant, some are starting to recognize the threats posed by this technology. Already, there is a bipartisan bill proposed in the Senate on this issue."
+      },
+      {
+        "id": "u20",
+        "text": "ESVELT: And this bill would require companies that make and sell custom DNA sequences to screen their orders for dangerous sequences."
+      },
+      {
+        "id": "u21",
+        "text": "RIDDLE: Researcher Brian Hie, who is behind this work, says he's optimistic it will do more good than harm. Nature, he points out, is not necessarily a good actor, either."
+      },
+      {
+        "id": "u22",
+        "text": "HIE: If you think about it, nature itself is constantly producing viruses with pandemic potential."
+      },
+      {
+        "id": "u23",
+        "text": "RIDDLE: The ultimate goal of their research, says Hie, is to develop biological technologies that can rapidly respond to something like the next pandemic."
+      },
+      {
+        "id": "u24",
+        "text": "HIE: If the technology is allowed to develop, we can have very, very powerful means of defense against dangerous biology."
+      },
+      {
+        "id": "u25",
+        "text": "RIDDLE: It's a fine line, he says. But when it comes to using artificial intelligence to manipulate biology, he's betting the advantage will belong to the good guys."
+      },
+      {
+        "id": "u26",
+        "text": "Katia Riddle, NPR News."
+      },
+      {
+        "id": "u27",
+        "text": "(SOUNDBITE OF DORIAN CONCEPT'S \"HIDE (RAW)\")"
+      },
+      {
+        "id": "u28",
+        "text": "Copyright © 2026 NPR. All rights reserved. Visit our website terms of use and permissions pages at www.npr.org for further information."
+      },
+      {
+        "id": "u29",
+        "text": "Accuracy and availability of NPR transcripts may vary. Transcript text may be revised to correct errors or match updates to audio. Audio on npr.org may be edited after its original broadcast or publication. The authoritative record of NPR’s programming is the audio record."
+      }
+    ],
+    "source_caption": null
+  },
+  "gold": {
+    "expected_outcome": "reject",
+    "expected_difficulty": "B2",
+    "article_type": "news_report",
+    "dirty_fragments": [
+      "JUANA SUMMERS, HOST:",
+      "(SOUNDBITE OF DORIAN CONCEPT",
+      "Copyright © 2026 NPR"
+    ],
+    "rejection_reasons": [
+      "transcript_skeleton"
+    ],
+    "key_evidence": [
+      {
+        "source_quote": "used artificial intelligence to generate novel viruses",
+        "acceptable_answer_points_zh": [
+          "研究者首次用 AI 在实验室生成全新病毒"
+        ],
+        "paragraph_ids": [
+          "u02"
+        ]
+      }
+    ],
+    "core_expressions": [],
+    "forbidden_facts": [],
+    "acceptable_transfer_directions": [],
+    "expected_translation_coverage": {
+      "policy": "selected_units",
+      "required_paragraph_ids": [
+        "u04"
+      ],
+      "allowed_paragraph_ids": [
+        "u04",
+        "u05"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

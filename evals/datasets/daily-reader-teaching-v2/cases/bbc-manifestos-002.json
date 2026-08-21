@@ -1,0 +1,283 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-manifestos-002",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cz97ljy91zxo?at_medium=RSS&at_campaign=rss",
+    "captured_at": "2026-08-19",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Why do tech bosses keep writing manifestos?",
+    "subtitle": "Zuckerberg's 6,500-word open letter is the latest in a line of sweeping essays from AI leaders.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cz97ljy91zxo?at_medium=RSS&at_campaign=rss",
+    "original_text": "- Published\nThis past week, Meta CEO Mark Zuckerberg published a 6,500 word open letter, external entitled \"The Future is for Everyone\".\nTo some, it's an expression of hope in AI's promise. To others, it's little more than a verbose public relations exercise.\nZuckerberg's manifesto is the latest example of a tech boss opining on why AI is the next big thing.\nHis vision echoes what AI leaders have expressed in various forms: the product they are building is among the \"most important technologies in history.\"\nMarc Andreessen, co-founder of early web titan Netscape, perhaps started this trend in 2023 with a 5,000-word essay he called \"The Techno-Optimist Manifesto\", which argued innovation was the way to solve life's problems.\n“So they're writing manifestos now?,” I remember thinking to myself.\nAndreessen's writing began with him recounting lies he claimed people were spreading, and called for readers to push back against this.\n\"We believe growth is progress – leading to vitality, expansion of life, increasing knowledge, higher well being,\" he wrote.\nZuckerberg's recent essay doesn't name names - but the Meta boss mimics Andreessen by questioning those who have warned about the negatives of future tech.\n\"It is surprising that the discourse from many developing AI is so filled with doom,\" he writes.\nAs the International Monetary Fund (IMF) warns AI could affect nearly 40% of jobs and worsen global financial inequality, Zuckerberg says he believes there will be an abundance of jobs in the future.\n\"I do not understand why anyone who believes that AI will eliminate most jobs and much of humanity's relevance would rush to build that future.\"\nNever mind that Zuckerberg's Meta has cut 10% of its global workforce - about 8,000 jobs - as the company reorganizes to focus on AI.\nZuckerberg's manifesto is the latest to land in our social media feeds in an effort to put a positive spin on AI.\nIn 2024, ChatGPT-maker OpenAI boss Sam Altman released a manifesto called \"The Intelligence Age\", a sweeping expression of optimism about the tech's potential.\nHuman progress was poised to accelerate in dramatic fashion, he promised.\n\"We need to act wisely but with conviction,\" he said.\nThat same year, in a manifesto titled \"Machines of Loving Grace\", Anthropic CEO Dario Amodei touted the potential of AI to transform everything from healthcare to politics.\nHe framed it as an attempt to share the potential upsides of AI - and he didn't want to be seen as a doomer.\nZuckerberg is no stranger to the long-winded essay format. During US President Donald Trump's first administration, he even wrote about thorny topics such as the spread of misinformation on his platforms, external.\nHe later put pen to paper to explain the company's ill-fated pivot to the metaverse in 2021.\nBut the stakes are higher in the AI era, argues economics blogger Noah Smith, and the commentary from executives reflects that.\n\"I think they all feel like it's such an important moment that it's incumbent upon them to do whatever they can to shape the direction that this technology is going,\" Smith said.\nZuckerberg's new manifesto announced plans to share its artificial intelligence tools more openly, meaning that the design or code behind the tech will be made public, allowing anyone to view, use and change it.\nDecisions about whether these tools should be open source carry significant weight given their potential to do harm.\nIn recent weeks, several highly powerful AI models hacked into websites, or as some put it, \"went rogue\".\nThese were the most powerful models, not the ones being made open source - but as the technology develops, it has raised a serious question for Smith.\n\"Should we open-source something that has the ability to kill humanity?\" he asked.\n\"If you don't take that seriously, you're just a fool.\"\nIt's why he thinks these manifestos are important, even if some online poke fun at them.\nAnd they're gaining additional interest at a time when the open source market is dominated by Chinese AI models like Qwen, DeepSeek and GLM.\nBut the frequency of these corporate manifestos also serves as a way for executives to position themselves and their companies in the marketplace of ideas.\n\"It's a way of showing how smart you are,\" said Rob Lalka, a business professor at Tulane University.\nExecutives have long used the corporate blog \"to expound on ideas in a way where they're sort of this businessman-philosopher, in a sense\".\n\"They're trying to argue for optimism as a way of looking at the future,\" he said.\nLalka said the timing of Zuckerberg's manifesto coincides with rising anger over AI's impact on everything from jobs to the environment.\nAnd while tech journalists and academics might pore over them trying to glean nuggets of meaning, these executive manifestos are not necessarily landing with the general public.\n\"They're trying to make the case that the positives will far outweigh some of those negatives that the public backlash is pointing out,\" he said.\n\"But I think a lot of the reasons for optimism are still yet to be seen.\"",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "- Published"
+      },
+      {
+        "id": "u02",
+        "text": "This past week, Meta CEO Mark Zuckerberg published a 6,500 word open letter, external entitled \"The Future is for Everyone\"."
+      },
+      {
+        "id": "u03",
+        "text": "To some, it's an expression of hope in AI's promise. To others, it's little more than a verbose public relations exercise."
+      },
+      {
+        "id": "u04",
+        "text": "Zuckerberg's manifesto is the latest example of a tech boss opining on why AI is the next big thing."
+      },
+      {
+        "id": "u05",
+        "text": "His vision echoes what AI leaders have expressed in various forms: the product they are building is among the \"most important technologies in history.\""
+      },
+      {
+        "id": "u06",
+        "text": "Marc Andreessen, co-founder of early web titan Netscape, perhaps started this trend in 2023 with a 5,000-word essay he called \"The Techno-Optimist Manifesto\", which argued innovation was the way to solve life's problems."
+      },
+      {
+        "id": "u07",
+        "text": "“So they're writing manifestos now?,” I remember thinking to myself."
+      },
+      {
+        "id": "u08",
+        "text": "Andreessen's writing began with him recounting lies he claimed people were spreading, and called for readers to push back against this."
+      },
+      {
+        "id": "u09",
+        "text": "\"We believe growth is progress – leading to vitality, expansion of life, increasing knowledge, higher well being,\" he wrote."
+      },
+      {
+        "id": "u10",
+        "text": "Zuckerberg's recent essay doesn't name names - but the Meta boss mimics Andreessen by questioning those who have warned about the negatives of future tech."
+      },
+      {
+        "id": "u11",
+        "text": "\"It is surprising that the discourse from many developing AI is so filled with doom,\" he writes."
+      },
+      {
+        "id": "u12",
+        "text": "As the International Monetary Fund (IMF) warns AI could affect nearly 40% of jobs and worsen global financial inequality, Zuckerberg says he believes there will be an abundance of jobs in the future."
+      },
+      {
+        "id": "u13",
+        "text": "\"I do not understand why anyone who believes that AI will eliminate most jobs and much of humanity's relevance would rush to build that future.\""
+      },
+      {
+        "id": "u14",
+        "text": "Never mind that Zuckerberg's Meta has cut 10% of its global workforce - about 8,000 jobs - as the company reorganizes to focus on AI."
+      },
+      {
+        "id": "u15",
+        "text": "Zuckerberg's manifesto is the latest to land in our social media feeds in an effort to put a positive spin on AI."
+      },
+      {
+        "id": "u16",
+        "text": "In 2024, ChatGPT-maker OpenAI boss Sam Altman released a manifesto called \"The Intelligence Age\", a sweeping expression of optimism about the tech's potential."
+      },
+      {
+        "id": "u17",
+        "text": "Human progress was poised to accelerate in dramatic fashion, he promised."
+      },
+      {
+        "id": "u18",
+        "text": "\"We need to act wisely but with conviction,\" he said."
+      },
+      {
+        "id": "u19",
+        "text": "That same year, in a manifesto titled \"Machines of Loving Grace\", Anthropic CEO Dario Amodei touted the potential of AI to transform everything from healthcare to politics."
+      },
+      {
+        "id": "u20",
+        "text": "He framed it as an attempt to share the potential upsides of AI - and he didn't want to be seen as a doomer."
+      },
+      {
+        "id": "u21",
+        "text": "Zuckerberg is no stranger to the long-winded essay format. During US President Donald Trump's first administration, he even wrote about thorny topics such as the spread of misinformation on his platforms, external."
+      },
+      {
+        "id": "u22",
+        "text": "He later put pen to paper to explain the company's ill-fated pivot to the metaverse in 2021."
+      },
+      {
+        "id": "u23",
+        "text": "But the stakes are higher in the AI era, argues economics blogger Noah Smith, and the commentary from executives reflects that."
+      },
+      {
+        "id": "u24",
+        "text": "\"I think they all feel like it's such an important moment that it's incumbent upon them to do whatever they can to shape the direction that this technology is going,\" Smith said."
+      },
+      {
+        "id": "u25",
+        "text": "Zuckerberg's new manifesto announced plans to share its artificial intelligence tools more openly, meaning that the design or code behind the tech will be made public, allowing anyone to view, use and change it."
+      },
+      {
+        "id": "u26",
+        "text": "Decisions about whether these tools should be open source carry significant weight given their potential to do harm."
+      },
+      {
+        "id": "u27",
+        "text": "In recent weeks, several highly powerful AI models hacked into websites, or as some put it, \"went rogue\"."
+      },
+      {
+        "id": "u28",
+        "text": "These were the most powerful models, not the ones being made open source - but as the technology develops, it has raised a serious question for Smith."
+      },
+      {
+        "id": "u29",
+        "text": "\"Should we open-source something that has the ability to kill humanity?\" he asked."
+      },
+      {
+        "id": "u30",
+        "text": "\"If you don't take that seriously, you're just a fool.\""
+      },
+      {
+        "id": "u31",
+        "text": "It's why he thinks these manifestos are important, even if some online poke fun at them."
+      },
+      {
+        "id": "u32",
+        "text": "And they're gaining additional interest at a time when the open source market is dominated by Chinese AI models like Qwen, DeepSeek and GLM."
+      },
+      {
+        "id": "u33",
+        "text": "But the frequency of these corporate manifestos also serves as a way for executives to position themselves and their companies in the marketplace of ideas."
+      },
+      {
+        "id": "u34",
+        "text": "\"It's a way of showing how smart you are,\" said Rob Lalka, a business professor at Tulane University."
+      },
+      {
+        "id": "u35",
+        "text": "Executives have long used the corporate blog \"to expound on ideas in a way where they're sort of this businessman-philosopher, in a sense\"."
+      },
+      {
+        "id": "u36",
+        "text": "\"They're trying to argue for optimism as a way of looking at the future,\" he said."
+      },
+      {
+        "id": "u37",
+        "text": "Lalka said the timing of Zuckerberg's manifesto coincides with rising anger over AI's impact on everything from jobs to the environment."
+      },
+      {
+        "id": "u38",
+        "text": "And while tech journalists and academics might pore over them trying to glean nuggets of meaning, these executive manifestos are not necessarily landing with the general public."
+      },
+      {
+        "id": "u39",
+        "text": "\"They're trying to make the case that the positives will far outweigh some of those negatives that the public backlash is pointing out,\" he said."
+      },
+      {
+        "id": "u40",
+        "text": "\"But I think a lot of the reasons for optimism are still yet to be seen.\""
+      }
+    ],
+    "source_caption": null
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "C1",
+    "article_type": "explainer",
+    "dirty_fragments": [
+      "- Published",
+      ", external"
+    ],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "published a 6,500 word open letter",
+        "acceptable_answer_points_zh": [
+          "扎克伯格发表了 6500 词的公开信"
+        ],
+        "paragraph_ids": [
+          "u02"
+        ]
+      },
+      {
+        "source_quote": "the discourse from many developing AI is so filled with doom",
+        "acceptable_answer_points_zh": [
+          "扎克伯格惊讶于 AI 圈话语充满末日论调"
+        ],
+        "paragraph_ids": [
+          "u11"
+        ]
+      },
+      {
+        "source_quote": "Should we open-source something that has the ability to kill humanity",
+        "acceptable_answer_points_zh": [
+          "学者追问是否该开源可能毁灭人类的技术"
+        ],
+        "paragraph_ids": [
+          "u29"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "put a positive spin on",
+        "source_quote": "an effort to put a positive spin on AI",
+        "meaning_zh": "给……做正面包装",
+        "teaching_value": "媒体语境高频搭配",
+        "paragraph_ids": [
+          "u15"
+        ]
+      },
+      {
+        "expression": "put pen to paper",
+        "source_quote": "He later put pen to paper to explain",
+        "meaning_zh": "动笔写下",
+        "teaching_value": "形象化写作习语",
+        "paragraph_ids": [
+          "u22"
+        ]
+      },
+      {
+        "expression": "incumbent upon",
+        "source_quote": "incumbent upon them to do whatever they can",
+        "meaning_zh": "责无旁贷地落在……身上",
+        "teaching_value": "C1 正式语体搭配",
+        "paragraph_ids": [
+          "u24"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "扎克伯格的公开信长达 5000 词",
+        "reason": "5000 词是 Andreessen 的文章，扎克伯格的是 6500 词"
+      },
+      {
+        "claim_zh": "Meta 没有裁减过员工",
+        "reason": "原文明确提到 Meta 裁员约 8000 人"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "put a positive spin on",
+        "acceptable_direction_zh": "用 put a positive spin on 复述这些宣言的传播动机"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "selected_units",
+      "required_paragraph_ids": [
+        "u03",
+        "u29"
+      ],
+      "allowed_paragraph_ids": [
+        "u03",
+        "u11",
+        "u15",
+        "u22",
+        "u24",
+        "u29"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

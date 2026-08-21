@@ -1,0 +1,203 @@
+id: daily-reader-teaching-v2
+title: Daily Reader teaching-contract v2 rubric (P-2)
+version: 2
+language: zh+en
+target: daily_reader_teaching_workflow_v2
+purpose: >
+  Quantify one Daily Reader teaching-package v2 artifact
+  (lesson_blueprint / learning_package / source_assets / run_meta)
+  against a frozen real article and its v2 gold. Mix of 12 deterministic
+  hard gates (structure/anchors/declared relations only) and one
+  eight-dimension LLM judge call per article (semantic quality).
+  Additive to v1: v1 rubric, dataset and runs stay untouched. All
+  unmeasured costs stay null/NOT_RUN until P-3 baselines exist.
+
+deterministic_checks:
+  - id: no_boilerplate_residue
+    description: >
+      Gold-listed dirty fragments (scrape boilerplate, transcript
+      skeleton, source UI residue) must not appear on any user-visible
+      teaching surface. Normalized casefold + whitespace match. n/a for
+      rejected runs.
+    fail_mode: any_fragment_found
+  - id: anchors_resolve
+    description: >
+      Every paragraph/span anchor in blueprint, checkpoints, language
+      targets, sentence maps, structure nodes and translations must
+      resolve to a reading unit of the frozen case.
+    fail_mode: any_unresolved_anchor
+  - id: expression_explained_once
+    description: >
+      The same normalized expression may be explained exactly once per
+      article across language targets (v1 naive-plural-strip reuse).
+    fail_mode: any_duplicate_key
+  - id: counts_in_bounds
+    description: >
+      checkpoints 2-4, language targets 3-5, sentence maps 1-2,
+      learning objectives 1-2, structure nodes 2-6, transfer task
+      exactly 1.
+    fail_mode: any_bound_violated
+  - id: no_empty_placeholders
+    description: >
+      No empty strings, empty containers or placeholder markers
+      ({{...}}/todo/tbd/待补充/占位) inside blueprint or package.
+    fail_mode: any_empty_or_placeholder
+  - id: checkpoint_evidence_valid
+    description: >
+      Every checkpoint's evidence_paragraph_ids is non-empty and its
+      answer_evidence_paragraph_ids is a non-empty subset of it.
+    fail_mode: any_invalid_evidence
+  - id: sentence_map_translation_reuse
+    description: >
+      A sentence map translation must fully reuse the same paragraph's
+      shared translation (whitespace-insensitive containment); the
+      shared translation is the single source of truth.
+    fail_mode: any_translation_not_reused
+  - id: source_caption_preserved
+    description: >
+      When the source caption exists the artifact must keep the same
+      value verbatim; when it is empty the artifact must stay empty.
+    fail_mode: caption_changed_or_invented
+  - id: refinement_bounded
+    description: refinement_count must be an int in 0..1.
+    fail_mode: count_above_one
+  - id: outcome_matches_gold
+    description: >
+      cleaned_publish completes without abort and carries a learning
+      package; reject rejects with abort and a rejection reason, per
+      gold expected_outcome.
+    fail_mode: outcome_mismatch
+  - id: translation_coverage_policy
+    description: >
+      Dispatched by gold policy. B1 all_units: every substantial unit
+      gets exactly one shared translation. B2 selected_units:
+      checkpoint/language-target/sentence-map associated units must be
+      translated. C1: only blueprint/gold explicitly selected hard
+      units need translations; plain checkpoint evidence is never
+      forced. B2/C1 translation ids must stay inside gold allowed and
+      cover gold required.
+    fail_mode: policy_violated
+  - id: legacy_fields_not_required
+    description: >
+      A legal v2 artifact without per-paragraph focus_question /
+      micro_summary or discussion_questions must never fail because of
+      their absence.
+    fail_mode: never
+
+judge:
+  gate_env: CLAREAD_ALLOW_REAL_LLM_TESTS
+  endpoint_env: CLAREAD_EVAL_JUDGE_BASE_URL
+  api_key_env: CLAREAD_EVAL_JUDGE_API_KEY
+  model_env: CLAREAD_EVAL_JUDGE_MODEL
+  fallback_api_key_env: DEEPSEEK_API_KEY
+  fallback_base_url: https://api.deepseek.com/v1
+  fallback_model: deepseek-v4-pro
+  temperature: 0.0
+  one_call_rule: >
+    One judge call per article scores all eight dimensions at once;
+    never split into eight calls. Input must contain the FULL original
+    text (no truncation), gold key evidence / forbidden facts, the
+    effective difficulty, the article type and the complete teaching
+    package.
+  system_role: >
+    你是英语精读教学包质量的严格评审，为中文英语学习产品"每日精读"的
+    教学合同 v2 产物打分。只依据给出的完整原文、gold 关键证据与禁出事实
+    打分，不猜测未展示的内容；八个维度各给 1-5 整数分并附一句具体依据
+    （引用证据中的词）。禁止 clamp 非法分数。
+  difficulty_calibration:
+    B1: >
+      B1 分档门槛：以高频词和短中句为主，译文和中文脚手架充分，任务
+      停留在事实定位与简单复述；不得以 B2 以上长难句或抽象论证充数，
+      也不因缺少高级表达扣分。
+    B2: >
+      B2 分档门槛：不得以 A1-A2 基础词充数；教学选点应含真实从句、
+      搭配或语篇衔接，任务要求整合与转述，而非逐句抄写。
+    C1: >
+      C1 分档门槛：只接受真正影响理解或具语体价值的高难单元；解释应
+      覆盖嵌套结构、修辞或论证策略，迁移任务要求真实重组所学。
+  dimensions:
+    - id: source_fidelity
+      label: 来源忠实
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        事实、实体、因果、立场和译文忠实；与完整原文和 gold 关键证据
+        对照，出现与禁出事实相符的表述、错位事实或错译按严重程度扣分。
+    - id: pedagogical_focus
+      label: 教学聚焦
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        选点稀疏且有必要，不靠填栏目制造内容；重复、冗余或与文章无关
+        的教学点按数量扣分。
+    - id: difficulty_fit
+      label: 难度匹配
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        词句、翻译和任务认知层级符合最终 CEFR（effective_difficulty）；
+        明显低于或高于该档位的选点与任务按偏离程度扣分。
+    - id: article_type_fit
+      label: 文章类型适配
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        理解对象和迁移形式适配文章结构（news_report / opinion_commentary
+        / explainer / narrative_profile）；用错误文体的读法或任务套用
+        按偏离程度扣分。
+    - id: evidence_retrieval
+      label: 证据可检索
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        问题可回答、答案可由锚定证据推出；答案超出证据范围或证据锚点
+        与问题不匹配按数量扣分。
+    - id: transfer_value
+      label: 迁移价值
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        任务要求真实使用或重组所学，而非抄写答案；仅复述原文或套用模板
+        的任务按价值缺失程度扣分。
+    - id: chinese_quality
+      label: 中文质量
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        中文自然、准确、无模板化 AI 腔（不用"深度解析/一文读懂/揭秘"
+        等套话）；机翻腔、空话或错别字按数量扣分。
+    - id: learning_sequence
+      label: 学习顺序
+      score_min: 1
+      score_max: 5
+      pass_score: 4
+      criteria: >
+        读前不泄题，检查、解释和收束顺序合理；读前任务泄露答案或顺序
+        造成理解断层按严重程度扣分。
+  output:
+    format: json
+    schema:
+      dimensions: 'map of the 8 dimension ids -> {"score": int 1..5, "rationale": string <= 60 字}'
+    parse_rule: >
+      Fail closed: exactly the 8 dimensions (no missing, no extra),
+      integer scores 1-5 (clamping forbidden, floats rejected),
+      non-empty rationale, JSON/provider errors become status=error.
+      Judge not run -> SEMANTIC_NOT_RUN; never PASS on deterministics alone.
+
+scoring:
+  deterministic_weight: 0.5
+  judge_weight: 0.5
+  pass_rule: >
+    case verdict = PASS only when all hard gates pass AND every judge
+    dimension >= 4 AND overall >= 0.90 AND the human review gate is
+    complete. Judge not run -> SEMANTIC_NOT_RUN; human review missing
+    -> HUMAN_REVIEW_PENDING. Batch overall mean is observational only;
+    strata (type/difficulty/source) are judged independently, never
+    averaged.

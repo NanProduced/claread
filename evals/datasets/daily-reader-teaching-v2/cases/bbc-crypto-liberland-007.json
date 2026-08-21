@@ -1,0 +1,240 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-crypto-liberland-007",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cly8eqyj8e2o",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Meet the crypto billionaires building a world where money buys you a vote",
+    "subtitle": "Liberland looks like a joke - but it is bankrolled by some of the wealthiest men in crypto.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cly8eqyj8e2o",
+    "original_text": "The Free Republic of Liberland doesn't look like much from the boat.\nYou would never guess that this flat, muddy stretch of floodplain on the Danube River, dotted with alder trees, tents and treehouses, is connected to some of the world's wealthiest men - including the biggest initial investor in the Trump family's crypto business.\nBy contrast, the virtual reality version of Liberland I'm currently being shown, designed by Zaha Hadid's ZHA architecture firm, features gleaming towers, floating public parks, and gravity-defying water features.\nThe person showing it to me is Vít Jedlička, Liberland's president. He founded the micronation on a disputed bit of territory between Serbia and Croatia with the goal of making a truly libertarian, digital country that runs on the same technology as cryptocurrencies.\nI've come to Liberland for the past year as part of a BBC Two documentary, The Tech Billionaire Takeover. Liberland may look and sound like a joke. But it is bankrolled by some of the wealthiest men in crypto, and it runs on an idea they are trying to export: that government itself can be replaced.\nWe arrive at the country by boat because Croatian authorities have stopped people from doing so by land. A few settlers in anoraks come out to wave to us from the shore and President Jedlička, communicating via megaphone, presents one of the settlers with an official medal.\nIn most modern democracies, everyone has an equal vote. But things are different in Liberland thanks to a purchasable crypto token called Liberland Merits. President Jedlička tells me a person is elected through Merits. \"So the people that have more Merits are able to have more say in who is going to be in the leadership of the country,\" he says. This effectively means you can vote directly with your money.\nLiberland is also entirely tax-free, something its interior minister, Ivan Pernar, a controversial Croatian former MP who was kicked out of parliament for spreading conspiracy theories, explains to me.\n\"Usually, people who believe in freedom, decentralised finances and so on, they tend to be from the upper class of society,\" Pernar tells me. \"If you make zero selection and you say whoever comes on [the] boat is welcome, we would end up like [the] UK. We don't want that.\"\n\"So it's liberty, but... some people have more liberty than others?\" I ask. One of the main ways to gain power and influence in Liberland appears to be through money, I suggest.\n\"Of course,\" says Pernar. He says that if you had \"a bunch of bums in your country without anything\", others would have to contribute to their benefits. He goes on to compare the poor to animals. \"Don't feed the animals, because if you do, they will be accustomed to that and they will lose [the] ability to feed themselves. The same is with people.\"\nTo Liberland's wealthy backers, helping the poor - or indeed any form of taxation or centralised redistribution of wealth - is an affront to their individual liberty. This view is shared, unsurprisingly, by people in this world with far more money and influence than Pernar.\nOver the past year, I've been hanging out with Liberland's prime minister, Chinese crypto titan Justin Sun. With Sun's backing - and that of about 30 other tech billionaires, they claim - the Liberlanders may now actually have access to the money needed to start building the version of their micronation with gleaming towers.\nSun is worth an estimated $8.5bn (£6.4bn). He's perhaps most famous for purchasing an art piece consisting of a banana duct taped to a wall for $6.2m and then eating it. He has also been accused by US regulators of fraud and market manipulation. Sun denies the charges, and recently reached a $10m settlement to resolve them.\nHis company, Tron, is a blockchain, a global software network on which you can buy and sell crypto currencies. Unlike a bank, it isn't run by one single authority - it's decentralised, existing across many computers all around the world, making it harder to tax and regulate.\nThis same blockchain technology is being used to run Liberland's government and one day, if Sun gets his way, it could run ours too. Citizens vote on laws and referendums using digital tokens, and the voting itself is automatically tallied and enforced by code, rather than counted by officials. In reality, though, the technology is still in its juvenile phase, and human officials are still required to implement laws.\nAccording to blockchain analytics firm TRM Labs, Tron is one of the biggest platforms for moving illicit crypto - reportedly including funds tied to Hamas and Hezbollah, alongside those of drug cartels and mafia networks. Sun says Tron has innovated new collaborations with law enforcement to tackle illegal transactions on the blockchain, leading to huge declines in illicit volume on the platform.\nThe Trump family welcomed him as lead token investor in their own crypto business, World Liberty Financial. Sun invested more than $75m in the company, as well as millions more in Donald Trump's memecoin, which won him a dinner with the US president.\nPresident Trump officially stepped down from the company once he took office but his family trust still owns and profits from it, selling a cryptocurrency coin called USD1. He has made more than $1.4bn from crypto in the past year, and stands to make much more.\nIt's safe to say the Trumps have profited hugely from their relationship to Sun. But what do Sun and other crypto entrepreneurs who have cosied up to the Trumps want in return? Liberland may offer a glimpse.\nIn person, Sun is warm and friendly. Like other billionaires I met, I sensed that Sun rarely got to hang around people that didn't work for him or desire his money. Most of our conversations centred around sci-fi and video games.\nLast summer, when Sun had just landed from space after paying $29m to fly there with Jeff Bezos' Blue Origin company, he rang me to tell me about the experience. He had been struck by the idea that \"the planet itself is boundaryless\", without borders, and that \"there's not even a concept of the country in the first place\". The notion that the nation-state is outdated, and could therefore be replaced with blockchain technology, is one of the reasons he decided to run to become Liberland's prime minister.\nLiberland isn't an outlier - it's one of several prototypes of such micronations, areas claimed as independent nations but not legally recognised as such. Prospera in Honduras, Peter Thiel's Seasteading Institute, and Tim Draper's Draper Nation, a fully digital country with Bitcoin as its currency, are all chasing the same idea.\nI meet Draper, a billionaire tech investor himself, at Silicon Valley's Draper University, his boot camp for young tech founders, where students pledge to \"promote freedom at all costs\". Draper tells me he believes government provides \"bad service at a high cost\", and blockchain will simply replace it: \"It's just a matter of time.\"\nMany of these ideas can be traced back to the controversial thinker and tech founder Curtis Yarvin, who has been called the \"founder of the Dark Enlightenment\". He has won praise from figures on the US right, including tech billionaire Peter Thiel and some in the current Trump administration, including Vice-President JD Vance. His philosophy is notoriously confusing, but it essentially amounts to a criticism of democracy (which has failed, he claims, because immigration is still too high) and concludes we should replace it with an authoritarian structure that sits somewhere in between a corporation, a monarchy, and a blockchain-run micro-nation.\nDespite the fact that he views the media as one half of \"The Cathedral\" - his term for what he believes is the repressive ideological power made up of journalists and academics that secretly runs Western society - he agrees to meet me in Berkeley, California. We go on a short hike while Yarvin, who looks like an ageing punk rocker, speaks in circuitous, long-winded yarns that reference esoteric texts and periods of history to prove his points.\nIn our conversation, he outlines his \"Patchwork\" concept, in which traditional nation-states are replaced with a global network of sovereign mini-countries owned by shareholders and competing for citizens like a business competes for customers. He believes blockchain can be used to bring this world about and that the result would be \"corporate monarchies\" ruled over by \"CEO-kings\". These corporate monarchs would be accountable to a hidden board of shareholders, who could potentially even control the military and police through something he called a \"crypto dingus\" that would allow them to essentially disable all guns.\nMany of these tech billionaires see Trump, and his office, as outdated, something that will eventually be replaced with their superior technology. Throughout my time meeting tech billionaires, I increasingly got the sense that they saw themselves as the real holders of power.\nThe crypto lobby has now surpassed the fossil fuel industry to become the most powerful lobby in the US, having contributed $238m in the most recent election cycle, according to Fox Business analysis. Yarvin, Sun, Draper, and Liberland all give a glimpse into the future some of them envision for us.\nFrom Justin Sun, to Liberland and Tim Draper, everyone told me how blockchain technology and cryptocurrency can free us - and our money - from government control. But who would we be handing the control to instead? Every example I've seen ends in wealth and power flowing to whoever controls the technology.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "The Free Republic of Liberland doesn't look like much from the boat."
+      },
+      {
+        "id": "u02",
+        "text": "You would never guess that this flat, muddy stretch of floodplain on the Danube River, dotted with alder trees, tents and treehouses, is connected to some of the world's wealthiest men - including the biggest initial investor in the Trump family's crypto business."
+      },
+      {
+        "id": "u03",
+        "text": "By contrast, the virtual reality version of Liberland I'm currently being shown, designed by Zaha Hadid's ZHA architecture firm, features gleaming towers, floating public parks, and gravity-defying water features."
+      },
+      {
+        "id": "u04",
+        "text": "The person showing it to me is Vít Jedlička, Liberland's president. He founded the micronation on a disputed bit of territory between Serbia and Croatia with the goal of making a truly libertarian, digital country that runs on the same technology as cryptocurrencies."
+      },
+      {
+        "id": "u05",
+        "text": "I've come to Liberland for the past year as part of a BBC Two documentary, The Tech Billionaire Takeover. Liberland may look and sound like a joke. But it is bankrolled by some of the wealthiest men in crypto, and it runs on an idea they are trying to export: that government itself can be replaced."
+      },
+      {
+        "id": "u06",
+        "text": "We arrive at the country by boat because Croatian authorities have stopped people from doing so by land. A few settlers in anoraks come out to wave to us from the shore and President Jedlička, communicating via megaphone, presents one of the settlers with an official medal."
+      },
+      {
+        "id": "u07",
+        "text": "In most modern democracies, everyone has an equal vote. But things are different in Liberland thanks to a purchasable crypto token called Liberland Merits. President Jedlička tells me a person is elected through Merits. \"So the people that have more Merits are able to have more say in who is going to be in the leadership of the country,\" he says. This effectively means you can vote directly with your money."
+      },
+      {
+        "id": "u08",
+        "text": "Liberland is also entirely tax-free, something its interior minister, Ivan Pernar, a controversial Croatian former MP who was kicked out of parliament for spreading conspiracy theories, explains to me."
+      },
+      {
+        "id": "u09",
+        "text": "\"Usually, people who believe in freedom, decentralised finances and so on, they tend to be from the upper class of society,\" Pernar tells me. \"If you make zero selection and you say whoever comes on [the] boat is welcome, we would end up like [the] UK. We don't want that.\""
+      },
+      {
+        "id": "u10",
+        "text": "\"So it's liberty, but... some people have more liberty than others?\" I ask. One of the main ways to gain power and influence in Liberland appears to be through money, I suggest."
+      },
+      {
+        "id": "u11",
+        "text": "\"Of course,\" says Pernar. He says that if you had \"a bunch of bums in your country without anything\", others would have to contribute to their benefits. He goes on to compare the poor to animals. \"Don't feed the animals, because if you do, they will be accustomed to that and they will lose [the] ability to feed themselves. The same is with people.\""
+      },
+      {
+        "id": "u12",
+        "text": "To Liberland's wealthy backers, helping the poor - or indeed any form of taxation or centralised redistribution of wealth - is an affront to their individual liberty. This view is shared, unsurprisingly, by people in this world with far more money and influence than Pernar."
+      },
+      {
+        "id": "u13",
+        "text": "Over the past year, I've been hanging out with Liberland's prime minister, Chinese crypto titan Justin Sun. With Sun's backing - and that of about 30 other tech billionaires, they claim - the Liberlanders may now actually have access to the money needed to start building the version of their micronation with gleaming towers."
+      },
+      {
+        "id": "u14",
+        "text": "Sun is worth an estimated $8.5bn (£6.4bn). He's perhaps most famous for purchasing an art piece consisting of a banana duct taped to a wall for $6.2m and then eating it. He has also been accused by US regulators of fraud and market manipulation. Sun denies the charges, and recently reached a $10m settlement to resolve them."
+      },
+      {
+        "id": "u15",
+        "text": "His company, Tron, is a blockchain, a global software network on which you can buy and sell crypto currencies. Unlike a bank, it isn't run by one single authority - it's decentralised, existing across many computers all around the world, making it harder to tax and regulate."
+      },
+      {
+        "id": "u16",
+        "text": "This same blockchain technology is being used to run Liberland's government and one day, if Sun gets his way, it could run ours too. Citizens vote on laws and referendums using digital tokens, and the voting itself is automatically tallied and enforced by code, rather than counted by officials. In reality, though, the technology is still in its juvenile phase, and human officials are still required to implement laws."
+      },
+      {
+        "id": "u17",
+        "text": "According to blockchain analytics firm TRM Labs, Tron is one of the biggest platforms for moving illicit crypto - reportedly including funds tied to Hamas and Hezbollah, alongside those of drug cartels and mafia networks. Sun says Tron has innovated new collaborations with law enforcement to tackle illegal transactions on the blockchain, leading to huge declines in illicit volume on the platform."
+      },
+      {
+        "id": "u18",
+        "text": "The Trump family welcomed him as lead token investor in their own crypto business, World Liberty Financial. Sun invested more than $75m in the company, as well as millions more in Donald Trump's memecoin, which won him a dinner with the US president."
+      },
+      {
+        "id": "u19",
+        "text": "President Trump officially stepped down from the company once he took office but his family trust still owns and profits from it, selling a cryptocurrency coin called USD1. He has made more than $1.4bn from crypto in the past year, and stands to make much more."
+      },
+      {
+        "id": "u20",
+        "text": "It's safe to say the Trumps have profited hugely from their relationship to Sun. But what do Sun and other crypto entrepreneurs who have cosied up to the Trumps want in return? Liberland may offer a glimpse."
+      },
+      {
+        "id": "u21",
+        "text": "In person, Sun is warm and friendly. Like other billionaires I met, I sensed that Sun rarely got to hang around people that didn't work for him or desire his money. Most of our conversations centred around sci-fi and video games."
+      },
+      {
+        "id": "u22",
+        "text": "Last summer, when Sun had just landed from space after paying $29m to fly there with Jeff Bezos' Blue Origin company, he rang me to tell me about the experience. He had been struck by the idea that \"the planet itself is boundaryless\", without borders, and that \"there's not even a concept of the country in the first place\". The notion that the nation-state is outdated, and could therefore be replaced with blockchain technology, is one of the reasons he decided to run to become Liberland's prime minister."
+      },
+      {
+        "id": "u23",
+        "text": "Liberland isn't an outlier - it's one of several prototypes of such micronations, areas claimed as independent nations but not legally recognised as such. Prospera in Honduras, Peter Thiel's Seasteading Institute, and Tim Draper's Draper Nation, a fully digital country with Bitcoin as its currency, are all chasing the same idea."
+      },
+      {
+        "id": "u24",
+        "text": "I meet Draper, a billionaire tech investor himself, at Silicon Valley's Draper University, his boot camp for young tech founders, where students pledge to \"promote freedom at all costs\". Draper tells me he believes government provides \"bad service at a high cost\", and blockchain will simply replace it: \"It's just a matter of time.\""
+      },
+      {
+        "id": "u25",
+        "text": "Many of these ideas can be traced back to the controversial thinker and tech founder Curtis Yarvin, who has been called the \"founder of the Dark Enlightenment\". He has won praise from figures on the US right, including tech billionaire Peter Thiel and some in the current Trump administration, including Vice-President JD Vance. His philosophy is notoriously confusing, but it essentially amounts to a criticism of democracy (which has failed, he claims, because immigration is still too high) and concludes we should replace it with an authoritarian structure that sits somewhere in between a corporation, a monarchy, and a blockchain-run micro-nation."
+      },
+      {
+        "id": "u26",
+        "text": "Despite the fact that he views the media as one half of \"The Cathedral\" - his term for what he believes is the repressive ideological power made up of journalists and academics that secretly runs Western society - he agrees to meet me in Berkeley, California. We go on a short hike while Yarvin, who looks like an ageing punk rocker, speaks in circuitous, long-winded yarns that reference esoteric texts and periods of history to prove his points."
+      },
+      {
+        "id": "u27",
+        "text": "In our conversation, he outlines his \"Patchwork\" concept, in which traditional nation-states are replaced with a global network of sovereign mini-countries owned by shareholders and competing for citizens like a business competes for customers. He believes blockchain can be used to bring this world about and that the result would be \"corporate monarchies\" ruled over by \"CEO-kings\". These corporate monarchs would be accountable to a hidden board of shareholders, who could potentially even control the military and police through something he called a \"crypto dingus\" that would allow them to essentially disable all guns."
+      },
+      {
+        "id": "u28",
+        "text": "Many of these tech billionaires see Trump, and his office, as outdated, something that will eventually be replaced with their superior technology. Throughout my time meeting tech billionaires, I increasingly got the sense that they saw themselves as the real holders of power."
+      },
+      {
+        "id": "u29",
+        "text": "The crypto lobby has now surpassed the fossil fuel industry to become the most powerful lobby in the US, having contributed $238m in the most recent election cycle, according to Fox Business analysis. Yarvin, Sun, Draper, and Liberland all give a glimpse into the future some of them envision for us."
+      },
+      {
+        "id": "u30",
+        "text": "From Justin Sun, to Liberland and Tim Draper, everyone told me how blockchain technology and cryptocurrency can free us - and our money - from government control. But who would we be handing the control to instead? Every example I've seen ends in wealth and power flowing to whoever controls the technology."
+      }
+    ],
+    "source_caption": "Matt SheaLiberlandWatch: What it's like to arrive in Liberland with a group of settlers"
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "C1",
+    "article_type": "narrative_profile",
+    "dirty_fragments": [],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "bankrolled by some of the wealthiest men in crypto",
+        "acceptable_answer_points_zh": [
+          "Liberland 由加密巨富出资"
+        ],
+        "paragraph_ids": [
+          "u05"
+        ]
+      },
+      {
+        "source_quote": "you can vote directly with your money",
+        "acceptable_answer_points_zh": [
+          "在 Liberland 可以用钱直接买投票权"
+        ],
+        "paragraph_ids": [
+          "u07"
+        ]
+      },
+      {
+        "source_quote": "The crypto lobby has now surpassed the fossil fuel industry",
+        "acceptable_answer_points_zh": [
+          "加密游说已成为美国最强游说力量"
+        ],
+        "paragraph_ids": [
+          "u29"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "accustomed to",
+        "source_quote": "they will be accustomed to that",
+        "meaning_zh": "习惯于……",
+        "teaching_value": "正式语体高频搭配",
+        "paragraph_ids": [
+          "u11"
+        ]
+      },
+      {
+        "expression": "tax and regulate",
+        "source_quote": "making it harder to tax and regulate",
+        "meaning_zh": "征税与监管",
+        "teaching_value": "政策语境固定搭配",
+        "paragraph_ids": [
+          "u15"
+        ]
+      },
+      {
+        "expression": "boundaryless",
+        "source_quote": "the planet itself is boundaryless",
+        "meaning_zh": "无边界、无国界",
+        "teaching_value": "C1 抽象构词",
+        "paragraph_ids": [
+          "u22"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "Liberland 已获得国际法上的国家承认",
+        "reason": "原文明确说微型国家不受法律承认"
+      },
+      {
+        "claim_zh": "孙宇晨被美国监管机构定罪",
+        "reason": "原文说他被指控但否认，并以和解解决"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "tax and regulate",
+        "acceptable_direction_zh": "用 tax and regulate 复述区块链去中心化对政府的影响"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "selected_units",
+      "required_paragraph_ids": [
+        "u05",
+        "u07"
+      ],
+      "allowed_paragraph_ids": [
+        "u05",
+        "u07",
+        "u11",
+        "u15",
+        "u22",
+        "u27"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

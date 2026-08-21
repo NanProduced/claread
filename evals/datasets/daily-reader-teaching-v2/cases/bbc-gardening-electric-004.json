@@ -1,0 +1,196 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-gardening-electric-004",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cpq3w3v19veo",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "How landscape gardening is being electrified",
+    "subtitle": "The switch to quieter electric equipment is not going as fast as some would like.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cpq3w3v19veo",
+    "original_text": "Part of the soundtrack to a day in southern California is the drone of petrol-powered gardening equipment.\nNoise is one of the main reasons that cities around the US are banning petrol landscaping tools or encouraging electric alternatives.\nThese alternatives have the additional benefits of reducing carbon emissions, vibrations and the exposure of landscapers to pollution.\nIn addition they can mean longer working hours, as they can be used at times when residents demand quiet.\nToday, I'm taking part in training run by the American Green Zone Alliance (AGZA), an organisation supporting the transition towards electric landscaping equipment.\nTo my surprise, the electric backpack leaf blower I strap on is not much heavier than my normal rucksack. Using the blower to herd balls around the park feels fairly intuitive, though naturally I'm much clumsier and slower than the pro landscapers.\nAs for noise, there's still a buzz, but the sound is higher-pitched and not quite so loud as the familiar petrol-powered machines.\nThe move to electric power is attracting new companies to the market for gardening kit.\nUS aerospace start-up Whisper Aero is one of those firms. Its main business is electric propulsion systems for aircraft.\nBut in 2022, after the Covid-19 pandemic made many people more sensitive to noise, and following a couple of years of research and development, the company realised that its aerospace-grade fans would work well in leaf blowers.\n\"Our technology is cleaner, quieter and more efficient than other air-moving technologies that exist today,\" according to Andrew Terajewicz, Whisper Aero's director of air management. \"And the leaf blower is the perfect mix of this.\"\nThe battery on Whisper Aero's blower lasts up to 50 minutes at full power.\nThe company has had to scale up its manufacturing volume in its expansion to consumer technology.\nOnline pre-orders of Whisper Aero's handheld leaf blower started this year. It's priced at the high-end of electric leaf blowers, which are often more expensive than traditional petrol versions.\nBut for that you get a machine which is less likely to disturb the peace.\n\"It is so ultra quiet yet powerful, that the brain has a hard time understanding what's happening,\" says Dan Mabe, the former landscaper who founded AGZA.\nWhisper Aero aims to further develop its products, including a backpack leaf blower that would be better suited to professional landscapers.\nEven with innovation like that, petrol-powered machines are unlikely to disappear anytime soon, particularly for professional landscapers.\nFor a start, petrol machines are much more powerful, which makes for quicker work, so less time is spent lugging around heavy equipment.\nTerajewicz says that heavy-duty petrol backpack blowers can reach a maximum blowing force of about 50 newtons.\nThe handheld Whisper Aero blower typically runs at about half that, though it can go higher.\nAnother big issue is runtime. Professional gardeners like to use their blowers at full throttle.\n\"For us, it's a little bit hard to use electric,\" explains Carlos Camarena, a supervisor for a California landscaping company.\nCamarena's company uses electric tools where they're required to, in cities with ordinances banning petrol tools. But when they have a choice, they stick to petrol.\nHis company typically uses batteries that last for about 30 minutes. A crew has six batteries charging at any given time; each takes about 45 minutes to reach a full charge.\nThen there's the considerable upfront cost of going electric. One landscaper estimates that it would cost his business around $10,000 (£7,540) to transition all their equipment.\nThe subsidies and rebates offered by some local governments may not be enough to offset the cost of the switch.\nThe change would be even harder for landscapers who work as sole proprietors, with a single vehicle and limited space for charging and storing equipment.\nAdded to that is the weight of tools with multiple batteries, and the cost of accessories to hold them all.\nNevertheless the biggest makers of power tools are investing in electric.\nStihl, a power tool manufacturer headquartered in Germany, aims for battery-powered equipment to make up 35% of its sales by next year, and 80% by 2035.\nIt's on track to meet the 2027 goal in Europe, though sales in the US have been slower.\nTo help reach its targets, the company opened its first plant solely manufacturing batteries and tools, in Romania in 2025.\n\"We like to say that we are dual-technology leaders,\" says Paul Hicks, senior marketing and product manager at Stihl GB.\n\"So we are being very open with our customers if in some cases a petrol tool may be a better solution for them… But in the large majority of cases, battery-power tools pay off fairly swiftly because of the cost of fuel.\"\nIn May, Stihl announced a new battery system that uses high-performance batteries.\nThese batteries use a relatively new, more efficient design for lithium battery cells, known as tabless cells.\nTabless cells have 60% more peak power than standard cells, according to Hicks. This means that the batteries charge faster, and landscapers can take fewer batteries out to sites.\nThe batteries are also relatively lightweight.\nMabe believes that overall, for gardeners embracing long-lasting electric equipment, \"There's big rewards if they can make it work.\"\nBack in southern California, landscaper Camarena sees the benefits of electric tools. \"We don't contaminate the air,\" he says.\n\"When we use the gas blower, some people get mad. They are reading a book or something.\"",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "Part of the soundtrack to a day in southern California is the drone of petrol-powered gardening equipment.\nNoise is one of the main reasons that cities around the US are banning petrol landscaping tools or encouraging electric alternatives.\nThese alternatives have the additional benefits of reducing carbon emissions, vibrations and the exposure of landscapers to pollution."
+      },
+      {
+        "id": "u02",
+        "text": "In addition they can mean longer working hours, as they can be used at times when residents demand quiet.\nToday, I'm taking part in training run by the American Green Zone Alliance (AGZA), an organisation supporting the transition towards electric landscaping equipment.\nTo my surprise, the electric backpack leaf blower I strap on is not much heavier than my normal rucksack. Using the blower to herd balls around the park feels fairly intuitive, though naturally I'm much clumsier and slower than the pro landscapers."
+      },
+      {
+        "id": "u03",
+        "text": "As for noise, there's still a buzz, but the sound is higher-pitched and not quite so loud as the familiar petrol-powered machines.\nThe move to electric power is attracting new companies to the market for gardening kit.\nUS aerospace start-up Whisper Aero is one of those firms. Its main business is electric propulsion systems for aircraft."
+      },
+      {
+        "id": "u04",
+        "text": "But in 2022, after the Covid-19 pandemic made many people more sensitive to noise, and following a couple of years of research and development, the company realised that its aerospace-grade fans would work well in leaf blowers.\n\"Our technology is cleaner, quieter and more efficient than other air-moving technologies that exist today,\" according to Andrew Terajewicz, Whisper Aero's director of air management. \"And the leaf blower is the perfect mix of this.\"\nThe battery on Whisper Aero's blower lasts up to 50 minutes at full power."
+      },
+      {
+        "id": "u05",
+        "text": "The company has had to scale up its manufacturing volume in its expansion to consumer technology.\nOnline pre-orders of Whisper Aero's handheld leaf blower started this year. It's priced at the high-end of electric leaf blowers, which are often more expensive than traditional petrol versions.\nBut for that you get a machine which is less likely to disturb the peace."
+      },
+      {
+        "id": "u06",
+        "text": "\"It is so ultra quiet yet powerful, that the brain has a hard time understanding what's happening,\" says Dan Mabe, the former landscaper who founded AGZA.\nWhisper Aero aims to further develop its products, including a backpack leaf blower that would be better suited to professional landscapers.\nEven with innovation like that, petrol-powered machines are unlikely to disappear anytime soon, particularly for professional landscapers."
+      },
+      {
+        "id": "u07",
+        "text": "For a start, petrol machines are much more powerful, which makes for quicker work, so less time is spent lugging around heavy equipment.\nTerajewicz says that heavy-duty petrol backpack blowers can reach a maximum blowing force of about 50 newtons."
+      },
+      {
+        "id": "u08",
+        "text": "The handheld Whisper Aero blower typically runs at about half that, though it can go higher.\nAnother big issue is runtime. Professional gardeners like to use their blowers at full throttle.\n\"For us, it's a little bit hard to use electric,\" explains Carlos Camarena, a supervisor for a California landscaping company."
+      },
+      {
+        "id": "u09",
+        "text": "Camarena's company uses electric tools where they're required to, in cities with ordinances banning petrol tools. But when they have a choice, they stick to petrol.\nHis company typically uses batteries that last for about 30 minutes. A crew has six batteries charging at any given time; each takes about 45 minutes to reach a full charge.\nThen there's the considerable upfront cost of going electric. One landscaper estimates that it would cost his business around $10,000 (£7,540) to transition all their equipment."
+      },
+      {
+        "id": "u10",
+        "text": "The subsidies and rebates offered by some local governments may not be enough to offset the cost of the switch.\nThe change would be even harder for landscapers who work as sole proprietors, with a single vehicle and limited space for charging and storing equipment.\nAdded to that is the weight of tools with multiple batteries, and the cost of accessories to hold them all."
+      },
+      {
+        "id": "u11",
+        "text": "Nevertheless the biggest makers of power tools are investing in electric.\nStihl, a power tool manufacturer headquartered in Germany, aims for battery-powered equipment to make up 35% of its sales by next year, and 80% by 2035.\nIt's on track to meet the 2027 goal in Europe, though sales in the US have been slower."
+      },
+      {
+        "id": "u12",
+        "text": "To help reach its targets, the company opened its first plant solely manufacturing batteries and tools, in Romania in 2025.\n\"We like to say that we are dual-technology leaders,\" says Paul Hicks, senior marketing and product manager at Stihl GB.\n\"So we are being very open with our customers if in some cases a petrol tool may be a better solution for them… But in the large majority of cases, battery-power tools pay off fairly swiftly because of the cost of fuel.\""
+      },
+      {
+        "id": "u13",
+        "text": "In May, Stihl announced a new battery system that uses high-performance batteries.\nThese batteries use a relatively new, more efficient design for lithium battery cells, known as tabless cells.\nTabless cells have 60% more peak power than standard cells, according to Hicks. This means that the batteries charge faster, and landscapers can take fewer batteries out to sites."
+      },
+      {
+        "id": "u14",
+        "text": "The batteries are also relatively lightweight.\nMabe believes that overall, for gardeners embracing long-lasting electric equipment, \"There's big rewards if they can make it work.\"\nBack in southern California, landscaper Camarena sees the benefits of electric tools. \"We don't contaminate the air,\" he says.\n\"When we use the gas blower, some people get mad. They are reading a book or something.\""
+      }
+    ],
+    "source_caption": "Getty ImagesAutumn can be a noisy time when the leaf blowers are out"
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "B1",
+    "article_type": "news_report",
+    "dirty_fragments": [],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "cities around the US are banning petrol landscaping tools",
+        "acceptable_answer_points_zh": [
+          "美国多地城市正在禁用汽油园林工具"
+        ],
+        "paragraph_ids": [
+          "u01"
+        ]
+      },
+      {
+        "source_quote": "it would cost his business around $10,000",
+        "acceptable_answer_points_zh": [
+          "一名园艺师估算全面换电动约需 1 万美元"
+        ],
+        "paragraph_ids": [
+          "u09"
+        ]
+      },
+      {
+        "source_quote": "battery-powered equipment to make up 35% of its sales by next year",
+        "acceptable_answer_points_zh": [
+          "斯蒂尔计划明年电池设备占销售额 35%"
+        ],
+        "paragraph_ids": [
+          "u11"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "stick to",
+        "source_quote": "they stick to petrol",
+        "meaning_zh": "坚持使用",
+        "teaching_value": "高频动词短语",
+        "paragraph_ids": [
+          "u09"
+        ]
+      },
+      {
+        "expression": "offset the cost",
+        "source_quote": "may not be enough to offset the cost",
+        "meaning_zh": "抵消成本",
+        "teaching_value": "财经语境常用搭配",
+        "paragraph_ids": [
+          "u10"
+        ]
+      },
+      {
+        "expression": "on track",
+        "source_quote": "on track to meet the 2027 goal",
+        "meaning_zh": "按计划推进",
+        "teaching_value": "新闻高频表达",
+        "paragraph_ids": [
+          "u11"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "电动吹叶机的动力普遍强于汽油机",
+        "reason": "原文明确说汽油机动力更强"
+      },
+      {
+        "claim_zh": "美国政府已全面禁止汽油园林工具",
+        "reason": "原文只说部分城市在禁用或鼓励替代"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "stick to",
+        "acceptable_direction_zh": "用 stick to 复述专业园艺师在无禁令时的选择"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "all_units",
+      "required_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13",
+        "u14"
+      ],
+      "allowed_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13",
+        "u14"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

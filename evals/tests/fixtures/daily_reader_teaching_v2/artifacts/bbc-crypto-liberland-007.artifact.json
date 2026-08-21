@@ -1,0 +1,171 @@
+{
+  "case_id": "bbc-crypto-liberland-007",
+  "lesson_blueprint": {
+    "article_type": "narrative_profile",
+    "effective_difficulty": "C1",
+    "reading_mission": "带着“这个看似玩笑的微型国家背后，加密巨富想输出什么理念”读这篇纪实特写。",
+    "learning_objectives": [
+      "沿记者见闻梳理 Liberland 的运作逻辑与资金来源",
+      "辨析叙述者的怀疑立场与各方主张的落差"
+    ],
+    "structure_map": [
+      {
+        "label": "上岛：现实与虚拟现实",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03",
+          "u04",
+          "u05",
+          "u06"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "钱买话语权：制度与金主",
+        "paragraph_ids": [
+          "u07",
+          "u08",
+          "u09",
+          "u10",
+          "u11",
+          "u12",
+          "u13",
+          "u14",
+          "u15",
+          "u16",
+          "u17",
+          "u18",
+          "u19",
+          "u20"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "理念源流：从孙宇晨到 Yarvin",
+        "paragraph_ids": [
+          "u21",
+          "u22",
+          "u23",
+          "u24",
+          "u25",
+          "u26",
+          "u27"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "记者之问：权力交给谁",
+        "paragraph_ids": [
+          "u28",
+          "u29",
+          "u30"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u05",
+      "u07"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "在 Liberland，怎样才能获得更大的话语权？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u07"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u07"
+        ],
+        "reference_answer": "购买可交易的代币 Liberland Merits，持有越多，对领导层人选的发言权越大。",
+        "explanation_zh": "第七段解释了代币与投票权的直接挂钩。"
+      },
+      {
+        "prompt": "TRM Labs 的分析对 Tron 提出了什么问题？",
+        "skill": "claim_evidence",
+        "evidence_paragraph_ids": [
+          "u17"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u17"
+        ],
+        "reference_answer": "Tron 是转移非法加密资产的最大平台之一，据报道涉及多类非法资金。",
+        "explanation_zh": "第十七段引用区块链分析公司的结论。"
+      },
+      {
+        "prompt": "文章结尾，作者对“交出控制权”提出了什么担忧？",
+        "skill": "inference",
+        "evidence_paragraph_ids": [
+          "u30"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u30"
+        ],
+        "reference_answer": "他看到的所有例子，最终都是财富与权力流向控制技术的少数人。",
+        "explanation_zh": "最后一段以反问收束，点明全文立场。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "accustomed to",
+        "paragraph_id": "u11",
+        "meaning_zh": "习惯于……",
+        "usage_note": "正式语体，强调养成的依赖",
+        "reusable_pattern": "be accustomed to sth"
+      },
+      {
+        "expression": "tax and regulate",
+        "paragraph_id": "u15",
+        "meaning_zh": "征税并监管",
+        "usage_note": "政策与财经报道的固定搭配",
+        "reusable_pattern": "tax and regulate sth"
+      },
+      {
+        "expression": "boundaryless",
+        "paragraph_id": "u22",
+        "meaning_zh": "无国界的、无边界的",
+        "usage_note": "抽象形容词，常见于科技乌托邦话语",
+        "reusable_pattern": "a boundaryless + 名词"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "traditional nation-states are replaced with a global network of sovereign mini-countries owned by shareholders and competing for citizens like a business competes for customers",
+        "paragraph_id": "u27",
+        "structure_zh": "被动结构(are replaced with)+并列分词短语(owned by/competing for)",
+        "translation": "传统民族国家将被一个由股东拥有的主权迷你国家组成的全球网络取代，它们像企业争夺顾客一样争夺公民"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u05": "过去一年，我作为 BBC Two 纪录片《科技亿万富翁接管》的一部分多次造访 Liberland。它看上去、听起来都像一场玩笑。但给它出资的是加密世界最富有的一批人，而它运行的，正是他们试图向外输出的理念：政府本身可以被取代。",
+      "u07": "在大多数现代民主国家，每个人都有一票平等的投票权。但 Liberland 不同，因为有一种可以购买的加密代币 Liberland Merits。总统 Jedlička 告诉我，人是靠 Merits 当选的。“所以拥有更多 Merits 的人，对谁将领导这个国家有更大的发言权，”他说。这实际上意味着，你可以直接用钱投票。",
+      "u11": "“当然，”Pernar 说。他说，如果你的国家里“有一群一无所有的懒汉”，别人就得为他们的福利出钱。他甚至把穷人比作动物：“不要喂动物，因为一旦喂了，它们就会习惯，失去自己觅食的能力。人也一样。”",
+      "u15": "他的公司 Tron 是一条区块链——一个可以买卖加密资产的全球软件网络。它不像银行那样由单一权威机构运营，而是去中心化的，分布在世界各地众多计算机上，使其更难被征税和监管。",
+      "u22": "去年夏天，孙宇晨刚花 2900 万美元搭乘贝索斯的 Blue Origin 从太空返回，就打电话给我讲述那段经历。他着迷于这样一种想法：“这颗星球本身是无国界的”，没有边界，而且“国家这个概念根本不存在”。民族国家已经过时、因此可以被区块链取代——这一观念是他决定竞选 Liberland 总理的原因之一。",
+      "u27": "在我们的交谈中，他概述了他的“Patchwork”构想：传统民族国家将被一个由股东拥有的主权迷你国家组成的全球网络取代，它们像企业争夺顾客一样争夺公民。他相信区块链可以促成这个世界，其结果将是由“CEO 国王”统治的“公司君主国”。这些公司君主对一个隐藏的股东董事会负责，后者甚至可以通过他所谓的一种“加密小装置”控制军队和警察，实质上禁用所有枪支。"
+    },
+    "post_read_summary": "从多瑙河上的泥泞滩地到 Zaha Hadid 的虚拟城市，Liberland 把“政府可以被取代”的理念做成一门生意：代币换话语权、免税换富人迁入；记者一路追问，财富与权力最终流向的，是控制技术的人。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 tax and regulate 复述区块链去中心化对政府治理的挑战。",
+      "scaffold": "Because Tron is decentralised, governments find it harder to ...",
+      "reference_points": [
+        "网络分布在全球计算机上",
+        "没有单一运营主体",
+        "监管与征税都更难落地"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": "Matt SheaLiberlandWatch: What it's like to arrive in Liberland with a group of settlers"
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

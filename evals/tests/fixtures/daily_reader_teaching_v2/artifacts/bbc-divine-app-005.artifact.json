@@ -1,0 +1,170 @@
+{
+  "case_id": "bbc-divine-app-005",
+  "lesson_blueprint": {
+    "article_type": "news_report",
+    "effective_difficulty": "B1",
+    "reading_mission": "带着“Divine 想复制 Vine 的什么、又想避开当下社交媒体的什么”读这篇报道。",
+    "learning_objectives": [
+      "抓住新应用的特色：六秒视频、无 AI、去中心化",
+      "理解怀旧情怀与商业挑战之间的张力"
+    ],
+    "structure_map": [
+      {
+        "label": "发布与定位",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "Vine 的记忆与技术底座",
+        "paragraph_ids": [
+          "u04",
+          "u05",
+          "u06",
+          "u07",
+          "u08",
+          "u09"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "挑战与吸引力",
+        "paragraph_ids": [
+          "u10",
+          "u11",
+          "u12",
+          "u13"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "短内容的意义与前景",
+        "paragraph_ids": [
+          "u14",
+          "u15",
+          "u16"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u02",
+      "u10",
+      "u16"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "Divine 对视频时长和 AI 内容有什么规定？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u01",
+          "u02"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u02"
+        ],
+        "reference_answer": "视频只有六秒、循环播放；禁止 AI 生成的内容。",
+        "explanation_zh": "第二组段落同时交代时长规则与禁 AI 政策。"
+      },
+      {
+        "prompt": "Divine 建在 Nostr 系统上对用户意味着什么？",
+        "skill": "causality",
+        "evidence_paragraph_ids": [
+          "u06"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u06"
+        ],
+        "reference_answer": "用户有望带着账号和内容去使用同一系统的其他服务，不被单一平台锁定。",
+        "explanation_zh": "第六组段落解释了去中心化带来的可携带性。"
+      },
+      {
+        "prompt": "分析师为什么说 Divine 的做法也是它最大的挑战？",
+        "skill": "claim_evidence",
+        "evidence_paragraph_ids": [
+          "u10",
+          "u11"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u10"
+        ],
+        "reference_answer": "人们讨厌的机制往往正是平台留住用户的手段，去掉成瘾性还要保住吸引力并不容易。",
+        "explanation_zh": "第十组段落引用分析师 Matt Nevarra 的判断。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "gone awry",
+        "paragraph_id": "u03",
+        "meaning_zh": "走偏了、出了问题",
+        "usage_note": "描述事情偏离了应有的轨道",
+        "reusable_pattern": "sth has gone awry"
+      },
+      {
+        "expression": "locked into",
+        "paragraph_id": "u06",
+        "meaning_zh": "被锁定在……中、无法脱身",
+        "usage_note": "常用于平台、合同与生态系统",
+        "reusable_pattern": "be locked into sth"
+      },
+      {
+        "expression": "a draw",
+        "paragraph_id": "u12",
+        "meaning_zh": "吸引人的事物、卖点",
+        "usage_note": "作名词使用，常与 be a draw for 搭配",
+        "reusable_pattern": "be a draw for sb"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "At its peak, Vine had more than 200 million monthly active users",
+        "paragraph_id": "u04",
+        "structure_zh": "介词短语前置(At its peak)+主语(Vine)+宾语(200 million)",
+        "translation": "巅峰时期，Vine 的月活跃用户超过 2 亿"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u01": "一款被视为短视频服务 Vine 精神续作的新应用已向公众发布。和原版一样，Divine 让用户创作并分享只有六秒、循环播放的视频。",
+      "u02": "新应用还托管了 200 多万个 Vine 原创视频，并为与其他平台拉开距离而禁止 AI 生成的内容。Divine 创始人、前 Twitter 员工 Evan Henshaw-Plath 告诉 BBC，他做这个应用是因为觉得社交媒体需要“一次重启”。",
+      "u03": "“我想看到它能与其他应用抗衡，因为我们已经走偏了，”他在公开发布前几周的采访中说。他表示 Divine 上不放 AI 内容很重要，并称自己“受够了看视频却不知道是不是真的”。",
+      "u04": "“我想能开心地玩，而不必对这些东西疑神疑鬼，”他说。巅峰时期，Vine 的月活跃用户超过 2 亿，还捧红了一批互联网大明星。",
+      "u05": "Jake Paul 和 Lele Pons 就是在该平台成名，随后它在 2017 年被东家 Twitter 关停。Divine 得到 Twitter 联合创始人 Jack Dorsey 的支持——2012 年 Twitter 收购 Vine 时，他在公司身居要职。",
+      "u06": "它构建在名为 Nostr 的去中心化系统上，不像 TikTok 或 Instagram 那样由单一公司控制。这意味着用户有望把账号和内容带到使用同一系统的其他服务，而不被锁在一个平台里。",
+      "u07": "类似做法已被 X 的对手 Bluesky 和 Mastodon 采用。如今已有超过 250 万个 Vine 原视频被恢复并重新加入 Divine，供人再次欣赏。",
+      "u08": "Divine 官网 FAQ 列出多种方式确保应用里的视频都是人类制作、没有 AI 参与。例如用户必须在应用内实时录制，不能从别处上传；它还使用名为 ProofMode 的验证工具，像媒体的数字收据。",
+      "u09": "当用户用装有 ProofMode 的设备录制时，它能附加信息，帮助核实录制时间、文件事后是否被篡改。用户也可以举报疑似 AI 内容，自动系统与人工都会参与排查。",
+      "u10": "社交媒体分析师 Matt Nevarra 认为，Divine 试图另辟蹊径，这也可能是它最大的挑战。“人们讨厌的现代社交媒体机制，往往正是那些平台让人欲罢不能的原因，”他说。",
+      "u11": "“所以 Divine 现在必须证明：去掉一些成瘾性，又不丢掉魔力。”除了看经典 Vine，用户又能创作自己的六秒作品。",
+      "u12": "除了新内容与功能，这座由平台最红明星留下的老 Vine 宝库，很可能吸引那些记得它最初岁月的人。Henshaw-Plath 说，他起初只想复刻 Vine 的短视频形式，后来想能否把老视频也带回来。",
+      "u13": "他发现 Internet Archive 保存了一份 Vine 数据，花了数月将其重建。“我当时想，哇，这真酷，”他说，起初只预期几千人感兴趣。",
+      "u14": "结果上线头几个小时就有 1 万人安装应用，把服务器挤爆了。“那时我才意识到，这里还有更大的东西，”他说。",
+      "u15": "在 YouTube、TikTok 等应用转向更长视频的今天，为什么人们还对短内容有兴趣？他把 Vine 的形式比作俳句。“我们当然可以写自由体散文，”他说。",
+      "u16": "“但诗歌是我们珍视、也自有意义的形式。从这个意义上说，Vine 曾是诗。”Divine 的挑战，是把这份怀旧变成对新一代社交媒体用户真正有用的东西。"
+    },
+    "post_read_summary": "Divine 带着六秒循环视频、无 AI 承诺与去中心化底座复活了 Vine 的记忆，还找回 250 万个老视频；但去掉成瘾机制还要保住魔力，是它面对新一代用户的真正考验。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 gone awry 复述创始人对当下社交媒体的评价。",
+      "scaffold": "He wants Divine to rival other apps because ...",
+      "reference_points": [
+        "社交媒体已经走偏",
+        "AI 内容让人真假难辨",
+        "需要一次重启"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": "DivineA new app seen as a spiritual successor to Vine."
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

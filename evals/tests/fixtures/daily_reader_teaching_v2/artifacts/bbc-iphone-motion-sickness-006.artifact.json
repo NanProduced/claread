@@ -1,0 +1,162 @@
+{
+  "case_id": "bbc-iphone-motion-sickness-006",
+  "lesson_blueprint": {
+    "article_type": "explainer",
+    "effective_difficulty": "B1",
+    "reading_mission": "带着“几个小圆点为什么能缓解晕车、代价又是什么”读这篇解释性文章。",
+    "learning_objectives": [
+      "理解圆点起作用的原理与争议",
+      "抓住作者在便利与屏幕时间之间的反思"
+    ],
+    "structure_map": [
+      {
+        "label": "地铁上的发现",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "晕车的原因之争",
+        "paragraph_ids": [
+          "u04",
+          "u05",
+          "u06",
+          "u07",
+          "u08"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "用法与拥趸",
+        "paragraph_ids": [
+          "u09",
+          "u10",
+          "u11"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "屏幕时代的代价",
+        "paragraph_ids": [
+          "u12",
+          "u13"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u03",
+      "u08",
+      "u13"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "“车辆运动提示”是怎么帮助晕车的人的？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u03"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u03"
+        ],
+        "reference_answer": "在屏幕边缘放上随交通工具同步移动的动态圆点。",
+        "explanation_zh": "第三组段落直接解释设置的工作方式。"
+      },
+      {
+        "prompt": "Steenerson 认为圆点起作用的原理是什么？",
+        "skill": "main_idea",
+        "evidence_paragraph_ids": [
+          "u08"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u08"
+        ],
+        "reference_answer": "给身体提供展示如何在空间中移动的信号，从而缓解晕动症。",
+        "explanation_zh": "第八组段落给出视觉反馈的解释与研究佐证。"
+      },
+      {
+        "prompt": "作者为什么讽刺地说“奖励”是多盯屏幕？",
+        "skill": "inference",
+        "evidence_paragraph_ids": [
+          "u12"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u12"
+        ],
+        "reference_answer": "圆点只在看手机晕车时有用，等于给了继续看屏幕的理由，而这正是人们担心的。",
+        "explanation_zh": "第十二组段落把缓解晕车与屏幕时间焦虑并置。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "gone wild for",
+        "paragraph_id": "u03",
+        "meaning_zh": "为……疯狂、极其喜爱",
+        "usage_note": "形容对新事物的狂热追捧",
+        "reusable_pattern": "go wild for sth"
+      },
+      {
+        "expression": "swears by",
+        "paragraph_id": "u11",
+        "meaning_zh": "笃信……有效、力荐",
+        "usage_note": "强调亲身体验后的信任",
+        "reusable_pattern": "swear by sth"
+      },
+      {
+        "expression": "creep into",
+        "paragraph_id": "u13",
+        "meaning_zh": "悄悄渗入、逐渐侵入",
+        "usage_note": "形容不易察觉的渗透过程",
+        "reusable_pattern": "creep into sth"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "Bit by bit, our devices are adapting to infiltrate more of our lives.",
+        "paragraph_id": "u04",
+        "structure_zh": "方式状语(Bit by bit)+主语(our devices)+不定式目的状语",
+        "translation": "我们的设备正一点一点适应我们，渗透进生活的更多角落"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u01": "一个被埋没的 iPhone 设置正在引发关注、拯救肠胃。但缓解了晕车，会不会只是让人盯屏幕的时间更多？",
+      "u02": "我尽量不看别人的手机，但在纽约地铁拥挤的车厢里难免瞥见几眼——列车呼啸穿过隧道，人晃来晃去。最近我发现一件怪事：总有人屏幕上有小圆点在跳动。看得越多我越想知道原因。原来这些人有个共同点：他们都晕车。",
+      "u03": "这支编排整齐的“圆点芭蕾”是一个不太为人知的 iPhone 设置，叫“车辆运动提示”（Vehicle Motion Cues），据说能缓解晕动症。它借助手机的加速度计，在屏幕边缘放上随你所乘交通工具同步移动的动态圆点。评价褒贬不一，但近几个月来，一些人为它疯狂。我在地铁上遇到的一位男士说，他太爱这个功能了，全天候开着，哪怕没在移动——不过他不愿把名字告诉通勤路上搭话的奇怪记者。",
+      "u04": "如果你天生一坐车就胃里翻江倒海，这些圆点可能就是解药。我天生铁胃，恐怕没法感同身受。但我认为更有意思的事情正在发生：我们的设备正一点一点适应我们，渗透进生活的更多角落。",
+      "u05": "为这篇报道和医生交流时，我学到一个小知识：研究晕动症的学者，大多数自己也晕车。“我坐邮轮时，72 到 96 个小时都得躺在铺位上，吃不下也起不来，”美国明尼苏达大学荣休教授 Tom Stoffregen 说，他从 20 世纪 80 年代起就研究晕动症。",
+      "u06": "关于晕车的原因，专家们意见不一。经典解释是“感觉冲突理论”：内耳感知到运动，但眼睛等其他感官看到的却是一堆静止不动的物体。Stoffregen 不买账。他说，问题在于肌肉等身体系统在不断预判下一步动作以维持姿势，一旦预测失败，人就乱了方寸。这或许能解释乘客会晕而司机通常不会——因为司机在操控车辆。",
+      "u07": "不管怎样，这种混乱会让一些人恶心，研究平衡控制系统（前庭系统）的斯坦福大学临床副教授 Kristen Steenerson 说。“这种偏差让人头晕、失去方向感，”她说，“可能出于某种有趣的进化巧合，它还会引发强烈的恶心。”她说，我们或许进化出这样一种设定：一旦失去方向感，就假定自己吃了有毒的东西，于是身体觉得该吐了。",
+      "u08": "Steenerson 说，如果能给身体提供展示你如何在空间中移动的信号，就能缓解晕动症。iPhone 的小圆点似乎遵循同样的逻辑：“它们让你感知到自己如何在空间中移动。”“确实有研究考察过视觉反馈，发现它非常有用，”她说。比如，你可以买到一种造型滑稽得惊人的防晕眼镜，里面的液体会以类似方式晃动，而且有证据表明它们有效。",
+      "u09": "Steenerson 说，这些圆点对她自己的晕车也有点帮助。“大家都以为我的屏幕出问题了。这些圆点太酷了，”她说。要打开它，进入 iPhone 的设置、辅助功能、动态效果、车辆运动提示。你可以让圆点常开，也可以在手机检测到移动时自动开启。Android 应用可以复刻这个设置，还有传闻说 Pixel 手机也将推出类似功能。",
+      "u10": "你还可以调整圆点的大小和颜色。我最近一直带着屏幕上的大号紫色圆点四处走，它们特别能打开话匣子。一些晕车人士告诉我车辆运动提示没用，也有人称之为奇迹。",
+      "u11": "纽约市的策展人 Zandie Brockett 对它们赞不绝口。“这是改变游戏规则的东西，”她说，甚至让她变成了 iPhone 圆点的布道者。“我不会站在屋顶上大喊，但只要有人说自己晕车，我就推荐。”我的前上司 Rory Carroll 也这么说。他的晕车格外讽刺，因为工作原因他常坐副驾：他是汽车爱好者媒体 Alloy 的主编。“这算是职业病，”Carroll 说，“它解决了我这辈子一直有的一个具体问题。圆点真的有用。”",
+      "u12": "iPhone 圆点的粉丝反复提到同一个观察：只有当你因为看手机才晕车时，它才有用。换句话说，你的奖励是多了一个盯屏幕的机会。当那么多人担心屏幕时间时，这也许根本不是奖励。“少了一个不看 Instagram 的理由，确实有点扫兴，”Carroll 说。",
+      "u13": "手机吞噬了现代生活，而新进展正让它们悄悄渗入少数还用不了手机的剩余时刻。电池续航越来越长，屏幕亮得更久；马斯克和竞争者的卫星把 Wi-Fi 和电话信号铺满天空，覆盖曾经与世隔绝的地方。甚至有传闻说苹果在做带摄像头的 AirPods——不为拍照，而是给可脱离屏幕使用的新 AI 语音工具当“眼睛”。它或许能在那些罕见的无手机时刻（比如走在街上）带来新的计算可能。如果盯屏幕让你晕车，不妨试试 iPhone 圆点。或者——要是这听起来疯狂就当我没说——你干脆放下手机，好好欣赏沿途风景。"
+    },
+    "post_read_summary": "iPhone 的“车辆运动提示”用随车同步的圆点缓解看手机引发的晕车，研究者用视觉反馈原理解释它的有效与分歧；但作者的提醒同样尖锐：解药的另一面，是更多盯屏幕的理由。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 swears by 复述 Brockett 对圆点的评价。",
+      "scaffold": "The curator swears by the dots because ...",
+      "reference_points": [
+        "改变了她的乘车体验",
+        "她会主动推荐给晕车的人",
+        "效果因人而异"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

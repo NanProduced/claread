@@ -1,0 +1,135 @@
+{
+  "case_id": "fx-b1",
+  "lesson_blueprint": {
+    "article_type": "news_report",
+    "effective_difficulty": "B1",
+    "reading_mission": "带着‘新图书馆为社区带来什么’的问题读这篇短新闻。",
+    "learning_objectives": [
+      "抓住新闻中的时间、地点和人物事实"
+    ],
+    "structure_map": [
+      {
+        "label": "事件",
+        "paragraph_ids": [
+          "u01",
+          "u02"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "观点与安排",
+        "paragraph_ids": [
+          "u03",
+          "u04"
+        ],
+        "function": "detail"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u01",
+      "u03"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "新图书馆什么时候开放？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u01"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u01"
+        ],
+        "reference_answer": "周六开放。",
+        "explanation_zh": "第一段第一句直接给出时间。"
+      },
+      {
+        "prompt": "市长认为书有什么作用？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u03"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u03"
+        ],
+        "reference_answer": "帮助儿童学习。",
+        "explanation_zh": "第三段引述市长原话。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "stay open",
+        "paragraph_id": "u04",
+        "meaning_zh": "保持开放",
+        "usage_note": "描述营业/开放时间的常用搭配",
+        "reusable_pattern": "stay open until + 时间"
+      },
+      {
+        "expression": "opening event",
+        "paragraph_id": "u02",
+        "meaning_zh": "开幕活动",
+        "usage_note": "名词修饰名词",
+        "reusable_pattern": "opening + 名词"
+      },
+      {
+        "expression": "help children learn",
+        "paragraph_id": "u03",
+        "meaning_zh": "帮助儿童学习",
+        "usage_note": "help + 人 + 动词原形",
+        "reusable_pattern": "help sb do sth"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "The town opened a new library on Saturday.",
+        "paragraph_id": "u01",
+        "structure_zh": "主语(The town)+谓语(opened)+宾语(a new library)+时间状语",
+        "translation": "小镇在周六开设了一家新图书馆。"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u01": "小镇在周六开设了一家新图书馆。",
+      "u02": "许多家庭来到开幕活动现场。",
+      "u03": "市长说，书籍帮助儿童学习。",
+      "u04": "图书馆将保持开放到晚上九点。"
+    },
+    "post_read_summary": "小镇周六开放新图书馆，开幕活动吸引许多家庭，市长强调阅读对儿童的价值。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 stay open 复述图书馆的开放时间。",
+      "scaffold": "The library stays open until ...",
+      "reference_points": [
+        "周六开放",
+        "开放到晚上九点"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": "The new library in the town centre."
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": {
+      "provider_requests": 5,
+      "logical_llm_calls": 5,
+      "retry_count": 0,
+      "output_retry_count": 1,
+      "refinement_count": 1,
+      "per_agent_tokens": {
+        "blueprint": {
+          "input": 100,
+          "output": 90
+        }
+      },
+      "per_agent_latency_ms": {
+        "blueprint": 1200
+      },
+      "end_to_end_latency_ms": 20000,
+      "accepted_teaching_points": 11,
+      "keep_points_per_1000_output_tokens": 2.1
+    }
+  }
+}

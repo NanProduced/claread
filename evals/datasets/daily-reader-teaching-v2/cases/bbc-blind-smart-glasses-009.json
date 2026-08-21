@@ -1,0 +1,190 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-blind-smart-glasses-009",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cqjxn4d91peo",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Blind Suffolk man says smart glasses have been game-changer",
+    "subtitle": "Kevin Ramsey says the glasses can read menus to him and help him track walking routes.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/cqjxn4d91peo",
+    "original_text": "A man who is blind said smart glasses have been a \"game-changer\" in helping him to navigate life.\nKevin Ramsey, 48, from Haverhill in Suffolk, is completely blind and uses a guide dog.\nHe is a volunteer with sight-loss charity, Suffolk Sight, which recently gave him a demonstration of Meta glasses that can read things like restaurant menus and help track walking routes.\nRamsey decided to invest in a pair and said the technology had completely changed his life.\n\"If you go to a restaurant then it is able to help you read the menus,\" he told BBC Radio Suffolk's Wayne Bavin.\n\"You can go into shops, pick up an item and ask 'what is this?' and it will tell you.\"\nWhen out with his guide dog, Ramsey uses the VoiceVista app which tracks where he is going, and this links with the technology.\nHe said: \"If I get lost I can ask what's around me and it will tell me.\"\nRamsey added that using the glasses means he does not have to continuously reach for his phone, so it remains safe in his pocket.\nHe said the glasses, which range in cost between £200 and £400, had been worth paying for and believed they could radically help those who are visually impaired.\n\"It just helps with your everyday life,\" he added.\nBut Ramsey said he was aware of concerns about smart glasses from some people.\nThis includes reports where men wearing the glasses film themselves approaching women, without their knowledge or consent, to ask casual questions or use pick-up lines before posting the videos on social media.\nUK courts recently banned people using the glasses inside their buildings and a number of restaurants and theatres have done the same.\nRamsey is concerned more places might ban them which could negatively affect visually impaired people using them.\n\"If they stop them in pubs and restaurants... it's going to be a bit of a pain for us,\" he added.\nMeta has previously told the BBC people should behave responsibly with any technology.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "A man who is blind said smart glasses have been a \"game-changer\" in helping him to navigate life."
+      },
+      {
+        "id": "u02",
+        "text": "Kevin Ramsey, 48, from Haverhill in Suffolk, is completely blind and uses a guide dog."
+      },
+      {
+        "id": "u03",
+        "text": "He is a volunteer with sight-loss charity, Suffolk Sight, which recently gave him a demonstration of Meta glasses that can read things like restaurant menus and help track walking routes."
+      },
+      {
+        "id": "u04",
+        "text": "Ramsey decided to invest in a pair and said the technology had completely changed his life."
+      },
+      {
+        "id": "u05",
+        "text": "\"If you go to a restaurant then it is able to help you read the menus,\" he told BBC Radio Suffolk's Wayne Bavin."
+      },
+      {
+        "id": "u06",
+        "text": "\"You can go into shops, pick up an item and ask 'what is this?' and it will tell you.\""
+      },
+      {
+        "id": "u07",
+        "text": "When out with his guide dog, Ramsey uses the VoiceVista app which tracks where he is going, and this links with the technology."
+      },
+      {
+        "id": "u08",
+        "text": "He said: \"If I get lost I can ask what's around me and it will tell me.\""
+      },
+      {
+        "id": "u09",
+        "text": "Ramsey added that using the glasses means he does not have to continuously reach for his phone, so it remains safe in his pocket."
+      },
+      {
+        "id": "u10",
+        "text": "He said the glasses, which range in cost between £200 and £400, had been worth paying for and believed they could radically help those who are visually impaired."
+      },
+      {
+        "id": "u11",
+        "text": "\"It just helps with your everyday life,\" he added."
+      },
+      {
+        "id": "u12",
+        "text": "But Ramsey said he was aware of concerns about smart glasses from some people."
+      },
+      {
+        "id": "u13",
+        "text": "This includes reports where men wearing the glasses film themselves approaching women, without their knowledge or consent, to ask casual questions or use pick-up lines before posting the videos on social media."
+      },
+      {
+        "id": "u14",
+        "text": "UK courts recently banned people using the glasses inside their buildings and a number of restaurants and theatres have done the same."
+      },
+      {
+        "id": "u15",
+        "text": "Ramsey is concerned more places might ban them which could negatively affect visually impaired people using them."
+      },
+      {
+        "id": "u16",
+        "text": "\"If they stop them in pubs and restaurants... it's going to be a bit of a pain for us,\" he added."
+      },
+      {
+        "id": "u17",
+        "text": "Meta has previously told the BBC people should behave responsibly with any technology."
+      }
+    ],
+    "source_caption": "ContributedKevin Ramsey said smart glasses have changed his life."
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "B2",
+    "article_type": "narrative_profile",
+    "dirty_fragments": [],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "the technology had completely changed his life",
+        "acceptable_answer_points_zh": [
+          "Ramsey 说这项技术彻底改变了他的生活"
+        ],
+        "paragraph_ids": [
+          "u04"
+        ]
+      },
+      {
+        "source_quote": "range in cost between £200 and £400",
+        "acceptable_answer_points_zh": [
+          "眼镜售价在 200 到 400 英镑之间"
+        ],
+        "paragraph_ids": [
+          "u10"
+        ]
+      },
+      {
+        "source_quote": "UK courts recently banned people using the glasses inside their buildings",
+        "acceptable_answer_points_zh": [
+          "英国法院已禁止在其建筑内使用此类眼镜"
+        ],
+        "paragraph_ids": [
+          "u14"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "track walking routes",
+        "source_quote": "help track walking routes",
+        "meaning_zh": "追踪步行路线",
+        "teaching_value": "实用动宾搭配",
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "expression": "without their knowledge or consent",
+        "source_quote": "without their knowledge or consent",
+        "meaning_zh": "在对方不知情或不同意的情况下",
+        "teaching_value": "新闻法律语境固定短语",
+        "paragraph_ids": [
+          "u13"
+        ]
+      },
+      {
+        "expression": "have done the same",
+        "source_quote": "a number of restaurants and theatres have done the same",
+        "meaning_zh": "也采取了同样做法",
+        "teaching_value": "承接复指表达",
+        "paragraph_ids": [
+          "u14"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "Ramsey 的眼镜由慈善机构免费赠送",
+        "reason": "原文说他自己决定花钱购买"
+      },
+      {
+        "claim_zh": "眼镜只能用来朗读菜单",
+        "reason": "原文还提到追踪路线、识别物品等用途"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "have done the same",
+        "acceptable_direction_zh": "用 have done the same 复述餐厅剧院跟随法院禁戴的做法"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "selected_units",
+      "required_paragraph_ids": [
+        "u01",
+        "u04",
+        "u08"
+      ],
+      "allowed_paragraph_ids": [
+        "u01",
+        "u03",
+        "u04",
+        "u08",
+        "u13",
+        "u14",
+        "u15"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

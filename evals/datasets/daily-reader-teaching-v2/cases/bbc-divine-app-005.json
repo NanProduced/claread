@@ -1,0 +1,208 @@
+{
+  "schema_version": 2,
+  "case_id": "bbc-divine-app-005",
+  "dataset_id": "daily-reader-teaching-v2",
+  "origin": {
+    "kind": "frozen_real_article",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/c3r05g378w4o",
+    "captured_at": "2026-08-21",
+    "frozen_real_article": true
+  },
+  "input": {
+    "title": "Is Vine back? Short-form video-sharing app Divine opens to public",
+    "subtitle": "The app lets users create six-second looping videos and hosts more than two million classic videos.",
+    "source": "bbc",
+    "source_url": "https://www.bbc.co.uk/news/articles/c3r05g378w4o",
+    "original_text": "A new app seen as a spiritual successor to short-form video service Vine has been released to the public.\nMuch like the original, Divine lets users create and share videos which are just six seconds long and repeat on a loop.\nThe new app also hosts more than two million original Vine videos and - in a bid to further distance itself from other platforms - bans content made by AI.\nDivine's founder, former Twitter employee Evan Henshaw-Plath, told the BBC he wanted to create the app because he felt social media needed \"a reset\".\n\"I want to see it rival other apps because I think we have gone awry,\" he said in an interview a few weeks before the public launch.\nHe said it was important that there was no AI-generated content on Divine, adding he was \"sick and tired of seeing videos and not knowing whether it was real\".\n\"I want to be able to have fun and not have to second guess these things,\" he said.\nAt its peak, Vine had more than 200 million monthly active users and helped launch the careers of some of the internet's biggest stars.\nJake Paul and Lele Pons are two of those who made their names on the platform before it was shut down by its owner Twitter in 2017.\nDivine is backed by Twitter co-founder Jack Dorsey, who had a senior role at the social media platform when it purchased the Vine in 2012.\nIt is built on a decentralised system called Nostr, meaning it is not controlled by a single company in the same way as platforms such as TikTok or Instagram.\nThis means users can potentially take their accounts and content with them to other services that use the same system, rather than being locked into one platform.\nA similar approach has been used by X rivals Bluesky and Mastodon.\nMore than 2.5 million original Vines have now been restored and added back to the Divine app to be enjoyed again.\nDivine's website FAQs outlines several ways for the platform to ensure all videos on the app are human-made, without AI involvement.\nFor example, users have to record videos live in the app, rather than uploading from elsewhere, and it will use a verification tool called ProofMode - which works like a digital receipt for a piece of media.\nWhen users record something using a device with ProofMode, it can attach information which helps verify elements such as when it was recorded and whether the file has been altered since.\nUsers will also be able to flag suspected AI content, and automated systems as well as humans will be involved in looking for signs of the tech.\nDivine's attempt to do things differently could also be its biggest challenge, according to social media analyst Matt Nevarra.\n\"The mechanisms people dislike about modern social media are often the same that made those platforms extraordinarily good at keeping people there,\" he said.\n\"So Divine now has to prove you can remove some of the addiction without removing the magic.\"\nAs well as viewing classic Vines, users will again be able to make their own six-second creations.\nAside from its new content and features, the treasure trove of old Vines created by some of the platform's biggest stars could well be a draw for those who remember their first time around (and around).\nHenshaw-Plath said he initially set out to simply recreate Vine's short-video format, but then wondered if he could bring back its old videos too.\nHe discovered the Internet Archive had preserved a copy of Vine's data and spent months reconstructing it.\n\"I was like, oh, this is really cool,\" he said, initially expecting only a few thousand people to be interested.\nInstead, 10,000 people installed the app within its first few hours, overwhelming its servers.\n\"That's when I went, oh, there's something more here,\" he said.\nAs to why people may still have interest in short-form content when many apps such as YouTube and TikTok have moved towards much longer videos, he compared Vine's format to the haiku.\n\"We could do free-form prose,\" he said.\n\"Yet poetry is a form in which we value and which has meaning. And so there's many ways in which Vine was poetry.\"\nThe challenge for Divine is to turn that nostalgia into something that works for a new generation of social media users.",
+    "reading_units": [
+      {
+        "id": "u01",
+        "text": "A new app seen as a spiritual successor to short-form video service Vine has been released to the public.\nMuch like the original, Divine lets users create and share videos which are just six seconds long and repeat on a loop."
+      },
+      {
+        "id": "u02",
+        "text": "The new app also hosts more than two million original Vine videos and - in a bid to further distance itself from other platforms - bans content made by AI.\nDivine's founder, former Twitter employee Evan Henshaw-Plath, told the BBC he wanted to create the app because he felt social media needed \"a reset\"."
+      },
+      {
+        "id": "u03",
+        "text": "\"I want to see it rival other apps because I think we have gone awry,\" he said in an interview a few weeks before the public launch.\nHe said it was important that there was no AI-generated content on Divine, adding he was \"sick and tired of seeing videos and not knowing whether it was real\"."
+      },
+      {
+        "id": "u04",
+        "text": "\"I want to be able to have fun and not have to second guess these things,\" he said.\nAt its peak, Vine had more than 200 million monthly active users and helped launch the careers of some of the internet's biggest stars."
+      },
+      {
+        "id": "u05",
+        "text": "Jake Paul and Lele Pons are two of those who made their names on the platform before it was shut down by its owner Twitter in 2017.\nDivine is backed by Twitter co-founder Jack Dorsey, who had a senior role at the social media platform when it purchased the Vine in 2012."
+      },
+      {
+        "id": "u06",
+        "text": "It is built on a decentralised system called Nostr, meaning it is not controlled by a single company in the same way as platforms such as TikTok or Instagram.\nThis means users can potentially take their accounts and content with them to other services that use the same system, rather than being locked into one platform."
+      },
+      {
+        "id": "u07",
+        "text": "A similar approach has been used by X rivals Bluesky and Mastodon.\nMore than 2.5 million original Vines have now been restored and added back to the Divine app to be enjoyed again."
+      },
+      {
+        "id": "u08",
+        "text": "Divine's website FAQs outlines several ways for the platform to ensure all videos on the app are human-made, without AI involvement.\nFor example, users have to record videos live in the app, rather than uploading from elsewhere, and it will use a verification tool called ProofMode - which works like a digital receipt for a piece of media."
+      },
+      {
+        "id": "u09",
+        "text": "When users record something using a device with ProofMode, it can attach information which helps verify elements such as when it was recorded and whether the file has been altered since.\nUsers will also be able to flag suspected AI content, and automated systems as well as humans will be involved in looking for signs of the tech."
+      },
+      {
+        "id": "u10",
+        "text": "Divine's attempt to do things differently could also be its biggest challenge, according to social media analyst Matt Nevarra.\n\"The mechanisms people dislike about modern social media are often the same that made those platforms extraordinarily good at keeping people there,\" he said."
+      },
+      {
+        "id": "u11",
+        "text": "\"So Divine now has to prove you can remove some of the addiction without removing the magic.\"\nAs well as viewing classic Vines, users will again be able to make their own six-second creations."
+      },
+      {
+        "id": "u12",
+        "text": "Aside from its new content and features, the treasure trove of old Vines created by some of the platform's biggest stars could well be a draw for those who remember their first time around (and around).\nHenshaw-Plath said he initially set out to simply recreate Vine's short-video format, but then wondered if he could bring back its old videos too."
+      },
+      {
+        "id": "u13",
+        "text": "He discovered the Internet Archive had preserved a copy of Vine's data and spent months reconstructing it.\n\"I was like, oh, this is really cool,\" he said, initially expecting only a few thousand people to be interested."
+      },
+      {
+        "id": "u14",
+        "text": "Instead, 10,000 people installed the app within its first few hours, overwhelming its servers.\n\"That's when I went, oh, there's something more here,\" he said."
+      },
+      {
+        "id": "u15",
+        "text": "As to why people may still have interest in short-form content when many apps such as YouTube and TikTok have moved towards much longer videos, he compared Vine's format to the haiku.\n\"We could do free-form prose,\" he said."
+      },
+      {
+        "id": "u16",
+        "text": "\"Yet poetry is a form in which we value and which has meaning. And so there's many ways in which Vine was poetry.\"\nThe challenge for Divine is to turn that nostalgia into something that works for a new generation of social media users."
+      }
+    ],
+    "source_caption": "DivineA new app seen as a spiritual successor to Vine."
+  },
+  "gold": {
+    "expected_outcome": "cleaned_publish",
+    "expected_difficulty": "B1",
+    "article_type": "news_report",
+    "dirty_fragments": [],
+    "rejection_reasons": [],
+    "key_evidence": [
+      {
+        "source_quote": "bans content made by AI",
+        "acceptable_answer_points_zh": [
+          "Divine 禁止 AI 生成的内容"
+        ],
+        "paragraph_ids": [
+          "u02"
+        ]
+      },
+      {
+        "source_quote": "2.5 million original Vines have now been restored",
+        "acceptable_answer_points_zh": [
+          "超过 250 万个 Vine 原视频被恢复"
+        ],
+        "paragraph_ids": [
+          "u07"
+        ]
+      },
+      {
+        "source_quote": "10,000 people installed the app within its first few hours",
+        "acceptable_answer_points_zh": [
+          "上线头几小时就有 1 万人安装"
+        ],
+        "paragraph_ids": [
+          "u14"
+        ]
+      }
+    ],
+    "core_expressions": [
+      {
+        "expression": "gone awry",
+        "source_quote": "I think we have gone awry",
+        "meaning_zh": "走偏了、出了岔子",
+        "teaching_value": "书面感习语",
+        "paragraph_ids": [
+          "u03"
+        ]
+      },
+      {
+        "expression": "locked into",
+        "source_quote": "rather than being locked into one platform",
+        "meaning_zh": "被锁定在……里",
+        "teaching_value": "科技语境常用搭配",
+        "paragraph_ids": [
+          "u06"
+        ]
+      },
+      {
+        "expression": "a draw",
+        "source_quote": "could well be a draw for those",
+        "meaning_zh": "吸引人的事物",
+        "teaching_value": "名词化口语表达",
+        "paragraph_ids": [
+          "u12"
+        ]
+      }
+    ],
+    "forbidden_facts": [
+      {
+        "claim_zh": "Divine 由 TikTok 提供支持",
+        "reason": "原文说是 Twitter 联合创始人 Jack Dorsey 支持"
+      },
+      {
+        "claim_zh": "用户可以从别处上传视频到 Divine",
+        "reason": "原文要求在应用内实时录制"
+      }
+    ],
+    "acceptable_transfer_directions": [
+      {
+        "task_kind": "retell",
+        "required_learning_target": "gone awry",
+        "acceptable_direction_zh": "用 gone awry 复述创始人对当下社交媒体的评价"
+      }
+    ],
+    "expected_translation_coverage": {
+      "policy": "all_units",
+      "required_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13",
+        "u14",
+        "u15",
+        "u16"
+      ],
+      "allowed_paragraph_ids": [
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+        "u05",
+        "u06",
+        "u07",
+        "u08",
+        "u09",
+        "u10",
+        "u11",
+        "u12",
+        "u13",
+        "u14",
+        "u15",
+        "u16"
+      ]
+    },
+    "annotation_status": "DRAFT_PM_REVIEW"
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "case_id": "bbc-politicians-too-online-008",
+  "lesson_blueprint": {
+    "article_type": "opinion_commentary",
+    "effective_difficulty": "C1",
+    "reading_mission": "带着“政治人物上网太多还是不够、这真的影响选票吗”读这篇媒体评论。",
+    "learning_objectives": [
+      "梳理十年间政治传播从粉丝文化到内容工厂的变化",
+      "分辨评论中的事实、引语与作者判断"
+    ],
+    "structure_map": [
+      {
+        "label": "从 Milifandom 到今天",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03",
+          "u04",
+          "u05",
+          "u06"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "各党的线上军备",
+        "paragraph_ids": [
+          "u07",
+          "u08",
+          "u09",
+          "u10"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "热度与因果之争",
+        "paragraph_ids": [
+          "u11",
+          "u12",
+          "u13",
+          "u14",
+          "u15",
+          "u16",
+          "u17",
+          "u18",
+          "u19",
+          "u20",
+          "u21",
+          "u22"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "亲力亲为的风险与效果之问",
+        "paragraph_ids": [
+          "u23",
+          "u24",
+          "u25",
+          "u26",
+          "u27",
+          "u28",
+          "u29",
+          "u30",
+          "u31",
+          "u32",
+          "u33",
+          "u34",
+          "u35",
+          "u36",
+          "u37",
+          "u38",
+          "u39"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u03",
+      "u17"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "哪位英国政党领袖拥有最大的线上观众规模？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u06"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u06"
+        ],
+        "reference_answer": "Reform UK 的 Nigel Farage，跨平台粉丝约 760 万。",
+        "explanation_zh": "第六段给出 Farage 的粉丝数字对比。"
+      },
+      {
+        "prompt": "Hyman 认为 Burnham 早期数字内容成功的关键是什么？",
+        "skill": "claim_evidence",
+        "evidence_paragraph_ids": [
+          "u15",
+          "u16"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u16"
+        ],
+        "reference_answer": "既重数量也重质量：每天把正在做的事讲上三四五遍，保持持续曝光。",
+        "explanation_zh": "第十五、十六段连续给出 Hyman 的判断与引语。"
+      },
+      {
+        "prompt": "学者 Emma Connolly 对政治社交媒体的效果持什么态度？",
+        "skill": "stance",
+        "evidence_paragraph_ids": [
+          "u36"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u36"
+        ],
+        "reference_answer": "她不确定，认为缺少有力证据表明它能说服对立或摇摆选民。",
+        "explanation_zh": "第三十六段直接引用她的保留态度。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "out there",
+        "paragraph_id": "u16",
+        "meaning_zh": "出现在公众视野中、保持曝光",
+        "usage_note": "政治与营销语境指持续露面",
+        "reusable_pattern": "be out there regularly"
+      },
+      {
+        "expression": "non-negotiable",
+        "paragraph_id": "u20",
+        "meaning_zh": "不可妥协的、必须做的",
+        "usage_note": "强调底线要求",
+        "reusable_pattern": "it is non-negotiable to do sth"
+      },
+      {
+        "expression": "a method in the madness",
+        "paragraph_id": "u26",
+        "meaning_zh": "荒唐举动背后自有盘算",
+        "usage_note": "化用莎士比亚，评价反常策略",
+        "reusable_pattern": "there is a method in the madness"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "Can a prime minister TikTok his way through a war, terror attack or controversial court case?",
+        "paragraph_id": "u37",
+        "structure_zh": "情态动词(can)+动词化新词(TikTok)+way through 结构",
+        "translation": "一位首相能靠 TikTok 撑过战争、恐怖袭击或争议性诉讼吗？"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u03": "这促使保守党席位增加的戴维·卡梅伦夸口：“英国和推特不是一回事。”Tomlinson 后来告诉我，眼看 Milibae 入主十号的希望落空，让她成了“政治悲观主义者”，因为她意识到，在网上赢得选民“不是一天、一周甚至几个月能做到的事，那需要很多年”。",
+      "u16": "“你必须每天三四五遍地讲述你正在做什么的故事，这样才能经常出现在公众视野里，”Hyman 说。“基尔·斯塔默露出得不够，所以没有落地生根。”",
+      "u17": "这里存在一个因果难题：是 Burnham 因为在社交媒体上狂揽点赞而民调走高，还是因为他本来就受欢迎，线上表现才更好？",
+      "u20": "把握分寸的难度正在于此。曾任特拉斯与苏纳克新闻秘书的 Bea Timpson 自称更偏爱广播与纸媒这类“传统媒体”，她补充道：“我不得不接受，如今适度上网已是没有商量余地的必然，但你绝对可能上得太多。”",
+      "u26": "这种疯狂背后自有章法。“人们更愿意互动那些感觉像出自个人之手、而不是设计专家委员会之手的作品，”Guerin 告诉我。“做点古怪荒唐的事很容易爆红，但那未必能推进你的竞选目标。”",
+      "u37": "这又引出另一个问题：Burnham 的数字蜜月期能持续多久？一位首相能靠 TikTok 撑过战争、恐怖袭击或争议性诉讼吗？宣布一项新福利也许能爆红，但为它埋单的削减细节呢？"
+    },
+    "post_read_summary": "从 Milifandom 到 Burnham 的内容工厂，英国政治人物把社交平台当成必争之地；但因果难辨、效果存疑，真正的考验在于：热度退去之后，政策与论证还站不站得住。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 non-negotiable 复述 Timpson 对政治人物上网程度的态度。",
+      "scaffold": "Timpson prefers traditional media, but she accepts that ...",
+      "reference_points": [
+        "适度上网已成必然",
+        "但过度曝光同样危险",
+        "分寸才是关键"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}

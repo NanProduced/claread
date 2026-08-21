@@ -1,0 +1,141 @@
+{
+  "case_id": "npr-europe-heat-010",
+  "lesson_blueprint": {
+    "article_type": "opinion_commentary",
+    "effective_difficulty": "B2",
+    "reading_mission": "带着“热浪造成了什么代价、作者想让我们记住什么”读这篇广播评论。",
+    "learning_objectives": [
+      "抓住评论中的事实支撑与情感推进",
+      "体会作者从数字到记忆的叙述转换"
+    ],
+    "structure_map": [
+      {
+        "label": "红色警报下的欧洲",
+        "paragraph_ids": [
+          "u01",
+          "u02",
+          "u03"
+        ],
+        "function": "opening"
+      },
+      {
+        "label": "死亡的账单",
+        "paragraph_ids": [
+          "u04",
+          "u05",
+          "u06"
+        ],
+        "function": "development"
+      },
+      {
+        "label": "未来的预兆",
+        "paragraph_ids": [
+          "u07"
+        ],
+        "function": "closing"
+      }
+    ],
+    "selected_paragraph_ids": [
+      "u02",
+      "u06"
+    ]
+  },
+  "learning_package": {
+    "comprehension_checkpoints": [
+      {
+        "prompt": "意大利卫生部监测的城市本周处于什么级别的警报？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u02"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u02"
+        ],
+        "reference_answer": "全部 27 座城市都处于红色警报。",
+        "explanation_zh": "第二段列出监测城市与警报级别。"
+      },
+      {
+        "prompt": "法国统计的六月热浪超额死亡人数是多少？",
+        "skill": "fact_location",
+        "evidence_paragraph_ids": [
+          "u04"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u04"
+        ],
+        "reference_answer": "至少 5700 人。",
+        "explanation_zh": "第四段给出法国官方的初步统计。"
+      },
+      {
+        "prompt": "欧洲投资银行与欧盟委员会的研究预测了什么？",
+        "skill": "main_idea",
+        "evidence_paragraph_ids": [
+          "u07"
+        ],
+        "answer_evidence_paragraph_ids": [
+          "u07"
+        ],
+        "reference_answer": "未来几十年欧盟农业损失将攀升，干旱、高温与风暴损害庄稼产量并使牲畜承压。",
+        "explanation_zh": "第七段引用研究报告的预测。"
+      }
+    ],
+    "language_targets": [
+      {
+        "expression": "hold onto",
+        "paragraph_id": "u03",
+        "meaning_zh": "留住、迟迟不散",
+        "usage_note": "此处形容城市夜间留住热量",
+        "reusable_pattern": "hold onto + 名词"
+      },
+      {
+        "expression": "ignite more fires",
+        "paragraph_id": "u06",
+        "meaning_zh": "引发更多火灾",
+        "usage_note": "因果链条上的隐喻用法",
+        "reusable_pattern": "ignite + 灾害类名词"
+      },
+      {
+        "expression": "climb",
+        "paragraph_id": "u07",
+        "meaning_zh": "攀升、持续上升",
+        "usage_note": "新闻中描述数字走高",
+        "reusable_pattern": "数字/损失 + climb"
+      }
+    ],
+    "sentence_maps": [
+      {
+        "sentence": "They count at least 5,700 excess deaths during the swelter that climbed to 111 degrees Fahrenheit in the early part of the summer.",
+        "paragraph_id": "u04",
+        "structure_zh": "主语(They)+谓语(count)+宾语(5,700 excess deaths)+定语从句(that climbed...)",
+        "translation": "他们统计，今夏早期气温升至华氏 111 度的酷暑中，至少有 5700 人超额死亡"
+      }
+    ],
+    "translations_by_paragraph_id": {
+      "u02": "这是欧洲的炎热之夏。意大利卫生部监测的全部 27 座城市——包括罗马、那不勒斯、威尼斯和博洛尼亚——本周都处于红色警报。人们被建议避开阳光、含糖碳酸饮料、咖啡和酒精。想想看，在意大利要避开阳光、气泡饮、葡萄酒和意式浓缩，有多难。",
+      "u03": "世界气象组织说，这是西欧有记录以来最热的六月，如今热浪卷土重来。伦敦、巴黎、马德里、佛罗伦萨、罗马这些以博物馆、市集、剧院和餐厅吸引游客的伟大城市，被认为格外开阔、曝露。这些美丽的城市由砖石砌成，以宽阔的柏油大道相连，白天吸热，夜晚仍留住热量。",
+      "u04": "法国官员才刚开始摸清六月热浪的代价。他们统计，今夏早期气温升至华氏 111 度的酷暑中，至少有 5700 人超额死亡。死者中许多是老人，常常独自待在闷热的房子或公寓里。德国在六月最热的日子里记录了近一百起溺水，其中许多是年轻男子。",
+      "u06": "听到那些话，我很难不想起自己报道过的战区里同样爆满的殡仪馆。科学家说，气候变化带来的持续升温可能点燃更多火灾，就像上个月席卷法国和西班牙、以及正在美国、加拿大和世界各地肆虐的那些。",
+      "u07": "欧洲投资银行与欧盟委员会今年夏天发布研究，预测未来几十年欧盟的农业损失将攀升，干旱、高温与风暴损害庄稼产量，也让牲畜承压。2026 年是欧洲的炎热之夏——也许会一直延续到明年夏天，以及此后的一个个夏天。美国人，以及世界其他地方的人，对这种感受也不陌生。"
+    },
+    "post_read_summary": "从红色警报到 5700 个超额死亡，Scott Simon 用数字与记忆书写欧洲的炎热之夏；研究预测农业损失将继续攀升，而这个夏天也许只是往后无数个夏天的序章。",
+    "transfer_task": {
+      "task_kind": "retell",
+      "prompt": "用 hold onto 复述欧洲城市夜晚仍然酷热的原因。",
+      "scaffold": "The brick, stone and asphalt avenues absorb the heat and ...",
+      "reference_points": [
+        "砖石与柏油白天吸热",
+        "夜晚热量迟迟不散",
+        "城市因此格外曝露"
+      ]
+    }
+  },
+  "source_assets": {
+    "source_caption": null
+  },
+  "run_meta": {
+    "outcome": "cleaned_publish",
+    "abort": false,
+    "refinement_count": 0,
+    "usage": null
+  }
+}
