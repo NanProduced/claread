@@ -170,7 +170,7 @@ def _clean_extracted_text(text: str) -> str:
 
 
 def clean_extracted_article(text: str) -> str:
-    """Deterministic A-1 cleaning for the three exposed dirty-data forms."""
+    """Deterministic A-1 cleaning for the exposed dirty-data forms."""
     if not text:
         return ""
     kept_lines: list[str] = []
@@ -179,7 +179,12 @@ def clean_extracted_article(text: str) -> str:
         if not stripped:
             kept_lines.append(line)
             continue
-        if _PUBLISHED_LINE_RE.match(stripped) or _BOILERPLATE_LINE_RE.match(stripped):
+        if (
+            _PUBLISHED_LINE_RE.match(stripped)
+            or _BOILERPLATE_LINE_RE.match(stripped)
+            or _TRANSCRIPT_CUE_RE.match(stripped)
+            or _TRANSCRIPT_SOUNDBITE_RE.search(stripped)
+        ):
             continue
         kept_lines.append(_LINK_BADGE_RE.sub("", line))
     return "\n".join(kept_lines).strip()
@@ -188,17 +193,17 @@ def clean_extracted_article(text: str) -> str:
 def detect_transcript_markers(text: str) -> list[str]:
     """Return detected transcript marker kinds; non-empty means reject.
 
-    Threshold: >=2 speaker cues, or >=1 cue plus a SOUNDBITE marker. A
-    single stray cue in a normal article does not trigger rejection.
+    Threshold: >=2 speaker cues, or >=2 soundbites. A single speaker
+    cue and/or a single soundbite is treated as cleanable framing.
     """
     if not text:
         return []
     cue_count = len(_TRANSCRIPT_CUE_RE.findall(text))
     soundbite_count = len(_TRANSCRIPT_SOUNDBITE_RE.findall(text))
     markers: list[str] = []
-    if cue_count >= 2 or (cue_count >= 1 and soundbite_count >= 1):
-        markers.append(f"speaker_cue_x{cue_count}" if cue_count else "speaker_cue")
-    if soundbite_count and (cue_count >= 1 or soundbite_count >= 2):
+    if cue_count >= 2:
+        markers.append(f"speaker_cue_x{cue_count}")
+    if soundbite_count >= 2:
         markers.append(f"soundbite_x{soundbite_count}")
     return markers
 

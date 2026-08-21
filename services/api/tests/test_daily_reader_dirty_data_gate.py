@@ -131,7 +131,6 @@ class TestTranscriptDetection:
         markers = detect_transcript_markers(NPR_TRANSCRIPT_TEXT)
         assert markers
         assert any("speaker_cue" in m for m in markers)
-        assert any("soundbite" in m for m in markers)
 
     def test_clean_article_not_detected(self):
         assert detect_transcript_markers(DIRTY_BBC_TEXT) == []
@@ -140,9 +139,32 @@ class TestTranscriptDetection:
         text = "Intro paragraph.\nSOMEONE, HOST:\nOnly one cue here."
         assert detect_transcript_markers(text) == []
 
-    def test_single_cue_plus_soundbite_detected(self):
+    def test_single_cue_plus_soundbite_treated_as_cleanable_framing(self):
         text = "SOMEONE, HOST:\nWords.\n(SOUNDBITE OF MUSIC)"
-        assert detect_transcript_markers(text)
+        assert detect_transcript_markers(text) == []
+
+    def test_two_cues_detected_as_transcript(self):
+        text = "SOMEONE, HOST:\nWords.\nANOTHER, BYLINE:\nMore words."
+        markers = detect_transcript_markers(text)
+        assert markers == ["speaker_cue_x2"]
+
+    def test_two_soundbites_detected_as_transcript(self):
+        text = "Words.\n(SOUNDBITE OF MUSIC 1)\n(SOUNDBITE OF MUSIC 2)"
+        markers = detect_transcript_markers(text)
+        assert markers == ["soundbite_x2"]
+
+    def test_transcript_framing_lines_removed_by_clean_extracted_article(self):
+        text = (
+            "SCOTT SIMON, HOST:\n"
+            "This is Europe's summer of heat.\n"
+            "(SOUNDBITE OF HERMANOS GUTIERREZ'S \"MESA REDONDA\")\n"
+            "Copyright © 2026 NPR. All rights reserved."
+        )
+        cleaned = clean_extracted_article(text)
+        assert "SCOTT SIMON, HOST:" not in cleaned
+        assert "(SOUNDBITE OF" not in cleaned
+        assert "Copyright" not in cleaned
+        assert cleaned == "This is Europe's summer of heat."
 
 
 class TestLightNormalizeGate:
@@ -168,6 +190,25 @@ class TestLightNormalizeGate:
         assert ", external" not in joined
         assert "Online Nation figures" in joined
         assert "open letter entitled" in joined
+
+    def test_europe_heat_framing_not_aborted_in_light_normalize(self):
+        state = {
+            "original_text": (
+                "SCOTT SIMON, HOST:\n"
+                "This is Europe's summer of heat. All 27 cities Italy's health ministry monitors "
+                "are on red alert this week.\n"
+                "(SOUNDBITE OF HERMANOS GUTIERREZ'S \"MESA REDONDA\")\n"
+                "Copyright © 2026 NPR. All rights reserved."
+            ),
+            "title": "Europe's summer of heat",
+        }
+        result = light_normalize_node(state)
+        assert result.get("abort") is not True
+        assert len(result.get("normalized_paragraphs", [])) > 0
+        joined = "\n".join(p["text"] for p in result["normalized_paragraphs"])
+        assert "SCOTT SIMON, HOST:" not in joined
+        assert "(SOUNDBITE OF" not in joined
+        assert "Copyright" not in joined
 
 
 class TestGraphTranscriptShortCircuit:
