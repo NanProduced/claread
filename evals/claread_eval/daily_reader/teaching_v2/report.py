@@ -72,12 +72,22 @@ def build_strata(case_results: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     return strata
 
 
+def _completed_eight_dim_publish(cr: dict[str, Any]) -> bool:
+    """overall_mean only counts cleaned_publish cases with a complete 8-dim judge."""
+    if cr.get("expected_outcome") != "cleaned_publish":
+        return False
+    judge = cr.get("judge") or {}
+    dims = judge.get("dimensions") if judge.get("status") == "ok" else None
+    return (isinstance(dims, dict) and len(dims) == 8
+            and isinstance(cr.get("overall"), int | float))
+
+
 def build_run(*, run_id: str, dataset_id: str, dataset_dir: str, rubric: dict[str, Any],
               case_results: list[dict[str, Any]], judge_status: str,
               created_at: str) -> dict[str, Any]:
     pass_cases = [cr for cr in case_results if cr["verdict"] == "PASS"]
-    overalls = [cr["overall"] for cr in case_results
-                if isinstance(cr["overall"], int | float)]
+    expected_rejects = [cr for cr in case_results if cr["verdict"] == "EXPECTED_REJECT"]
+    overalls = [cr["overall"] for cr in case_results if _completed_eight_dim_publish(cr)]
     return {
         "schema_kind": "daily_reader_teaching_v2_run",
         "run_id": run_id,
@@ -96,13 +106,15 @@ def build_run(*, run_id: str, dataset_id: str, dataset_dir: str, rubric: dict[st
         "aggregate": {
             "case_count": len(case_results),
             "pass_count": len(pass_cases),
+            "expected_reject_count": len(expected_rejects),
             "verdicts": {cr["verdict"]: sum(1 for c in case_results
                                             if c["verdict"] == cr["verdict"])
                          for cr in case_results},
             "overall_mean": round(sum(overalls) / len(overalls), 4)
             if overalls else None,
-            "overall_mean_note": "观察值：不能取代单篇 verdict；"
-                                 "PASS 要求全门禁∧八维每项≥4∧overall≥0.90∧人工门禁完成",
+            "overall_mean_note": "观察值：只统计完成八维 Judge 的 cleaned_publish；"
+                                 "全部 SEMANTIC_NOT_RUN 时为 null；"
+                                 "EXPECTED_REJECT 不计入质量 PASS",
         },
     }
 
@@ -168,8 +180,15 @@ def render_report_md(run: dict[str, Any]) -> str:
             lines.append(f"- {axis}={key}: PASS {s['pass_count']}/{s['count']}，"
                          f"accepted={s['accepted']}，verdicts={s['verdicts']}")
     agg = run["aggregate"]
-    lines += ["", f"overall mean（仅观察）: **{agg['overall_mean']}** — "
-              f"{agg['overall_mean_note']}", "", "## 失败证据", ""]
+    lines += [
+        "",
+        "## 质量 PASS 与预期拒绝",
+        "",
+        f"- 质量 PASS: {agg['pass_count']}",
+        f"- EXPECTED_REJECT: {agg.get('expected_reject_count', 0)}",
+        "",
+        f"overall mean（仅观察）: **{agg['overall_mean']}** — "
+        f"{agg['overall_mean_note']}", "", "## 失败证据", ""]
     any_evidence = False
     for cr in run["cases"]:
         evidences = []

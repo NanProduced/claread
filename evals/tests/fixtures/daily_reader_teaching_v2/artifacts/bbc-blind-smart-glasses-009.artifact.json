@@ -133,13 +133,13 @@
     },
     "post_read_summary": "对完全失明的 Ramsey 来说，智能眼镜读菜单、记路线、保手机安全，是实实在在的生活改善；但当同款眼镜因偷拍争议被法院和场所禁戴时，他担心真正需要它们的人会被一并挡在门外。",
     "transfer_task": {
-      "task_kind": "retell",
-      "prompt": "用 have done the same 复述餐厅和剧院跟随法院的做法。",
-      "scaffold": "UK courts banned the glasses, and restaurants and theatres ...",
+      "task_kind": "rewrite",
+      "prompt": "用 have done the same 压缩改写 Ramsey 故事的转折：法院禁戴之后，更多场所跟进，真正需要眼镜的人被波及。",
+      "scaffold": "After the courts banned the glasses, restaurants and theatres have done the same, which ...",
       "reference_points": [
-        "法院率先禁戴",
+        "法院因偷拍争议禁戴",
         "餐厅剧院跟进",
-        "视障用户担心被波及"
+        "视障用户的生活工具被一并挡住"
       ]
     }
   },

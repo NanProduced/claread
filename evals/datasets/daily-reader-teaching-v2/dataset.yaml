@@ -4,11 +4,19 @@ description: >-
   Daily Reader teaching-contract v2 gold set. Ten frozen real articles
   (BBC x8, NPR x2; three recast verbatim from the v1 regression
   snapshots keeping their original captured_at, seven captured read-only
-  on 2026-08-21): four news_report, two opinion_commentary, two
-  explainer, two narrative_profile; B1 x4, B2 x3, C1 x3; one reject
-  (transcript skeleton), two dirty cleaned_publish cases, one short
-  (<800 words) and one long (>=1500 words) article. All gold is
-  DRAFT_PM_REVIEW; human approval is never written by this package.
+  on 2026-08-21). Difficulty quotas count cleaned_publish only: B1 x3,
+  B2 x3, C1 x3; reject npr-ai-viruses-003 is B2 but does not fill the
+  B2 quota. The third cleaned_publish B2 is the existing frozen snapshot
+  bbc-iphone-motion-sickness-006 recast from B1 (no new scrape).
+  Transfer tasks follow P-1 kinds retell/rewrite/counter/explain.
+  All gold is DRAFT_PM_REVIEW; human approval is never written by this package.
+owner_input_required:
+  - gap: additional_guardian_cleaned_publish_article
+    status: OWNER_INPUT_REQUIRED
+    reason: >-
+      No unused in-repo frozen real-article snapshot remains. Full-text
+      submission permission for a new public page is not explicit, so
+      P-2R does not fetch more articles to pad the set.
 case_globs:
   - cases/*.json
 review_globs:

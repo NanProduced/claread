@@ -742,7 +742,8 @@ def test_runner_reject_case_verdict(rubric):
     mod = _runner()
     res = mod.score_case(rubric, _reject_case(), _reject_artifact(),
                          review_doc=None, skip_judge=True)
-    assert res["verdict"] == "PASS"
+    assert res["verdict"] == "EXPECTED_REJECT"
+    assert res["verdict"] != "PASS"
     assert res["judge"]["status"] == "not_applicable_rejected"
 
 
@@ -948,3 +949,205 @@ def test_schema_errors_surface_in_failure_evidence(rubric):
                        judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
     md = rp.render_report_md(run)
     assert "schema" in md and "A2" in md
+
+
+# ---------------------------------------------------------------------------
+# P-2R — fail-closed scoring, 1:1 review, schema, report authenticity
+# ---------------------------------------------------------------------------
+
+
+def _judged_ok(rubric: dict, score: int = 5) -> dict:
+    return {"status": "ok", "dimensions": {
+        d["id"]: {"score": score, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+
+
+def test_score_case_single_five_score_dimension_cannot_pass(rubric):
+    """External judge_result with only one 5-score dimension must error/FAIL."""
+    mod = _runner()
+    judged = {"status": "ok", "dimensions": {
+        "source_fidelity": {"score": 5, "rationale": "ok"}}}
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                         review_doc=_full_review_doc(_b1_artifact()),
+                         judge_result=judged)
+    assert res["judge"]["status"] == "error"
+    assert res["verdict"] == "FAIL"
+    assert res["verdict"] != "PASS"
+
+
+@pytest.mark.parametrize("mutate", ["missing", "extra", "illegal_score"])
+def test_score_case_does_not_trust_external_judge_result(rubric, mutate):
+    mod = _runner()
+    judged = _judged_ok(rubric)
+    if mutate == "missing":
+        del judged["dimensions"]["chinese_quality"]
+    elif mutate == "extra":
+        judged["dimensions"]["bonus_dim"] = {"score": 5, "rationale": "x"}
+    else:
+        judged["dimensions"]["source_fidelity"]["score"] = 4.0
+    parsed = j2.parse_judge_output(rubric, json.dumps(
+        {"dimensions": judged["dimensions"]}))
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                         review_doc=_full_review_doc(_b1_artifact()),
+                         judge_result=judged)
+    assert parsed["status"] == "error"
+    assert res["judge"]["status"] == "error"
+    assert res["judge"].get("reason") == parsed.get("reason")
+    assert res["verdict"] == "FAIL"
+
+
+def test_review_duplicate_item_id_is_incomplete():
+    case, art = _b1_case(), _b1_artifact()
+    doc = _full_review_doc(art)
+    doc["items"].append(copy.deepcopy(doc["items"][0]))
+    st = rv.review_status(case, art, doc)
+    assert st["status"] == "REVIEW_INCOMPLETE"
+    assert st["accepted"] is False
+
+
+def test_review_case_id_mismatch_is_incomplete():
+    case, art = _b1_case(), _b1_artifact()
+    doc = _full_review_doc(art)
+    doc["case_id"] = "someone-else"
+    st = rv.review_status(case, art, doc)
+    assert st["status"] == "REVIEW_INCOMPLETE"
+    assert st["accepted"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("reviewer", ""),
+    ("reviewed_at", "  "),
+    ("reason", None),
+    ("factual_major_error", "yes"),
+    ("decision", "maybe"),
+    ("kind", "banana"),
+    ("suggested_edit", ["rewrite"]),
+])
+def test_review_illegal_item_fields_are_incomplete(field, value):
+    case, art = _b1_case(), _b1_artifact()
+    doc = _full_review_doc(art)
+    doc["items"][0][field] = value
+    st = rv.review_status(case, art, doc)
+    assert st["status"] == "REVIEW_INCOMPLETE"
+    assert st["accepted"] is False
+
+
+def test_review_incomplete_verdict_is_fail(rubric):
+    mod = _runner()
+    art = _b1_artifact()
+    doc = _full_review_doc(art)
+    del doc["items"][0]["reason"]
+    res = mod.score_case(rubric, _b1_case(), art,
+                         review_doc=doc, judge_result=_judged_ok(rubric))
+    assert res["review"]["status"] == "REVIEW_INCOMPLETE"
+    assert res["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize("payload", [
+    {"schema_version": 2, "input": {"reading_units": ["u01"]}},
+    {"schema_version": 2, "gold": {"key_evidence": "not-a-list"}},
+    {"schema_version": 2, "gold": {"key_evidence": [None]}},
+    {"schema_version": 2, "gold": {"core_expressions": [{"expression": 1}]}},
+    {"schema_version": 2, "origin": ["bbc"], "input": {}, "gold": {}},
+])
+def test_validate_case_malformed_nested_returns_errors_not_raises(payload):
+    errs = sc.validate_case(payload)
+    assert isinstance(errs, list) and errs
+
+
+def test_validate_case_requires_case_id_and_gold_contract_fields():
+    case = _b1_case()
+    case["case_id"] = ""
+    errs = sc.validate_case(case)
+    assert any("case_id" in e for e in errs)
+    missing = _b1_case()
+    del missing["gold"]["forbidden_facts"]
+    del missing["gold"]["acceptable_transfer_directions"]
+    errs2 = sc.validate_case(missing)
+    assert any("forbidden_facts" in e for e in errs2)
+    assert any("acceptable_transfer_directions" in e for e in errs2)
+
+
+def test_overall_mean_null_when_all_semantic_not_run(rubric):
+    mod = _runner()
+    results = [
+        mod.decorate(_b1_case(), mod.score_case(
+            rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True)),
+        mod.decorate(_reject_case(), mod.score_case(
+            rubric, _reject_case(), _reject_artifact(),
+            review_doc=None, skip_judge=True)),
+    ]
+    run = rp.build_run(run_id="mean-null", dataset_id="daily-reader-teaching-v2",
+                       dataset_dir=".", rubric=rubric, case_results=results,
+                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    assert results[0]["verdict"] == j2.SEMANTIC_NOT_RUN
+    assert results[1]["verdict"] == "EXPECTED_REJECT"
+    assert run["aggregate"]["overall_mean"] is None
+
+
+def test_overall_mean_only_completed_eight_dim_cleaned_publish(rubric):
+    mod = _runner()
+    ok = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                        review_doc=_full_review_doc(_b1_artifact()),
+                        judge_result=_judged_ok(rubric))
+    one_dim = mod.score_case(rubric, _b1_case(), _b1_artifact(),
+                             review_doc=_full_review_doc(_b1_artifact()),
+                             judge_result={"status": "ok", "dimensions": {
+                                 "source_fidelity": {"score": 5, "rationale": "ok"}}})
+    reject = mod.score_case(rubric, _reject_case(), _reject_artifact(),
+                            review_doc=None, skip_judge=True)
+    run = rp.build_run(
+        run_id="mean-pub", dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".", rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), ok),
+                      mod.decorate(_b1_case(), one_dim),
+                      mod.decorate(_reject_case(), reject)],
+        judge_status="ok", created_at="2026-08-21T00:00:00")
+    assert ok["overall"] is not None
+    assert run["aggregate"]["overall_mean"] == ok["overall"]
+    assert run["aggregate"]["pass_count"] == 1
+    assert run["aggregate"]["expected_reject_count"] == 1
+    md = rp.render_report_md(run)
+    assert "EXPECTED_REJECT" in md
+    assert "质量 PASS" in md
+
+
+def test_difficulty_quota_counts_only_cleaned_publish():
+    cases = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cloned = copy.deepcopy(cases)
+    changed = 0
+    for case in cloned:
+        gold = case["gold"]
+        if (gold.get("expected_difficulty") == "B2"
+                and gold.get("expected_outcome") == "cleaned_publish"
+                and changed < 2):
+            gold["expected_difficulty"] = "C1"
+            changed += 1
+    assert changed == 2
+    errs = sc.validate_dataset_coverage(cloned)
+    assert any("B2" in e and "cleaned_publish" in e for e in errs)
+
+
+def test_cleaned_publish_transfer_kinds_follow_p1_types():
+    kinds = set()
+    opinion_kinds = set()
+    explainer_kinds = set()
+    for p in sorted((DATASET_DIR / "cases").glob("*.json")):
+        case = json.loads(p.read_text(encoding="utf-8"))
+        gold = case["gold"]
+        if gold["expected_outcome"] != "cleaned_publish":
+            continue
+        assert gold["annotation_status"] == "DRAFT_PM_REVIEW"
+        directions = gold["acceptable_transfer_directions"]
+        assert directions
+        kind = directions[0]["task_kind"]
+        kinds.add(kind)
+        if gold["article_type"] == "opinion_commentary" and gold[
+                "expected_difficulty"] in ("B2", "C1"):
+            opinion_kinds.add(kind)
+        if gold["article_type"] == "explainer" and gold[
+                "expected_difficulty"] in ("B2", "C1"):
+            explainer_kinds.add(kind)
+    assert kinds == set(sc.TRANSFER_TASK_KINDS)
+    assert opinion_kinds == {"counter"}
+    assert explainer_kinds == {"explain"}

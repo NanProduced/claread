@@ -149,13 +149,13 @@
     },
     "post_read_summary": "从多瑙河上的泥泞滩地到 Zaha Hadid 的虚拟城市，Liberland 把“政府可以被取代”的理念做成一门生意：代币换话语权、免税换富人迁入；记者一路追问，财富与权力最终流向的，是控制技术的人。",
     "transfer_task": {
-      "task_kind": "retell",
-      "prompt": "用 tax and regulate 复述区块链去中心化对政府治理的挑战。",
-      "scaffold": "Because Tron is decentralised, governments find it harder to ...",
+      "task_kind": "rewrite",
+      "prompt": "用 tax and regulate 改写孙宇晨/Liberland 的人物动机：去中心化如何让征税与监管更难落地。",
+      "scaffold": "He is drawn to a world that is harder to tax and regulate because ...",
       "reference_points": [
-        "网络分布在全球计算机上",
-        "没有单一运营主体",
-        "监管与征税都更难落地"
+        "区块链没有单一运营主体",
+        "征税与监管更难落地",
+        "这正是他想用技术替代民族国家的原因"
       ]
     }
   },

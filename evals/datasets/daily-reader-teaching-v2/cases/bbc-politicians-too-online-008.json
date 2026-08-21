@@ -251,9 +251,9 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "counter",
         "required_learning_target": "non-negotiable",
-        "acceptable_direction_zh": "用 non-negotiable 复述 Timpson 对上网程度的让步"
+        "acceptable_direction_zh": "用 non-negotiable 补一条反方：适度上网虽已不可避免，但热度不能代替政策论证"
       }
     ],
     "expected_translation_coverage": {

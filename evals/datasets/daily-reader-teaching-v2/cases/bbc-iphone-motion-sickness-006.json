@@ -73,7 +73,7 @@
   },
   "gold": {
     "expected_outcome": "cleaned_publish",
-    "expected_difficulty": "B1",
+    "expected_difficulty": "B2",
     "article_type": "explainer",
     "dirty_fragments": [],
     "rejection_reasons": [],
@@ -147,39 +147,22 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "explain",
         "required_learning_target": "swears by",
-        "acceptable_direction_zh": "用 swears by 复述 Brockett 对圆点的评价"
+        "acceptable_direction_zh": "用 swears by 解释 Brockett 为何把圆点当成晕车机制的解药"
       }
     ],
     "expected_translation_coverage": {
-      "policy": "all_units",
+      "policy": "selected_units",
       "required_paragraph_ids": [
-        "u01",
-        "u02",
         "u03",
-        "u04",
-        "u05",
-        "u06",
-        "u07",
         "u08",
-        "u09",
-        "u10",
-        "u11",
-        "u12",
         "u13"
       ],
       "allowed_paragraph_ids": [
-        "u01",
-        "u02",
         "u03",
         "u04",
-        "u05",
-        "u06",
-        "u07",
         "u08",
-        "u09",
-        "u10",
         "u11",
         "u12",
         "u13"

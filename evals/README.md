@@ -43,7 +43,7 @@ uv run python scripts/run_daily_reader_eval.py --mode baseline `
 
 ## 每日精读教学合同 v2 评测（daily-reader-teaching-v2，任务包 P-2）
 
-独立 v2 模块组（`claread_eval/daily_reader/teaching_v2/`）+ 最小 artifact runner，v1 文件零改动（仅 import 复用 `normalize_text`/`normalize_expression`）。金标集 10 篇冻结真实文章（BBC x8 + NPR x2；三篇自 v1 回归快照逐字重铸，七篇 2026-08-21 只读抓取）；gold 全部 `annotation_status: DRAFT_PM_REVIEW`，人工批准不由本包写入。
+独立 v2 模块组（`claread_eval/daily_reader/teaching_v2/`）+ 最小 artifact runner，v1 文件零改动（仅 import 复用 `normalize_text`/`normalize_expression`）。金标集 10 篇冻结真实文章（BBC x8 + NPR x2；三篇自 v1 回归快照逐字重铸，七篇 2026-08-21 只读抓取）。难度配额只计 `cleaned_publish`：B1×3、B2×3、C1×3；`bbc-iphone-motion-sickness-006` 用已有冻结快照收成 B2 explainer。迁移任务按 P-1 四种 `retell | rewrite | counter | explain` 拉开，B2/C1 opinion 用 `counter`、explainer 用 `explain`。Guardian 新增全文未获明确提交许可，标记 `OWNER_INPUT_REQUIRED`，不再抓取。gold 全部 `annotation_status: DRAFT_PM_REVIEW`，人工批准不由本包写入。
 
 合同构成：
 
@@ -61,4 +61,4 @@ uv run python scripts/run_daily_reader_teaching_eval.py `
     --runs-dir <输出目录> --run-id <id> --no-judge
 ```
 
-verdict 合同：全部硬门禁通过 ∧ 八维每项≥4 ∧ overall≥0.90 ∧ 人工门禁完成 → PASS；judge 缺位 → `SEMANTIC_NOT_RUN`；人工缺位 → `HUMAN_REVIEW_PENDING`。overall = 0.5×确定性 + 0.5×judge 均分/5（judge 未跑不给 PASS；报告中的 overall mean 仅观察）。rubric 单一来源：`rubrics/daily-reader-teaching-v2.yaml`。
+verdict 合同：全部硬门禁通过 ∧ 八维每项≥4 ∧ overall≥0.90 ∧ 人工门禁完成 → 质量 `PASS`；gold reject 且按预期拒绝 → `EXPECTED_REJECT`（与质量 PASS 分列）；judge 缺位 → `SEMANTIC_NOT_RUN`；人工缺位 → `HUMAN_REVIEW_PENDING`；非法/缺维 Judge 或 1:1 审阅不完整 → `FAIL`。overall = 0.5×确定性 + 0.5×judge 均分/5（judge 未跑不给 PASS；`overall_mean` 只统计完成八维 Judge 的 cleaned_publish，全部 `SEMANTIC_NOT_RUN` 时为 `null`）。rubric 单一来源：`rubrics/daily-reader-teaching-v2.yaml`。

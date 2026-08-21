@@ -215,9 +215,9 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "rewrite",
         "required_learning_target": "tax and regulate",
-        "acceptable_direction_zh": "用 tax and regulate 复述区块链去中心化对政府的影响"
+        "acceptable_direction_zh": "用 tax and regulate 改写 Liberland 人物动机：去中心化如何让征税与监管更难落地"
       }
     ],
     "expected_translation_coverage": {

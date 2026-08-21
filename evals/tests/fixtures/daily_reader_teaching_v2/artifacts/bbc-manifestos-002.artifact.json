@@ -153,13 +153,13 @@
     },
     "post_read_summary": "从 Andreessen 到扎克伯格，科技高管接连撰写长篇宣言，为 AI 描绘乐观图景；但裁员数据、IMF 警告与开源风险提醒人们，这些文章既是立场表达，也是话语权的争夺。",
     "transfer_task": {
-      "task_kind": "retell",
-      "prompt": "用 put a positive spin on 复述这些企业宣言的传播动机。",
-      "scaffold": "These manifestos land in our feeds in an effort to ...",
+      "task_kind": "explain",
+      "prompt": "用 put a positive spin on 解释科技高管接连写宣言的机制：它们如何把 AI 风险话语改写成乐观叙事。",
+      "scaffold": "These manifestos put a positive spin on AI by ...",
       "reference_points": [
-        "回应公众疑虑",
-        "塑造乐观叙事",
-        "争夺话语权"
+        "用长文回应裁员与监管疑虑",
+        "把争议包装成不可避免的进步",
+        "在思想市场里争夺定义权"
       ]
     }
   },

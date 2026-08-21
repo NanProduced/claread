@@ -119,13 +119,13 @@
     },
     "post_read_summary": "从红色警报到 5700 个超额死亡，Scott Simon 用数字与记忆书写欧洲的炎热之夏；研究预测农业损失将继续攀升，而这个夏天也许只是往后无数个夏天的序章。",
     "transfer_task": {
-      "task_kind": "retell",
-      "prompt": "用 hold onto 复述欧洲城市夜晚仍然酷热的原因。",
-      "scaffold": "The brick, stone and asphalt avenues absorb the heat and ...",
+      "task_kind": "counter",
+      "prompt": "用 hold onto 写一条短评论，反驳“热浪只是天气新闻”：城市不只留住热量，也该被要求留住降温公共资源。",
+      "scaffold": "These cities hold onto heat at night, so they should also hold onto ...",
       "reference_points": [
-        "砖石与柏油白天吸热",
-        "夜晚热量迟迟不散",
-        "城市因此格外曝露"
+        "砖石与柏油让夜晚更热",
+        "超额死亡说明这不只是体感问题",
+        "公共降温资源同样需要被留住"
       ]
     }
   },

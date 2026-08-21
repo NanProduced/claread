@@ -140,9 +140,9 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "counter",
         "required_learning_target": "hold onto",
-        "acceptable_direction_zh": "用 hold onto 复述欧洲城市夜晚仍酷热的原因"
+        "acceptable_direction_zh": "用 hold onto 写一条短评论：城市不只留住热量，也该被要求留住降温公共资源"
       }
     ],
     "expected_translation_coverage": {

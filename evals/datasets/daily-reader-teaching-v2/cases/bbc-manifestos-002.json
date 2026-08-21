@@ -258,9 +258,9 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "explain",
         "required_learning_target": "put a positive spin on",
-        "acceptable_direction_zh": "用 put a positive spin on 复述这些宣言的传播动机"
+        "acceptable_direction_zh": "用 put a positive spin on 解释科技高管为何用宣言争夺 AI 话语权"
       }
     ],
     "expected_translation_coverage": {

@@ -75,15 +75,15 @@ def _extract_json(text: str) -> dict[str, Any]:
         raise
 
 
-def parse_judge_output(rubric: dict[str, Any], raw_text: str) -> dict[str, Any]:
-    """Fail-closed parse. Never raises; returns status ok|error."""
+def validate_judge_payload(rubric: dict[str, Any], payload: Any) -> dict[str, Any]:
+    """Strict eight-dimension contract. Never trusts caller ``status``.
+
+    Used by both ``parse_judge_output`` and ``score_case`` so parse and
+    verdict cannot drift.
+    """
     expected = {d["id"]: (d["score_min"], d["score_max"])
                 for d in rubric["judge"]["dimensions"]}
-    try:
-        parsed = _extract_json(raw_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        return {"status": "error", "reason": f"invalid JSON: {exc}"}
-    dims = parsed.get("dimensions") if isinstance(parsed, dict) else None
+    dims = payload.get("dimensions") if isinstance(payload, dict) else None
     if not isinstance(dims, dict):
         return {"status": "error", "reason": "missing 'dimensions' object"}
     missing = sorted(set(expected) - set(dims))
@@ -111,6 +111,15 @@ def parse_judge_output(rubric: dict[str, Any], raw_text: str) -> dict[str, Any]:
                               f"non-empty string"}
         valid[dim_id] = {"score": score, "rationale": rationale.strip()}
     return {"status": "ok", "dimensions": valid}
+
+
+def parse_judge_output(rubric: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    """Fail-closed parse. Never raises; returns status ok|error."""
+    try:
+        parsed = _extract_json(raw_text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"status": "error", "reason": f"invalid JSON: {exc}"}
+    return validate_judge_payload(rubric, parsed)
 
 
 def judge_mean_v2(judge_result: dict[str, Any]) -> float | None:

@@ -83,12 +83,17 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
                review_doc: dict[str, Any] | None = None, skip_judge: bool = False,
                judge_result: dict[str, Any] | None = None) -> dict[str, Any]:
     """Score one case offline. Verdict ladder: schema violations -> FAIL;
-    reject handled by gold -> PASS; any hard gate failing -> FAIL; judge
-    absent -> SEMANTIC_NOT_RUN; human gate incomplete ->
+    reject handled by gold -> EXPECTED_REJECT; any hard gate failing -> FAIL;
+    incomplete 1:1 review -> FAIL; illegal/partial judge payload -> FAIL;
+    judge absent -> SEMANTIC_NOT_RUN; human gate pending ->
     HUMAN_REVIEW_PENDING; reviewed but rejected -> FAIL; otherwise PASS
     requires every judge dimension >= 4 and overall >= 0.90."""
     schema_errors = sc.validate_case(case) + sc.validate_artifact(case, artifact)
-    gates = g2.run_hard_gates(case, artifact)
+    try:
+        gates = g2.run_hard_gates(case, artifact)
+    except (TypeError, AttributeError, KeyError) as exc:
+        schema_errors.append(f"malformed nested structure: {type(exc).__name__}")
+        gates = {"all_passed": False, "passed_count": 0, "scored_count": 0, "gates": {}}
     det_ratio = (gates["passed_count"] / gates["scored_count"]
                  if gates["scored_count"] else 1.0)
     reject = _is_reject(case, artifact)
@@ -100,7 +105,7 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
         judge = {"status": j2.SEMANTIC_NOT_RUN,
                  "reason": "--no-judge" if skip_judge else "judge result absent (P-3)"}
     else:
-        judge = judge_result
+        judge = j2.validate_judge_payload(rubric, judge_result)
 
     judge_mean = j2.judge_mean_v2(judge)
     if judge_mean is not None:
@@ -115,13 +120,16 @@ def score_case(rubric: dict[str, Any], case: dict[str, Any], artifact: dict[str,
     if schema_errors:
         verdict = "FAIL"  # enum/shape violations never pass the hard layer
     elif reject:
-        verdict = "PASS" if gates["all_passed"] else "FAIL"
+        verdict = "EXPECTED_REJECT" if gates["all_passed"] else "FAIL"
     elif not gates["all_passed"]:
         verdict = "FAIL"
-    elif judge.get("status") != "ok":
+    elif review.get("status") == "REVIEW_INCOMPLETE":
+        verdict = "FAIL"
+    elif judge.get("status") == j2.SEMANTIC_NOT_RUN:
         verdict = j2.SEMANTIC_NOT_RUN
+    elif judge.get("status") != "ok":
+        verdict = "FAIL"
     elif not review["accepted"]:
-        # reviewed-but-rejected is a hard FAIL, only incomplete review pends
         verdict = ("FAIL" if review["status"] == "REVIEWED"
                    else rv.HUMAN_REVIEW_PENDING)
     else:
@@ -149,6 +157,7 @@ def decorate(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         "case_id": case["case_id"],
         "article_type": gold.get("article_type"),
         "difficulty": gold.get("expected_difficulty"),
+        "expected_outcome": gold.get("expected_outcome"),
         "source": case.get("input", {}).get("source"),
         **result,
     }

@@ -159,13 +159,13 @@
     },
     "post_read_summary": "从 Milifandom 到 Burnham 的内容工厂，英国政治人物把社交平台当成必争之地；但因果难辨、效果存疑，真正的考验在于：热度退去之后，政策与论证还站不站得住。",
     "transfer_task": {
-      "task_kind": "retell",
-      "prompt": "用 non-negotiable 复述 Timpson 对政治人物上网程度的态度。",
-      "scaffold": "Timpson prefers traditional media, but she accepts that ...",
+      "task_kind": "counter",
+      "prompt": "用 non-negotiable 补一条反方：承认适度上网已不可避免，但反驳“热度等于执政能力”。",
+      "scaffold": "Being online may now be non-negotiable, but ...",
       "reference_points": [
-        "适度上网已成必然",
-        "但过度曝光同样危险",
-        "分寸才是关键"
+        "适度上网已成现实约束",
+        "点赞热度不能代替政策论证",
+        "危机来临时内容工厂会失真"
       ]
     }
   },

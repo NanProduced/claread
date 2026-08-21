@@ -163,9 +163,9 @@
     ],
     "acceptable_transfer_directions": [
       {
-        "task_kind": "retell",
+        "task_kind": "rewrite",
         "required_learning_target": "have done the same",
-        "acceptable_direction_zh": "用 have done the same 复述餐厅剧院跟随法院禁戴的做法"
+        "acceptable_direction_zh": "用 have done the same 压缩改写 Ramsey 故事的转折：法院禁戴后场所跟进，视障用户被波及"
       }
     ],
     "expected_translation_coverage": {
