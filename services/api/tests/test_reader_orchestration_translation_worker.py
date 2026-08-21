@@ -381,6 +381,8 @@ def test_extract_run_usage_reads_agent_run_result_property_without_deprecation_w
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
+        "model_requests": 0,
+        "tool_calls": 0,
     }
     assert not any(
         issubclass(warning.category, PydanticAIDeprecationWarning)
@@ -400,6 +402,8 @@ def test_extract_run_usage_keeps_legacy_callable_usage_compatibility() -> None:
         "input_tokens": 7,
         "output_tokens": 5,
         "total_tokens": 12,
+        "model_requests": 0,
+        "tool_calls": 0,
     }
 
 @pytest.mark.anyio

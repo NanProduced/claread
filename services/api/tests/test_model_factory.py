@@ -220,6 +220,30 @@ def test_model_profiles_example_documents_rag_embedding_profile() -> None:
     )
 
 
+def test_model_profiles_example_documents_dashscope_daily_test_profiles() -> None:
+    document = json.loads(
+        (PROJECT_ROOT / "config" / "model-profiles.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = {
+        "flash-0731": "deepseek-v4-flash-0731",
+        "pro-0813": "deepseek-v4-pro-0813",
+    }
+
+    for suffix, model_name in expected.items():
+        model_id = f"dashscope-deepseek-v4-{suffix}"
+        profile_id = f"workflow-dashscope-deepseek-v4-{suffix}"
+        model = document["models"][model_id]
+        assert model["provider"] == "dashscope_compat"
+        assert model["model_name"] == model_name
+        assert model["model_settings"] == {"temperature": 0.2, "timeout": 120.0}
+        assert document["profiles"][profile_id]["model"] == model_id
+        assert document["profiles"][profile_id]["model_settings"] == {
+            "extra_body": {"enable_thinking": False}
+        }
+
+
 def test_resolve_model_config_uses_dict_ai_route_default_with_annotation_fallback() -> None:
     settings = Settings(
         default_model_profile="shared_default",

@@ -574,6 +574,25 @@ def test_extract_run_usage_populated_emits_present_diagnostic(
     assert USAGE_PRESENT_AT_ADAPTER in codes
 
 
+def test_extract_run_usage_includes_request_and_tool_call_counts() -> None:
+    from pydantic_ai.usage import RunUsage
+
+    result = agent_runner.extract_run_usage(
+        SimpleNamespace(
+            usage=RunUsage(
+                input_tokens=11,
+                output_tokens=2,
+                requests=3,
+                tool_calls=1,
+            )
+        )
+    )
+
+    assert result is not None
+    assert result["model_requests"] == 3
+    assert result["tool_calls"] == 1
+
+
 def test_extract_run_usage_without_reader_scope_emits_no_diagnostic(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

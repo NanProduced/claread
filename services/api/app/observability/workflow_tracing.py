@@ -94,6 +94,8 @@ def build_usage_metadata(usage: RunUsage) -> dict[str, object]:
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.input_tokens + usage.output_tokens,
+        "model_requests": getattr(usage, "requests", 0),
+        "tool_calls": getattr(usage, "tool_calls", 0),
     }
     if usage.cache_read_tokens:
         usage_metadata["cache_read_tokens"] = usage.cache_read_tokens
