@@ -99,6 +99,35 @@ def _quote_substring(case: dict[str, Any], quote: Any, where: str, errs: list[st
                     f"substring of original_text: {str(quote)[:80]!r}")
 
 
+def _quote_spans_declared_units(case: dict[str, Any], quote: Any, paragraph_ids: Any,
+                                where: str, errs: list[str]) -> None:
+    """P-2G-C gold gate: a source_quote must be a contiguous (whitespace-
+    normalized) substring of at least one of the declared paragraph_ids'
+    reading units. A quote that only exists in other paragraphs is a
+    schema error, not just an anchor misalignment. Malformed inputs are
+    already reported by ``_quote_substring``/_anchors, so this is skipped
+    for them — this helper never raises."""
+    if not isinstance(quote, str) or not collapse_whitespace(quote):
+        return  # covered by _quote_substring
+    if not isinstance(paragraph_ids, list) or not paragraph_ids:
+        return  # covered by _anchors
+    inp = _as_dict(case.get("input")) or {}
+    units = _as_list(inp.get("reading_units")) or []
+    by_id = {u.get("id"): u for u in units if isinstance(u, dict)}
+    normalized = collapse_whitespace(quote)
+    declared_texts: list[str] = []
+    for pid in paragraph_ids:
+        u = by_id.get(pid)
+        if not isinstance(u, dict):
+            continue
+        text = u.get("text")
+        if isinstance(text, str):
+            declared_texts.append(collapse_whitespace(text))
+    if declared_texts and not any(normalized in t for t in declared_texts):
+        errs.append(f"{where}: source_quote must be a contiguous substring of at "
+                    f"least one declared paragraph unit: {str(quote)[:80]!r}")
+
+
 def _require_str_list(value: Any, where: str, errs: list[str], *, allow_empty: bool) -> None:
     if not isinstance(value, list):
         errs.append(f"{where} must be a list")
@@ -131,6 +160,9 @@ def _require_gold_items(gold: dict[str, Any], field: str, required_keys: tuple[s
             _quote_substring(case, item.get("source_quote"), where, errs)
         if "paragraph_ids" in required_keys:
             _anchors(case, item.get("paragraph_ids"), where, errs)
+        if "source_quote" in required_keys and "paragraph_ids" in required_keys:
+            _quote_spans_declared_units(case, item.get("source_quote"),
+                                        item.get("paragraph_ids"), where, errs)
         if "acceptable_answer_points_zh" in required_keys:
             _require_str_list(item.get("acceptable_answer_points_zh"),
                               f"{where}.acceptable_answer_points_zh", errs, allow_empty=False)

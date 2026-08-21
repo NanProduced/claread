@@ -1263,3 +1263,167 @@ def test_no_judge_quality_strata_not_accepted(rubric):
     for groups in run["strata"].values():
         for s in groups.values():
             assert s["accepted"] is False
+
+
+# ---------------------------------------------------------------------------
+# P-2G-C — gold/artifact 对齐修复 + 最小根门禁
+# ---------------------------------------------------------------------------
+
+
+def _with_dirty_unit(case: dict, text: str = "- Published") -> dict:
+    """Declare a reading unit whose full text equals a dirty fragment."""
+    case = copy.deepcopy(case)
+    case["gold"]["dirty_fragments"] = [text]
+    case["input"]["reading_units"][0]["text"] = text
+    return case
+
+
+def test_gold_gate_quote_only_in_other_paragraph_fails():
+    """GOLD: source_quote exists in original_text but not in any declared
+    reading unit -> schema error (RED: current schema only checks original)."""
+    case = _b1_case()
+    # quote lives verbatim in u02; declared unit is u03 -> mis-declared
+    case["gold"]["key_evidence"][0]["source_quote"] = \
+        "Many families came to the opening event"
+    case["gold"]["key_evidence"][0]["paragraph_ids"] = ["u03"]
+    errs = sc.validate_case(case)
+    assert any("source_quote" in e and "declared paragraph" in e for e in errs)
+
+
+def test_gold_gate_quote_spanning_declared_unit_passes():
+    case = _b1_case()
+    case["gold"]["key_evidence"][0]["source_quote"] = \
+        "The town opened a new library on Saturday"
+    assert sc.validate_case(case) == []
+
+
+def test_gold_gate_malformed_paragraph_ids_fail_closed():
+    case = _b1_case()
+    case["gold"]["key_evidence"][0]["paragraph_ids"] = None
+    errs = sc.validate_case(case)
+    assert isinstance(errs, list) and errs  # never raises
+
+
+def test_gate_language_target_expression_must_match_paragraph():
+    """HARD GATE: expression 'stay open' anchored to u01 (which lacks it)."""
+    art = _b1_artifact()
+    art["learning_package"]["language_targets"][0]["paragraph_id"] = "u01"
+    g = _gate(_run(_b1_case(), art), "anchors_resolve")
+    assert g["passed"] is False
+
+
+def test_gate_sentence_map_sentence_must_match_paragraph():
+    art = _b1_artifact()
+    art["learning_package"]["sentence_maps"][0]["paragraph_id"] = "u02"
+    g = _gate(_run(_b1_case(), art), "anchors_resolve")
+    assert g["passed"] is False
+
+
+def test_gate_structure_map_pure_dirty_unit_fails():
+    case = _with_dirty_unit(_b1_case())
+    art = _b1_artifact()  # structure_map[0] references u01 (now pure dirty)
+    g = _gate(_run(case, art), "anchors_resolve")
+    assert g["passed"] is False
+
+
+def test_anchors_gate_fail_closed_on_malformed_entries():
+    """Malformed nested entries must not raise a traceback."""
+    case = _b1_case()
+    art = _b1_artifact()
+    art["learning_package"]["language_targets"][0] = ["not", "a", "dict"]
+    art["learning_package"]["sentence_maps"][0] = None
+    res = g2.gate_anchors_resolve(case, art)  # never raises
+    assert isinstance(res, dict) and "passed" in res
+
+
+def test_run_hard_gates_fail_closed_on_minimal_artifact():
+    case = _b1_case()
+    art = {"case_id": "fx-b1"}  # minimal, missing lesson_blueprint/learning_package
+    res = g2.run_hard_gates(case, art)  # never raises
+    assert "gates" in res and "all_passed" in res
+
+
+# ---------------------------------------------------------------------------
+# P-2G-C — per-artifact source-text / paragraph-id targeted probes
+# ---------------------------------------------------------------------------
+
+def _load_case(case_id: str) -> dict:
+    return json.loads((DATASET_DIR / "cases" / f"{case_id}.json").read_text(encoding="utf-8"))
+
+
+def _load_artifact(case_id: str) -> dict:
+    return json.loads((FIXTURE_DIR / "artifacts" / f"{case_id}.artifact.json")
+                      .read_text(encoding="utf-8"))
+
+
+def test_p2gc_bumble_swamped_quote_declared_u15():
+    case = _load_case("bbc-bumble-001")
+    core = [e for e in case["gold"]["core_expressions"]
+            if e["expression"] == "swamped with"][0]
+    assert core["paragraph_ids"] == ["u15"]
+    u15 = next(u["text"] for u in case["input"]["reading_units"] if u["id"] == "u15")
+    assert core["source_quote"].strip('"') in u15
+    art = _load_artifact("bbc-bumble-001")
+    lt = [t for t in art["learning_package"]["language_targets"]
+          if t["expression"] == "swamped with"][0]
+    assert lt["paragraph_id"] == "u15"
+    # structure map must not reference the pure dirty `- Published` unit u01
+    refs = [pid for node in art["lesson_blueprint"]["structure_map"]
+            for pid in node["paragraph_ids"]]
+    assert "u01" not in refs
+
+
+def test_p2gc_divine_key_evidence_three_and_anchored():
+    case = _load_case("bbc-divine-app-005")
+    ke = case["gold"]["key_evidence"]
+    assert len(ke) == 3
+    by_quote = {k["source_quote"]: k for k in ke}
+    restore = by_quote["More than 2.5 million original Vines have now been restored"]
+    tension = by_quote["Divine now has to prove you can remove some of the addiction "
+                       "without removing the magic"]
+    assert restore["paragraph_ids"] == ["u07"]
+    assert tension["paragraph_ids"] == ["u11"]
+    units = {u["id"]: u["text"] for u in case["input"]["reading_units"]}
+    assert tension["source_quote"] in units["u11"]
+    art = _load_artifact("bbc-divine-app-005")
+    cps = art["learning_package"]["comprehension_checkpoints"]
+    assert set(cps[0]["answer_evidence_paragraph_ids"]) == {"u01", "u02"}
+    assert set(cps[2]["answer_evidence_paragraph_ids"]) == {"u10", "u11"}
+
+
+def test_p2gc_garden_sentence_map_and_full_power_anchored_u04():
+    case = _load_case("bbc-gardening-electric-004")
+    units = {u["id"]: u["text"] for u in case["input"]["reading_units"]}
+    art = _load_artifact("bbc-gardening-electric-004")
+    sm = art["learning_package"]["sentence_maps"][0]
+    assert sm["paragraph_id"] == "u04"
+    assert sm["sentence"] in units["u04"]
+    shared = art["learning_package"]["translations_by_paragraph_id"]["u04"]
+    assert sm["translation"] in shared  # sentence map translation reused in u04
+    cp = art["learning_package"]["comprehension_checkpoints"][1]
+    assert cp["evidence_paragraph_ids"] == ["u04"]
+    assert cp["answer_evidence_paragraph_ids"] == ["u04"]
+    gas = art["learning_package"]["comprehension_checkpoints"][2]
+    assert set(gas["answer_evidence_paragraph_ids"]) == {"u07", "u08"}
+
+
+def test_p2gc_politicians_u16_translation_expresses_not_landing():
+    art = _load_artifact("bbc-politicians-too-online-008")
+    u16 = art["learning_package"]["translations_by_paragraph_id"]["u16"]
+    assert "落地生根" not in u16
+    assert ("打动受众" in u16) or ("奏效" in u16)
+    cp = art["learning_package"]["comprehension_checkpoints"][1]
+    assert set(cp["answer_evidence_paragraph_ids"]) == {"u15", "u16"}
+
+
+def test_p2gc_manifestos_and_heat_structure_map_omit_pure_dirty_u01():
+    for cid in ("bbc-manifestos-002", "npr-europe-heat-010"):
+        case = _load_case(cid)
+        art = _load_artifact(cid)
+        refs = [pid for node in art["lesson_blueprint"]["structure_map"]
+                for pid in node["paragraph_ids"]]
+        # the pure dirty unit full-text equals the first declared dirty fragment
+        first_dirty = case["gold"]["dirty_fragments"][0]
+        pure_ids = {u["id"] for u in case["input"]["reading_units"]
+                    if u["text"] == first_dirty}
+        assert pure_ids and not (set(refs) & pure_ids), cid

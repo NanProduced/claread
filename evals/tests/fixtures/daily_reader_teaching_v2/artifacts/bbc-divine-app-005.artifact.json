@@ -66,6 +66,7 @@
           "u02"
         ],
         "answer_evidence_paragraph_ids": [
+          "u01",
           "u02"
         ],
         "reference_answer": "视频只有六秒、循环播放；禁止 AI 生成的内容。",
@@ -91,7 +92,8 @@
           "u11"
         ],
         "answer_evidence_paragraph_ids": [
-          "u10"
+          "u10",
+          "u11"
         ],
         "reference_answer": "人们讨厌的机制往往正是平台留住用户的手段，去掉成瘾性还要保住吸引力并不容易。",
         "explanation_zh": "第十组段落引用分析师 Matt Nevarra 的判断。"

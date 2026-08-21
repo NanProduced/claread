@@ -49,6 +49,15 @@ def _unit_ids(case: dict[str, Any]) -> set[str]:
     return {u["id"] for u in case.get("input", {}).get("reading_units", []) or []}
 
 
+def _unit_texts(case: dict[str, Any]) -> dict[str, str]:
+    """id -> raw unit text for every dict reading unit with a string text."""
+    texts: dict[str, str] = {}
+    for u in case.get("input", {}).get("reading_units", []) or []:
+        if isinstance(u, dict) and isinstance(u.get("text"), str):
+            texts[u.get("id", "")] = u["text"]
+    return texts
+
+
 def _coverage(case: dict[str, Any]) -> dict[str, Any]:
     return (case.get("gold", {}).get("expected_translation_coverage") or {})
 
@@ -104,6 +113,7 @@ def gate_anchors_resolve(case: dict[str, Any], artifact: dict[str, Any]) -> dict
     if _is_reject_run(case, artifact):
         return _na("rejected run carries no anchors")
     valid = _unit_ids(case)
+    unit_texts = _unit_texts(case)
     anchors: list[tuple[str, str]] = []
     bp = _bp(artifact)
     for pid in bp.get("selected_paragraph_ids") or []:
@@ -117,14 +127,63 @@ def gate_anchors_resolve(case: dict[str, Any], artifact: dict[str, Any]) -> dict
             for pid in cp.get(key) or []:
                 anchors.append((f"checkpoint[{i}].{key}", pid))
     for i, lt in enumerate(pkg.get("language_targets") or []):
-        anchors.append((f"language_target[{i}]", lt.get("paragraph_id", "")))
+        if isinstance(lt, dict):
+            anchors.append((f"language_target[{i}]", lt.get("paragraph_id", "")))
     for i, sm in enumerate(pkg.get("sentence_maps") or []):
-        anchors.append((f"sentence_map[{i}]", sm.get("paragraph_id", "")))
+        if isinstance(sm, dict):
+            anchors.append((f"sentence_map[{i}]", sm.get("paragraph_id", "")))
     for pid in (pkg.get("translations_by_paragraph_id") or {}):
         anchors.append(("translations_by_paragraph_id", pid))
     unresolved = [{"where": w, "anchor": p} for w, p in anchors if p not in valid]
-    return {"passed": not unresolved,
-            "detail": {"anchors_checked": len(anchors), "unresolved": unresolved[:20]}}
+
+    # P-2G-C: a source-backed surface must actually be a contiguous substring
+    # of the unit it is anchored to (whitespace-normalized, case-insensitive).
+    text_problems: list[dict[str, str]] = []
+    for i, lt in enumerate(pkg.get("language_targets") or []):
+        if not isinstance(lt, dict):
+            continue
+        pid = lt.get("paragraph_id", "")
+        expr = lt.get("expression", "")
+        hay = normalize_text(unit_texts.get(pid, ""))
+        if isinstance(expr, str) and normalize_text(expr) and \
+                normalize_text(expr) not in hay:
+            text_problems.append({"kind": "language_target", "index": i,
+                                  "paragraph_id": pid,
+                                  "text": expr[:120]})
+    for i, sm in enumerate(pkg.get("sentence_maps") or []):
+        if not isinstance(sm, dict):
+            continue
+        pid = sm.get("paragraph_id", "")
+        sentence = sm.get("sentence", "")
+        hay = _squash(unit_texts.get(pid, ""))
+        if isinstance(sentence, str) and _squash(sentence) and \
+                _squash(sentence) not in hay:
+            text_problems.append({"kind": "sentence_map", "index": i,
+                                  "paragraph_id": pid,
+                                  "text": sentence[:120]})
+
+    # P-2G-C: structure_map / selected paragraphs must not reference a pure
+    # dirty unit (unit whose full text equals a declared dirty fragment).
+    norm_frags = {normalize_text(f) for f in (case.get("gold") or {}).get(
+        "dirty_fragments") or [] if isinstance(f, str) and normalize_text(f)}
+    pure_dirty = {pid for pid, txt in unit_texts.items()
+                  if norm_frags and normalize_text(txt) in norm_frags}
+    dirty_refs: list[dict[str, str]] = []
+    for i, node in enumerate(bp.get("structure_map") or []):
+        if not isinstance(node, dict):
+            continue
+        for pid in node.get("paragraph_ids") or []:
+            if pid in pure_dirty:
+                dirty_refs.append({"where": f"structure_map[{i}]", "paragraph_id": pid})
+    for pid in bp.get("selected_paragraph_ids") or []:
+        if pid in pure_dirty:
+            dirty_refs.append({"where": "selected_paragraph_ids", "paragraph_id": pid})
+
+    problems = unresolved or text_problems or dirty_refs
+    return {"passed": not problems,
+            "detail": {"anchors_checked": len(anchors), "unresolved": unresolved[:20],
+                       "text_mismatches": text_problems[:20],
+                       "pure_dirty_refs": dirty_refs[:20]}}
 
 
 # ---------------------------------------------------------------------------
