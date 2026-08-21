@@ -31,6 +31,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
+from pydantic_ai.usage import RunUsage
 
 from app.agents.daily_footer_agent import (
     DailyFooterAgentDeps,
@@ -69,7 +70,7 @@ from app.llm.routes import (
     ModelRoute,
 )
 from app.llm.types import ModelSelection
-from app.observability.workflow_tracing import build_llm_trace_metadata
+from app.observability.workflow_tracing import build_llm_trace_metadata, build_usage_metadata
 from app.services.daily_reader.extraction import (
     clean_extracted_article,
     detect_transcript_markers,
@@ -85,6 +86,12 @@ logger = logging.getLogger(__name__)
 WORKFLOW_NAME = "daily_reader"
 WORKFLOW_VERSION = "2.0.0"
 DAILY_MODEL_SELECTION = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
+
+
+def _metadata_from_owned_usage(run_usage: RunUsage) -> dict[str, object] | None:
+    if int(getattr(run_usage, "requests", 0) or 0) <= 0:
+        return None
+    return build_usage_metadata(run_usage)
 
 HIGHLIGHT_BATCH_SIZE = 6
 HIGHLIGHT_CONCURRENCY = 2
@@ -207,6 +214,7 @@ async def _run_daily_highlight_llm_span(
     deps: DailyVocabAgentDeps,
     prompt: str,
     metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
         agent=get_daily_vocab_agent(),
@@ -214,6 +222,7 @@ async def _run_daily_highlight_llm_span(
         deps=deps,
         route=MODEL_ROUTE_DAILY_ANNOTATION,
         model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -225,6 +234,7 @@ async def _run_daily_paragraph_notes_llm_span(
     deps: DailyFooterAgentDeps,
     prompt: str,
     metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
         agent=get_daily_footer_agent(),
@@ -232,6 +242,7 @@ async def _run_daily_paragraph_notes_llm_span(
         deps=deps,
         route=MODEL_ROUTE_DAILY_TRANSLATION,
         model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -243,6 +254,7 @@ async def _run_daily_takeaways_llm_span(
     deps: DailyInterpretationAgentDeps,
     prompt: str,
     metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
         agent=get_daily_interpretation_agent(),
@@ -250,6 +262,7 @@ async def _run_daily_takeaways_llm_span(
         deps=deps,
         route=MODEL_ROUTE_DAILY_TAKEAWAYS,
         model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -261,6 +274,7 @@ async def _run_daily_review_llm_span(
     deps: DailyReviewAgentDeps,
     prompt: str,
     metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
         agent=get_daily_review_agent(),
@@ -268,6 +282,7 @@ async def _run_daily_review_llm_span(
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
         model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -279,6 +294,7 @@ async def _run_daily_refinement_llm_span(
     deps: DailyRefinementAgentDeps,
     prompt: str,
     metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
         agent=get_daily_refinement_agent(),
@@ -286,6 +302,7 @@ async def _run_daily_refinement_llm_span(
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
         model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
     )
     usage = extract_run_usage(result)
     return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
@@ -353,6 +370,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
     }
 
     batches = _make_batches(paragraphs, HIGHLIGHT_BATCH_SIZE)
+    batch_usages = [RunUsage() for _ in batches]
 
     semaphore = asyncio.Semaphore(HIGHLIGHT_CONCURRENCY)
 
@@ -379,6 +397,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 deps=deps,
                 prompt=prompt,
                 metadata=metadata,
+                run_usage=batch_usages[batch_idx],
                 langsmith_extra={"metadata": metadata},
             )
         return result
@@ -399,7 +418,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 result,
                 exc_info=(type(result), result, result.__traceback__),
             )
-            usage = extract_run_usage(result)
+            usage = _metadata_from_owned_usage(batch_usages[batch_idx])
             if usage:
                 for k in total_usage:
                     total_usage[k] += int(usage.get(k, 0) or 0)
@@ -431,6 +450,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
 
     missing_required = _paragraphs_requiring_highlight(paragraphs, all_highlights)
     if missing_required:
+        retry_run_usage = RunUsage()
         try:
             deps = DailyVocabAgentDeps(
                 paragraphs=missing_required,
@@ -452,6 +472,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                 deps=deps,
                 prompt=prompt,
                 metadata=metadata,
+                run_usage=retry_run_usage,
                 langsmith_extra={"metadata": metadata},
             )
             retry_draft = result.get("output")
@@ -468,7 +489,7 @@ async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
                     total_usage[k] += int(retry_usage.get(k, 0) or 0)
         except Exception as e:
             logger.error("highlight required retry failed: %s", e, exc_info=True)
-            usage = extract_run_usage(e)
+            usage = _metadata_from_owned_usage(retry_run_usage)
             if usage:
                 for k in total_usage:
                     total_usage[k] += int(usage.get(k, 0) or 0)
@@ -498,6 +519,7 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
     if not paragraphs:
         return {"paragraph_notes_json": {}}
 
+    run_usage = RunUsage()
     try:
         highlights_summary = ""
         if highlights:
@@ -525,6 +547,7 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
             deps=deps,
             prompt=prompt,
             metadata=metadata,
+            run_usage=run_usage,
             langsmith_extra={"metadata": metadata},
         )
         notes_draft = result.get("output")
@@ -540,7 +563,7 @@ async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dic
     except Exception as e:
         logger.error("paragraph_guides_and_translations_node failed: %s", e, exc_info=True)
         updates: dict[str, Any] = {"paragraph_notes_json": {}}
-        usage = extract_run_usage(e)
+        usage = _metadata_from_owned_usage(run_usage)
         if usage:
             updates["paragraph_notes_usage"] = usage
         return updates
@@ -552,6 +575,7 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
     highlights = state.get("highlights_json", [])
     paragraph_notes = state.get("paragraph_notes_json", {})
 
+    run_usage = RunUsage()
     try:
         highlights_summary = ""
         if highlights:
@@ -579,6 +603,7 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
             deps=deps,
             prompt=prompt,
             metadata=metadata,
+            run_usage=run_usage,
             langsmith_extra={"metadata": metadata},
         )
         takeaways_draft = result.get("output")
@@ -593,7 +618,7 @@ async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
     except Exception as e:
         logger.error("close_reading_takeaways_node failed: %s", e, exc_info=True)
         updates: dict[str, Any] = {"takeaways_json": {}}
-        usage = extract_run_usage(e)
+        usage = _metadata_from_owned_usage(run_usage)
         if usage:
             updates["takeaways_usage"] = usage
         return updates
@@ -761,6 +786,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
     paragraph_notes = state.get("paragraph_notes_json", {})
     takeaways = state.get("takeaways_json", {})
 
+    run_usage = RunUsage()
     try:
         # A-1 deterministic gate (no LLM): no highlight/guide/translation may
         # sit on suspected boilerplate text. Reuses the extraction-layer
@@ -844,6 +870,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
             deps=deps,
             prompt=prompt,
             metadata=metadata,
+            run_usage=run_usage,
             langsmith_extra={"metadata": metadata},
         )
         review = result.get("output")
@@ -878,7 +905,7 @@ async def quality_review_node(state: DailyReaderState) -> dict:
                 }],
             },
         }
-        usage = extract_run_usage(e)
+        usage = _metadata_from_owned_usage(run_usage)
         if usage:
             updates["review_usage"] = usage
         return updates
@@ -892,6 +919,7 @@ async def refinement_node(state: DailyReaderState) -> dict:
     paragraph_notes = state.get("paragraph_notes_json", {})
     takeaways = state.get("takeaways_json", {})
 
+    run_usage = RunUsage()
     try:
         unresolved_issues = [
             issue
@@ -922,6 +950,7 @@ async def refinement_node(state: DailyReaderState) -> dict:
             deps=deps,
             prompt=prompt,
             metadata=metadata,
+            run_usage=run_usage,
             langsmith_extra={"metadata": metadata},
         )
         refinement = result.get("output")
@@ -1012,7 +1041,7 @@ async def refinement_node(state: DailyReaderState) -> dict:
                 }],
             },
         }
-        usage = extract_run_usage(e)
+        usage = _metadata_from_owned_usage(run_usage)
         if usage:
             updates["refinement_usage"] = usage
         return updates

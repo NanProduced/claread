@@ -58,25 +58,13 @@ async def run_reader_scoped_agent(
     re-raise the ORIGINAL exception untouched (no wrapping, no attribute
     mutation; ``__cause__`` / traceback preserved).
 
-    When no execution scope is bound (non-Reader callers), the run still
-    uses ``agent.iter`` so confirmed provider usage can be recovered after
-    a structured-output failure. Never a provider HTTP id. Never writes
-    ``ai_usage_events.latency_ms``.
+    When no execution scope is bound (non-Reader callers), behaviour is a
+    plain ``agent.run`` with no Reader identity. Never a provider HTTP id.
+    Never writes ``ai_usage_events.latency_ms``.
     """
     correlation = current_execution()
     if correlation is None:
-        agent_run: Any = None
-        try:
-            async with agent.iter(prompt, **run_kwargs) as agent_run:
-                node = agent_run.next_node
-                while not isinstance(node, End):
-                    if agent_run.result is not None:
-                        break
-                    node = await agent_run.next(node)
-        except BaseException as exc:
-            _attach_failed_run_usage(exc, agent_run)
-            raise
-        return agent_run.result
+        return await agent.run(prompt, **run_kwargs)
 
     agent_run_id, _updated = mint_agent_run_id()
     # Never inherit a stale snapshot from an earlier run in this scope.
@@ -263,6 +251,7 @@ async def run_agent_with_route(
     deps: Any,
     route: ModelRoute,
     model_selection: ModelSelection | None = None,
+    run_usage: RunUsage | None = None,
 ) -> Any:
     model, model_config = build_model_for_route(get_settings(), route, model_selection)
     if model is None:
@@ -272,12 +261,10 @@ async def run_agent_with_route(
         model_config=model_config,
     )
     # Shared path: Reader-scope mint happens inside run_reader_scoped_agent.
-    result = await run_reader_scoped_agent(
-        agent,
-        prompt,
-        deps=deps,
-        model=model,
-    )
+    run_kwargs: dict[str, Any] = {"deps": deps, "model": model}
+    if run_usage is not None:
+        run_kwargs["usage"] = run_usage
+    result = await run_reader_scoped_agent(agent, prompt, **run_kwargs)
     result._resolved_model_config = model_config
     return result
 
@@ -298,45 +285,14 @@ def extract_model_metadata(model_config: ResolvedModelConfig | None) -> dict[str
     }
 
 
-def _attach_failed_run_usage(exc: BaseException, agent_run: Any) -> None:
-    """Stash confirmed RunUsage on the original exception; never wrap it.
-
-    Only attaches when the AgentRun already received at least one provider
-    request. Pre-provider failures stay unadorned so callers cannot invent
-    token/request counts.
-    """
-    if agent_run is None:
-        return
-    usage = getattr(agent_run, "usage", None)
-    if usage is None:
-        return
-    if not isinstance(usage, RunUsage) and callable(usage):
-        usage = usage()
-    if not isinstance(usage, RunUsage):
-        return
-    if int(getattr(usage, "requests", 0) or 0) <= 0:
-        return
-    try:
-        exc.__dict__["_claread_run_usage"] = build_usage_metadata(usage)
-    except Exception:
-        return
-
-
 def extract_run_usage(result: Any) -> dict[str, object] | None:
     """Extract provider usage metadata; emit Reader usage-presence diagnostics.
 
     Diagnostics fire only when ``current_execution()`` is bound (Reader worker
     scope). Non-Reader callers keep pre-O2 extract-only behaviour.
 
-    Failed Daily runs (no Reader execution scope) may carry confirmed usage on
-    the original exception via ``_claread_run_usage``. Never logs prompt,
-    article text, raw provider payloads, or secrets.
+    Never logs prompt, article text, raw provider payloads, or secrets.
     """
-    if isinstance(result, BaseException):
-        usage_data = result.__dict__.get("_claread_run_usage")
-        if isinstance(usage_data, dict) and usage_data:
-            return usage_data
-        return None
     # Lazy import avoids circular import with reader_orchestration package init.
     from app.services.ai_usage.execution_diagnostics import (
         STAGE_ADAPTER,
