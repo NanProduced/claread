@@ -38,11 +38,14 @@ Hard constraints (per Structured Source Contract CONTRACT.md):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from typing import Any
 
 from markdown_it import MarkdownIt
+from markdown_it.common.utils import normalizeReference
+from markdown_it.rules_block.reference import reference as stock_reference
+from markdown_it.rules_inline.image import image as stock_image
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
 
@@ -55,7 +58,7 @@ from .source_link_policy import is_safe_source_link
 # ---------------------------------------------------------------------------
 
 PARSER_NAME = "markdown_it_py"
-PARSER_VERSION = "v1"
+PARSER_VERSION = "v2"
 PROFILE = "commonmark_gfm_v1"
 
 # ---------------------------------------------------------------------------
@@ -148,8 +151,16 @@ _MSG_DEFINITION_LIST = (
     "structure is not supported in the first phase."
 )
 _MSG_UNSUP_DEFINITION_LIST = (
-    "Definition-list structure is not supported in the first phase; text is "
-    "retained for safe review."
+    "Definition-list structure is not supported in the first phase; the "
+    "text is retained for safe review."
+)
+_MSG_IMAGE_LINK_WRAPPER_REMOVED = (
+    "Image was wrapped in a clickable link; the outer link target is not "
+    "preserved in the stable representation."
+)
+_MSG_IMAGE_ONLY_IN_NARRATIVE_CONTAINER = (
+    "A heading, list item, or blockquote contained only images; the "
+    "container was replaced by standalone image blocks."
 )
 
 
@@ -182,6 +193,11 @@ class ParsedBlock:
     parent_block_id: str | None
     order_index: int
     source_range: SourceRange
+    # G2a-A policy carrier: explicit interpretation policy (e.g. the
+    # metadata_only policy for an image-only table_cell). ``None`` keeps
+    # the StableDocumentBlock block-type default. Must never be smuggled
+    # through payload_json.
+    interpretation_policy: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +236,298 @@ class MarkdownParseResult:
 
 class MarkdownSourceParseError(ValueError):
     """Raised when the parser adapter encounters an unrecoverable error."""
+
+
+# ---------------------------------------------------------------------------
+# G2a-A · source_url provenance seam（合同 §7.5）
+#
+# 在 MarkdownIt 的官方 rule 扩展点（``ruler.at``）上包裹 stock image rule
+# 与 stock reference rule，把 image destination 的 pre-normalization
+# semantic destination（``parseLinkDestination().res.str``）挂到 image
+# token 的 meta，并把 reference 定义处的 semantic destination 存进本次
+# parse 的 namespaced env side-store。普通 link rule 零改动；不覆盖
+# validateLink/normalizeLink；不新增图片 URL regex。
+# ---------------------------------------------------------------------------
+
+_IMAGE_SEMANTIC_META_KEY = "semantic_destination"
+# Title meta carries the explicit title ("" = explicit empty title;
+# key holding None = title absent) so payload schema keeps the title
+# key unconditionally（合同 §7.1/§7.2）.
+_IMAGE_TITLE_META_KEY = "semantic_title"
+_REF_SEMANTIC_ENV_KEY = "__claread_ref_semantic_destination"
+_REF_TITLE_ENV_KEY = "__claread_ref_title"
+_REF_UNSAFE_ENV_KEY = "__claread_ref_unsafe_destination"
+
+
+def _scan_reference_definition_parts(
+    text: str, md: MarkdownIt
+) -> tuple[str, str, str | None] | None:
+    """Escape-aware re-scan of one reference definition line.
+
+    Mirrors the label scan of ``markdown_it.rules_block.reference``
+    (nested ``[`` rejects, backslash escapes skip the next char) and
+    returns ``(normalizeReference(label), semantic_destination,
+    title | None)`` or ``None`` when ``text`` is not a definition.
+    """
+    maximum = len(text)
+    if maximum < 2 or text[0] != "[":
+        return None
+    label_end: int | None = None
+    pos = 1
+    while pos < maximum:
+        ch = text[pos]
+        if ch == "[":
+            return None
+        if ch == "]":
+            label_end = pos
+            break
+        if ch == "\\":
+            pos += 1
+        pos += 1
+    if label_end is None or label_end < 0:
+        return None
+    if label_end + 1 >= maximum or text[label_end + 1] != ":":
+        return None
+    label = normalizeReference(text[1:label_end])
+    if not label:
+        return None
+    pos = label_end + 2
+    while pos < maximum and text[pos] in (" ", "\t", "\n"):
+        pos += 1
+    res = md.helpers.parseLinkDestination(text, pos, maximum)
+    if not res.ok:
+        return None
+    semantic = res.str
+    title: str | None = None
+    pos = res.pos
+    title_start = pos
+    while pos < maximum and text[pos] in (" ", "\t", "\n"):
+        pos += 1
+    if pos < maximum and title_start != pos:
+        tres = md.helpers.parseLinkTitle(text, pos, maximum)
+        if tres.ok:
+            # Title only counts when the rest of the line is trailing
+            # whitespace (garbage after the title rolls the title back,
+            # same as the stock rule).
+            q = tres.pos
+            while q < maximum and text[q] in (" ", "\t"):
+                q += 1
+            if q >= maximum or text[q] == "\n":
+                title = tres.str
+    return label, semantic, title
+
+
+def _reference_definition_text(state: Any, start_line: int) -> str:
+    """Read the same lazy-continuation span as the stock reference rule."""
+    next_line = start_line + 1
+    terminator_rules = state.md.block.ruler.getRules("reference")
+    old_parent_type = state.parentType
+    state.parentType = "reference"
+    try:
+        while next_line < state.lineMax and not state.isEmpty(next_line):
+            if state.sCount[next_line] - state.blkIndent > 3:
+                next_line += 1
+                continue
+            if state.sCount[next_line] < 0:
+                next_line += 1
+                continue
+            if any(
+                rule(state, next_line, state.lineMax, True)
+                for rule in terminator_rules
+            ):
+                break
+            next_line += 1
+    finally:
+        state.parentType = old_parent_type
+    return str(state.getLines(start_line, next_line, state.blkIndent, False)).strip()
+
+
+def _install_image_provenance_seam(md: MarkdownIt) -> None:
+    """Install the image/reference provenance wrappers on ``md``.
+
+    Wraps (does not replace) the stock rules so that:
+      * every emitted image token carries its pre-normalization
+        semantic destination in ``meta['semantic_destination']``;
+      * syntactically valid but validateLink-dropped inline image
+        syntax is re-emitted as a typed image token;
+      * reference definitions keep their pre-normalization
+        destination in a namespaced env side-store (safe and unsafe
+        variants), keyed by ``normalizeReference``.
+    """
+
+    def image_with_provenance(state: Any, silent: bool) -> bool:
+        src = state.src
+        pos0 = state.pos
+        max0 = state.posMax
+        semantic: str | None = None
+        ref_label: str | None = None
+        valid_inline = False
+        inline_title: str | None = None
+        inline_title_found = False
+        end_pos = -1
+
+        if pos0 + 1 < max0 and src[pos0] == "!" and src[pos0 + 1] == "[":
+            label_end = md.helpers.parseLinkLabel(state, pos0 + 1, False)
+            if label_end >= 0:
+                pos = label_end + 1
+                if pos < max0 and src[pos] == "(":
+                    p = pos + 1
+                    while p < max0 and (src[p] in (" ", "\t") or src[p] == "\n"):
+                        p += 1
+                    res = md.helpers.parseLinkDestination(src, p, max0)
+                    if res.ok:
+                        semantic = res.str
+                        q = res.pos
+                        space_start = q
+                        while q < max0 and (src[q] in (" ", "\t") or src[q] == "\n"):
+                            q += 1
+                        tres = md.helpers.parseLinkTitle(src, q, max0)
+                        if q < max0 and space_start != q and tres.ok:
+                            inline_title = tres.str
+                            inline_title_found = True
+                            q = tres.pos
+                            while q < max0 and (
+                                src[q] in (" ", "\t") or src[q] == "\n"
+                            ):
+                                q += 1
+                        if q < max0 and src[q] == ")":
+                            valid_inline = True
+                            end_pos = q
+                    elif p < max0 and src[p] == ")":
+                        # Empty bare destination（合同 §7.5.1）: the stock
+                        # rule accepts ``![a]()`` without destination
+                        # parsing; semantic destination is "".
+                        semantic = ""
+                        valid_inline = True
+                        end_pos = p
+                elif pos < max0 and src[pos] == "[":
+                    start = pos + 1
+                    pos2 = md.helpers.parseLinkLabel(state, pos)
+                    if pos2 >= 0:
+                        ref_label = src[start:pos2]
+                if not ref_label:
+                    ref_label = src[pos0 + 2 : label_end]
+
+        ok = stock_image(state, silent)
+        if ok:
+            if not silent and state.tokens and state.tokens[-1].type == "image":
+                token = state.tokens[-1]
+                title_value: str | None = None
+                if semantic is None and ref_label:
+                    ref_key = normalizeReference(ref_label)
+                    store = state.env.get(_REF_SEMANTIC_ENV_KEY) or {}
+                    semantic = store.get(ref_key)
+                    title_store = state.env.get(_REF_TITLE_ENV_KEY) or {}
+                    title_value = title_store.get(ref_key)
+                else:
+                    title_value = inline_title if inline_title_found else None
+                token.meta[_IMAGE_SEMANTIC_META_KEY] = semantic
+                token.meta[_IMAGE_TITLE_META_KEY] = title_value
+            return True
+
+        if valid_inline and semantic is not None and not silent:
+            # The stock rule dropped the image only because validateLink
+            # rejected the (normalized) destination: re-emit an
+            # equivalent typed image token with the semantic destination.
+            label_end2 = md.helpers.parseLinkLabel(state, pos0 + 1, False)
+            content = src[pos0 + 2 : label_end2]
+            tokens: list[Token] = []
+            md.inline.parse(content, md, state.env, tokens)
+            token = state.push("image", "img", 0)
+            token.attrs = {"src": md.normalizeLink(semantic), "alt": ""}
+            if inline_title:
+                token.attrSet("title", inline_title)
+            token.children = tokens or None
+            token.content = content
+            token.meta[_IMAGE_SEMANTIC_META_KEY] = semantic
+            token.meta[_IMAGE_TITLE_META_KEY] = (
+                inline_title if inline_title_found else None
+            )
+            state.pos = end_pos + 1
+            state.posMax = max0
+            return True
+
+        if not silent and ref_label:
+            unsafe_store = state.env.get(_REF_UNSAFE_ENV_KEY) or {}
+            entry = unsafe_store.get(normalizeReference(ref_label))
+            if entry is not None:
+                # Reference image whose definition was dropped by
+                # validateLink: emit a typed image from the unsafe
+                # side-store while the definition line itself remains
+                # visible text.
+                label_end3 = md.helpers.parseLinkLabel(state, pos0 + 1, False)
+                content = src[pos0 + 2 : label_end3]
+                tokens = []
+                md.inline.parse(content, md, state.env, tokens)
+                token = state.push("image", "img", 0)
+                token.attrs = {
+                    "src": md.normalizeLink(entry["destination"]),
+                    "alt": "",
+                }
+                if entry.get("title"):
+                    token.attrSet("title", str(entry["title"]))
+                token.children = tokens or None
+                token.content = content
+                token.meta[_IMAGE_SEMANTIC_META_KEY] = entry["destination"]
+                token.meta[_IMAGE_TITLE_META_KEY] = entry.get("title")
+                pos = label_end3 + 1
+                if pos < max0 and src[pos] == "[":
+                    pos2 = md.helpers.parseLinkLabel(state, pos)
+                    state.pos = pos2 + 1 if pos2 >= 0 else pos
+                else:
+                    state.pos = pos
+                state.posMax = max0
+                return True
+        return bool(ok)
+
+    def reference_with_provenance(
+        state: Any, startLine: int, endLine: int, silent: bool
+    ) -> bool:
+        env = state.env
+        definition: str | None = None
+        pos0 = state.bMarks[startLine] + state.tShift[startLine]
+        maximum = state.eMarks[startLine]
+        if (
+            pos0 < maximum
+            and state.src[pos0] == "["
+            and not state.is_code_block(startLine)
+        ):
+            definition = _reference_definition_text(state, startLine)
+        before = set((env.get("references") or {}).keys())
+        ok = stock_reference(state, startLine, endLine, silent)
+        if silent:
+            return bool(ok)
+        refs = env.get("references") or {}
+        semantic_store = env.setdefault(_REF_SEMANTIC_ENV_KEY, {})
+        title_store = env.setdefault(_REF_TITLE_ENV_KEY, {})
+        for label in refs:
+            if label in before or label in semantic_store:
+                continue
+            entry = refs[label]
+            definition = state.getLines(
+                entry["map"][0], entry["map"][1], state.blkIndent, False
+            ).strip()
+            parts = _scan_reference_definition_parts(definition, md)
+            if parts is not None:
+                semantic_store[label] = parts[1]
+                title_store[label] = parts[2]
+        if not ok:
+            # The stock rule refused the definition; when the refusal is
+            # validateLink (unsafe scheme), keep the semantic destination
+            # in the unsafe side-store so image usages can still resolve.
+            if definition is not None:
+                parts = _scan_reference_definition_parts(definition, md)
+                if parts is not None:
+                    label, semantic, title = parts
+                    if not md.validateLink(md.normalizeLink(semantic)):
+                        unsafe_store = env.setdefault(_REF_UNSAFE_ENV_KEY, {})
+                        unsafe_store.setdefault(
+                            label, {"destination": semantic, "title": title}
+                        )
+        return bool(ok)
+
+    md.inline.ruler.at("image", image_with_provenance)
+    md.block.ruler.at("reference", reference_with_provenance)
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +573,8 @@ def _extract_inline_text(token: Token) -> str:
 
     Inline marks (emphasis / strong / strikethrough / inline_code /
     link_open / link_close / html_inline) are stripped; their text
-    content is preserved.
+    content is preserved. Images contribute nothing (alt/url/title
+    never enter container text per the G2a-A contract).
     """
     if not token.children:
         return token.content or ""
@@ -285,6 +594,7 @@ def _extract_inline_text(token: Token) -> str:
             "s_open", "s_close",
             "del_open", "del_close",
             "footnote_ref",
+            "image",
         ):
             continue
         elif child.type == "html_inline":
@@ -294,12 +604,174 @@ def _extract_inline_text(token: Token) -> str:
             if _is_non_html_placeholder(child.content):
                 parts.append(child.content)
             continue
-        elif child.type == "image":
-            parts.append(child.content)
         else:
             if child.content:
                 parts.append(child.content)
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# G2a-A · image typed representation helpers（合同 §5/§6/§7）
+# ---------------------------------------------------------------------------
+
+_STYLE_WRAPPER_TOKEN_TYPES = frozenset(
+    {
+        "strong_open", "strong_close",
+        "em_open", "em_close",
+        "s_open", "s_close",
+        "del_open", "del_close",
+    }
+)
+
+# Parser-explicit policy for an image-only table_cell（合同 §6.5.2 B'）。
+_IMAGE_ONLY_TABLE_CELL_POLICY: dict[str, Any] = {
+    "allowed_source_scope": ["table_cell"],
+    "default_route": "metadata_only",
+    "rag_eligible": False,
+}
+
+
+def _image_alt_text(token: Token) -> str:
+    """Rendered alt text of an image token (parsed label content)."""
+    if not token.children:
+        return token.content or ""
+    parts: list[str] = []
+    for child in token.children:
+        if child.type in ("text", "code_inline"):
+            parts.append(child.content)
+        elif child.type in ("softbreak", "hardbreak"):
+            parts.append("\n")
+        elif child.type == "image":
+            parts.append(_image_alt_text(child))
+        elif child.type in _STYLE_WRAPPER_TOKEN_TYPES or child.type in (
+            "link_open",
+            "link_close",
+            "footnote_ref",
+        ):
+            continue
+        elif child.content:
+            parts.append(child.content)
+    return "".join(parts)
+
+
+def _image_semantic_destination(token: Token) -> str:
+    """Pre-normalization semantic destination attached by the seam.
+
+    Fail-closed invariant（合同 §7.5.1）: every image token produced by a
+    seam-installed parse carries a ``str`` semantic destination ("" is
+    the legal empty destination). A missing key or a non-str value is a
+    seam invariant violation and fails loudly; the error message never
+    echoes Markdown or URL content.
+    """
+    meta = token.meta
+    value = meta.get(_IMAGE_SEMANTIC_META_KEY) if isinstance(meta, dict) else None
+    if not isinstance(value, str):
+        raise MarkdownSourceParseError(
+            "image provenance invariant violated: semantic destination "
+            "meta is missing or not a string on an image token"
+        )
+    return value
+
+
+def _image_title(token: Token) -> str | None:
+    """Explicit title attached by the seam ("" = explicit empty title)."""
+    meta = token.meta or {}
+    value = meta.get(_IMAGE_TITLE_META_KEY)
+    return value if isinstance(value, str) else None
+
+
+def _image_payload(token: Token) -> dict[str, Any]:
+    """Standalone image block payload（合同 §7.1）。"""
+    return {
+        "source_url": _image_semantic_destination(token),
+        "alt_text": _image_alt_text(token),
+        "title": _image_title(token),
+        "position_kind": "standalone",
+    }
+
+
+def _image_inline_entry(token: Token, before_utf16: int) -> dict[str, Any]:
+    """One ``inline_images`` array entry（合同 §7.2）。"""
+    return {
+        "source_url": _image_semantic_destination(token),
+        "alt_text": _image_alt_text(token),
+        "title": _image_title(token),
+        "before_utf16": before_utf16,
+    }
+
+
+@dataclass(slots=True)
+class _InlineImageWalk:
+    """Result of the §5.2 semantic-leaf classification walk."""
+
+    image_tokens: list[Token]
+    is_image_only: bool
+    link_wrapped_image_count: int
+
+
+def _walk_inline_images(children: list[Token] | None) -> _InlineImageWalk:
+    """Classify inline children with the §5.2 semantic-leaf rules.
+
+    Style wrappers are transparent; whitespace-only text and breaks are
+    ignored; link wrappers are downgraded first (an image-only link
+    contributes only its images, and each link wrapper containing at
+    least one image is counted for the ``image_link_wrapper_removed``
+    notice).
+    """
+    image_tokens: list[Token] = []
+    has_non_image_leaf = False
+    link_wrapped = 0
+    # Stack entries: [has_image, has_non_image_leaf] per open link.
+    link_stack: list[list[bool]] = []
+    for child in children or []:
+        ctype = child.type
+        if ctype == "image":
+            image_tokens.append(child)
+            if link_stack:
+                link_stack[-1][0] = True
+        elif ctype == "text":
+            if child.content and child.content.strip():
+                has_non_image_leaf = True
+                if link_stack:
+                    link_stack[-1][1] = True
+        elif ctype in ("code_inline", "footnote_ref"):
+            has_non_image_leaf = True
+            if link_stack:
+                link_stack[-1][1] = True
+        elif ctype == "html_inline":
+            if child.content and child.content.strip():
+                has_non_image_leaf = True
+                if link_stack:
+                    link_stack[-1][1] = True
+        elif ctype in ("softbreak", "hardbreak"):
+            continue
+        elif ctype in _STYLE_WRAPPER_TOKEN_TYPES:
+            continue
+        elif ctype == "link_open":
+            link_stack.append([False, False])
+        elif ctype == "link_close":
+            if link_stack:
+                has_image, has_leaf = link_stack.pop()
+                if has_image:
+                    link_wrapped += 1
+                if has_leaf:
+                    has_non_image_leaf = True
+        else:
+            if child.content and child.content.strip():
+                has_non_image_leaf = True
+                if link_stack:
+                    link_stack[-1][1] = True
+    for has_image, has_leaf in link_stack:
+        # Malformed unclosed link spans: count conservatively.
+        if has_image:
+            link_wrapped += 1
+        if has_leaf:
+            has_non_image_leaf = True
+    return _InlineImageWalk(
+        image_tokens=image_tokens,
+        is_image_only=bool(image_tokens) and not has_non_image_leaf,
+        link_wrapped_image_count=link_wrapped,
+    )
 
 
 def _reconstruct_raw_with_html(token: Token) -> str:
@@ -439,6 +911,8 @@ def _extract_links_from_link_open(
 
 def _process_paragraph_inline(
     token: Token,
+    *,
+    inline_images: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -469,7 +943,11 @@ def _process_paragraph_inline(
         unsafe_links,
         has_inline_html,
         starts_with_html_inline,
-    ) = _process_inline_with_marks(token, unsafe_link_spans=unsafe_link_spans)
+    ) = _process_inline_with_marks(
+        token,
+        unsafe_link_spans=unsafe_link_spans,
+        inline_images=inline_images,
+    )
     # Normalize meaningless trailing whitespace (e.g. the real space
     # decoded from a trailing ``&#x20;`` HTML entity) at the single
     # shared boundary where narrative paragraph leaves are produced.
@@ -495,6 +973,7 @@ def _process_paragraph_inline(
                 safe_links=safe_links,
                 unsafe_links=unsafe_links,
                 unsafe_link_spans=unsafe_link_spans,
+                inline_images=inline_images,
             )
         )
     return (
@@ -514,6 +993,7 @@ def _clamp_inline_marks_to_trimmed_tail(
     safe_links: list[dict[str, str]],
     unsafe_links: list[dict[str, str]],
     unsafe_link_spans: list[tuple[int, int]],
+    inline_images: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -531,8 +1011,15 @@ def _clamp_inline_marks_to_trimmed_tail(
     clamped to the new length and dropped when the clamp empties them;
     a clamped link label equals its own ``rstrip()`` because everything
     past the trim boundary is trailing whitespace of the whole text.
+    Inline image ``before_utf16`` offsets are clamped to the trimmed
+    length in place (an image sitting in the removed tail still renders
+    after the final visible character).
     """
     limit = utf16_code_unit_length(trimmed)
+    if inline_images is not None:
+        for entry in inline_images:
+            if entry["before_utf16"] > limit:
+                entry["before_utf16"] = limit
     kept_marks: list[dict[str, Any]] = []
     kept_safe_links: list[dict[str, str]] = []
     # Link marks and safe_links entries are appended 1:1 in creation
@@ -582,6 +1069,7 @@ def _process_inline_with_marks(
     token: Token,
     *,
     unsafe_link_spans: list[tuple[int, int]] | None = None,
+    inline_images: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -615,6 +1103,14 @@ def _process_inline_with_marks(
     UTF-16 span of each unsafe-link label in creation order (paired
     1:1 with the returned ``unsafe_links``) so tail-trim consumers can
     realign audit labels positionally instead of blanket-rstripping.
+
+    G2a-A image projection（合同 §6）: image tokens append no text and
+    no link label; ``inline_images`` (when provided) receives one
+    ``{source_url, alt_text, title, before_utf16}`` entry per image
+    with ``before_utf16`` relative to the final projected text. When
+    removing images would leave two non-whitespace characters glued, a
+    single U+0020 separator is inserted before the next non-empty
+    append (one separator for a run of images; dropped at block end).
     """
     if not token.children:
         return token.content or "", [], [], [], False, False
@@ -632,11 +1128,25 @@ def _process_inline_with_marks(
     starts_with_html_inline = token.children[0].type == "html_inline"
 
     current_utf16 = 0
+    pending_image_separator = False
+    last_text_char: str | None = None
 
     def _append_text(s: str) -> None:
-        nonlocal current_utf16
+        nonlocal current_utf16, pending_image_separator, last_text_char
+        if not s:
+            return
+        if pending_image_separator:
+            if (
+                last_text_char is not None
+                and not last_text_char.isspace()
+                and not s[0].isspace()
+            ):
+                text_parts.append(" ")
+                current_utf16 += 1
+            pending_image_separator = False
         text_parts.append(s)
         current_utf16 += utf16_code_unit_length(s)
+        last_text_char = s[-1]
 
     def _try_match_link_pattern(content: str, start_idx: int) -> tuple[str, str, int] | None:
         """Try to match ``[label](href)`` at content[start_idx].
@@ -744,15 +1254,19 @@ def _process_inline_with_marks(
                 href = open_link["href"]
                 label = "".join(open_link["label_parts"])
                 if open_link["is_safe"]:
-                    marks.append(
-                        {
-                            "type": "link",
-                            "start": start,
-                            "end": end,
-                            "href": href,
-                        }
-                    )
-                    safe_links.append({"text": label, "href": href})
+                    # §5.3/§6.4: a link whose visible label was emptied by
+                    # image exclusion emits no empty-range mark and no
+                    # empty-label links entry.
+                    if label:
+                        marks.append(
+                            {
+                                "type": "link",
+                                "start": start,
+                                "end": end,
+                                "href": href,
+                            }
+                        )
+                        safe_links.append({"text": label, "href": href})
                 else:
                     unsafe_links.append(
                         {
@@ -783,13 +1297,16 @@ def _process_inline_with_marks(
             for idx in range(len(open_marks) - 1, -1, -1):
                 if open_marks[idx][0] == close_to_type:
                     mark_type, start = open_marks.pop(idx)
-                    marks.append(
-                        {
-                            "type": mark_type,
-                            "start": start,
-                            "end": current_utf16,
-                        }
-                    )
+                    # §6.4: style wrappers around pure images produce no
+                    # empty-range mark.
+                    if start < current_utf16:
+                        marks.append(
+                            {
+                                "type": mark_type,
+                                "start": start,
+                                "end": current_utf16,
+                            }
+                        )
                     break
         elif ctype == "html_inline":
             if _is_non_html_placeholder(child.content):
@@ -803,9 +1320,14 @@ def _process_inline_with_marks(
                 # Skip from text (no rescue merge).
                 continue
         elif ctype == "image":
-            _append_text(child.content)
-            if open_link is not None:
-                open_link["label_parts"].append(child.content)
+            # G2a-A（合同 §6）: images contribute no text and no link
+            # label; record the typed inline image at the current offset
+            # and arm the pending separator.
+            if inline_images is not None:
+                inline_images.append(
+                    _image_inline_entry(child, current_utf16)
+                )
+            pending_image_separator = True
         elif ctype == "footnote_ref":
             continue
         else:
@@ -959,10 +1481,9 @@ def _promote_callout_display_icons(blocks: list[ParsedBlock]) -> list[ParsedBloc
         if icon is not None:
             payload = {**payload, "display_icon": icon}
         promoted.append(
-            ParsedBlock(
+            replace(
+                block,
                 block_id=id_by_old_id[block.block_id],
-                block_type=block.block_type,
-                text_content=block.text_content,
                 payload_json=payload,
                 parent_block_id=(
                     id_by_old_id.get(block.parent_block_id)
@@ -970,7 +1491,6 @@ def _promote_callout_display_icons(blocks: list[ParsedBlock]) -> list[ParsedBloc
                     else None
                 ),
                 order_index=index,
-                source_range=block.source_range,
             )
         )
     return promoted
@@ -1503,6 +2023,7 @@ class MarkdownSourceParser:
             .enable("strikethrough")
             .use(footnote_plugin)
         )
+        _install_image_provenance_seam(self._md)
 
     def parse(self, text: str) -> MarkdownParseResult:
         """Parse Markdown text into a structured result."""
@@ -1517,6 +2038,9 @@ class MarkdownSourceParser:
         parent_stack: list[str] = []
         # Stack of (block_id, block_type, line_end) for parent context
         parent_context: list[tuple[str, str, int]] = []
+        # Levels of promoted (never emitted) list items whose closing
+        # token must not pop parent_stack（合同 §6.5.8）.
+        skipped_item_close_levels: list[int] = []
         # Stack of list contexts: {"ordered": bool, "next_ordinal": int}
         list_context_stack: list[dict[str, Any]] = []
         # Stack of current tr_open map for cell source_range derivation
@@ -1536,6 +2060,48 @@ class MarkdownSourceParser:
         # are then parented to the container automatically. The container
         # is closed when a standalone ``</aside>`` close token arrives.
         aside_open_block_id: str | None = None
+
+        # G2a-A image diagnostics（合同 §5.3/§6.5.5）: one
+        # adaptation_notice per link wrapper containing ≥1 image and one
+        # per promoted image-only narrative container.
+        image_notices: list[DiagnosticWarning] = []
+
+        def _append_image_notice(code: str, message: str) -> None:
+            image_notices.append(
+                DiagnosticWarning(
+                    code=code,
+                    message=message,
+                    blocks_freeze=False,
+                    classification=CLASSIFICATION_ADAPTATION_NOTICE,
+                )
+            )
+
+        def _append_link_wrapper_notices(count: int) -> None:
+            for _ in range(count):
+                _append_image_notice(
+                    "image_link_wrapper_removed",
+                    _MSG_IMAGE_LINK_WRAPPER_REMOVED,
+                )
+
+        def _emit_standalone_image_blocks(
+            image_tokens: list[Token],
+            parent_block_id: str | None,
+            src_range: SourceRange | None,
+        ) -> None:
+            nonlocal order_index
+            for image_token in image_tokens:
+                blocks.append(
+                    ParsedBlock(
+                        block_id=f"b{order_index + 1}",
+                        block_type="image",
+                        text_content=None,
+                        payload_json=_image_payload(image_token),
+                        parent_block_id=parent_block_id,
+                        order_index=order_index,
+                        source_range=_resolve_range(src_range, flags),
+                    )
+                )
+                order_index += 1
 
         # Pre-scan for strikethrough detection (token-level, not string).
         # s_open/del_open may appear as inline children inside `inline` tokens,
@@ -1577,6 +2143,15 @@ class MarkdownSourceParser:
                 "list_item_close", "blockquote_close",
                 "table_close", "tr_close",
             ):
+                if (
+                    token_type == "list_item_close"
+                    and skipped_item_close_levels
+                    and skipped_item_close_levels[-1] == token.level
+                ):
+                    # Promoted empty item: nothing was pushed for it.
+                    skipped_item_close_levels.pop()
+                    i += 1
+                    continue
                 if parent_stack:
                     parent_stack.pop()
                 if parent_context:
@@ -2167,40 +2742,74 @@ class MarkdownSourceParser:
 
                 # Flat path: ordinary blockquote — aggregate inline content
                 # into a single block (no regression for quotations).
+                bq_inlines: list[Token] = []
+                j = i + 1
+                while j < len(tokens) and tokens[j].type != "blockquote_close":
+                    if tokens[j].type == "inline":
+                        bq_inlines.append(tokens[j])
+                    j += 1
+
+                bq_walks = [_walk_inline_images(t.children) for t in bq_inlines]
+                if bq_walks and all(w.is_image_only for w in bq_walks):
+                    # §6.5.2（已批准方案 B）: image-only blockquote promotes
+                    # all images in token order; no empty container block.
+                    promoted: list[Token] = []
+                    for w in bq_walks:
+                        promoted.extend(w.image_tokens)
+                    _emit_standalone_image_blocks(
+                        promoted,
+                        parent_stack[-1] if parent_stack else None,
+                        src_range,
+                    )
+                    _append_image_notice(
+                        "image_only_in_narrative_container",
+                        _MSG_IMAGE_ONLY_IN_NARRATIVE_CONTAINER,
+                    )
+                    for w in bq_walks:
+                        _append_link_wrapper_notices(w.link_wrapped_image_count)
+                    # Skip blockquote_close: nothing was pushed onto
+                    # parent_stack for this container.
+                    i = j + 1
+                    continue
+
                 bq_text = ""
                 bq_marks: list[dict[str, Any]] = []
                 bq_safe_links: list[dict[str, str]] = []
                 bq_unsafe_links: list[dict[str, str]] = []
-                # Consume blockquote content
-                j = i + 1
-                while j < len(tokens) and tokens[j].type != "blockquote_close":
-                    if tokens[j].type == "inline":
-                        (
-                            inline_text,
-                            inline_marks,
-                            safe_links,
-                            unsafe_links,
-                            _bq_has_html,
-                            _bq_starts_html,
-                        ) = _process_inline_with_marks(tokens[j])
-                        mark_offset = utf16_code_unit_length(bq_text)
-                        if bq_text:
-                            bq_text += "\n"
-                            mark_offset += 1
-                        bq_text += inline_text
-                        bq_marks.extend(
-                            {
-                                **mark,
-                                "start": mark["start"] + mark_offset,
-                                "end": mark["end"] + mark_offset,
-                            }
-                            for mark in inline_marks
-                        )
-                        bq_safe_links.extend(safe_links)
-                        bq_unsafe_links.extend(unsafe_links)
-                        if unsafe_links:
-                            flags.has_unsafe_link = True
-                    j += 1
+                bq_inline_images: list[dict[str, Any]] = []
+                for bq_inline, bq_walk in zip(bq_inlines, bq_walks, strict=True):
+                    per_inline_images: list[dict[str, Any]] = []
+                    (
+                        inline_text,
+                        inline_marks,
+                        safe_links,
+                        unsafe_links,
+                        _bq_has_html,
+                        _bq_starts_html,
+                    ) = _process_inline_with_marks(
+                        bq_inline, inline_images=per_inline_images
+                    )
+                    mark_offset = utf16_code_unit_length(bq_text)
+                    if bq_text:
+                        bq_text += "\n"
+                        mark_offset += 1
+                    bq_text += inline_text
+                    bq_marks.extend(
+                        {
+                            **mark,
+                            "start": mark["start"] + mark_offset,
+                            "end": mark["end"] + mark_offset,
+                        }
+                        for mark in inline_marks
+                    )
+                    for image_entry in per_inline_images:
+                        image_entry["before_utf16"] += mark_offset
+                        bq_inline_images.append(image_entry)
+                    bq_safe_links.extend(safe_links)
+                    bq_unsafe_links.extend(unsafe_links)
+                    if unsafe_links:
+                        flags.has_unsafe_link = True
+                    _append_link_wrapper_notices(bq_walk.link_wrapped_image_count)
                 flat_bq_payload: dict[str, Any] = {}
                 if bq_safe_links or bq_unsafe_links:
                     flat_bq_payload["links"] = bq_safe_links
@@ -2208,6 +2817,8 @@ class MarkdownSourceParser:
                     flat_bq_payload["stripped_links"] = bq_unsafe_links
                 if bq_marks:
                     flat_bq_payload["inline_marks"] = bq_marks
+                if bq_inline_images:
+                    flat_bq_payload["inline_images"] = bq_inline_images
                 blocks.append(
                     ParsedBlock(
                         block_id=bq_id,
@@ -2310,24 +2921,44 @@ class MarkdownSourceParser:
             if token_type in ("td_open", "th_open"):
                 # source_range from parent tr_open map (th_open/td_open map=None)
                 src_range = _map_to_1based(current_tr_map)
-                cell_text = ""
+                cell_text: str | None = ""
                 cell_marks: list[dict[str, Any]] = []
+                cell_policy: dict[str, Any] | None = None
+                cell_inline_images: list[dict[str, Any]] = []
                 j = i + 1
                 while (
                     j < len(tokens)
                     and tokens[j].type not in ("td_close", "th_close")
                 ):
                     if tokens[j].type == "inline":
-                        (
-                            cell_text,
-                            cell_marks,
-                            _cell_safe_links,
-                            _cell_unsafe_links,
-                            _cell_has_html,
-                            _cell_starts_html,
-                        ) = _process_inline_with_marks(tokens[j])
-                        if _cell_unsafe_links:
-                            flags.has_unsafe_link = True
+                        walk = _walk_inline_images(tokens[j].children)
+                        if walk.is_image_only:
+                            # §6.5.2 B': image-only cell keeps the
+                            # structural cell (text_content=None) with a
+                            # parser-explicit metadata_only policy; every
+                            # inline image sits at offset 0.
+                            cell_text = None
+                            cell_policy = dict(_IMAGE_ONLY_TABLE_CELL_POLICY)
+                            for image_token in walk.image_tokens:
+                                cell_inline_images.append(
+                                    _image_inline_entry(image_token, 0)
+                                )
+                        else:
+                            (
+                                cell_text,
+                                cell_marks,
+                                _cell_safe_links,
+                                _cell_unsafe_links,
+                                _cell_has_html,
+                                _cell_starts_html,
+                            ) = _process_inline_with_marks(
+                                tokens[j], inline_images=cell_inline_images
+                            )
+                            if _cell_unsafe_links:
+                                flags.has_unsafe_link = True
+                        _append_link_wrapper_notices(
+                            walk.link_wrapped_image_count
+                        )
                     j += 1
                 is_header = token_type == "th_open"
                 alignment = _extract_alignment(token)
@@ -2338,6 +2969,8 @@ class MarkdownSourceParser:
                 }
                 if cell_marks:
                     cell_payload["inline_marks"] = cell_marks
+                if cell_inline_images:
+                    cell_payload["inline_images"] = cell_inline_images
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
@@ -2347,6 +2980,7 @@ class MarkdownSourceParser:
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
+                        interpretation_policy=cell_policy,
                     )
                 )
                 order_index += 1
@@ -2360,23 +2994,51 @@ class MarkdownSourceParser:
                 src_range = _map_to_1based(token.map)
                 heading_text = ""
                 heading_marks: list[dict[str, Any]] = []
+                heading_inline_images: list[dict[str, Any]] = []
+                heading_inline: Token | None = None
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "heading_close":
                     if tokens[j].type == "inline":
-                        (
-                            heading_text,
-                            heading_marks,
-                            _heading_safe_links,
-                            _heading_unsafe_links,
-                            _heading_has_html,
-                            _heading_starts_html,
-                        ) = _process_inline_with_marks(tokens[j])
-                        if _heading_unsafe_links:
-                            flags.has_unsafe_link = True
+                        heading_inline = tokens[j]
                     j += 1
+                if heading_inline is not None:
+                    walk = _walk_inline_images(heading_inline.children)
+                    if walk.is_image_only:
+                        # §6.5.2（已批准方案 B）: image-only heading is
+                        # replaced by standalone image blocks; no empty
+                        # heading block enters the freeze path.
+                        _emit_standalone_image_blocks(
+                            walk.image_tokens,
+                            parent_stack[-1] if parent_stack else None,
+                            src_range,
+                        )
+                        _append_image_notice(
+                            "image_only_in_narrative_container",
+                            _MSG_IMAGE_ONLY_IN_NARRATIVE_CONTAINER,
+                        )
+                        _append_link_wrapper_notices(
+                            walk.link_wrapped_image_count
+                        )
+                        i = j + 1
+                        continue
+                    (
+                        heading_text,
+                        heading_marks,
+                        _heading_safe_links,
+                        _heading_unsafe_links,
+                        _heading_has_html,
+                        _heading_starts_html,
+                    ) = _process_inline_with_marks(
+                        heading_inline, inline_images=heading_inline_images
+                    )
+                    if _heading_unsafe_links:
+                        flags.has_unsafe_link = True
+                    _append_link_wrapper_notices(walk.link_wrapped_image_count)
                 heading_payload: dict[str, Any] = {"level": level}
                 if heading_marks:
                     heading_payload["inline_marks"] = heading_marks
+                if heading_inline_images:
+                    heading_payload["inline_images"] = heading_inline_images
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
@@ -2405,6 +3067,21 @@ class MarkdownSourceParser:
                 payload: dict[str, Any] = {}
                 para_text = ""
                 if inline_token is not None:
+                    walk = _walk_inline_images(inline_token.children)
+                    if walk.is_image_only:
+                        # §5.2: image-only paragraph becomes N standalone
+                        # image blocks; no empty paragraph is emitted.
+                        _emit_standalone_image_blocks(
+                            walk.image_tokens,
+                            parent_stack[-1] if parent_stack else None,
+                            src_range,
+                        )
+                        _append_link_wrapper_notices(
+                            walk.link_wrapped_image_count
+                        )
+                        i = j + 1
+                        continue
+                    para_inline_images: list[dict[str, Any]] = []
                     (
                         para_text,
                         inline_marks,
@@ -2412,7 +3089,9 @@ class MarkdownSourceParser:
                         unsafe_links,
                         has_inline_html,
                         starts_with_html_inline,
-                    ) = _process_paragraph_inline(inline_token)
+                    ) = _process_paragraph_inline(
+                        inline_token, inline_images=para_inline_images
+                    )
                     # html_inline tokens never contribute raw tag text to
                     # para_text (they are either stripped or, for non-HTML
                     # placeholders like vector<T>, preserved verbatim as
@@ -2433,12 +3112,15 @@ class MarkdownSourceParser:
                     # Inline_marks only when non-empty (minimal payload).
                     if inline_marks:
                         payload["inline_marks"] = inline_marks
+                    if para_inline_images:
+                        payload["inline_images"] = para_inline_images
                     # M-6: paragraph starting with html_inline
                     if starts_with_html_inline:
                         payload["extracted_from"] = "html_inline"
                     # Footnote reference detection
                     if _has_footnote_ref(inline_token):
                         flags.has_footnote_ref = True
+                    _append_link_wrapper_notices(walk.link_wrapped_image_count)
 
                 blocks.append(
                     ParsedBlock(
@@ -2531,6 +3213,7 @@ class MarkdownSourceParser:
                 li_id = f"b{order_index + 1}"
                 li_text = ""
                 li_marks: list[dict[str, Any]] = []
+                li_inline_token: Token | None = None
                 # Only consume the list item's own paragraph (for text).
                 # Do NOT consume nested list tokens — let the main loop
                 # process them so nested lists produce their own blocks.
@@ -2543,16 +3226,7 @@ class MarkdownSourceParser:
                         k = j + 1
                         while k < len(tokens) and tokens[k].type != "paragraph_close":
                             if tokens[k].type == "inline":
-                                (
-                                    li_text,
-                                    li_marks,
-                                    _li_safe_links,
-                                    _li_unsafe_links,
-                                    _li_has_html,
-                                    _li_starts_html,
-                                ) = _process_inline_with_marks(tokens[k])
-                                if _li_unsafe_links:
-                                    flags.has_unsafe_link = True
+                                li_inline_token = tokens[k]
                             k += 1
                         consumed_end = k + 1  # advance past paragraph_close
                         break
@@ -2569,19 +3243,78 @@ class MarkdownSourceParser:
                         break
                     elif t.type == "inline":
                         # Bare inline (no paragraph wrapper)
-                        (
-                            li_text,
-                            li_marks,
-                            _li_safe_links,
-                            _li_unsafe_links,
-                            _li_has_html,
-                            _li_starts_html,
-                        ) = _process_inline_with_marks(t)
-                        if _li_unsafe_links:
-                            flags.has_unsafe_link = True
+                        li_inline_token = t
                         consumed_end = j + 1
                         break
                     j += 1
+
+                # G2a-A image-only promotion（合同 §6.5.2/§6.5.8）: an
+                # item whose direct content carries no text is never
+                # emitted. Its direct images become children of the
+                # surrounding list wrapper at the item's position; any
+                # nested lists stay in the token stream and the main
+                # loop re-parents them onto the same wrapper.
+                li_walk = (
+                    _walk_inline_images(li_inline_token.children)
+                    if li_inline_token is not None
+                    else None
+                )
+                promotable = li_walk is None or li_walk.is_image_only
+                close_idx = next(
+                    (
+                        scan
+                        for scan in range(consumed_end, len(tokens))
+                        if tokens[scan].type == "list_item_close"
+                        and tokens[scan].level == token.level
+                    ),
+                    -1,
+                )
+                if promotable and close_idx >= 0:
+                    if list_context_stack and list_context_stack[-1]["ordered"]:
+                        list_context_stack[-1]["next_ordinal"] += 1
+                    if li_walk is not None:
+                        _emit_standalone_image_blocks(
+                            li_walk.image_tokens,
+                            parent_stack[-1] if parent_stack else None,
+                            src_range,
+                        )
+                        _append_image_notice(
+                            "image_only_in_narrative_container",
+                            _MSG_IMAGE_ONLY_IN_NARRATIVE_CONTAINER,
+                        )
+                        _append_link_wrapper_notices(
+                            li_walk.link_wrapped_image_count
+                        )
+                    if close_idx == consumed_end:
+                        # Nothing between the direct content and the
+                        # close: skip the close token entirely.
+                        i = close_idx + 1
+                    else:
+                        # Nested structure remains to be processed by
+                        # the main loop; only this item's own close
+                        # token is skipped.
+                        skipped_item_close_levels.append(token.level)
+                        i = consumed_end
+                    continue
+
+                li_inline_images: list[dict[str, Any]] = []
+                if li_inline_token is not None:
+                    (
+                        li_text,
+                        li_marks,
+                        _li_safe_links,
+                        _li_unsafe_links,
+                        _li_has_html,
+                        _li_starts_html,
+                    ) = _process_inline_with_marks(
+                        li_inline_token, inline_images=li_inline_images
+                    )
+                    if _li_unsafe_links:
+                        flags.has_unsafe_link = True
+                    if li_walk is not None:
+                        _append_link_wrapper_notices(
+                            li_walk.link_wrapped_image_count
+                        )
 
                 # Get list context for ordered/ordinal/depth
                 if list_context_stack:
@@ -2612,6 +3345,8 @@ class MarkdownSourceParser:
                 }
                 if li_marks:
                     li_payload["inline_marks"] = li_marks
+                if li_inline_images:
+                    li_payload["inline_images"] = li_inline_images
                 blocks.append(
                     ParsedBlock(
                         block_id=li_id,
@@ -2682,6 +3417,9 @@ class MarkdownSourceParser:
         blocks = _promote_callout_display_icons(blocks)
 
         # --- Diagnostics ---
+        # G2a-A image adaptation notices（合同 §5.3/§6.5.5）in occurrence
+        # order; adaptation_notice classification never forces candidate.
+        warnings.extend(image_notices)
         # Unclosed fence detection moved to pre-scan (before token loop)
         # so fence blocks can reference flags.has_unclosed_fence.
 

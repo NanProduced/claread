@@ -78,9 +78,18 @@ NOTION_ASIDE = """
 safe informational content for every reader of the document.</aside>
 """
 
-# candidate 触发器：image 是合法 content_check 信号（media truth）。
+# G2a-A（O-1）：图片自 typed representation 起直接 stable freeze，不再
+# 触发 candidate。此处 fixture 保留给"含图直接 freeze"断言使用。
 IMAGE_BLOCK = """
 ![Architecture diagram](https://example.com/images/architecture.png)
+"""
+
+# candidate 触发器：footnote 是合法 content_check 信号（结构语义需要
+# 人工确认）。candidate 结构保真测试改用 footnote 触发。
+FOOTNOTE_BLOCK = """
+The committee also cited an archival footnote for extra context.[^1]
+
+[^1]: The archival note keeps the additional context attached.
 """
 
 
@@ -199,9 +208,9 @@ def _utf16_len(text: str) -> int:
 async def test_pasted_markdown_candidate_blocks_are_typed_in_db(
     db_env: asyncpg.Pool,
 ) -> None:
-    """pasted_text Markdown（image 触发 candidate）blocks_json 不再全 paragraph。"""
+    """pasted_text Markdown（footnote 触发 candidate）blocks_json 不再全 paragraph。"""
     user_id = await _insert_user(db_env)
-    result = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + IMAGE_BLOCK)
+    result = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + FOOTNOTE_BLOCK)
 
     assert result.suitability.outcome == "candidate_document_required"
     assert result.suitability.detected_format == "markdown"
@@ -308,7 +317,7 @@ async def test_confirm_preserves_block_types_hierarchy_canonical_and_snapshot(
 ) -> None:
     """Candidate → Stable：block type / 层级 / 顺序 / canonical / units 保真。"""
     user_id = await _insert_user(db_env)
-    created = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + IMAGE_BLOCK)
+    created = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + FOOTNOTE_BLOCK)
     candidate_blocks = await _fetch_candidate_blocks(
         db_env, created.candidate_document_id
     )
@@ -453,3 +462,71 @@ async def test_long_pasted_markdown_30k_candidate_keeps_typed_blocks(
     by_id = {block["block_id"]: block for block in blocks}
     for item in (b for b in blocks if b["block_type"] == "list_item"):
         assert by_id[item["parent_block_id"]]["block_type"] == "list"
+
+
+# ---------------------------------------------------------------------------
+# 5. G2a-A：含图 Markdown 直接 stable freeze + typed image block
+# ---------------------------------------------------------------------------
+
+
+async def test_image_markdown_freezes_stable_with_typed_image_block(
+    db_env: asyncpg.Pool,
+) -> None:
+    """G2a-A（O-1）：图片不再触发 candidate；typed image block 直接 freeze。"""
+    user_id = await _insert_user(db_env)
+    service = StableReadyInputApplicationService(pool=db_env)
+    result = await service.freeze_stable_ready_input_and_load_snapshot(
+        user_id=user_id,
+        source_type="pasted_text",
+        text=PASTED_MARKDOWN + IMAGE_BLOCK,
+        language="en",
+    )
+
+    suitability = result.suitability
+    assert suitability.outcome == "stable_document_ready", (
+        f"outcome={suitability.outcome}, flags={suitability.flags}, "
+        f"reasons={suitability.reasons}"
+    )
+    assert "image_ocr_uncertain" not in suitability.flags
+    assert "markdown_complex_structure" not in suitability.flags
+
+    async with db_env.acquire() as conn:
+        stable_rows = await conn.fetch(
+            """
+            SELECT b.block_id, b.block_type, b.text_content, b.payload_json
+            FROM stable_reading_documents d
+            JOIN stable_document_blocks b
+              ON b.stable_document_id = d.id
+            WHERE d.reading_record_id = $1
+            ORDER BY b.order_index ASC
+            """,
+            result.reading_record_id,
+        )
+        base_row = await conn.fetchrow(
+            """
+            SELECT b.text
+            FROM reading_bases b
+            WHERE b.reading_record_id = $1 AND b.status = 'active'
+            """,
+            result.reading_record_id,
+        )
+
+    image_blocks = [r for r in stable_rows if str(r["block_type"]) == "image"]
+    assert len(image_blocks) == 1, (
+        f"expected exactly one typed image block, got "
+        f"{[str(r['block_type']) for r in stable_rows]}"
+    )
+    image_row = image_blocks[0]
+    assert image_row["text_content"] is None
+    payload = _json(image_row["payload_json"])
+    assert payload["source_url"] == "https://example.com/images/architecture.png"
+    assert payload["alt_text"] == "Architecture diagram"
+    assert payload["position_kind"] == "standalone"
+    assert "url_safe" not in payload
+    assert "effective_url" not in payload
+
+    # alt/url/title 永不进入 canonical text。
+    assert base_row is not None
+    canonical = str(base_row["text"])
+    assert "architecture.png" not in canonical
+    assert "Architecture diagram" not in canonical

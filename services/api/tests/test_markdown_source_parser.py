@@ -256,7 +256,9 @@ def test_fixture_diagnostics_match_expected(fixture_name: str) -> None:
 def test_clause1_identity_constants_are_frozen() -> None:
     """Clause 1 — parser identity must be frozen constants."""
     assert PARSER_NAME == "markdown_it_py"
-    assert PARSER_VERSION == "v1"
+    # G2a-A: v2 bumps for the typed image representation (standalone
+    # image blocks + owning-block inline_images + provenance seam).
+    assert PARSER_VERSION == "v2"
     assert PROFILE == "commonmark_gfm_v1"
 
 
@@ -404,7 +406,7 @@ def test_clause6_normalizer_uses_structured_source_identity() -> None:
         normalize_input_document,
     )
 
-    assert NORMALIZER_VERSION == "d6_i3b_structured_source_v1"
+    assert NORMALIZER_VERSION == "d6_i3b_structured_source_v2"
 
     normalized = normalize_input_document(
         InputSuitabilityRequest(

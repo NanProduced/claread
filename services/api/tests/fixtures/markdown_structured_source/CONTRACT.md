@@ -58,7 +58,7 @@ blocks carry canonical text and inherit the source-callout semantic policy.
 
 **Reference**:
 - Schema: `app/schemas/reader_documents.py` (`StableDocumentBlock`, `StableDocumentBlockType`, `_DEFAULT_POLICY_BY_BLOCK_TYPE`, `default_interpretation_policy_for`)
-- Existing normalizer: `app/services/reader_orchestration/input_document_normalizer.py` (current `NORMALIZER_VERSION = "d6_i3b_structured_source_v1"`; legacy `"d6_i3b_plain_text_markdown_v1"` referenced only in Clause 6 for the legacy read path)
+- Existing normalizer: `app/services/reader_orchestration/input_document_normalizer.py` (current `NORMALIZER_VERSION = "d6_i3b_structured_source_v2"`; legacy `"d6_i3b_plain_text_markdown_v1"` referenced only in Clause 6 for the legacy read path)
 - Suitability gate: `app/services/reader_orchestration/input_suitability_gate.py`
 
 ---
@@ -70,7 +70,7 @@ Every parser invocation MUST produce a stable identity envelope:
 | Field | Source | Notes |
 |-------|--------|-------|
 | `parser_name` | adapter constant | First phase: `"markdown_it_py"` |
-| `parser_version` | adapter constant (semver-ish string, not Python package version) | First phase: `"v1"` (parser-internal contract version; library upgrade bumps only when token tree shape changes) |
+| `parser_version` | adapter constant (semver-ish string, not Python package version) | Current: `"v2"` (G2a-A typed image representation + provenance seam; library upgrade bumps only when token tree shape changes) |
 | `profile` | adapter config name | First phase: `"commonmark_gfm_v1"` (CommonMark + GFM table/strikethrough + footnote plugin) |
 
 These three fields REPLACE the legacy `normalizer_version` semantics (`"d6_i3b_plain_text_markdown_v1"`) for newly produced documents. Legacy frozen documents keep their existing `normalizer_version` on read (Clause 6).
@@ -486,7 +486,7 @@ MUST NOT override this matrix when they conflict.
 | `table` (structure-uncertain) | fail-closed (content_check) | supported (`structure_uncertain: true`) | n/a (candidate path) | `table_structure_uncertain` fixture | supported | L1: row/column mismatch (cells would be padded/dropped) or missing header row routes to `candidate_document_required`. |
 | `table_row` / `table_cell` | supported | supported (`is_header`, `alignment`) | supported (L1: snapshot `tableIsHeader` / `tableAlignment`) | parser fixtures; `test_table_code_metadata_reload.py` | supported | L1: source header-row semantics and per-cell alignment survive the Reading Record Snapshot reload. |
 | `footnote` | supported (mdit-py-plugins `footnote_plugin` enabled) | supported (`footnote` block type, `footnote_id`, `footnote_anchor`) | NOT rendered as a Reader reading unit | `footnote` fixture | partial | **Parser produces degraded/candidate semantics**, not "no parser support". Footnote reference produces `footnote_reference` warning and routes document to `candidate_document_required`. Full footnote rendering (multi-ref / backref / inline footnote) is future work. |
-| `image` | detected by suitability gate (`has_image`) | n/a (not frozen as a first-class block in the first phase) | n/a | `has_image` flag in `input_suitability_gate.py` | partial | **Backend suitability gate routes image-containing inputs to candidate review**, NOT "纯文本 + 暂不支持提示". Frontend renders no image block in the Reader. image block schema/renderer is not implemented. |
+| `image` | typed representation (G2a-A: standalone `image` block / owning-block `inline_images`) | supported (`payload_json.source_url` semantic destination + `alt_text` / `title` / `position_kind` or `before_utf16`; image-only table_cell carries explicit `metadata_only` policy) | n/a (Reader image rendering is G3b) | `test_markdown_image_representation.py`; `test_pasted_markdown_structure_truth_db.py` | partial | **G2a-A (O-1): image presence no longer routes to candidate review** — inputs with images and enough prose freeze as `stable_document_ready` with a typed image block (metadata_only, never enters canonical text). The `has_image` gate branch / `image_ocr_uncertain` flag generation was removed; `source_url` preserves the pre-normalization semantic destination (raw backslash/space/unsafe scheme) via the parser provenance seam. Reader image rendering / `effective_url` projection is G2a-B/G3b. |
 | `raw_html` (block / inline) | deterministic sanitize (L1) | text extracted, HTML not preserved; paired rich `<aside>` becomes `source_callout` | visible safe text; paired `<aside>` uses the generic callout tree | `raw_html` / `safe_html_adaptation` / `rich_html_aside`; G5 browser suite | partial | Arbitrary raw HTML is intentionally not a first-class block. Sanitization and adaptation notices are supported; paired rich `<aside>` is covered as `source_callout`. |
 | `definition_list` | deterministic plain-text degradation | paragraph payload only | visible paragraph text | `definition_list` fixture | partial | No definition-list block type exists; the syntax remains visible and carries `definition_list_degraded` as an adaptation notice. |
 | non-HTML placeholders (`vector<T>` / `<name>`) | supported (L1: preserved verbatim, no diagnostic) | supported | supported (plain text) | `safe_html_adaptation` fixture; `test_markdown_safe_normalization.py` | supported | Bare unknown tags without attributes are literal text, not HTML. |
@@ -517,11 +517,15 @@ MUST NOT override this matrix when they conflict.
   `footnote_reference` warning and `candidate_document_required` outcome.
   The matrix MUST NOT describe this as "no parser support". Full footnote
   rendering (multi-ref / backref / inline footnote) is future work.
-- **Image**: The backend suitability gate (`input_suitability_gate.py`)
-  detects `has_image` and routes the input to `candidate_document_required`
-  with `image_ocr_uncertain` flag. The matrix MUST NOT describe this as
-  "纯文本 + 暂不支持提示" — it is a candidate review routing, not a silent
-  text-only fallback.
+- **Image**: G2a-A — the parser produces typed image representation
+  (standalone `image` blocks for image-only paragraphs/headings/quotes,
+  `inline_images` on owning blocks for mixed content) whose
+  `payload_json.source_url` keeps the pre-normalization semantic
+  destination. The suitability gate no longer routes image-containing
+  inputs to candidate review (`has_image` branch and `image_ocr_uncertain`
+  generation removed); pure-image / zero-prose documents are still rejected
+  by the regular text-eligibility rules. The matrix MUST NOT describe
+  images as candidate-review routing.
 - **Raw HTML**: L1 — the backend deterministically sanitizes raw HTML
   (executable structure removed, text preserved), classifies it
   `adaptation_notice` and continues as `stable_document_ready`. Paired rich

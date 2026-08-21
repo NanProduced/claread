@@ -437,18 +437,26 @@ def test_markdown_candidate_preserves_list_payload_and_code_block_contract() -> 
     # Parser expresses list grouping via parent_block_id (both items
     # share the list wrapper's block_id), not via a list_id payload key.
     # Unordered list items have ordinal=None per Structured Source Contract.
-    assert list_blocks[0]["payload_json"] == {
+    # The semantic classifier attaches `semantic` (default_prose) to every
+    # role-bearing block before persistence.
+    expected_list_payload = {
         "ordered": False,
         "ordinal": None,
         "depth": 0,
         "marker": "-",
+        "semantic": {
+            "classification": {
+                "confidence": 1.0,
+                "rules_version": "semrules_v1",
+                "signals": ["default_prose"],
+                "source": "deterministic",
+            },
+            "content_role": "prose",
+            "contract_version": "semantic_contract_v1",
+        },
     }
-    assert list_blocks[1]["payload_json"] == {
-        "ordered": False,
-        "ordinal": None,
-        "depth": 0,
-        "marker": "-",
-    }
+    assert list_blocks[0]["payload_json"] == expected_list_payload
+    assert list_blocks[1]["payload_json"] == expected_list_payload
     # Both list items must share the same parent_block_id (list wrapper).
     list_parent = list_blocks[0]["parent_block_id"]
     assert list_parent is not None

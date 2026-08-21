@@ -97,6 +97,10 @@ class _BlockDraft:
     line_end: int
     links: list[dict[str, str]] = field(default_factory=list)
     parent_block_id: str | None = None
+    # G2a-A policy carrier: parser-explicit interpretation policy (e.g.
+    # image-only table_cell metadata_only); ``None`` keeps the
+    # StableDocumentBlock block-type default.
+    interpretation_policy: dict[str, Any] | None = None
 
 
 class CandidateDocumentCreationService:
@@ -624,6 +628,7 @@ def _build_candidate_blocks(
                 line_end=draft.line_end,
                 links=draft.links,
             ),
+            interpretation_policy=draft.interpretation_policy,
             quality_json=dict(block_quality_json),
         )
         for index, draft in enumerate(drafts)
@@ -711,6 +716,11 @@ def _build_markdown_drafts_from_parser(
                 line_start=block.source_range.line_start,
                 line_end=block.source_range.line_end,
                 parent_block_id=block.parent_block_id,
+                interpretation_policy=(
+                    dict(block.interpretation_policy)
+                    if block.interpretation_policy is not None
+                    else None
+                ),
             )
         )
 
