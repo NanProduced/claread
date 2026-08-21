@@ -24,7 +24,6 @@ from app.llm.routes import (
     DAILY_READER_MODEL_PRESET,
     MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DAILY_ANNOTATION,
-    MODEL_ROUTE_DAILY_COVER,
     MODEL_ROUTE_DAILY_REVIEW,
     MODEL_ROUTE_DAILY_TAKEAWAYS,
     MODEL_ROUTE_DAILY_TRANSLATION,
@@ -159,7 +158,6 @@ def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dic
         MODEL_ROUTE_DAILY_ANALYSIS,
         MODEL_ROUTE_DAILY_TAKEAWAYS,
         MODEL_ROUTE_DAILY_REVIEW,
-        MODEL_ROUTE_DAILY_COVER,
     ):
         metadata = resolve_model_metadata(settings, route, selection)
         if metadata["model_profile"] is None:

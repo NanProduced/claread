@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,12 +33,13 @@ from app.services.daily_reader.cover_select import (
     LAYOUT_FULL_BLEED,
     LAYOUT_HALF_FLOAT,
     LAYOUT_TWO_THIRD,
-    SELECTION_MODE_FALLBACK_FIRST,
-    SELECTION_MODE_LLM,
-    _CoverSelectOutput,
+    SELECTION_MODE_DETERMINISTIC_SOURCE,
+    SELECTION_MODE_NONE,
+    VISUAL_FALLBACK_REASON_CAPTION_MISSING,
     build_image_block,
     layout_for_dimensions,
     select_cover_images,
+    visual_fallback_eligible,
 )
 from app.services.daily_reader.cover_storage import (
     LocalCoverStorage,
@@ -50,6 +52,8 @@ from app.services.daily_reader.discovery import (
     DiscoveredArticle,
     ImageCandidate,
     collect_image_candidates_from_html,
+    discover_guardian,
+    upsert_image_candidate,
 )
 
 # --- fixtures: minimal real image headers ---
@@ -220,13 +224,24 @@ class TestLayoutForDimensions:
             url="https://x/y.jpg",
             width=2100,
             height=900,
-            caption_zh=" 一句图说 ",
             source_caption="Photo: BBC",
         )
         assert block["layout"] == LAYOUT_FULL_BLEED
-        assert block["caption_zh"] == "一句图说"
+        # P-0: new output never carries an AI Chinese caption.
+        assert block["caption_zh"] is None
         assert block["source_caption"] == "Photo: BBC"
         assert block["role"] == "cover"
+
+    def test_image_block_without_source_caption_is_null(self):
+        block = build_image_block(
+            block_id="img_cover",
+            role="cover",
+            url="https://x/y.jpg",
+            width=1280,
+            height=720,
+        )
+        assert block["source_caption"] is None
+        assert block["caption_zh"] is None
 
 
 # --- storage ---
@@ -344,17 +359,186 @@ class TestCollectImageCandidates:
     def test_empty_html(self):
         assert collect_image_candidates_from_html("", "https://example.com") == []
 
+    HTML_OG_CAPTION = """
+    <html><head>
+      <meta property="og:image" content="https://cdn.example.com/hero.jpg">
+    </head><body>
+      <figure>
+        <img src="https://cdn.example.com/hero.jpg">
+        <figcaption>A nurse examines X-rays. Credit: Reuters</figcaption>
+      </figure>
+    </body></html>
+    """
+
+    def test_same_url_meta_caption_filled_by_figcaption(self):
+        candidates = collect_image_candidates_from_html(
+            self.HTML_OG_CAPTION, "https://example.com/article"
+        )
+        hero = [c for c in candidates if "hero.jpg" in c.url]
+        assert len(hero) == 1
+        assert hero[0].caption == "A nurse examines X-rays. Credit: Reuters"
+        # first (meta) position is preserved so og:image keeps the main signal
+        assert hero[0].position == IMAGE_POSITION_META
+
+    HTML_BODY_FIRST_NESTED = """
+    <figure><img src="https://cdn.example.com/hero.jpg">
+      <figcaption><span>Fig 1. </span>Skyline at dusk, <em>Photograph: BBC</em></figcaption>
+    </figure>
+    <figure><img src="https://cdn.example.com/hero.jpg">
+      <figcaption>Fig 2. A different caption</figcaption>
+    </figure>
+    """
+
+    def test_first_non_empty_caption_wins_and_nested_tags_kept(self):
+        candidates = collect_image_candidates_from_html(
+            self.HTML_BODY_FIRST_NESTED, "https://example.com/article"
+        )
+        hero = [c for c in candidates if "hero.jpg" in c.url]
+        assert len(hero) == 1
+        assert "Skyline at dusk" in hero[0].caption
+        assert "Photograph: BBC" in hero[0].caption  # nested tag visible text kept
+
+
+# --- P-0 source caption merge semantics ---
+
+
+class TestUpsertImageCandidate:
+    def test_new_url_appended(self):
+        out: list[ImageCandidate] = []
+        upsert_image_candidate(
+            out,
+            ImageCandidate(url="https://a/x.jpg", position=IMAGE_POSITION_META),
+        )
+        assert len(out) == 1
+
+    def test_same_url_fills_empty_caption_and_keeps_position(self):
+        out: list[ImageCandidate] = [
+            ImageCandidate(url="https://a/x.jpg", position=IMAGE_POSITION_META)
+        ]
+        upsert_image_candidate(
+            out,
+            ImageCandidate(
+                url="https://a/x.jpg", caption="Photo: Getty", position=IMAGE_POSITION_BODY
+            ),
+        )
+        assert len(out) == 1
+        assert out[0].caption == "Photo: Getty"
+        assert out[0].position == IMAGE_POSITION_META  # first position kept
+
+    def test_empty_caption_never_overwrites_non_empty(self):
+        out: list[ImageCandidate] = [
+            ImageCandidate(
+                url="https://a/x.jpg", caption="Photo: Reuters", position=IMAGE_POSITION_META
+            )
+        ]
+        upsert_image_candidate(
+            out, ImageCandidate(url="https://a/x.jpg", position=IMAGE_POSITION_BODY)
+        )
+        assert out[0].caption == "Photo: Reuters"
+
+    def test_conflicting_non_empty_keeps_first_saved(self):
+        out: list[ImageCandidate] = [
+            ImageCandidate(
+                url="https://a/x.jpg", caption="First caption", position=IMAGE_POSITION_BODY
+            )
+        ]
+        upsert_image_candidate(
+            out,
+            ImageCandidate(
+                url="https://a/x.jpg", caption="Second caption", position=IMAGE_POSITION_BODY
+            ),
+        )
+        assert out[0].caption == "First caption"
+
+    def test_whitespace_only_caption_treated_as_empty(self):
+        out: list[ImageCandidate] = [
+            ImageCandidate(url="https://a/x.jpg", position=IMAGE_POSITION_META)
+        ]
+        upsert_image_candidate(
+            out,
+            ImageCandidate(url="https://a/x.jpg", caption="   ", position=IMAGE_POSITION_BODY),
+        )
+        assert out[0].caption == ""
+
+
+class TestDiscoverGuardianCaptionMerge:
+    async def test_thumbnail_and_body_same_url_merged(self):
+        body_html = (
+            '<figure><img src="https://media.guim.co.uk/abc/0_0_5472_3648/140.jpg">'
+            "<figcaption>A nurse checks a patient. Credit: Reuters</figcaption></figure>"
+        )
+        response_payload = {
+            "response": {
+                "results": [
+                    {
+                        "webUrl": "https://www.theguardian.com/society/2026/aug/21/sample",
+                        "webTitle": "Sample headline",
+                        "fields": {
+                            "headline": "Sample headline",
+                            "standfirst": "Standfirst",
+                            "byline": "Jane",
+                            "wordcount": "1200",
+                            "thumbnail": "https://media.guim.co.uk/abc/0_0_5472_3648/140.jpg",
+                            "body": body_html,
+                        },
+                    }
+                ]
+            }
+        }
+
+        class _Resp:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._payload
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url, **params):
+                return _Resp(response_payload)
+
+        with (
+            patch(
+                "app.services.daily_reader.discovery.get_settings",
+                return_value=SimpleNamespace(guardian_api_key="test-key"),
+            ),
+            patch("app.services.daily_reader.discovery.httpx.AsyncClient", _Client),
+        ):
+            articles = await discover_guardian()
+
+        # Guardian iterates each registered section; the mock echoes the same
+        # payload for the configured sections, so inspect the first result.
+        assert articles
+        by_url = [c for c in articles[0].image_candidates if "media.guim.co.uk" in c.url]
+        assert len(by_url) == 1
+        assert by_url[0].caption == "A nurse checks a patient. Credit: Reuters"
+        assert by_url[0].position == IMAGE_POSITION_META  # thumbnail position kept
+
 
 # --- LLM selection + degradation ---
 
 
-def _validated(width: int, height: int, url: str, caption: str = "") -> object:
+def _validated(
+    width: int, height: int, url: str, caption: str = "", position: str = IMAGE_POSITION_META
+) -> object:
     from app.services.daily_reader.cover_download import ValidatedCandidate
 
     return ValidatedCandidate(
         url=url,
         caption=caption,
-        position=IMAGE_POSITION_META,
+        position=position,
         fetched=_fetched(_jpeg_bytes(width, height), url),
         width=width,
         height=height,
@@ -362,107 +546,85 @@ def _validated(width: int, height: int, url: str, caption: str = "") -> object:
 
 
 class TestSelectCoverImages:
-    async def test_no_candidates_returns_empty_selection(self):
-        selection = await select_cover_images(title="t", text_excerpt="x", candidates=[])
-        assert selection.cover is None
+    def test_no_candidates_returns_none(self):
+        selection = select_cover_images([])
+        assert selection.mode == SELECTION_MODE_NONE
+        assert selection.cover_index is None
 
-    async def test_model_unavailable_degrades_to_first_candidate(self):
-        with patch(
-            "app.llm.router.build_model_for_route", return_value=(None, None)
-        ):
-            selection = await select_cover_images(
-                title="t",
-                text_excerpt="x",
-                candidates=[_validated(1600, 900, "https://a/1.jpg")],
-            )
-        assert selection.mode == SELECTION_MODE_FALLBACK_FIRST
-        assert selection.cover.index == 0
-        assert selection.cover.caption_zh == ""
+    def test_meta_pool_preferred_over_body(self):
+        candidates = [
+            _validated(1800, 1013, "https://a/body-wide.jpg", position=IMAGE_POSITION_BODY),
+            _validated(1200, 675, "https://a/meta.jpg"),
+        ]
+        selection = select_cover_images(candidates)
+        assert selection.mode == SELECTION_MODE_DETERMINISTIC_SOURCE
+        assert selection.cover_index == 1  # meta pool wins over wider body
 
-    async def test_fallback_prefers_widest_candidate(self):
-        with patch(
-            "app.llm.router.build_model_for_route", return_value=(None, None)
-        ):
-            selection = await select_cover_images(
-                title="t",
-                text_excerpt="x",
-                candidates=[
-                    _validated(1200, 675, "https://a/meta.jpg"),
-                    _validated(3840, 2159, "https://a/body.jpg"),
-                ],
-            )
-        assert selection.mode == SELECTION_MODE_FALLBACK_FIRST
-        assert selection.cover.index == 1
+    def test_no_meta_uses_body_pool(self):
+        candidates = [
+            _validated(1200, 675, "https://a/body1.jpg", position=IMAGE_POSITION_BODY),
+            _validated(1400, 788, "https://a/body2.jpg", position=IMAGE_POSITION_BODY),
+        ]
+        selection = select_cover_images(candidates)
+        assert selection.cover_index == 1  # wider within body pool
 
-    async def test_llm_selection_with_caption(self):
-        output = _CoverSelectOutput(
-            cover_index=1,
-            cover_caption_zh="发射现场的清晨",
-            inline_index=None,
-        )
-        with (
-            patch(
-                "app.llm.router.build_model_for_route",
-                return_value=(MagicMock(), MagicMock()),
-            ),
-            patch(
-                "app.services.daily_reader.cover_select._run_cover_select_span",
-                new=AsyncMock(return_value=output),
-            ),
-            patch("app.services.daily_reader.cover_select.assert_real_llm_allowed"),
-        ):
-            selection = await select_cover_images(
-                title="t",
-                text_excerpt="x",
-                candidates=[
-                    _validated(1600, 900, "https://a/1.jpg"),
-                    _validated(1600, 900, "https://a/2.jpg"),
-                ],
-            )
-        assert selection.mode == SELECTION_MODE_LLM
-        assert selection.cover.index == 1
-        assert selection.cover.caption_zh == "发射现场的清晨"
-        assert selection.inline is None
+    def test_source_caption_beats_width_within_pool(self):
+        candidates = [
+            _validated(2000, 1125, "https://a/wide-nocaption.jpg", caption=""),
+            _validated(1200, 675, "https://a/captioned.jpg", caption="Photo: Reuters"),
+        ]
+        selection = select_cover_images(candidates)
+        assert selection.mode == SELECTION_MODE_DETERMINISTIC_SOURCE
+        assert selection.cover_index == 1  # captioned preferred over wider
 
-    async def test_invalid_index_falls_back(self):
-        output = _CoverSelectOutput(cover_index=99, cover_caption_zh="x")
-        with (
-            patch(
-                "app.llm.router.build_model_for_route",
-                return_value=(MagicMock(), MagicMock()),
-            ),
-            patch(
-                "app.services.daily_reader.cover_select._run_cover_select_span",
-                new=AsyncMock(return_value=output),
-            ),
-            patch("app.services.daily_reader.cover_select.assert_real_llm_allowed"),
-        ):
-            selection = await select_cover_images(
-                title="t",
-                text_excerpt="x",
-                candidates=[_validated(1600, 900, "https://a/1.jpg")],
-            )
-        assert selection.mode == SELECTION_MODE_FALLBACK_FIRST
-        assert selection.cover.index == 0
+    def test_width_breaks_tie_preserving_original_order(self):
+        candidates = [
+            _validated(1280, 720, "https://a/first.jpg"),
+            _validated(1280, 720, "https://a/second.jpg"),
+        ]
+        selection = select_cover_images(candidates)
+        assert selection.cover_index == 0
 
-    async def test_llm_exception_falls_back(self):
-        with (
-            patch(
-                "app.llm.router.build_model_for_route",
-                return_value=(MagicMock(), MagicMock()),
-            ),
-            patch(
-                "app.services.daily_reader.cover_select._run_cover_select_span",
-                new=AsyncMock(side_effect=RuntimeError("provider down")),
-            ),
-            patch("app.services.daily_reader.cover_select.assert_real_llm_allowed"),
-        ):
-            selection = await select_cover_images(
-                title="t",
-                text_excerpt="x",
-                candidates=[_validated(1600, 900, "https://a/1.jpg")],
-            )
-        assert selection.mode == SELECTION_MODE_FALLBACK_FIRST
+    def test_only_cover_no_inline_result(self):
+        candidates = [_validated(1600, 900, "https://a/1.jpg")]
+        selection = select_cover_images(candidates)
+        assert selection.cover_index == 0
+        assert not hasattr(selection, "inline")
+
+    def test_cover_select_has_no_llm_path(self):
+        import inspect
+
+        import app.services.daily_reader.cover_select as cs
+
+        source = inspect.getsource(cs)
+        assert "BinaryImage" not in source
+        assert "_CoverSelectOutput" not in source
+        assert "build_model_for_route" not in source
+        # Pure deterministic seam: single argument, no async IO.
+        assert list(inspect.signature(select_cover_images).parameters) == ["candidates"]
+
+
+class TestVisualFallbackEligible:
+    def test_multiple_no_caption_meta_pool_eligible(self):
+        candidates = [
+            _validated(1280, 720, "https://a/m1.jpg"),
+            _validated(1600, 900, "https://a/m2.jpg"),
+        ]
+        assert visual_fallback_eligible(candidates) is True
+
+    def test_single_meta_not_eligible(self):
+        candidates = [_validated(1280, 720, "https://a/m1.jpg")]
+        assert visual_fallback_eligible(candidates) is False
+
+    def test_captioned_pool_not_eligible(self):
+        candidates = [
+            _validated(1280, 720, "https://a/m1.jpg", caption=""),
+            _validated(1600, 900, "https://a/m2.jpg", caption="Photo: Getty"),
+        ]
+        assert visual_fallback_eligible(candidates) is False
+
+    def test_empty_pool_not_eligible(self):
+        assert visual_fallback_eligible([]) is False
 
 
 # --- probe + orchestration ---
@@ -538,7 +700,6 @@ class TestProcessArticleCovers:
             patch(
                 "app.services.daily_reader.cover_storage.get_cover_storage"
             ) as mock_storage_factory,
-            patch("app.llm.router.build_model_for_route", return_value=(None, None)),
         ):
             mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
             outcome = await process_article_covers(article, tracker=tracker)
@@ -549,11 +710,155 @@ class TestProcessArticleCovers:
         block = outcome.image_blocks[0]
         assert block["role"] == "cover"
         assert block["layout"] == LAYOUT_FULL_BLEED  # 2100/900
-        assert outcome.meta["selection_mode"] == SELECTION_MODE_FALLBACK_FIRST
+        assert block["caption_zh"] is None
+        assert outcome.meta["selection_mode"] == SELECTION_MODE_DETERMINISTIC_SOURCE
+        assert outcome.meta["visual_fallback_eligible"] is False
+        assert outcome.meta["visual_fallback_reason"] is None
         reasons = [c["reason"] for c in outcome.meta["candidates"]]
         assert REASON_TRACKING_PIXEL in reasons
-        # silent failures are now visible: tracker got the invalid candidate
         tracker.add_error.assert_awaited()
+
+    async def test_zero_model_calls_integration(self, tmp_path: Path):
+        # P-0: cover selection must never hit the LLM router or a provider.
+        article = self._article(
+            [ImageCandidate(url="https://a/hero.jpg", position=IMAGE_POSITION_META)]
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(return_value=_fetched(_png_bytes(1600, 900))),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.cover_url is not None
+
+    async def test_six_qualified_candidates_all_participate(self, tmp_path: Path):
+        # The 5th qualified (widest+captioned) candidate must win; no LLM 4-cutoff.
+        candidates = [
+            ImageCandidate(url=f"https://a/c{i}.jpg", position=IMAGE_POSITION_BODY)
+            for i in range(6)
+        ]
+        article = self._article(candidates)
+
+        async def fake_fetch(url: str) -> FetchedImage | None:
+            width = 1280 if "c4" not in url else 2000
+            return _fetched(_png_bytes(width, width), url)
+
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(side_effect=fake_fetch),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.meta["selected"]["cover"]["source_url"] == "https://a/c4.jpg"
+
+    async def test_source_caption_passthrough(self, tmp_path: Path):
+        caption = "A nurse checks a patient. Photograph: Jane Doe/The Guardian"
+        article = self._article(
+            [
+                ImageCandidate(
+                    url="https://a/hero.jpg", position=IMAGE_POSITION_META, caption=caption
+                )
+            ]
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(return_value=_fetched(_png_bytes(1600, 900))),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        block = outcome.image_blocks[0]
+        assert block["source_caption"] == caption
+        assert block["caption_zh"] is None
+        assert outcome.meta["candidates"][0]["source_caption"] == caption
+        assert outcome.meta["selected"]["cover"]["source_caption"] == caption
+
+    async def test_source_caption_missing_is_null_not_error(self, tmp_path: Path):
+        article = self._article(
+            [ImageCandidate(url="https://a/hero.jpg", position=IMAGE_POSITION_META)]
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(return_value=_fetched(_png_bytes(1600, 900))),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.cover_url is not None  # article not aborted
+        block = outcome.image_blocks[0]
+        assert block["source_caption"] is None
+        assert block["caption_zh"] is None
+        assert outcome.meta["selected"]["cover"]["source_caption"] is None
+
+    async def test_multiple_no_caption_pool_records_visual_eligibility(self, tmp_path: Path):
+        article = self._article(
+            [
+                ImageCandidate(url="https://a/m1.jpg", position=IMAGE_POSITION_META),
+                ImageCandidate(url="https://a/m2.jpg", position=IMAGE_POSITION_META),
+            ]
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(side_effect=lambda url: _fetched(_png_bytes(1600, 900), url)),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.cover_url is not None  # deterministic cover still output
+        assert outcome.meta["visual_fallback_eligible"] is True
+        assert outcome.meta["visual_fallback_reason"] == VISUAL_FALLBACK_REASON_CAPTION_MISSING
+        assert outcome.meta["selection_mode"] == SELECTION_MODE_DETERMINISTIC_SOURCE
+
+    async def test_captioned_pool_not_eligible(self, tmp_path: Path):
+        article = self._article(
+            [
+                ImageCandidate(url="https://a/m1.jpg", position=IMAGE_POSITION_META),
+                ImageCandidate(
+                    url="https://a/m2.jpg", position=IMAGE_POSITION_META, caption="Photo: AP"
+                ),
+            ]
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(side_effect=lambda url: _fetched(_png_bytes(1600, 900), url)),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.meta["visual_fallback_eligible"] is False
+        assert outcome.meta["visual_fallback_reason"] is None
 
     async def test_all_candidates_fail_returns_null_cover(self):
         article = self._article(
@@ -561,17 +866,16 @@ class TestProcessArticleCovers:
         )
         tracker = MagicMock()
         tracker.add_error = AsyncMock()
-        with (
-            patch(
-                "app.services.daily_reader.cover_download.fetch_image",
-                new=AsyncMock(return_value=_fetched(_png_bytes(240, 134))),
-            ),
+        with patch(
+            "app.services.daily_reader.cover_download.fetch_image",
+            new=AsyncMock(return_value=_fetched(_png_bytes(240, 134))),
         ):
             outcome = await process_article_covers(article, tracker=tracker)
 
         assert outcome.cover_url is None
         assert outcome.image_blocks == []
-        assert outcome.meta["selection_mode"] == "none"
+        assert outcome.meta["selection_mode"] == SELECTION_MODE_NONE
+        assert outcome.meta["visual_fallback_eligible"] is False
         assert outcome.meta["candidates"][0]["reason"] == REASON_BELOW_MIN_WIDTH
         tracker.add_error.assert_awaited()
 
@@ -581,7 +885,7 @@ class TestProcessArticleCovers:
         tracker.add_error = AsyncMock()
         outcome = await process_article_covers(article, tracker=tracker)
         assert outcome.cover_url is None
-        assert outcome.meta["selection_mode"] == "none"
+        assert outcome.meta["selection_mode"] == SELECTION_MODE_NONE
         tracker.add_error.assert_awaited()
 
     async def test_download_failure_recorded(self):

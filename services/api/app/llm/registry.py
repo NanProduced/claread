@@ -9,7 +9,6 @@ from app.llm.routes import (
     MODEL_ROUTE_ANNOTATION_GENERATION,
     MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DAILY_ANNOTATION,
-    MODEL_ROUTE_DAILY_COVER,
     MODEL_ROUTE_DAILY_REVIEW,
     MODEL_ROUTE_DAILY_TAKEAWAYS,
     MODEL_ROUTE_DAILY_TRANSLATION,
@@ -101,7 +100,6 @@ def _build_model_registry_cached(
     daily_analysis_model_profile: str,
     daily_takeaways_model_profile: str,
     daily_review_model_profile: str,
-    daily_cover_model_profile: str,
     rag_embedding_model_profile: str,
     rag_rerank_model_profile: str,
     model_profiles_json: str,
@@ -123,7 +121,6 @@ def _build_model_registry_cached(
         daily_analysis_model_profile=daily_analysis_model_profile,
         daily_takeaways_model_profile=daily_takeaways_model_profile,
         daily_review_model_profile=daily_review_model_profile,
-        daily_cover_model_profile=daily_cover_model_profile,
         rag_embedding_model_profile=rag_embedding_model_profile,
         rag_rerank_model_profile=rag_rerank_model_profile,
         model_profiles_json=model_profiles_json,
@@ -165,10 +162,6 @@ def _build_model_registry_cached(
             MODEL_ROUTE_DAILY_ANALYSIS: settings.daily_analysis_model_profile,
             MODEL_ROUTE_DAILY_TAKEAWAYS: settings.daily_takeaways_model_profile,
             MODEL_ROUTE_DAILY_REVIEW: settings.daily_review_model_profile,
-            MODEL_ROUTE_DAILY_COVER: (
-                settings.daily_cover_model_profile
-                or settings.daily_analysis_model_profile
-            ),
             MODEL_ROUTE_RAG_EMBEDDING: settings.rag_embedding_model_profile,
             MODEL_ROUTE_RAG_RERANK: settings.rag_rerank_model_profile,
         }.items()
@@ -206,7 +199,6 @@ def build_model_registry(settings: Settings) -> ModelRegistry:
         daily_analysis_model_profile=settings.daily_analysis_model_profile,
         daily_takeaways_model_profile=settings.daily_takeaways_model_profile,
         daily_review_model_profile=settings.daily_review_model_profile,
-        daily_cover_model_profile=settings.daily_cover_model_profile,
         rag_embedding_model_profile=settings.rag_embedding_model_profile,
         rag_rerank_model_profile=settings.rag_rerank_model_profile,
         model_profiles_json=settings.model_profiles_json,

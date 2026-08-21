@@ -272,7 +272,6 @@ def test_daily_model_preset_declares_every_daily_cost_tier() -> None:
         "daily_analysis": {"profile": "workflow-deepseek-v4-flash"},
         "daily_takeaways": {"profile": "workflow-deepseek-v4-pro"},
         "daily_review": {"profile": "workflow-deepseek-v4-pro"},
-        "daily_cover": {"profile": "workflow-deepseek-v4-flash"},
     }
 
 

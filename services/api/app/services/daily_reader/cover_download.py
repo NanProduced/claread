@@ -30,9 +30,6 @@ logger = logging.getLogger(__name__)
 TARGET_COVER_WIDTH = 1280
 MIN_COVER_WIDTH = 1200
 MAX_COVER_CANDIDATES = 6
-# Images sent to the multimodal selection call (cost bound).
-MAX_CANDIDATES_FOR_LLM = 4
-
 REASON_DOWNLOAD_FAILED = "download_failed"
 REASON_UNREADABLE = "unreadable_image"
 REASON_TRACKING_PIXEL = "tracking_pixel"
@@ -325,13 +322,21 @@ async def process_article_covers(
     article: DiscoveredArticle,
     tracker: PipelineRunTracker | None = None,
 ) -> CoverOutcome:
-    """Validate candidates, LLM-select cover (+optional inline), store.
+    """Validate candidates, deterministically select one cover, store (P-0).
 
     No qualified candidate → cover_url=None (editorial fallback) with every
     failure recorded as tracker error + pipeline_meta (no silent failures).
+    Never calls a model: selection is a fixed source-priority rule.
     """
-    from app.services.daily_reader.cover_select import select_cover_images
+    from app.services.daily_reader.cover_select import (
+        SELECTION_MODE_NONE,
+        VISUAL_FALLBACK_REASON_CAPTION_MISSING,
+        build_image_block,
+        select_cover_images,
+        visual_fallback_eligible,
+    )
     from app.services.daily_reader.cover_storage import get_cover_storage
+    from app.services.daily_reader.discovery import upsert_image_candidate
 
     candidates = list(article.image_candidates)
     if not candidates and article.cover_image_url:
@@ -339,13 +344,11 @@ async def process_article_covers(
 
         candidates = [ImageCandidate(url=article.cover_image_url)]
 
-    seen_urls: set[str] = set()
-    unique_candidates = []
+    # P-0: same resolved URL keeps one candidate; empty captions are filled by
+    # the first later non-empty source caption, first position is preserved.
+    unique_candidates: list = []
     for cand in candidates:
-        if cand.url in seen_urls:
-            continue
-        seen_urls.add(cand.url)
-        unique_candidates.append(cand)
+        upsert_image_candidate(unique_candidates, cand)
     unique_candidates = unique_candidates[:MAX_COVER_CANDIDATES]
 
     if not unique_candidates:
@@ -369,6 +372,7 @@ async def process_article_covers(
             "url": cand.url,
             "upgraded_url": upgraded if upgraded != cand.url else None,
             "position": cand.position,
+            "source_caption": cand.caption.strip() or None,
             "valid": False,
             "reason": None,
             "width": None,
@@ -411,7 +415,9 @@ async def process_article_covers(
 
     if not validated:
         meta = {
-            "selection_mode": "none",
+            "selection_mode": SELECTION_MODE_NONE,
+            "visual_fallback_eligible": False,
+            "visual_fallback_reason": None,
             "candidates": candidate_meta,
             "errors": errors,
         }
@@ -422,81 +428,67 @@ async def process_article_covers(
         )
         return CoverOutcome(meta=meta, errors=errors)
 
-    selection = await select_cover_images(
-        title=article.title,
-        text_excerpt=article.text,
-        candidates=validated[:MAX_CANDIDATES_FOR_LLM],
-    )
+    # P-0: deterministic selection over ALL qualified candidates (no LLM
+    # 4-candidate truncation); exactly one cover, never an inline image.
+    selection = select_cover_images(validated)
+    eligible = visual_fallback_eligible(validated)
+    fallback_reason = VISUAL_FALLBACK_REASON_CAPTION_MISSING if eligible else None
 
     storage = get_cover_storage()
     image_blocks: list[dict] = []
     stored_cover_url: str | None = None
     selected_meta: dict = {"mode": selection.mode}
 
-    for selected, role, block_id in (
-        (selection.cover, "cover", "img_cover"),
-        (selection.inline, "inline", "img_inline"),
-    ):
-        if selected is None:
-            continue
-        candidate = validated[selected.index]
-        ext = _guess_extension(candidate.fetched.source_url, candidate.fetched.content_type)
-        filename = (
-            f"{hashlib.sha256(candidate.url.encode()).hexdigest()[:16]}{ext}"
+    candidate = validated[selection.cover_index]
+    ext = _guess_extension(candidate.fetched.source_url, candidate.fetched.content_type)
+    filename = f"{hashlib.sha256(candidate.url.encode()).hexdigest()[:16]}{ext}"
+    try:
+        stored_url = await storage.store(
+            candidate.fetched.data,
+            filename=filename,
+            content_type=candidate.fetched.content_type,
         )
-        try:
-            stored_url = await storage.store(
-                candidate.fetched.data,
-                filename=filename,
-                content_type=candidate.fetched.content_type,
-            )
-        except Exception as exc:
-            error = f"cover_storage_failed ({storage.backend}): {exc}"
-            logger.error(error)
-            errors.append(error)
-            if tracker:
-                await tracker.add_error("cover", error)
-            continue
-
-        from app.services.daily_reader.cover_select import build_image_block
-
+    except Exception as exc:
+        error = f"cover_storage_failed ({storage.backend}): {exc}"
+        logger.error(error)
+        errors.append(error)
+        if tracker:
+            await tracker.add_error("cover", error)
+    else:
+        stored_cover_url = stored_url
         image_blocks.append(
             build_image_block(
-                block_id=block_id,
-                role=role,
+                block_id="img_cover",
+                role="cover",
                 url=stored_url,
                 width=candidate.width,
                 height=candidate.height,
-                caption_zh=selected.caption_zh,
                 source_caption=candidate.caption,
             )
         )
-        block_meta = {
+        selected_meta["cover"] = {
             "url": stored_url,
             "source_url": candidate.url,
             "width": candidate.width,
             "height": candidate.height,
-            "caption_zh": selected.caption_zh or None,
+            "source_caption": candidate.caption.strip() or None,
         }
-        if role == "cover":
-            stored_cover_url = stored_url
-            selected_meta["cover"] = block_meta
-        else:
-            selected_meta["inline"] = block_meta
 
     meta = {
         "selection_mode": selection.mode,
+        "visual_fallback_eligible": eligible,
+        "visual_fallback_reason": fallback_reason,
         "candidates": candidate_meta,
         "selected": selected_meta,
         "storage_backend": storage.backend,
         "errors": errors,
     }
     logger.info(
-        "Cover processed for '%s': mode=%s cover=%s inline=%s",
+        "Cover processed for '%s': mode=%s cover=%s eligible=%s",
         article.title[:50],
         selection.mode,
         bool(stored_cover_url),
-        "inline" in selected_meta,
+        eligible,
     )
     return CoverOutcome(
         cover_url=stored_cover_url,

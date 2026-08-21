@@ -95,7 +95,7 @@ publish 在同一条 UPDATE 中写入 `approved/reviewed_by/reviewed_at`。B-4 �
 - `takeaways_json`: 文末收束，包括中文编辑标题、副标题、中文标签、讨论问题和写作借鉴。
 - `original_title` / `subtitle_zh`: 分别保存英文源标题与中文编辑副标题；对旧行保持可空兼容。
 - `review_status` / `reviewed_by` / `reviewed_at`: 发布审核状态与操作审计；发布、下架请求的 `operator` 会去除首尾空白并拒绝空值。
-- `cover_image_url`: 像素门槛与 LLM 候选选择后落地的本地或 OSS 封面 URL。
+- `cover_image_url`: 像素门槛与确定性（source-priority）选择后落地的本地或 OSS 封面 URL。
 
 为保持兼容，外部字段名仍沿用 `paragraphs`、`paragraph_id`、`paragraph_notes`。代码和 prompt 中的新语义按 reading unit 处理。
 
@@ -155,7 +155,7 @@ Daily Reader 不再把抓取文本的原始换行直接当成页面段落。当�
 - 文章 workflow 最多 2 篇并发，最终结果仍按评分顺序输出；封面处理和写库存储通过 finalize lock 串行收口。
 - 高亮每批 6 个 reading units、最多 2 批并发，合并顺序保持稳定。
 
-模型使用显式 `daily_reader` preset：scoring、annotation、translation、analysis 与 cover 走 flash profile；takeaways 与 semantic review/refinement 走 pro profile。`services/api/config/model-presets.example.json` 是无密钥模板；实际 runtime 的 `MODEL_PRESETS_JSON` 必须包含同名 preset，所引用 profile 必须存在于 `MODEL_PROFILES_JSON`。
+模型使用显式 `daily_reader` preset：scoring、annotation、translation、analysis 走 flash profile；takeaways 与 semantic review/refinement 走 pro profile。（P-0：封面由确定性规则选择，不映射任何模型 route/profile。）`services/api/config/model-presets.example.json` 是无密钥模板；实际 runtime 的 `MODEL_PRESETS_JSON` 必须包含同名 preset，所引用 profile 必须存在于 `MODEL_PROFILES_JSON`。
 
 workflow 会把每个 agent 的 input/output/total tokens 聚合到 `usage_summary.per_agent` 与 aggregate，并写入 Daily pipeline usage event。该观测只证明字段已采集；真实成本、时延和供应商分布仍需生产运行确认。
 
@@ -272,8 +272,10 @@ rtk test uv run pytest services/api/tests -q
    - 后续应确认无线上依赖后删除或降级为历史迁移字段。
 
 5. 封面策略
-   - 当前候选先做至少 1200 像素的尺寸门槛，再通过 `daily_cover` 模型路由选择；模型失败时回退到排序第一的合格候选。
-   - 选中图片按 `DAILY_READER_COVER_STORAGE_BACKEND=local|oss` 落地。生产仍需验证多模态 profile、派生尺寸与 CDN 配置。
+   - 候选先做至少 1200 像素的尺寸门槛；选择是确定性的（P-0）：meta 池优先于 body pool，caption 存在与宽度决定优先级，不调用任何模型。
+   - 相同来源 URL 合并为单个候选，正文 figcaption/credit 补全空 caption；新产物 `caption_zh` 固定为 null，`source_caption` 原样保存来源图说，缺失时为空且不报错。
+   - 仅当封面池多图且全部无 source caption 时记录 `visual_fallback_eligible=true`（候选资格，不触发任何视觉调用）。
+   - 选中图片按 `DAILY_READER_COVER_STORAGE_BACKEND=local|oss` 落地。生产无需任何视觉模型配置；派生尺寸与 CDN 配置仍需验证。
    - `content_security.py` 与 `content_sec_check` 占位写入已删除；列保留为 DEPRECATED，pipeline 不再写入。
 
 6. 真实 provider 与生产观测

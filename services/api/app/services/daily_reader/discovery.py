@@ -40,6 +40,26 @@ class ImageCandidate:
     position: str = IMAGE_POSITION_META  # meta (og:image) | body (figure/img)
 
 
+def upsert_image_candidate(
+    candidates: list[ImageCandidate], cand: ImageCandidate
+) -> None:
+    """P-0 source-caption dedup/merge: same resolved URL keeps a single candidate.
+
+    First-saved position and source text win. An empty stored caption is
+    filled by a later non-empty source caption/credit; empty values never
+    overwrite non-empty ones; whitespace-only is treated as empty. Only
+    whitespace normalization is applied — no translation, rewriting or
+    inference (nested-tag figcaption text is preserved as collected).
+    """
+    caption = (cand.caption or "").strip()
+    for existing in candidates:
+        if existing.url == cand.url:
+            if not existing.caption and caption:
+                existing.caption = caption
+            return
+    candidates.append(ImageCandidate(url=cand.url, caption=caption, position=cand.position))
+
+
 @dataclass
 class DiscoveredArticle:
     url: str
@@ -78,7 +98,6 @@ def collect_image_candidates_from_html(
         return []
 
     candidates: list[ImageCandidate] = []
-    seen: set[str] = set()
 
     def _add(url: str, caption: str, position: str) -> None:
         url = (url or "").strip()
@@ -87,11 +106,11 @@ def collect_image_candidates_from_html(
         if _IMG_URL_NOISE_RE.search(url):
             return
         resolved = urljoin(base_url, url)
-        if resolved in seen:
-            return
-        seen.add(resolved)
-        candidates.append(
-            ImageCandidate(url=resolved, caption=(caption or "").strip(), position=position)
+        # P-0: same resolved URL merges in place (first-saved position kept;
+        # empty caption filled by the first later non-empty source caption).
+        upsert_image_candidate(
+            candidates,
+            ImageCandidate(url=resolved, caption=caption, position=position),
         )
 
     for meta in soup.find_all(
@@ -203,10 +222,11 @@ async def discover_guardian() -> list[DiscoveredArticle]:
                         ImageCandidate(url=thumbnail, position=IMAGE_POSITION_META)
                     )
                 # Guardian skips trafilatura (API body), so collect body
-                # figure/img candidates here (B-1).
+                # figure/img candidates here (B-1). P-0: same URL as the
+                # thumbnail merges in place, so its figcaption populates the
+                # empty meta thumbnail caption while the meta position is kept.
                 for cand in collect_image_candidates_from_html(body_html, web_url):
-                    if cand.url != thumbnail:
-                        image_candidates.append(cand)
+                    upsert_image_candidate(image_candidates, cand)
 
                 articles.append(
                     DiscoveredArticle(

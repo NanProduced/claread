@@ -91,7 +91,6 @@ class Settings(BaseSettings):
     daily_analysis_model_profile: str = ""
     daily_takeaways_model_profile: str = ""
     daily_review_model_profile: str = ""
-    daily_cover_model_profile: str = ""
     rag_embedding_model_profile: str = ""
     rag_rerank_model_profile: str = ""
     model_profiles_json: str = ""
