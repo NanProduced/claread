@@ -629,6 +629,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
     from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
+        _aggregate_usage,
         build_daily_reader_graph,
     )
 
@@ -692,13 +693,19 @@ async def run_workflow_only(article_id: str) -> dict | None:
         )
         raise
 
+    # P-3F: aborted retries skip daily_projection_node, so the state has
+    # no usage_summary — fall back to the per-node usage the nodes
+    # already hold (same expression as _run_workflow_and_store) for both
+    # the abort and the success event.
+    usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
+
     if final_state.get("abort"):
         logger.info("Retry workflow aborted for: %s", article_id)
         await _record_daily_pipeline_event(
             request_id=article_id,
             daily_reader_article_id=article_id,
             status=STATUS_SKIPPED,
-            usage_data=final_state.get("usage_summary"),
+            usage_data=usage_summary,
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_code="workflow_abort",
             error_message="quality_review_rejected",
@@ -744,7 +751,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
         request_id=article_id,
         daily_reader_article_id=article_id,
         status=STATUS_SUCCEEDED,
-        usage_data=final_state.get("usage_summary"),
+        usage_data=usage_summary,
         latency_ms=int((perf_counter() - started_at) * 1000),
         metadata_json={
             "entrypoint": "daily_reader_retry",

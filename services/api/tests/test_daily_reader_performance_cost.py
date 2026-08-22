@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
@@ -28,14 +28,20 @@ from app.schemas.internal.daily_drafts import (
     ParagraphNotesDraft,
     ParagraphReadingNote,
 )
+from app.services.ai_usage import STATUS_SKIPPED, STATUS_SUCCEEDED
 from app.services.daily_reader.discovery import DiscoveredArticle
-from app.services.daily_reader.pipeline import _run_workflow_and_store, run_daily_pipeline
+from app.services.daily_reader.pipeline import (
+    _run_workflow_and_store,
+    run_daily_pipeline,
+    run_workflow_only,
+)
 from app.services.daily_reader.scoring import ArticleScore
 from app.services.daily_reader.workflow import (
     build_daily_reader_graph,
     close_reading_takeaways_node,
     highlight_by_paragraph_batches_node,
     paragraph_guides_and_translations_node,
+    refinement_node,
 )
 
 
@@ -692,3 +698,222 @@ async def test_failed_translation_usage_aggregates_with_refinement() -> None:
     assert final_state["usage_summary"]["aggregate"]["model_requests"] == 7
     assert final_state["usage_summary"]["aggregate"]["input_tokens"] == 124
     assert final_state["paragraph_notes_json"]["article_summary"] == "文章摘要"
+
+# ---------------------------------------------------------------------------
+# P-3F: offline failure attribution + usage closed loop
+# ---------------------------------------------------------------------------
+
+
+def _retry_row() -> dict:
+    return {
+        "id": "daily_2026_08_22_001",
+        "title": "旧中文标题",
+        "original_title": "English Headline",
+        "subtitle": "sub",
+        "source": "BBC News",
+        "source_url": "https://example.com/a",
+        "cover_image_url": None,
+        "tags": ["旧标签"],
+        "difficulty": "B2",
+        "read_time_minutes": 5,
+        "pipeline_source": "bbc_rss",
+        "pipeline_meta": {},
+        "original_text": "Enough original text to retry.",
+    }
+
+
+def _retry_env(row: dict, final_state: dict) -> tuple[MagicMock, MagicMock, AsyncMock]:
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = row
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    graph = MagicMock()
+    graph.ainvoke = AsyncMock(return_value=final_state)
+    return mock_pool, graph, mock_conn
+
+
+def _patched_retry_env(row: dict, final_state: dict):
+    mock_pool, graph, mock_conn = _retry_env(row, final_state)
+    record_event = AsyncMock()
+    return mock_pool, graph, mock_conn, record_event
+
+
+@pytest.mark.anyio
+async def test_retry_abort_records_aggregated_usage_snapshot() -> None:
+    final_state = {
+        "abort": True,
+        "usage_summary": None,
+        "review_result": {"passed": False, "reason": "quality_review_rejected"},
+        "paragraph_notes_usage": {
+            "input_tokens": 44,
+            "output_tokens": 28,
+            "total_tokens": 72,
+            "model_requests": 4,
+            "tool_calls": 0,
+        },
+        "refinement_usage": {
+            "input_tokens": 20,
+            "output_tokens": 10,
+            "total_tokens": 30,
+            "model_requests": 4,
+            "tool_calls": 0,
+        },
+    }
+    mock_pool, graph, _conn, record_event = _patched_retry_env(_retry_row(), final_state)
+
+    with (
+        patch("app.services.daily_reader.pipeline.db_connection.DB_POOL", mock_pool),
+        patch(
+            "app.services.daily_reader.workflow.build_daily_reader_graph",
+            return_value=graph,
+        ),
+        patch(
+            "app.services.daily_reader.pipeline._record_daily_pipeline_event",
+            new=record_event,
+        ),
+    ):
+        result = await run_workflow_only("daily_2026_08_22_001")
+
+    assert result is None
+    assert record_event.await_args.kwargs["status"] == STATUS_SKIPPED
+    # abort path must emit the conserved aggregate, not a usage-less event
+    assert record_event.await_args.kwargs["usage_data"] == {
+        "available": True,
+        "per_agent": {
+            "paragraph_notes": final_state["paragraph_notes_usage"],
+            "refinement": final_state["refinement_usage"],
+        },
+        "aggregate": {
+            "input_tokens": 64,
+            "output_tokens": 38,
+            "total_tokens": 102,
+            "model_requests": 8,
+            "tool_calls": 0,
+        },
+    }
+
+
+@pytest.mark.anyio
+async def test_retry_success_records_aggregated_usage_when_projection_summary_missing() -> None:
+    final_state = {
+        "abort": False,
+        "usage_summary": None,
+        "body_json": {"paragraphs": []},
+        "highlights_json": [],
+        "paragraph_notes_json": {},
+        "takeaways_json": {
+            "title_zh": "新中文标题",
+            "subtitle_zh": "新副标题",
+            "tags_zh": ["科技"],
+            "article_takeaway": "一句话总结",
+        },
+        "vocab_usage": {
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "total_tokens": 12,
+            "model_requests": 1,
+            "tool_calls": 0,
+        },
+        "review_usage": {
+            "input_tokens": 20,
+            "output_tokens": 4,
+            "total_tokens": 24,
+            "model_requests": 1,
+            "tool_calls": 0,
+        },
+    }
+    mock_pool, graph, mock_conn, record_event = _patched_retry_env(_retry_row(), final_state)
+
+    with (
+        patch("app.services.daily_reader.pipeline.db_connection.DB_POOL", mock_pool),
+        patch(
+            "app.services.daily_reader.workflow.build_daily_reader_graph",
+            return_value=graph,
+        ),
+        patch(
+            "app.services.daily_reader.pipeline._record_daily_pipeline_event",
+            new=record_event,
+        ),
+    ):
+        result = await run_workflow_only("daily_2026_08_22_001")
+
+    # success semantics unchanged
+    assert result is not None
+    assert result["status"] == "retry_completed"
+    assert record_event.await_args.kwargs["status"] == STATUS_SUCCEEDED
+
+    # fallback usage instead of a usage-less success event
+    assert record_event.await_args.kwargs["usage_data"] == {
+        "available": True,
+        "per_agent": {
+            "vocab": final_state["vocab_usage"],
+            "review": final_state["review_usage"],
+        },
+        "aggregate": {
+            "input_tokens": 30,
+            "output_tokens": 6,
+            "total_tokens": 36,
+            "model_requests": 2,
+            "tool_calls": 0,
+        },
+    }
+
+    # DB business payload untouched by the usage fix
+    _sql, *params = mock_conn.execute.call_args[0]
+    assert params[0] == {"paragraphs": []}
+    assert params[1] == []
+    assert params[2] == {}
+    assert params[3] == final_state["takeaways_json"]
+
+
+@pytest.mark.anyio
+async def test_paragraph_notes_failure_attribution_keeps_requests_without_abort() -> None:
+    with patch(
+        "app.llm.agent_runner.build_model_for_route",
+        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_translation")),
+    ):
+        out = await paragraph_guides_and_translations_node(_translation_node_state())
+
+    assert out["paragraph_notes_json"] == {}
+    # full retry-cap request count survives for stage attribution
+    assert out["paragraph_notes_usage"]["model_requests"] == 4
+    # this node degrades to empty notes; it never aborts the run itself
+    assert "abort" not in out
+
+
+@pytest.mark.anyio
+async def test_refinement_failure_attribution_aborts_with_evidence_and_usage() -> None:
+    state = {
+        "original_text": "Substantive analysis explains a complex policy choice.",
+        "normalized_paragraphs": [{
+            "paragraph_id": "p_0",
+            "text": (
+                "Substantive analysis explains a complex policy choice with "
+                "evidence and context."
+            ),
+        }],
+        "review_result": {
+            "passed": False,
+            "issues": [{
+                "dimension": "paragraph_note_coverage",
+                "severity": "major",
+                "description": "missing notes",
+                "suggestion": "add notes",
+            }],
+        },
+        "highlights_json": [],
+        "paragraph_notes_json": {},
+        "takeaways_json": {},
+    }
+    with patch(
+        "app.llm.agent_runner.build_model_for_route",
+        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_review")),
+    ):
+        out = await refinement_node(state)
+
+    assert out["abort"] is True
+    remaining_issues = out["refinement_result"]["remaining_issues"]
+    assert any(issue["dimension"] == "refinement_failed" for issue in remaining_issues)
+    # full retry-cap request count survives for stage attribution
+    assert out["refinement_usage"]["model_requests"] == 4
