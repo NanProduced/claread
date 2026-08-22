@@ -333,7 +333,33 @@ const InputMarkdownPlugin = MarkdownPlugin.configure({
   options: INPUT_MARKDOWN_PLUGIN_OPTIONS,
 });
 
-const markdownTextInputPlugins = [
+// ---------------------------------------------------------------------------
+// G1P-B-A：HTML fenced code 语言保留（输入端窄 seam）
+//
+// 正文/children 行为继续由 stock PRE deserializer 负责（不复制完整 code
+// parser）；这里只从内层 `<code>` 读语言：标准 `language-*` class 优先，
+// `data-language` 仅作 fallback；无语言不虚构。language 只进 code_block 的
+// `lang` metadata（与 @platejs/markdown code_block 规则的 deserialize/serialize
+// 字段一致），不进 code text leaf；不接 reader-blocks-kit / projection /
+// 默认 MarkdownKit，不读 companion plain。
+const STOCK_CODE_BLOCK_HTML_DESERIALIZER =
+  BaseCodeBlockPlugin.parsers?.html?.deserializer;
+
+function htmlCodeBlockLanguage(pre: HTMLElement): string | undefined {
+  const code = pre.querySelector("code");
+  if (!code) return undefined;
+  for (const token of (code.getAttribute("class") ?? "").split(/\s+/)) {
+    if (token.startsWith("language-") && token.length > "language-".length) {
+      return token.slice("language-".length);
+    }
+  }
+  const dataLanguage = code.getAttribute("data-language");
+  return dataLanguage || undefined;
+}
+
+// 导出供测试以“实际 mounted plugins” seams 驱动 HTML deserializer
+// （G1P-B-A）；生产链路仅本组件消费。
+export const markdownTextInputPlugins = [
   InputMarkdownPlugin,
   // source_callout：Notion 风格 aside 提示框（剪贴板 HTML deserializer +
   // component 注册）。Markdown 路径的 mdast html → source_callout 转换由
@@ -365,7 +391,21 @@ const markdownTextInputPlugins = [
   BaseListItemContentPlugin.configure({ node: { component: MarkdownListContent } }),
   // link / code-block / table
   BaseLinkPlugin.configure({ node: { component: MarkdownLink } }),
-  BaseCodeBlockPlugin.configure({ node: { component: MarkdownCodeBlock } }),
+  BaseCodeBlockPlugin.configure({
+    node: { component: MarkdownCodeBlock },
+    parsers: {
+      html: {
+        deserializer: {
+          ...STOCK_CODE_BLOCK_HTML_DESERIALIZER,
+          parse: (ctx) => {
+            const node = STOCK_CODE_BLOCK_HTML_DESERIALIZER?.parse?.(ctx) ?? {};
+            const language = htmlCodeBlockLanguage(ctx.element);
+            return language ? { ...node, lang: language } : node;
+          },
+        },
+      },
+    },
+  }),
   BaseCodeLinePlugin.configure({ node: { component: MarkdownCodeLine } }),
   BaseTablePlugin.configure({ node: { component: MarkdownTable } }),
   BaseTableRowPlugin.configure({ node: { component: MarkdownTableRow } }),

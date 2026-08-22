@@ -33,9 +33,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React, { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { createPlateEditor } from "platejs/react";
+import { MarkdownPlugin } from "@platejs/markdown";
+import type { Descendant } from "platejs";
+
+import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
 
 import {
   MarkdownTextInput,
+  markdownTextInputPlugins,
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
 
@@ -928,5 +934,134 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     expect(md).not.toContain("复制链接");
     expect(md).not.toContain("修改链接");
     expect(md).not.toContain("图片链接");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-A · HTML code language fidelity（实际 mounted plugins 的 HTML
+// deserializer；不伪造 ClipboardEvent，仅经公开 deserialize/serialize seam）
+// ---------------------------------------------------------------------------
+
+describe("HTML code language fidelity（G1P-B-A，实际 mounted plugins）", () => {
+  function deserializeMountedHtml(html: string): Descendant[] {
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    return editor.api.html.deserialize({
+      element: prepareClipboardHtml(html),
+    }) as Descendant[];
+  }
+
+  function collectByType(
+    nodes: Descendant[],
+    type: string,
+  ): Array<Record<string, unknown>> {
+    const found: Array<Record<string, unknown>> = [];
+    const walk = (ns: Descendant[]) => {
+      for (const n of ns) {
+        const node = n as Record<string, unknown>;
+        if (node.type === type) found.push(node);
+        if (Array.isArray(node.children)) {
+          walk(node.children as Descendant[]);
+        }
+      }
+    };
+    walk(nodes);
+    return found;
+  }
+
+  function codeBlockText(node: Record<string, unknown>): string {
+    return (node.children as Array<{ children?: Array<{ text?: string }> }> | undefined)
+      ?.map((line) => line.children?.map((c) => c.text ?? "").join("") ?? "")
+      .join("\n") ?? "";
+  }
+
+  it('class="language-python" → code_block lang=python（正文/children 不变）', () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("python");
+    expect(codeBlockText(blocks[0])).toBe("x = 1");
+  });
+
+  it('data-language="typescript" → lang=typescript（fallback 通道）', () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code data-language="typescript">const a = 1;</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("typescript");
+  });
+
+  it("class 与 data-language 并存：标准 language-* class 优先", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-rust" data-language="go">fn main() {}</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("rust");
+  });
+
+  it("多 code blocks、多语言：各自保真、源序不漂移", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">a = 1</code></pre>` +
+        `<p>between</p>` +
+        `<pre><code data-language="sql">SELECT 1;</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].lang).toBe("python");
+    expect(blocks[1].lang).toBe("sql");
+    expect(codeBlockText(blocks[0])).toBe("a = 1");
+    expect(codeBlockText(blocks[1])).toBe("SELECT 1;");
+  });
+
+  it("code body 内部空行完整保留", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">line1\n\nline3</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(codeBlockText(blocks[0])).toBe("line1\n\nline3");
+    expect((blocks[0].children as unknown[]).length).toBe(3);
+  });
+
+  it("无 language 时不虚构（无 lang 字段）", () => {
+    const fragment = deserializeMountedHtml(`<pre><code>plain code</code></pre>`);
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).not.toHaveProperty("lang");
+    expect(codeBlockText(blocks[0])).toBe("plain code");
+  });
+
+  it("prose 中的 language-python / 反引号不被识别成 code language", () => {
+    const fragment = deserializeMountedHtml(
+      `<p>Use <span class="language-python">language-python</span> and \`code\` in prose.</p>`,
+    );
+    expect(collectByType(fragment, "code_block")).toHaveLength(0);
+    expect(JSON.stringify(fragment)).not.toContain('"lang"');
+  });
+
+  it("language 只进入 code block metadata，不进入 code text leaf", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1</code></pre>`,
+    );
+    const json = JSON.stringify(fragment);
+    expect(json).toContain('"lang":"python"');
+    expect(json).not.toContain('"text":"python"');
+    expect(json).not.toContain("language-python");
+  });
+
+  it("serialize round-trip：lang 输出为 fence info（非回归）", () => {
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1\n\ny = 2</code></pre>`,
+    );
+    editor.tf.setValue([{ type: "p", children: [{ text: "" }] }] as never[]);
+    editor.tf.insertFragment(fragment as never[]);
+    const md = editor.getApi(MarkdownPlugin).markdown.serialize();
+    expect(md).toContain("```python");
+    expect(md).toContain("x = 1");
+    expect(md).toContain("y = 2");
   });
 });

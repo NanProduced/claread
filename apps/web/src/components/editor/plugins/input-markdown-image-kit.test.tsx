@@ -18,6 +18,9 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPlateEditor, Plate, PlateContent } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
+import type { Descendant } from "platejs";
+
+import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
 
 import {
   INPUT_MARKDOWN_PLUGIN_OPTIONS,
@@ -410,6 +413,236 @@ describe("INPUT_MARKDOWN_PLUGIN_OPTIONS round-trip 矩阵", () => {
     // alt 在 caption（stock 承载位置），url 不进入任何 text leaf
     expect(json).toContain('"caption":[{"text":"a"}]');
     expect(json).not.toContain('"text":"u"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-A · HTML native image：实际 InputMarkdownImagePlugin HTML deserializer
+// ---------------------------------------------------------------------------
+
+describe("InputMarkdownImagePlugin HTML deserializer（G1P-B-A）", () => {
+  function deserializePreparedHtml(html: string): Descendant[] {
+    const editor = createPlateEditor({
+      plugins: [InputMarkdownImagePlugin],
+    });
+    return editor.api.html.deserialize({
+      element: prepareClipboardHtml(html),
+    }) as Descendant[];
+  }
+
+  function collectByType(
+    nodes: Descendant[],
+    type: string,
+  ): Array<Record<string, unknown>> {
+    const found: Array<Record<string, unknown>> = [];
+    const walk = (ns: Descendant[]) => {
+      for (const n of ns) {
+        const node = n as Record<string, unknown>;
+        if (node.type === type) found.push(node);
+        if (Array.isArray(node.children)) {
+          walk(node.children as Descendant[]);
+        }
+      }
+    };
+    walk(nodes);
+    return found;
+  }
+
+  function allLeafText(nodes: Descendant[]): string {
+    let text = "";
+    const walk = (ns: Descendant[]) => {
+      for (const n of ns) {
+        const node = n as Record<string, unknown>;
+        if (typeof node.text === "string") text += node.text;
+        if (Array.isArray(node.children)) {
+          walk(node.children as Descendant[]);
+        }
+      }
+    };
+    walk(nodes);
+    return text;
+  }
+
+  it("standalone safe IMG → 唯一 typed img 节点，url/caption(alt)/title 保真", () => {
+    const fragment = deserializePreparedHtml(
+      `<img src="https://example.com/alpha.png" alt="alpha-alt" title="The Title">`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      type: "img",
+      url: "https://example.com/alpha.png",
+      caption: [{ text: "alpha-alt" }],
+      title: "The Title",
+    });
+    expect(imgs[0].children).toEqual([{ text: "" }]);
+    // URL/alt/title 不进入普通正文 text leaf
+    const leafText = allLeafText(fragment);
+    expect(leafText).not.toContain("https://example.com/alpha.png");
+    expect(leafText).not.toContain("alpha-alt");
+    expect(leafText).not.toContain("The Title");
+    // 不再产生 link 降级节点
+    expect(collectByType(fragment, "a")).toHaveLength(0);
+  });
+
+  it("paragraph inline IMG：留在原段落内，前后文本不漂移", () => {
+    const fragment = deserializePreparedHtml(
+      `<p>before <img src="https://example.com/i.png" alt="mid"> after</p>`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      type: "img",
+      url: "https://example.com/i.png",
+      caption: [{ text: "mid" }],
+    });
+    const leafText = allLeafText(fragment);
+    expect(leafText).toContain("before");
+    expect(leafText).toContain("after");
+    expect(leafText).not.toContain("i.png");
+  });
+
+  it("consecutive IMG：两张图按源序各自 typed，不重复不合并", () => {
+    const fragment = deserializePreparedHtml(
+      `<img src="https://example.com/1.png" alt="one"><img src="https://example.com/2.png" alt="two">`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(2);
+    expect(imgs[0]).toMatchObject({ url: "https://example.com/1.png" });
+    expect(imgs[1]).toMatchObject({ url: "https://example.com/2.png" });
+  });
+
+  it("empty alt 保持为空：不回退 URL 文本", () => {
+    const fragment = deserializePreparedHtml(
+      `<img src="https://example.com/i.png" alt="">`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].caption).toEqual([{ text: "" }]);
+    expect(allLeafText(fragment)).not.toContain("i.png");
+  });
+
+  it("missing alt 同样为空：不从 URL 虚构", () => {
+    const fragment = deserializePreparedHtml(
+      `<img src="https://example.com/i.png">`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].caption).toEqual([{ text: "" }]);
+  });
+
+  it("title absent 不伪造字段；title=\"\" 保持显式空值", () => {
+    const absent = deserializePreparedHtml(
+      `<img src="https://example.com/i.png" alt="a">`,
+    );
+    const absentImgs = collectByType(absent, "img");
+    expect(absentImgs).toHaveLength(1);
+    expect(absentImgs[0]).not.toHaveProperty("title");
+
+    const explicitEmpty = deserializePreparedHtml(
+      `<img src="https://example.com/i.png" alt="a" title="">`,
+    );
+    const emptyImgs = collectByType(explicitEmpty, "img");
+    expect(emptyImgs).toHaveLength(1);
+    expect(emptyImgs[0]).toHaveProperty("title", "");
+  });
+
+  it("sanitized src（危险 scheme 摘除）：节点保留但无 url，不渲染可加载 img", () => {
+    const fragment = deserializePreparedHtml(
+      `<img src="data:image/png;base64,AAAA" alt="kept-alt" title="T">`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).not.toHaveProperty("url");
+    expect(imgs[0].caption).toEqual([{ text: "kept-alt" }]);
+    expect(imgs[0]).toHaveProperty("title", "T");
+
+    const editor = createPlateEditor({
+      plugins: [
+        MarkdownPlugin.configure({ options: INPUT_MARKDOWN_PLUGIN_OPTIONS }),
+        InputMarkdownImagePlugin,
+      ],
+    });
+    // 产品插入路径（同 handlePaste 的 editor.tf.insertFragment）
+    editor.tf.setValue([{ type: "p", children: [{ text: "" }] }] as never[]);
+    editor.tf.insertFragment(fragment as never[]);
+    const { container } = render(
+      <Plate editor={editor}>
+        <PlateContent />
+      </Plate>,
+    );
+    // 无安全 src：不产生带 src 的 img（零网络请求）；alt/title 保留在节点字段（上方已断言）
+    expect(container.querySelector("img[src]")).toBeNull();
+    expect(container.textContent).toContain("链接不安全");
+  });
+
+  it("linked image：wrapper 解包后只剩唯一 typed img，无嵌套/重复 link、image AST", () => {
+    const fragment = deserializePreparedHtml(
+      `<a href="https://example.com/page"><img src="https://example.com/i.png" alt="a"></a>`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      url: "https://example.com/i.png",
+      caption: [{ text: "a" }],
+    });
+    expect(collectByType(fragment, "a")).toHaveLength(0);
+  });
+
+  it("figure/figcaption：figcaption 不偷当 alt/title，保持可见邻接内容", () => {
+    const fragment = deserializePreparedHtml(
+      `<figure><img src="https://example.com/i.png" alt="real-alt"><figcaption>the caption</figcaption></figure>`,
+    );
+    const imgs = collectByType(fragment, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].caption).toEqual([{ text: "real-alt" }]);
+    expect(imgs[0]).not.toHaveProperty("title");
+    // figcaption 作为可见邻接文本保留，不进 typed 字段
+    expect(allLeafText(fragment)).toContain("the caption");
+  });
+
+  it("serialize 位置合同：inline/consecutive 经 HTML 路径不漂移、无 ZWSP、无额外顶层空段", () => {
+    const editor = createPlateEditor({
+      plugins: [
+        MarkdownPlugin.configure({ options: INPUT_MARKDOWN_PLUGIN_OPTIONS }),
+        InputMarkdownImagePlugin,
+      ],
+    });
+    // 与 handlePaste 一致：空编辑器 + insertFragment（产品插入路径）
+    const insertIntoEmpty = (fragment: Descendant[]) => {
+      editor.tf.setValue([{ type: "p", children: [{ text: "" }] }] as never[]);
+      editor.tf.insertFragment(fragment as never[]);
+    };
+
+    const inline = deserializePreparedHtml(
+      `<p>before <img src="https://example.com/i.png" alt="a"> after</p>`,
+    );
+    insertIntoEmpty(inline);
+    // HTML white-space collapse 标准语义：img 后连续空白折叠；
+    // 位置合同 = 图留在原段落内、源序不漂移。
+    expect(editor.getApi(MarkdownPlugin).markdown.serialize().trim()).toBe(
+      "before ![a](https://example.com/i.png)after",
+    );
+
+    const consecutive = deserializePreparedHtml(
+      `<img src="https://example.com/1.png" alt="one"><img src="https://example.com/2.png" alt="two">`,
+    );
+    insertIntoEmpty(consecutive);
+    const out = editor.getApi(MarkdownPlugin).markdown.serialize();
+    expect(out.trim()).toBe(
+      "![one](https://example.com/1.png)![two](https://example.com/2.png)",
+    );
+    expect(out).not.toContain("\u200B");
+    // 无额外顶层空段：只有一段（两张图共处）
+    expect(editor.children).toHaveLength(1);
+  });
+
+  it("非 IMG 元素带 class=\"slate-img\" 不被认领为图片：可见文本保留、无 typed img（G1P-B-A-R2）", () => {
+    const fragment = deserializePreparedHtml(
+      `<div class="slate-img">keep me</div>`,
+    );
+    expect(collectByType(fragment, "img")).toHaveLength(0);
+    expect(allLeafText(fragment)).toContain("keep me");
   });
 });
 

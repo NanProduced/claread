@@ -31,10 +31,12 @@ import {
   BaseTablePlugin,
   BaseTableRowPlugin,
 } from "@platejs/table";
-import { createPlateEditor } from "platejs/react";
+import { createPlateEditor, createPlatePlugin } from "platejs/react";
+import type { Descendant } from "platejs";
 
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
+import { InputMarkdownImagePlugin } from "@/components/editor/plugins/input-markdown-image-kit";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
 import {
   NOTION_CALLOUT_DUAL_MIME_HTML,
@@ -717,5 +719,57 @@ describe("Clipboard Source Negotiation", () => {
       "source_callout",
       "p",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-A dual-MIME Layer A 边界：HTML 仍是结构 truth，只让 HTML 自身已有的
+// image/code language 不丢；plain 额外/冲突字段一律不补（O-B1 属 G1P-B-B，
+// 本轮不实现）；plain URL 永不进入 HTML img；callout fusion 不变。
+// ---------------------------------------------------------------------------
+
+describe("G1P-B-A dual-MIME Layer A boundary", () => {
+  it("dual-MIME image：HTML 自身 src/alt/title 保真，plain 冲突字段不覆盖不补齐", () => {
+    const result = negotiateClipboardSource({
+      html: `<p>body</p><img src="https://example.com/html.png" alt="html-alt" title="html-title">`,
+      plain: `body\n\n![plain-alt](https://example.com/plain.png "plain-title")`,
+    });
+
+    // HTML 仍是结构 truth，不整篇退回 plain、不触发 fusion
+    expect(result.kind).toBe("html");
+    expect(result.fusion).toBeUndefined();
+
+    const editor = createPlateEditor({
+      plugins: [
+        InputMarkdownImagePlugin,
+        createPlatePlugin({ key: "p", node: { isElement: true } }),
+      ],
+    });
+    const fragment = editor.api.html.deserialize({
+      element: result.html,
+    }) as Descendant[];
+    const json = JSON.stringify(fragment);
+    // HTML 自身字段保真（typed img）
+    expect(json).toContain('"url":"https://example.com/html.png"');
+    expect(json).toContain('"text":"html-alt"');
+    expect(json).toContain('"title":"html-title"');
+    // plain 冲突字段未覆盖/漏入 HTML fragment（plain URL 永不进 HTML img）
+    expect(json).not.toContain("plain.png");
+    expect(json).not.toContain("plain-alt");
+    expect(json).not.toContain("plain-title");
+  });
+
+  it("dual-MIME code language：HTML 保留自身 language 信号，plain 冲突语言不覆盖", () => {
+    const result = negotiateClipboardSource({
+      html: `<p>intro</p><pre><code class="language-python">x = 1</code></pre>`,
+      plain: "intro\n\n```typescript\nconst x = 1;\n```",
+    });
+
+    expect(result.kind).toBe("html");
+    expect(result.fusion).toBeUndefined();
+    // result.html 保留 HTML 自身 language-* class（G1P-B-A parser 的输入）；
+    // plain 的 typescript fence 语言不进入 HTML
+    expect(result.html).toContain("language-python");
+    expect(result.html).not.toContain("typescript");
   });
 });

@@ -541,6 +541,13 @@ function InputImageElement({
  * 输入端图片 Plate plugin：inline void element + 四态预览组件。
  * 注册于 MarkdownTextInput 的 plugins（编辑器渲染需要）；
  * deserialize.ts 的输入端 deserializer 不需要组件，仅用 options。
+ *
+ * HTML deserializer（G1P-B-A）：只匹配原生 `<img>`，从 sanitizer 后 DOM 读
+ * `src/alt/title`，直接产出唯一 typed `img` 节点（不再经 generic link 降级）。
+ * getAttribute 的 absent 与 explicit empty 不合并：alt absent/空都保持空（不
+ * 回退 URL 文本）；title absent 不伪造字段，title="" 保持显式空值。src 被
+ * sanitize 摘除时不产出 url，后续由 isLoadableImageUrl 判定进占位；不做任何
+ * 网络探测。
  */
 export const InputMarkdownImagePlugin = createPlatePlugin({
   key: KEYS.img,
@@ -549,5 +556,33 @@ export const InputMarkdownImagePlugin = createPlatePlugin({
     isInline: true,
     isVoid: true,
     component: InputImageElement,
+  },
+  parsers: {
+    html: {
+      deserializer: {
+        rules: [{ validNodeName: "IMG" }],
+        parse: ({
+          element,
+          type,
+        }: {
+          element: HTMLElement;
+          type: string;
+        }) => {
+          // G1P-B-A-R2：Plate 静态规则会以 class="slate-img" 命中任意元素；
+          // 非 IMG 不认领，回退子节点遍历，避免可见内容被空 typed img 替换。
+          if (element.nodeName !== "IMG") return undefined;
+          const src = element.getAttribute("src");
+          const alt = element.getAttribute("alt") ?? "";
+          const title = element.getAttribute("title");
+          return {
+            type,
+            ...(src !== null ? { url: src } : {}),
+            ...(title !== null ? { title } : {}),
+            caption: [{ text: alt }],
+            children: [{ text: "" }],
+          };
+        },
+      },
+    },
   },
 });
