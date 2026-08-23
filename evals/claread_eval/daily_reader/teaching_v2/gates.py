@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from claread_eval.daily_reader.checks import normalize_expression, normalize_text
+from claread_eval.daily_reader.teaching_v2.schema import substantive_unit_ids
 
 GateFn = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
@@ -162,12 +163,9 @@ def gate_anchors_resolve(case: dict[str, Any], artifact: dict[str, Any]) -> dict
                                   "paragraph_id": pid,
                                   "text": sentence[:120]})
 
-    # P-2G-C: structure_map / selected paragraphs must not reference a pure
-    # dirty unit (unit whose full text equals a declared dirty fragment).
-    norm_frags = {normalize_text(f) for f in (case.get("gold") or {}).get(
-        "dirty_fragments") or [] if isinstance(f, str) and normalize_text(f)}
-    pure_dirty = {pid for pid, txt in unit_texts.items()
-                  if norm_frags and normalize_text(txt) in norm_frags}
+    # P-4C-B-R: reuse shared substantive helper for pure-dirty判定
+    substantive = substantive_unit_ids(case)
+    pure_dirty = _unit_ids(case) - substantive
     dirty_refs: list[dict[str, str]] = []
     for i, node in enumerate(bp.get("structure_map") or []):
         if not isinstance(node, dict):
@@ -388,9 +386,8 @@ def gate_translation_coverage_policy(case: dict[str, Any],
 
     pkg = _pkg(artifact)
     if policy == "all_units":
-        # B1: every substantial unit gets exactly one shared translation
-        # (dict keys are unique by construction).
-        missing_units = sorted(_unit_ids(case) - keys)
+        # P-4C-B-R: B1 must cover every substantive (non-pure-dirty) unit
+        missing_units = sorted(substantive_unit_ids(case) - keys)
         if missing_units:
             problems.append(f"all_units policy missing unit translations: {missing_units}")
     elif policy == "selected_units":

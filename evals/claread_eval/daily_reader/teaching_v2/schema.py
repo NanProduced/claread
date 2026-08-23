@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from claread_eval.daily_reader.checks import normalize_text
+
 ARTICLE_TYPES = ("news_report", "opinion_commentary", "explainer", "narrative_profile")
 DIFFICULTIES = ("B1", "B2", "C1")  # A2 is legacy-compat only: never built here
 EXPECTED_OUTCOMES = ("cleaned_publish", "reject")
@@ -68,6 +70,54 @@ def unit_ids(case: dict[str, Any]) -> set[str]:
     inp = _as_dict(case.get("input")) or {}
     units = _as_list(inp.get("reading_units")) or []
     return {u["id"] for u in units if isinstance(u, dict) and isinstance(u.get("id"), str)}
+
+
+def substantive_unit_ids(case: Any) -> set[str]:
+    """Return IDs of substantive (non-pure-dirty) reading units.
+
+    A unit is pure dirty iff its full text after ``normalize_text`` exactly
+    equals some non-empty dirty fragment's ``normalize_text``. Substring
+    containment is not enough. Malformed input is fail-closed (no traceback).
+    When no dirty_fragments are declared, all unit IDs are substantive.
+    """
+    try:
+        if not isinstance(case, dict):
+            return set()
+        inp = case.get("input")
+        if not isinstance(inp, dict):
+            return set()
+        units = inp.get("reading_units")
+        if not isinstance(units, list):
+            return set()
+        unit_ids_set: set[str] = set()
+        unit_texts: dict[str, str] = {}
+        for u in units:
+            if not isinstance(u, dict):
+                continue
+            uid = u.get("id")
+            txt = u.get("text")
+            if isinstance(uid, str) and UNIT_ID_RE.match(uid):
+                unit_ids_set.add(uid)
+                if isinstance(txt, str):
+                    unit_texts[uid] = txt
+        gold = case.get("gold")
+        if not isinstance(gold, dict):
+            return unit_ids_set
+        dirty = gold.get("dirty_fragments")
+        if not isinstance(dirty, list):
+            return unit_ids_set
+        norm_frags: set[str] = set()
+        for f in dirty:
+            if isinstance(f, str):
+                n = normalize_text(f)
+                if n:
+                    norm_frags.add(n)
+        if not norm_frags:
+            return unit_ids_set
+        pure_dirty = {pid for pid, txt in unit_texts.items() if normalize_text(txt) in norm_frags}
+        return unit_ids_set - pure_dirty
+    except Exception:
+        return set()
 
 
 def _anchors(case: dict[str, Any], ids: Any, where: str, errs: list[str]) -> None:
@@ -269,7 +319,8 @@ def validate_case(case: dict[str, Any]) -> list[str]:
             errs.append("B1 gold must use policy=all_units")
         if diff in ("B2", "C1") and cov.get("policy") != "selected_units":
             errs.append("B2/C1 gold must use policy=selected_units")
-        if cov.get("policy") == "all_units" and req != seen_ids:
+        substantive = substantive_unit_ids(case)
+        if cov.get("policy") == "all_units" and req != substantive:
             errs.append("policy=all_units must require exactly all reading units")
     return errs
 

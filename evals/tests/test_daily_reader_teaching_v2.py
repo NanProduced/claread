@@ -301,10 +301,7 @@ def test_validate_artifact_flags_bad_fields():
 def test_dataset_coverage_matrix_validation():
     cases = [json.loads(p.read_text(encoding="utf-8"))
              for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
-    errs = sc.validate_dataset_coverage(cases)
-    # P-4C-B: bumble dirty u01 excluded from all_units coverage by OWNER; filter legacy strict check
-    errs = [e for e in errs if e != "policy=all_units must require exactly all reading units"]
-    assert errs == []
+    assert sc.validate_dataset_coverage(cases) == []
 
 
 def test_dataset_coverage_matrix_gaps_detected():
@@ -770,14 +767,7 @@ def test_all_dataset_cases_validate_and_golds_are_draft():
              for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
     assert 8 <= len(cases) <= 12
     for case in cases:
-        errs = sc.validate_case(case)
-        # P-4C-B: bumble dirty u01 excluded from all_units by OWNER
-        if case["case_id"] == "bbc-bumble-001":
-            errs = [
-                e for e in errs
-                if e != "policy=all_units must require exactly all reading units"
-            ]
-        assert errs == [], case["case_id"]
+        assert sc.validate_case(case) == [], case["case_id"]
         assert case["gold"]["annotation_status"] == "DRAFT_PM_REVIEW"
         assert case["origin"]["frozen_real_article"] is True
         assert case["origin"]["source_url"]
@@ -799,14 +789,6 @@ def test_green_fixtures_pass_all_gates_on_real_dataset_cases():
         art_path = FIXTURE_DIR / "artifacts" / f"{case['case_id']}.artifact.json"
         assert art_path.exists(), f"missing reference artifact for {case['case_id']}"
         art = json.loads(art_path.read_text(encoding="utf-8"))
-        # P-4C-B: bumble Gold removes dirty u01; reference fixture is
-        # pre-correction with u01 — gate's all_units counts pure dirty
-        if case["case_id"] == "bbc-bumble-001":
-            # verify substantive units still all covered (u02..u28)
-            cov = case["gold"]["expected_translation_coverage"]
-            expected = {f"u{str(i).zfill(2)}" for i in range(2, 29)}
-            assert set(cov["required_paragraph_ids"]) == expected
-            continue
         res = _run(case, art)
         failing = {k: v for k, v in res["gates"].items() if v["passed"] is False}
         assert failing == {}, f"{case['case_id']}: {failing}"
@@ -932,9 +914,7 @@ def test_runner_reviewed_but_rejected_is_fail_not_pending(rubric):
 def test_dataset_coverage_source_whitelist():
     cases = [json.loads(p.read_text(encoding="utf-8"))
              for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
-    errs = sc.validate_dataset_coverage(cases)
-    errs = [e for e in errs if e != "policy=all_units must require exactly all reading units"]
-    assert errs == []
+    assert sc.validate_dataset_coverage(cases) == []
     bad = copy.deepcopy(cases)
     bad[0]["input"]["source"] = "nytimes"
     errs = sc.validate_dataset_coverage(bad)
@@ -1514,3 +1494,84 @@ def test_p4cb_heat_transfer_still_counter_with_hold_onto():
     assert len(dirs) == 1
     assert dirs[0]["task_kind"] == "counter"
     assert dirs[0]["required_learning_target"] == "hold onto"
+
+
+# ---------------------------------------------------------------------------
+# P-4C-B-R — substantive-unit translation coverage (pure dirty excluded)
+# ---------------------------------------------------------------------------
+
+
+def test_p4cbr_bumble_validate_case_green():
+    case = _load_case("bbc-bumble-001")
+    assert sc.validate_case(case) == []
+
+
+def test_p4cbr_pure_dirty_all_units_substantive_only_passes():
+    case = _with_dirty_unit(_b1_case())
+    substantive = {"u02", "u03", "u04"}
+    case["gold"]["expected_translation_coverage"] = {
+        "policy": "all_units",
+        "required_paragraph_ids": sorted(substantive),
+        "allowed_paragraph_ids": sorted(substantive),
+    }
+    art = _b1_artifact()
+    # keep only substantive translations
+    art["learning_package"]["translations_by_paragraph_id"] = {
+        k: v for k, v in art["learning_package"]["translations_by_paragraph_id"].items()
+        if k in substantive
+    }
+    # adjust anchors that referenced u01
+    art["lesson_blueprint"]["structure_map"] = [
+        {"label": "事件", "paragraph_ids": ["u02"], "function": "opening"},
+        {"label": "观点与安排", "paragraph_ids": ["u03", "u04"], "function": "detail"},
+    ]
+    art["lesson_blueprint"]["selected_paragraph_ids"] = ["u02", "u03"]
+    cp0 = art["learning_package"]["comprehension_checkpoints"][0]
+    cp0["evidence_paragraph_ids"] = ["u02"]
+    cp0["answer_evidence_paragraph_ids"] = ["u02"]
+    sm0 = art["learning_package"]["sentence_maps"][0]
+    sm0["paragraph_id"] = "u02"
+    sm0["sentence"] = "Many families came to the opening event."
+    sm0["translation"] = "许多家庭来到开幕活动现场。"
+    res = g2.run_hard_gates(case, art)
+    assert res["gates"]["translation_coverage_policy"]["passed"] is True
+
+
+def test_p4cbr_pure_dirty_translation_outside_allowed_fails():
+    case = _with_dirty_unit(_b1_case())
+    substantive = {"u02", "u03", "u04"}
+    case["gold"]["expected_translation_coverage"] = {
+        "policy": "all_units",
+        "required_paragraph_ids": sorted(substantive),
+        "allowed_paragraph_ids": sorted(substantive),
+    }
+    art = _b1_artifact()
+    # keep substantive plus dirty u01
+    art["learning_package"]["translations_by_paragraph_id"]["u01"] = "脏片段译文"
+    res = g2.run_hard_gates(case, art)
+    gate = res["gates"]["translation_coverage_policy"]
+    # pure dirty u01 must be outside allowed
+    assert gate["passed"] is False
+    assert "u01" in json.dumps(gate["detail"], ensure_ascii=False)
+
+
+def test_p4cbr_non_pure_dirty_long_paragraph_still_substantive():
+    case = _b1_case()
+    case["gold"]["dirty_fragments"] = ["- Published"]
+    # u01 contains dirty as substring but not exact -> still substantive
+    long_text = "Note: - Published appears inside long paragraph but not exact."
+    case["input"]["reading_units"][0]["text"] = long_text
+    assert "u01" in sc.substantive_unit_ids(case)
+    art = _b1_artifact()
+    res = g2.run_hard_gates(case, art)
+    assert res["gates"]["translation_coverage_policy"]["passed"] is True
+
+
+def test_p4cbr_malformed_substantive_helper_fail_closed():
+    # malformed input must not raise
+    assert sc.substantive_unit_ids(None) == set()
+    assert sc.substantive_unit_ids({}) == set()
+    assert sc.substantive_unit_ids({"input": None, "gold": None}) == set()
+    assert sc.validate_case({"input": {}, "gold": {}}) != []
+    res = g2.run_hard_gates({"input": {}}, {"case_id": "x"})
+    assert res["gates"]["translation_coverage_policy"]["passed"] is False
