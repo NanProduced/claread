@@ -297,6 +297,8 @@ async def test_nonstream_fallback_captures_explicit_provider_usage() -> None:
         "input_tokens": 120,
         "output_tokens": 45,
         "total_tokens": 165,
+        "model_requests": 1,
+        "tool_calls": 0,
     }
 
 
@@ -422,6 +424,8 @@ async def test_unavailable_usage_is_none_not_fabricated_zero() -> None:
         "input_tokens": 1,
         "output_tokens": 0,
         "total_tokens": 1,
+        "model_requests": 0,
+        "tool_calls": 0,
     }
 
 
@@ -513,6 +517,8 @@ async def test_runtime_propagates_usage_summary_to_run_result() -> None:
         "input_tokens": 64,
         "output_tokens": 12,
         "total_tokens": 76,
+        "model_requests": 1,
+        "tool_calls": 0,
     }
 
 
@@ -1243,6 +1249,8 @@ async def test_transport_failure_after_confirmed_round_retains_partial_usage() -
         "input_tokens": 30,
         "output_tokens": 10,
         "total_tokens": 40,
+        "model_requests": 1,
+        "tool_calls": 1,
     }
     assert observation.usage_completeness == "partial"
 
@@ -1325,6 +1333,8 @@ async def test_runtime_failure_propagates_partial_usage_on_observation() -> None
         "input_tokens": 30,
         "output_tokens": 10,
         "total_tokens": 40,
+        "model_requests": 1,
+        "tool_calls": 1,
     }
     assert observation.usage_completeness == "partial"
 
