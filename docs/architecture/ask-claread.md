@@ -81,7 +81,7 @@ route (reader_record_ask.py)
 
 ## Provider reasoning
 
-主 agent 的 `ThinkingPart` / `ThinkingPartDelta` 只进入 `ProviderReasoningObserver`。Host 以确定性、跨 chunk 的安全闸处理后，按严格递增 `seq` 发布 `agentic.reasoning.started|delta|completed`；不使用 LLM projector，不产生第二次 provider 调用。安全闸命中凭据、私钥、连接串、内部 evidence handle 或非法控制字符时永久停止本轮后续 reasoning，但不影响答案链。
+主 agent 的 `ThinkingPart` / `ThinkingPartDelta` 只进入 `ProviderReasoningObserver`。Host 以确定性、跨 chunk 的安全闸处理后，按严格递增 `seq` 发布 `agentic.reasoning.started|delta|completed`；不使用 LLM projector，不产生第二次 provider 调用。内部 evidence handle 会替换为中性的 `〔引用〕` 并继续输出；只有凭据、私钥、连接串或非法控制字符等真正的信任边界失败才永久停止本轮后续 reasoning，但不影响答案链。
 
 `reasoning_projection_json` 保存用户实际看到的 `provider_reasoning_v1` 文本与 `complete|truncated|blocked` 状态；成功与非成功正常终态都保存，冷历史只经同一 snapshot validator 恢复，且不进入 thread memory。`reader_record_ask_provider_reasoning_enabled=true` 为默认，`false` 仅作紧急 kill switch。旧 `learner_reasoning_v1` 只保留历史读取兼容，不再接入生产执行流。
 

@@ -96,7 +96,7 @@ def test_hard_secret_stops_whole_text_projection() -> None:
         "reasoning_content",
     ):
         assert sentinel not in out
-    assert out == "Let me check "
+    assert out == "Let me check 〔引用〕 and . Key "
 
 
 def test_redaction_drops_system_instruction_lines() -> None:
@@ -158,7 +158,7 @@ def test_incremental_redaction_matches_whole_text_across_splits(split: int) -> N
     assert "".join(pieces) == expected
 
 
-def test_incremental_redactor_blocks_partial_handle_once_complete() -> None:
+def test_incremental_redactor_replaces_partial_handle_and_continues() -> None:
     # Half of a handle must never be emitted in a form that survives
     # redaction once the full handle arrives.
     redactor = IncrementalRedactor()
@@ -168,8 +168,8 @@ def test_incremental_redactor_blocks_partial_handle_once_complete() -> None:
     combined = first + second + tail
     assert _EVH_SENTINEL not in combined
     assert "evh_0123" not in combined.replace("〔引用〕", "")
-    assert redactor.blocked
-    assert combined == "引用开始 "
+    assert not redactor.blocked
+    assert combined == "引用开始 〔引用〕 结束"
 
 
 def test_incremental_redactor_releases_safe_text_immediately() -> None:
@@ -413,15 +413,15 @@ def test_ambiguous_token_overflow_seals_redactor_permanently() -> None:
     assert out4 == ""
 
 
-def test_committed_prefix_stops_at_complete_hard_sentinel() -> None:
+def test_committed_prefix_redacts_complete_evidence_handle_and_continues() -> None:
     raw = "正" * 100 + " " + _EVH_SENTINEL + " " + "尾" * 500
     redactor = IncrementalRedactor()
     out1 = redactor.feed(raw)
     out2 = redactor.flush()
     combined = out1 + out2
     assert _EVH_SENTINEL not in combined
-    assert combined == "正" * 100 + " "
-    assert redactor.blocked
+    assert combined == "正" * 100 + " 〔引用〕 " + "尾" * 500
+    assert not redactor.blocked
     assert combined == redact_reasoning_text(raw)
 
 
@@ -537,13 +537,13 @@ def test_buffer_snapshot_shape() -> None:
     }
 
 
-def test_buffer_blocks_hard_sentinel_while_projecting() -> None:
+def test_buffer_redacts_evidence_handle_while_projecting() -> None:
     buffer = ReasoningProjectionBuffer()
     out = buffer.feed(f"检查 {_EVH_SENTINEL}。") + buffer.flush()
     assert _EVH_SENTINEL not in out
-    assert out == "检查 "
+    assert out == "检查 〔引用〕。"
     assert _EVH_SENTINEL not in buffer.text
-    assert buffer.visibility_status == "blocked"
+    assert buffer.visibility_status == "complete"
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +571,19 @@ def test_observer_started_only_on_first_nonempty_projection() -> None:
     # The raw handle and all later text never appear.
     assert _EVH_SENTINEL not in _dump(events)
     assert "仅包含 " in _dump(events)
+
+
+def test_observer_redacts_evidence_handle_without_blocking_later_reasoning() -> None:
+    events: list[RuntimeEvent] = []
+    observer = _observer(events)
+    observer.on_reasoning_delta(f"先检查 {_EVH_SENTINEL}。")
+    observer.on_reasoning_delta("再说明结论。")
+    observer.on_analysis_finished()
+
+    deltas = [e for e in events if isinstance(e, AgenticReasoningDeltaEvent)]
+    assert "".join(delta.delta for delta in deltas) == "先检查 〔引用〕。再说明结论。"
+    assert observer.visibility_status == "complete"
+    assert observer.persistence_payload()["text"] == "先检查 〔引用〕。再说明结论。"  # type: ignore[index]
 
 
 def test_observer_no_events_when_reasoning_entirely_invisible() -> None:
@@ -730,9 +743,10 @@ def test_observer_raw_sentinel_never_published_or_logged(
     assert _EVH_SENTINEL not in wire
     assert _SK_SENTINEL not in wire
     assert "fp_" not in wire
-    # Only the safe prefix before the first hard blocker flows.
+    # Evidence handles are replaced; the credential remains a hard blocker.
     assert "先检查" in wire
-    assert "再用" not in wire
+    assert "〔引用〕" in wire
+    assert "再用" in wire
     # And nothing raw reached logs.
     assert _EVH_SENTINEL not in caplog.text
     assert _SK_SENTINEL not in caplog.text

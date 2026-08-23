@@ -172,12 +172,10 @@ _REDACTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
 # Trust-boundary failures stop the public reasoning stream for the turn.
 # These are narrower than the ordinary redaction rules: harmless locators
 # may be redacted and processing may continue, while credentials, private
-# keys, internal evidence handles, connection strings, and illegal control
-# characters fail closed.
+# keys, connection strings, and illegal control characters fail closed.
 _HARD_BLOCK_RE = re.compile(
     r"(?i:"
-    r"(?<![A-Za-z0-9_])evh_[0-9A-Fa-f]{8,64}"
-    r"|(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._\-]{12,}"
+    r"(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._\-]{12,}"
     r"|(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{12,}"
     r"|(?<![A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,})"
     r"|(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?"
