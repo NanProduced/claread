@@ -343,7 +343,20 @@ def test_legal_v2_artifact_without_legacy_fields_must_not_fail():
 
 def test_gate_registry_has_exactly_12_ordered_gates():
     assert len(g2.HARD_GATES) == 12
-    assert list(g2.HARD_GATES)[0] == "no_boilerplate_residue"
+    assert list(g2.HARD_GATES) == [
+        "no_boilerplate_residue",
+        "anchors_resolve",
+        "expression_explained_once",
+        "counts_in_bounds",
+        "no_empty_placeholders",
+        "checkpoint_evidence_valid",
+        "sentence_map_translation_reuse",
+        "source_caption_preserved",
+        "refinement_bounded",
+        "outcome_matches_gold",
+        "translation_coverage_policy",
+        "legacy_fields_not_required",
+    ]
 
 
 def test_gate_boilerplate_residue():
@@ -1575,3 +1588,34 @@ def test_p4cbr_malformed_substantive_helper_fail_closed():
     assert sc.validate_case({"input": {}, "gold": {}}) != []
     res = g2.run_hard_gates({"input": {}}, {"case_id": "x"})
     assert res["gates"]["translation_coverage_policy"]["passed"] is False
+
+
+def test_p4cd_selective_translation_gold_and_reference_artifacts():
+    expected = {
+        "bbc-iphone-motion-sickness-006": (
+            ["u03", "u08", "u13"],
+            ["u03", "u04", "u06", "u07", "u08", "u11", "u12", "u13"],
+            set(),
+        ),
+        "bbc-crypto-liberland-007": (
+            ["u05", "u07"],
+            ["u05", "u07", "u11", "u15", "u16", "u22", "u25", "u27"],
+            {"u09", "u18", "u19", "u20", "u30"},
+        ),
+    }
+
+    for case_id, (required, allowed, forbidden) in expected.items():
+        case = _load_case(case_id)
+        coverage = case["gold"]["expected_translation_coverage"]
+        assert coverage["required_paragraph_ids"] == required
+        assert coverage["allowed_paragraph_ids"] == allowed
+        assert forbidden.isdisjoint(coverage["allowed_paragraph_ids"])
+        assert sc.validate_case(case) == []
+        assert case["gold"]["annotation_status"] == "DRAFT_PM_REVIEW"
+
+        artifact = _load_artifact(case_id)
+        assert sc.validate_artifact(case, artifact) == []
+        result = g2.run_hard_gates(case, artifact)
+        assert result["scored_count"] == 12
+        assert result["passed_count"] == 12
+        assert result["all_passed"] is True
