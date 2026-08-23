@@ -33,6 +33,7 @@ import type {
   ReaderCodeBlockElement,
   ReaderHeadingElement,
   ReaderHrElement,
+  ReaderImageElement,
   ReaderListItemElement,
   ReaderListElement,
   ReaderMarkdownBlockquoteElement,
@@ -50,6 +51,8 @@ import {
   READER_CODE_BLOCK_TYPE,
   READER_HEADING_TYPE,
   READER_HR_TYPE,
+  READER_IMAGE_BLOCK_TYPE,
+  READER_IMAGE_TYPE,
   READER_LIST_ITEM_TYPE,
   READER_LIST_TYPE,
   READER_MARKDOWN_BLOCKQUOTE_TYPE,
@@ -62,6 +65,7 @@ import {
   READER_TABLE_ROW_TYPE,
   READER_TABLE_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { isSafeCalloutEmoji } from "@/lib/source-callout/source-callout-display-icon";
@@ -310,6 +314,152 @@ const copyExcludeProps = {
   draggable: false,
   "data-reader-record-copy-exclude": "true",
 } as const;
+
+// ---------------------------------------------------------------------------
+// G3b Reader image (standalone + inline) — single image data shape, reuse
+// isLoadableImageUrl, native <img> + Clipboard API, no media framework.
+// ---------------------------------------------------------------------------
+
+const READER_IMAGE_PLACEHOLDER_CLASS =
+  "inline-flex max-w-full min-h-[4.5rem] flex-col items-start gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 align-top text-sm text-ink-soft";
+const READER_IMAGE_BUTTON_CLASS =
+  "rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised";
+
+function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
+  const node = element as unknown as ReaderImageElement;
+  const data = (node.data ?? {}) as unknown as {
+    sourceUrl?: unknown;
+    effectiveUrl?: unknown;
+    altText?: unknown;
+    title?: unknown;
+    positionKind?: unknown;
+    stableBlockId?: unknown;
+    parentStableBlockId?: unknown;
+  };
+  const sourceUrl = typeof data.sourceUrl === "string" ? data.sourceUrl : "";
+  const effectiveUrl = data.effectiveUrl;
+  const altText = typeof data.altText === "string" ? data.altText : "";
+  const title = typeof data.title === "string" ? data.title : undefined;
+  const positionKind = data.positionKind === "inline" ? "inline" : data.positionKind === "standalone" ? "standalone" : "inline";
+  const safe = typeof effectiveUrl === "string" && isLoadableImageUrl(effectiveUrl);
+  const [loadState, setLoadState] = React.useState<"loading" | "loaded" | "failed">("loading");
+  const [prevUrl, setPrevUrl] = React.useState<unknown>(effectiveUrl);
+  if (prevUrl !== effectiveUrl) {
+    setPrevUrl(effectiveUrl);
+    setLoadState("loading");
+  }
+  const copyLink = React.useCallback(() => {
+    if (!safe || typeof effectiveUrl !== "string") return;
+    try {
+      void navigator.clipboard?.writeText(effectiveUrl).catch(() => {});
+    } catch {}
+  }, [effectiveUrl, safe]);
+
+  // unsafe / null effectiveUrl
+  if (!safe) {
+    return (
+      <span
+        {...attributes}
+        data-reader-image="true"
+        data-reader-image-kind={positionKind}
+        data-image-state="unsafe"
+        className="inline-block max-w-full align-top"
+      >
+        <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS}>
+          <span className="font-medium text-ink">链接不安全</span>
+          <span className="break-all font-mono text-xs">{sourceUrl}</span>
+        </span>
+        {children}
+      </span>
+    );
+  }
+
+  // safe: loading / loaded / load_failed
+  if (loadState === "failed") {
+    return (
+      <span
+        {...attributes}
+        data-reader-image="true"
+        data-reader-image-kind={positionKind}
+        data-image-state="load_failed"
+        className="inline-block max-w-full align-top"
+      >
+        <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS} data-image-state="load_failed">
+          <span className="break-all">{altText || "图片加载失败"}</span>
+          <span className="flex items-center gap-2">
+            <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+              复制链接
+            </button>
+          </span>
+        </span>
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      {...attributes}
+      data-reader-image="true"
+      data-reader-image-kind={positionKind}
+      data-image-state={loadState === "loaded" ? "loaded" : "loading"}
+      className="inline-block max-w-full align-top"
+    >
+      <span {...copyExcludeProps} className="inline-flex max-w-full flex-col items-start gap-1 align-top">
+        {loadState === "loading" ? (
+          <span data-image-state="loading" className={READER_IMAGE_PLACEHOLDER_CLASS}>
+            图片加载中…
+          </span>
+        ) : null}
+        <img
+          data-image-state={loadState === "loaded" ? "loaded" : undefined}
+          src={effectiveUrl as string}
+          alt={altText}
+          title={title}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onLoad={() => setLoadState("loaded")}
+          onError={() => setLoadState("failed")}
+          className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
+        />
+        {loadState === "loaded" ? (
+          <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+            复制链接
+          </button>
+        ) : null}
+      </span>
+      {children}
+    </span>
+  );
+}
+
+export const ReaderImagePlugin = createPlatePlugin({
+  key: READER_IMAGE_TYPE,
+  node: {
+    isElement: true,
+    isInline: true,
+    isVoid: true,
+    component: ReaderImageInlineComponent,
+  },
+});
+
+function ReaderImageBlockComponent({ attributes, children }: PlateElementProps) {
+  return (
+    <div
+      {...attributes}
+      data-reader-image-block="true"
+      className="reader-record-plate-image-block my-3 flex justify-center"
+    >
+      {children}
+    </div>
+  );
+}
+
+export const ReaderImageBlockPlugin = createPlatePlugin({
+  key: READER_IMAGE_BLOCK_TYPE,
+  node: { isElement: true, component: ReaderImageBlockComponent },
+});
 
 function stopReaderCalloutControlEvent(
   event: React.SyntheticEvent<HTMLElement>,
@@ -1240,19 +1390,22 @@ function ReaderStableListItemComponent({
   attributes,
 }: PlateElementProps) {
   const data = (element as unknown as ReaderListItemElement).data;
+  const presentationOnly = data?.presentationOnly === true;
 
   return (
     <li
       {...attributes}
       className={`${attributes?.className ?? ""}`.trim()}
-      {...readerRecordNavigableNodeAttrs({
-        nodeKind: "list_item",
-        unitId: data?.unitId,
-        isUnitStart: data?.isUnitStart,
-        anchorSegmentId: data?.anchorSegmentId,
-      })}
+      {...(presentationOnly
+        ? {}
+        : readerRecordNavigableNodeAttrs({
+            nodeKind: "list_item",
+            unitId: data?.unitId,
+            isUnitStart: data?.isUnitStart,
+            anchorSegmentId: data?.anchorSegmentId,
+          }))}
       data-reader-record-block-id={(element as unknown as ReaderListItemElement).id}
-      data-reader-record-stable-block-type="list_item"
+      data-reader-record-stable-block-type={presentationOnly ? undefined : "list_item"}
       data-reader-record-markdown-node="li"
     >
       {children}
@@ -2043,6 +2196,8 @@ export const ReaderBlocksKit = [
   ReaderStableCodeBlockPlugin,
   ReaderStableMarkdownBlockquotePlugin,
   ReaderStableSourceCalloutPlugin,
+  ReaderImagePlugin,
+  ReaderImageBlockPlugin,
   // source_callout（非 stable-block 路径）：当 enhancement children markdown
   // 反序列化遇到 `<aside>` 或 GFM alert 时，SOURCE_CALLOUT_RULES 产出
   // `{type:"source_callout"}` element。此处注册 SourceCalloutPlugin 让该

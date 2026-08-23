@@ -214,6 +214,48 @@ describe("buildReaderRecordNavigationItems", () => {
     expect(items[0].label).toBe("The quick brown fox jumps over the lazy dog.");
   });
 
+  it("derives labels from text around an inline image without leaking image metadata", () => {
+    const paragraph = makeParagraph("u1", "hello ");
+    if (paragraph.type !== "paragraph") {
+      throw new Error("expected paragraph");
+    }
+    const firstLeaf = paragraph.children[0];
+    if (!("text" in firstLeaf)) {
+      throw new Error("expected text leaf");
+    }
+    paragraph.children = [
+      firstLeaf,
+      {
+        type: "image",
+        id: "image:block_1:0",
+        children: [{ text: "" }],
+        data: {
+          sourceUrl: "https://example.com/private.png",
+          effectiveUrl: "https://example.com/private.png",
+          altText: "private alt",
+          title: "private title",
+          positionKind: "inline",
+          stableBlockId: "block_1",
+          parentStableBlockId: null,
+          inlineOrdinal: 0,
+          beforeUtf16: 6,
+        },
+      },
+      {
+        ...firstLeaf,
+        text: "world",
+        baseRange: { startUtf16: 6, endUtf16: 11 },
+      },
+    ];
+
+    expect(
+      buildReaderRecordNavigationItems(
+        makeSnapshot([{ unit_id: "u1", order_index: 0, label: null }]),
+        makeDocument([paragraph]),
+      )[0]?.label,
+    ).toBe("hello world");
+  });
+
   it("trims whitespace and collapses multiple spaces in derived labels", () => {
     const snapshot = makeSnapshot([
       { unit_id: "unit_1", order_index: 0, label: null },

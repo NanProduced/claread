@@ -33,14 +33,16 @@ import type {
   ReaderRecordPlateGrammarMark,
   ReaderRecordPlateHeadingBlock,
   ReaderRecordPlateHrBlock,
+  ReaderRecordPlateImageBlock,
+  ReaderRecordPlateInlineNode,
   ReaderRecordPlateInlineMark,
   ReaderRecordPlateListBlock,
   ReaderRecordPlateListItemBlock,
   ReaderRecordPlateMarkdownBlockquoteBlock,
   ReaderRecordPlateMark,
   ReaderRecordPlateParagraphBlock,
-  ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateSentenceAnalysisBlock,
+  ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateSourceCalloutBlock,
   ReaderRecordPlateTableBlock,
   ReaderRecordPlateTableCellBlock,
@@ -79,6 +81,8 @@ export const READER_TABLE_ROW_TYPE = "reader_table_row" as const;
 export const READER_TABLE_CELL_TYPE = "reader_table_cell" as const;
 export const READER_HR_TYPE = "reader_hr" as const;
 export const READER_SOURCE_CALLOUT_TYPE = "reader_source_callout" as const;
+export const READER_IMAGE_TYPE = "reader_image" as const;
+export const READER_IMAGE_BLOCK_TYPE = "reader_image_block" as const;
 
 // --- Mark key constants ---
 
@@ -93,7 +97,7 @@ export const READER_SENTENCE_CHUNK_MARK_KEY = "sentence_chunk" as const;
 export interface ReaderParagraphElement {
   type: typeof READER_PARAGRAPH_TYPE;
   id: ReaderRecordPlateParagraphBlock["id"];
-  children: PlateTextNode[];
+  children: Array<PlateTextNode | ReaderImageElement>;
   data: ReaderRecordPlateParagraphBlock["data"];
 }
 
@@ -139,7 +143,7 @@ export interface ReaderHeadingElement {
   id: ReaderRecordPlateHeadingBlock["id"];
   /** 1-based heading level (clamped to 1-6). */
   level: ReaderRecordPlateHeadingBlock["level"];
-  children: PlateTextNode[];
+  children: Array<PlateTextNode | ReaderImageElement>;
   data: ReaderRecordPlateHeadingBlock["data"];
 }
 
@@ -155,7 +159,9 @@ export interface ReaderListElement {
 export interface ReaderListItemElement {
   type: typeof READER_LIST_ITEM_TYPE;
   id: ReaderRecordPlateListItemBlock["id"];
-  children: Array<PlateTextNode | ReaderListElement>;
+  children: Array<
+    PlateTextNode | ReaderImageElement | ReaderImageBlockElement | ReaderListElement
+  >;
   data: ReaderRecordPlateListItemBlock["data"];
 }
 
@@ -169,7 +175,7 @@ export interface ReaderCodeBlockElement {
 export interface ReaderMarkdownBlockquoteElement {
   type: typeof READER_MARKDOWN_BLOCKQUOTE_TYPE;
   id: ReaderRecordPlateMarkdownBlockquoteBlock["id"];
-  children: PlateTextNode[];
+  children: Array<PlateTextNode | ReaderImageElement>;
   data: ReaderRecordPlateMarkdownBlockquoteBlock["data"];
 }
 
@@ -190,7 +196,7 @@ export interface ReaderTableRowElement {
 export interface ReaderTableCellElement {
   type: typeof READER_TABLE_CELL_TYPE;
   id: ReaderRecordPlateTableCellBlock["id"];
-  children: PlateTextNode[];
+  children: Array<PlateTextNode | ReaderImageElement>;
   data: ReaderRecordPlateTableCellBlock["data"];
 }
 
@@ -206,6 +212,20 @@ export interface ReaderSourceCalloutElement {
   id: ReaderRecordPlateSourceCalloutBlock["id"];
   children: Array<PlateTextNode | ReaderPlateElement>;
   data: ReaderRecordPlateSourceCalloutBlock["data"];
+}
+
+export interface ReaderImageElement {
+  type: typeof READER_IMAGE_TYPE;
+  id: string;
+  children: [{ text: "" }];
+  data: ReaderRecordPlateImageBlock["data"];
+}
+
+export interface ReaderImageBlockElement {
+  type: typeof READER_IMAGE_BLOCK_TYPE;
+  id: string;
+  children: [ReaderImageElement];
+  data: { stableBlockId: string; parentStableBlockId: string | null };
 }
 
 export type ReaderPlateElement =
@@ -225,7 +245,9 @@ export type ReaderPlateElement =
   | ReaderTableRowElement
   | ReaderTableCellElement
   | ReaderHrElement
-  | ReaderSourceCalloutElement;
+  | ReaderSourceCalloutElement
+  | ReaderImageElement
+  | ReaderImageBlockElement;
 
 // --- Text node type ---
 
@@ -452,15 +474,46 @@ export function translationLeafToPlateTextNode(
   };
 }
 
+// --- Image helpers (ponytail: reuse existing text leaf pipeline, no new framework) ---
+
+function isImageNode(node: unknown): node is ReaderRecordPlateImageBlock {
+  return (node as { type?: string })?.type === "image";
+}
+
+function inlineImageToPlateElement(block: ReaderRecordPlateImageBlock): ReaderImageElement {
+  return {
+    type: READER_IMAGE_TYPE,
+    id: block.id,
+    children: [{ text: "" }],
+    data: block.data,
+  };
+}
+
+function imageBlockToPlateElement(block: ReaderRecordPlateImageBlock): ReaderImageBlockElement {
+  const img = inlineImageToPlateElement(block);
+  return {
+    type: READER_IMAGE_BLOCK_TYPE,
+    id: `block:${block.id}`,
+    children: [img],
+    data: { stableBlockId: block.data.stableBlockId, parentStableBlockId: block.data.parentStableBlockId },
+  };
+}
+
+function inlineNodesToPlateChildren(
+  nodes: ReaderRecordPlateInlineNode[],
+): Array<PlateTextNode | ReaderImageElement> {
+  if (nodes.length === 0) return [{ text: "" }];
+  return nodes.map((node) =>
+    isImageNode(node) ? inlineImageToPlateElement(node) : textLeafToPlateTextNode(node),
+  );
+}
+
 // --- Block → Element converters ---
 
 function paragraphBlockToElement(
-  block: ReaderRecordPlateParagraphBlock,
+  block: ReaderRecordPlateParagraphBlock<ReaderRecordPlateInlineNode>,
 ): ReaderParagraphElement {
-  const children: PlateTextNode[] =
-    block.children.length > 0
-      ? block.children.map(textLeafToPlateTextNode)
-      : [{ text: "" }];
+  const children = inlineNodesToPlateChildren(block.children);
 
   return {
     type: READER_PARAGRAPH_TYPE,
@@ -528,12 +581,9 @@ function sentenceAnalysisBlockToElement(
 // --- B2: Markdown stable-block-derived converters ---
 
 function headingBlockToElement(
-  block: ReaderRecordPlateHeadingBlock,
+  block: ReaderRecordPlateHeadingBlock<ReaderRecordPlateInlineNode>,
 ): ReaderHeadingElement {
-  const children: PlateTextNode[] =
-    block.children.length > 0
-      ? block.children.map(textLeafToPlateTextNode)
-      : [{ text: "" }];
+  const children = inlineNodesToPlateChildren(block.children);
 
   return {
     type: READER_HEADING_TYPE,
@@ -545,12 +595,9 @@ function headingBlockToElement(
 }
 
 function listItemBlockToElement(
-  block: ReaderRecordPlateListItemBlock,
+  block: ReaderRecordPlateListItemBlock<ReaderRecordPlateInlineNode>,
 ): ReaderListItemElement {
-  const textChildren: PlateTextNode[] =
-    block.children.length > 0
-      ? block.children.map(textLeafToPlateTextNode)
-      : [{ text: "" }];
+  const textChildren = inlineNodesToPlateChildren(block.children);
   const nestedChildren = (block.nestedChildren ?? []).map(listBlockToElement);
 
   return {
@@ -562,13 +609,29 @@ function listItemBlockToElement(
 }
 
 function listBlockToElement(block: ReaderRecordPlateListBlock): ReaderListElement {
-  // Backend guarantees list blocks contain at least one list_item (B2.6
-  // groups by parentStableBlockId). If a malformed empty list slips through,
-  // we emit a single empty list_item to keep Plate value valid rather than
-  // crashing the editor.
+  // A list may contain promoted standalone images without a source list_item.
+  // Keep every direct child as a Plate list item so the DOM remains valid.
+  // A malformed empty list still gets one empty item rather than crashing.
   const children: ReaderListItemElement[] =
     block.children.length > 0
-      ? block.children.map(listItemBlockToElement)
+      ? block.children.map((child) => {
+          if (child.type === "image") {
+            return {
+              type: READER_LIST_ITEM_TYPE,
+              id: `list_item:${child.id}`,
+              children: [imageBlockToPlateElement(child)],
+              data: {
+                unitId: null,
+                stableBlockType: "image",
+                stableBlockId: child.data.stableBlockId,
+                parentStableBlockId: child.data.parentStableBlockId,
+                coveredAnchorSegmentIds: [],
+                presentationOnly: true,
+              },
+            };
+          }
+          return listItemBlockToElement(child);
+        })
       : [
           {
             type: READER_LIST_ITEM_TYPE,
@@ -604,12 +667,9 @@ function codeBlockBlockToElement(
 }
 
 function markdownBlockquoteBlockToElement(
-  block: ReaderRecordPlateMarkdownBlockquoteBlock,
+  block: ReaderRecordPlateMarkdownBlockquoteBlock<ReaderRecordPlateInlineNode>,
 ): ReaderMarkdownBlockquoteElement {
-  const children: PlateTextNode[] =
-    block.children.length > 0
-      ? block.children.map(textLeafToPlateTextNode)
-      : [{ text: "" }];
+  const children = inlineNodesToPlateChildren(block.children);
 
   return {
     type: READER_MARKDOWN_BLOCKQUOTE_TYPE,
@@ -620,12 +680,9 @@ function markdownBlockquoteBlockToElement(
 }
 
 function tableCellBlockToElement(
-  block: ReaderRecordPlateTableCellBlock,
+  block: ReaderRecordPlateTableCellBlock<ReaderRecordPlateInlineNode>,
 ): ReaderTableCellElement {
-  const children: PlateTextNode[] =
-    block.children.length > 0
-      ? block.children.map(textLeafToPlateTextNode)
-      : [{ text: "" }];
+  const children = inlineNodesToPlateChildren(block.children);
 
   return {
     type: READER_TABLE_CELL_TYPE,
@@ -729,6 +786,8 @@ function readerBlockToPlateElement(
       return hrBlockToElement(block);
     case "source_callout":
       return sourceCalloutBlockToElement(block);
+    case "image":
+      return imageBlockToPlateElement(block as unknown as ReaderRecordPlateImageBlock) as unknown as ReaderPlateElement;
   }
 }
 

@@ -17,6 +17,7 @@ import {
   type ReaderPlateSnapshotDto,
   type ReaderSourceBlockNodeDto,
   type ReaderSnapshotUserAssetDto,
+  type ReaderStableDocumentBlockNodeDto,
   type ReaderTitleGenerationStatus,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
@@ -8826,5 +8827,594 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(groupBlocks[0]!.id).toContain("fallback");
     expect(groupBlocks[1]!.id).toContain("fallback");
     expect(groupBlocks[0]!.id).not.toBe(groupBlocks[1]!.id);
+  });
+});
+
+describe("G3b Reader image safe surface Slice B RED", () => {
+  // ponytail: reuse existing snapshot builders, no new framework
+  function wgNode(overrides: Partial<ReaderStableDocumentBlockNodeDto>): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "block",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+  function imgPayload(sourceUrl: string, alt: string, title: string | null, effectiveUrl: string | null): Record<string, unknown> {
+    return { source_url: sourceUrl, alt_text: alt, title, position_kind: "standalone", effective_url: effectiveUrl };
+  }
+  function inlineEntry(sourceUrl: string, alt: string, title: string | null, before: number, effectiveUrl: string | null): Record<string, unknown> {
+    return { source_url: sourceUrl, alt_text: alt, title, before_utf16: before, effective_url: effectiveUrl };
+  }
+  async function renderImageCopyButtonAfter(
+    eventName: "load" | "error",
+  ): Promise<HTMLButtonElement> {
+    const url = "https://example.com/a.png";
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [
+        wgNode({
+          block_id: "img1",
+          block_type: "image",
+          payload: imgPayload(url, "alt", null, url),
+        }),
+      ],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const image = container.querySelector('[data-reader-image="true"] img');
+    expect(image).not.toBeNull();
+    if (!image) {
+      throw new Error("Expected Reader image");
+    }
+    await act(async () => {
+      fireEvent(image, new Event(eventName));
+    });
+    return screen.getByRole("button", { name: "复制链接" }) as HTMLButtonElement;
+  }
+  function makeImgSnapshotForSurface(
+    specs: Array<{ unitId: string; text: string; stableType: string; stableId: string; parent?: string | null }>,
+    tree: ReaderStableDocumentBlockNodeDto[],
+  ): ReaderPlateSnapshotDto {
+    const baseId = "base_w1";
+    let offset = 0;
+    const anchor_segments: ReaderPlateSnapshotDto["anchor_segments"] = [];
+    const navigation: ReaderPlateSnapshotDto["navigation"]["units"] = [];
+    const value: ReaderUnitNodeDto[] = [];
+    for (const [idx, spec] of specs.entries()) {
+      const start = offset;
+      const end = start + spec.text.length;
+      offset = end + 2;
+      const segId = `seg_${spec.unitId}`;
+      anchor_segments.push({
+        anchor_segment_id: segId,
+        sentence_id: `sent_${segId}`,
+        paragraph_id: spec.unitId,
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        unit_start_utf16: 0,
+        unit_end_utf16: spec.text.length,
+        text_hash: `hash_${segId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      });
+      navigation.push({
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        label: null,
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        stable_block_type: spec.stableType,
+        heading_level: null,
+      });
+      value.push({
+        type: "reader_unit",
+        owner: "stable",
+        base_id: baseId,
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        children: [
+          {
+            type: "reader_source_block",
+            owner: "stable",
+            base_id: baseId,
+            unit_id: spec.unitId,
+            base_start_utf16: start,
+            base_end_utf16: end,
+            stableBlockType: spec.stableType,
+            stableBlockId: spec.stableId,
+            parentStableBlockId: spec.parent ?? null,
+            children: [
+              {
+                type: "reader_anchor_segment",
+                owner: "stable",
+                base_id: baseId,
+                unit_id: spec.unitId,
+                anchor_segment_id: segId,
+                sentence_id: `sent_${segId}`,
+                segment_type: "sentence",
+                boundary_quality: "normal",
+                base_start_utf16: start,
+                base_end_utf16: end,
+                unit_start_utf16: 0,
+                unit_end_utf16: spec.text.length,
+                text_hash: `hash_${segId}`,
+                hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                children: [
+                  {
+                    text: spec.text,
+                    owner: "stable",
+                    lock_source: true,
+                    source_role: "segment_text",
+                    base_start_utf16: start,
+                    base_end_utf16: end,
+                    anchor_segment_id: segId,
+                    segment_start_utf16: 0,
+                    segment_end_utf16: spec.text.length,
+                  },
+                ],
+              },
+            ],
+          } as unknown as ReaderSourceBlockNodeDto,
+        ],
+      });
+    }
+    return {
+      schema_kind: "reader_plate_snapshot" as const,
+      snapshot_id: "snapshot_w1",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_w1",
+      record: {
+        title: "Surface Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: baseId,
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: offset,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: { units: navigation },
+      anchor_segments,
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      analysis_progress: { mode: "automatic", plan_version: "test", overall_status: "completed", active_phase: null, translation_status: "completed", completed_section_count: 0, total_section_count: 0, active_section_id: null, needs_user_action: false, last_progress_at: null, sections: [] } as unknown as import("@/types/api/reader-plate").ReaderAnalysisProgressDto,
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value,
+      stable_document_tree: tree,
+    };
+  }
+
+  const ALLOW_URLS = [
+    "https://example.com/a.png",
+    "http://example.com/a.png",
+    "HTTP://Example.COM/a.png",
+    "http://example.com:65535/a.png",
+    "http://example.com:8080/a.png?q=1#f",
+    "http://127.0.0.1/a.png",
+    "http://[::1]:8080/a.png",
+    "https://xn--r8jz45g.jp/a.png",
+    "http://example.com",
+    "https://example.com/a%20b.png",
+    "http://example.com/%5C@evil.com/a.png",
+  ];
+  const REJECT_URLS = [
+    "",
+    "  https://example.com/a.png  ",
+    "/a.png",
+    "a.png",
+    "//example.com/a.png",
+    "http:foo",
+    "https:foo",
+    "http://",
+    "https:///",
+    "http://user:pass@example.com/a.png",
+    "http://user@example.com/a.png",
+    "javascript:alert(1)",
+    "data:image/png;base64,AAAA",
+    "file:///etc/passwd",
+    "blob:https://x/y",
+    "mailto:a@b.com",
+    "http://exa\u0000mple.com/a.png",
+    "http://example.com/a\u0001.png",
+    "http://exa mple.com/a.png",
+    "http://example.com/a b.png",
+    "http://example.com\\@evil.com/a.png",
+    "http://example.com\\evil/a.png",
+    "http://example.com:bad/a.png",
+    "http://example.com:65536/a.png",
+    "http://example.com:99999/a.png",
+    "http://example.com:-1/a.png",
+    "http://[::1",
+  ];
+
+  // B1: plugin and void contract
+  it("inline image is inline void, attributes on outer element, children once, leaf outside chrome", () => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "hello world", stableType: "paragraph", stableId: "b1" }],
+      [wgNode({ block_id: "b1", block_type: "paragraph", payload: { inline_images: [inlineEntry("https://example.com/a.png", "alt", null, 5, "https://example.com/a.png")] } })],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const outer = container.querySelector<HTMLElement>('[data-reader-image="true"][data-reader-image-kind="inline"]');
+    // RED: before plugin, no such element
+    expect(outer).not.toBeNull();
+    expect(outer?.hasAttribute("data-slate-node")).toBe(true);
+    const leaf = outer?.querySelector<HTMLElement>("[data-slate-leaf]");
+    expect(leaf).not.toBeNull();
+    const chrome = outer?.querySelector<HTMLElement>('[contenteditable="false"]');
+    expect(chrome).not.toBeNull();
+    expect(chrome?.contains(leaf as Node)).toBe(false);
+    expect(leaf?.textContent).not.toContain("alt");
+    expect(leaf?.textContent).not.toContain("https://example.com");
+    const zeroWidth = outer?.querySelectorAll("[data-slate-zero-width]")?.length ?? 0;
+    expect(zeroWidth).toBe(1);
+  });
+
+  it.each(ALLOW_URLS)("ALLOW effective_url renders img with raw src: %s", (url) => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [
+        wgNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+        wgNode({ block_id: "img1", block_type: "image", order_index: 1, payload: imgPayload(url, "alt", null, url) }),
+      ],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const img = container.querySelector('[data-reader-image="true"] img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("src")).toBe(url);
+  });
+
+  it.each(REJECT_URLS)("REJECT effective_url renders no img[src] and unsafe placeholder: %s", (url) => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [
+        wgNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+        wgNode({ block_id: "img1", block_type: "image", order_index: 1, payload: imgPayload(url, "alt", null, url) }),
+      ],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
+    expect(container.textContent).toContain("链接不安全");
+  });
+
+  it("non-string effective_url renders unsafe (no img)", () => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [wgNode({ block_id: "img1", block_type: "image", payload: { source_url: "https://example.com/a.png", alt_text: "alt", title: null, position_kind: "standalone", effective_url: 123 as unknown as string } })],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
+    expect(container.textContent).toContain("链接不安全");
+  });
+
+  it("safe effectiveUrl initial loading, loaded, load_failed, empty alt, unsafe states", async () => {
+    const snapshotLoading = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload("https://example.com/a.png", "alt text", "Title", "https://example.com/a.png") })],
+    );
+    const { container: c1 } = render(<ReaderRecordPlateSurface snapshot={snapshotLoading} />);
+    expect(c1.querySelector('[data-image-state="loading"]')).not.toBeNull();
+    const img = c1.querySelector('[data-reader-image="true"] img');
+    expect(img?.getAttribute("loading")).toBe("lazy");
+    expect(img?.getAttribute("decoding")).toBe("async");
+    expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(img?.getAttribute("alt")).toBe("alt text");
+    expect(img?.getAttribute("title")).toBe("Title");
+    // simulate load
+    await act(async () => {
+      if (img) fireEvent(img as Element, new Event("load"));
+    });
+    expect(c1.querySelector('[data-image-state="loaded"]')).not.toBeNull();
+    expect(c1.querySelector('[data-image-state="loading"]')).toBeNull();
+    // load_failed with alt
+    const { container: c2 } = render(<ReaderRecordPlateSurface snapshot={snapshotLoading} />);
+    const img2 = c2.querySelector('[data-reader-image="true"] img');
+    await act(async () => {
+      if (img2) fireEvent(img2 as Element, new Event("error"));
+    });
+    expect(c2.querySelector('[data-image-state="load_failed"]')).not.toBeNull();
+    expect(c2.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
+    expect(c2.textContent).toContain("alt text");
+    // empty alt
+    const snapshotEmptyAlt = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload("https://example.com/a.png", "", null, "https://example.com/a.png") })],
+    );
+    const { container: c3 } = render(<ReaderRecordPlateSurface snapshot={snapshotEmptyAlt} />);
+    const img3 = c3.querySelector('[data-reader-image="true"] img');
+    await act(async () => {
+      if (img3) fireEvent(img3 as Element, new Event("error"));
+    });
+    expect(c3.textContent).toContain("图片加载失败");
+    // after fix, loaded img with empty alt should have alt=""
+    // For this test, we check loaded state empty alt
+    const { container: c4 } = render(<ReaderRecordPlateSurface snapshot={snapshotEmptyAlt} />);
+    const img4 = c4.querySelector('[data-reader-image="true"] img');
+    expect(img4?.getAttribute("alt")).toBe("");
+  });
+
+  it("复制链接 only copies effectiveUrl, exactly once, fail-soft", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload("https://example.com/a.png", "alt", null, "https://example.com/a.png") })],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const img = container.querySelector('[data-reader-image="true"] img');
+    await act(async () => {
+      if (img) fireEvent(img as Element, new Event("error"));
+    });
+    const btn = screen.getByRole("button", { name: "复制链接" });
+    fireEvent.click(btn);
+    expect(writeText).toHaveBeenCalledWith("https://example.com/a.png");
+    expect(writeText).toHaveBeenCalledTimes(1);
+  });
+
+  it("loaded image also exposes an action that copies effectiveUrl", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const button = await renderImageCopyButtonAfter("load");
+
+    fireEvent.click(button);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("https://example.com/a.png");
+  });
+
+  it("copy effectiveUrl consumes an asynchronously rejected Clipboard promise", async () => {
+    const calls: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (url: string) => {
+          calls.push(url);
+          return Promise.reject(new Error("clipboard denied"));
+        },
+      },
+    });
+    const button = await renderImageCopyButtonAfter("error");
+
+    expect(() => fireEvent.click(button)).not.toThrow();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(calls).toEqual(["https://example.com/a.png"]);
+  });
+
+  it("copy effectiveUrl is fail-soft when Clipboard writeText throws synchronously", async () => {
+    const calls: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (url: string) => {
+          calls.push(url);
+          throw new Error("clipboard unavailable");
+        },
+      },
+    });
+    const button = await renderImageCopyButtonAfter("error");
+
+    expect(() => fireEvent.click(button)).not.toThrow();
+    expect(calls).toEqual(["https://example.com/a.png"]);
+  });
+
+  it("copy effectiveUrl is fail-soft when Clipboard API is absent", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    const button = await renderImageCopyButtonAfter("error");
+
+    expect(() => fireEvent.click(button)).not.toThrow();
+  });
+
+  it("copy chrome uses copyExcludeProps and mixed Range copy only text", async () => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "hello world", stableType: "paragraph", stableId: "b1" }],
+      [wgNode({ block_id: "b1", block_type: "paragraph", payload: { inline_images: [inlineEntry("https://example.com/a.png", "alt", null, 5, "https://example.com/a.png")] } })],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    // Check image chrome has copyExcludeProps
+    // At least one element with copyExcludeProps should exist inside image
+    const image = container.querySelector<HTMLElement>('[data-reader-image="true"]');
+    expect(image).not.toBeNull();
+    if (!image) {
+      throw new Error("Expected inline Reader image");
+    }
+    const copyExcludes = image.querySelectorAll('[data-reader-record-copy-exclude="true"]');
+    expect(copyExcludes.length).toBeGreaterThan(0);
+    for (const el of Array.from(copyExcludes)) {
+      expect(el.getAttribute("contenteditable")).toBe("false");
+      expect(el.getAttribute("draggable")).toBe("false");
+    }
+    // Mixed range copy test: select across text -> image -> text
+    const para = container.querySelector<HTMLElement>('[data-reader-record-node="paragraph"]');
+    expect(para).not.toBeNull();
+    if (!para) {
+      throw new Error("Expected paragraph owning inline image");
+    }
+    const textLeaves = Array.from(para.querySelectorAll<HTMLElement>("[data-slate-leaf]")).filter(
+      (leaf) => !leaf.closest('[data-reader-image="true"]'),
+    );
+    expect(textLeaves).toHaveLength(2);
+    const startNode = firstTextNode(textLeaves[0]!);
+    const endNode = firstTextNode(textLeaves[1]!);
+    const range = document.createRange();
+    range.setStart(startNode, 0);
+    range.setEnd(endNode, endNode.textContent?.length ?? 0);
+    const selection = window.getSelection();
+    expect(selection).not.toBeNull();
+    if (!selection) {
+      throw new Error("Expected DOM selection");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const clipboardData = { setData: vi.fn() };
+    fireEvent.copy(para, { clipboardData } as unknown as ClipboardEvent);
+    const plain = clipboardData.setData.mock.calls.find(([type]) => type === "text/plain");
+    expect(plain).toBeDefined();
+    if (!plain) {
+      throw new Error("Expected text/plain clipboard payload");
+    }
+    const copiedText = String(plain[1]);
+    expect(copiedText).toBe("hello world");
+    expect(copiedText).not.toContain("\uFEFF");
+    expect(copiedText).not.toContain("\u200B");
+    expect(copiedText).not.toContain("https://example.com");
+    expect(copiedText).not.toContain("alt");
+    expect(copiedText).not.toContain("图片加载中");
+    expect(copiedText).not.toContain("复制链接");
+  });
+
+  it("keeps an inline image mounted when switching the production surface to immersive mode", async () => {
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "hello world", stableType: "paragraph", stableId: "b1" }],
+      [
+        wgNode({
+          block_id: "b1",
+          block_type: "paragraph",
+          payload: {
+            inline_images: [
+              inlineEntry(
+                "https://example.com/a.png",
+                "alt",
+                null,
+                5,
+                "https://example.com/a.png",
+              ),
+            ],
+          },
+        }),
+      ],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    expect(container.querySelector('[data-reader-image="true"]')).not.toBeNull();
+
+    expect(() => {
+      fireEvent.click(screen.getByRole("button", { name: "切换到沉浸模式" }));
+    }).not.toThrow();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "切换到沉浸模式" }).getAttribute("aria-pressed"),
+      ).toBe("true");
+    });
+    expect(container.querySelector('[data-reader-image="true"]')).not.toBeNull();
+  });
+
+  it("renders a promoted list image as a direct presentation li without Stable item identity", () => {
+    const imageUrl = "https://example.com/list.png";
+    const snapshot = makeImgSnapshotForSurface(
+      [
+        {
+          unitId: "u_item_1",
+          text: "First item",
+          stableType: "list_item",
+          stableId: "item_1",
+          parent: "list_1",
+        },
+        {
+          unitId: "u_item_2",
+          text: "Second item",
+          stableType: "list_item",
+          stableId: "item_2",
+          parent: "list_1",
+        },
+      ],
+      [
+        wgNode({
+          block_id: "list_1",
+          block_type: "list",
+          payload: { ordered: false },
+          children: [
+            wgNode({
+              block_id: "item_1",
+              parent_block_id: "list_1",
+              block_type: "list_item",
+            }),
+            wgNode({
+              block_id: "img_list",
+              parent_block_id: "list_1",
+              order_index: 1,
+              block_type: "image",
+              payload: imgPayload(imageUrl, "list image", null, imageUrl),
+            }),
+            wgNode({
+              block_id: "item_2",
+              parent_block_id: "list_1",
+              order_index: 2,
+              block_type: "list_item",
+            }),
+          ],
+        }),
+      ],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const list = container.querySelector<HTMLElement>('[data-reader-record-node="list"]');
+    expect(list).not.toBeNull();
+    if (!list) {
+      throw new Error("Expected Stable list");
+    }
+
+    const directChildren = Array.from(list.children);
+    expect(directChildren).toHaveLength(3);
+    expect(directChildren.every((child) => child.tagName === "LI")).toBe(true);
+    const image = list.querySelector<HTMLElement>('[data-reader-image="true"]');
+    expect(image).not.toBeNull();
+    if (!image) {
+      throw new Error("Expected promoted list image");
+    }
+    const imageItem = image.closest("li");
+    expect(imageItem).not.toBeNull();
+    expect(imageItem?.parentElement).toBe(list);
+    expect(imageItem?.hasAttribute("data-reader-record-node")).toBe(false);
+    expect(imageItem?.hasAttribute("data-reader-record-stable-block-type")).toBe(false);
+    expect(imageItem?.hasAttribute("data-unit-id")).toBe(false);
+    expect(imageItem?.hasAttribute("data-anchor-segment-id")).toBe(false);
   });
 });
