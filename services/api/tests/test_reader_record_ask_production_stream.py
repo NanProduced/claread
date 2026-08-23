@@ -60,6 +60,7 @@ from app.services.reader_record_ask.runtime_events import (
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
+    EVENT_AGENTIC_REASONING_DELTA,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_CONTEXT_COMPACTION_COMPLETED,
@@ -313,6 +314,7 @@ class _FakeRepo:
             "terminal_reason": kwargs["terminal_reason"],
             "user_visible_output_json": kwargs.get("terminal_dto"),
             "resolved_evidence_json": [],
+            "reasoning_projection_json": kwargs.get("reasoning_projection"),
             "envelope_fingerprint": None,
             "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         }
@@ -525,20 +527,18 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                        args=json.dumps(
-                            {
-                                "response_kind": "grounded_answer",
-                                "answer_blocks": [
-                                    {
-                                        "text": "about climate",
-                                        "basis": "article",
-                                        "evidence_handles": (
-                                            [handle] if handle else []
-                                        ),
-                                    }
-                                ],
-                            }
-                        ),
+                    args=json.dumps(
+                        {
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": "about climate",
+                                    "basis": "article",
+                                    "evidence_handles": ([handle] if handle else []),
+                                }
+                            ],
+                        }
+                    ),
                     tool_call_id="f1",
                 )
             ]
@@ -831,20 +831,18 @@ async def test_persist_failure_after_search_hit_does_not_leak_provisional_eviden
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                        args=json.dumps(
-                            {
-                                "response_kind": "grounded_answer",
-                                "answer_blocks": [
-                                    {
-                                        "text": "about climate",
-                                        "basis": "article",
-                                        "evidence_handles": (
-                                            [handle] if handle else []
-                                        ),
-                                    }
-                                ],
-                            }
-                        ),
+                    args=json.dumps(
+                        {
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": "about climate",
+                                    "basis": "article",
+                                    "evidence_handles": ([handle] if handle else []),
+                                }
+                            ],
+                        }
+                    ),
                     tool_call_id="f1",
                 )
             ]
@@ -1378,18 +1376,12 @@ async def test_baseline_document_unavailable_emits_typed_terminal() -> None:
     assert repo.terminal_writes[0]["final_status"] == "failed"
     assert repo.terminal_writes[0]["run_status"] == "failed"
     # Typed terminal_reason (not "missing_finalizer_result").
-    assert (
-        repo.terminal_writes[0]["terminal_reason"]
-        == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
-    )
+    assert repo.terminal_writes[0]["terminal_reason"] == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
     # SSE terminal event carries the same typed reason.
     for _name, data in events:
         if _name == EVENT_AGENTIC_TERMINAL:
             assert data.get("final_status") == "failed"
-            assert (
-                data.get("terminal_reason")
-                == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
-            )
+            assert data.get("terminal_reason") == TERMINAL_REASON_DOCUMENT_UNAVAILABLE
             assert data.get("terminal_reason") != "missing_finalizer_result"
 
 
@@ -1452,17 +1444,11 @@ async def test_baseline_envelope_mismatch_emits_baseline_unavailable_terminal() 
     assert EVENT_MESSAGE_COMPLETED not in names
     assert len(repo.terminal_writes) == 1
     assert repo.terminal_writes[0]["final_status"] == "failed"
-    assert (
-        repo.terminal_writes[0]["terminal_reason"]
-        == TERMINAL_REASON_BASELINE_UNAVAILABLE
-    )
+    assert repo.terminal_writes[0]["terminal_reason"] == TERMINAL_REASON_BASELINE_UNAVAILABLE
     for _name, data in events:
         if _name == EVENT_AGENTIC_TERMINAL:
             assert data.get("final_status") == "failed"
-            assert (
-                data.get("terminal_reason")
-                == TERMINAL_REASON_BASELINE_UNAVAILABLE
-            )
+            assert data.get("terminal_reason") == TERMINAL_REASON_BASELINE_UNAVAILABLE
 
 
 @pytest.mark.asyncio
@@ -1665,9 +1651,7 @@ def test_completed_dto_rejects_legacy_v1_public_fields() -> None:
     assert ok.answer_text == "legacy answer"
 
     with pytest.raises(ValidationError):
-        ReaderRecordAskCompletedDTO.model_validate(
-            {**base, "envelope_fingerprint": "f" * 64}
-        )
+        ReaderRecordAskCompletedDTO.model_validate({**base, "envelope_fingerprint": "f" * 64})
     with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate({**base, "evidence": []})
     with pytest.raises(ValidationError):
@@ -1703,9 +1687,7 @@ def test_evidence_scope_strict_rejects_coerced_generation_and_empty_stable() -> 
             )
 
     with pytest.raises(ValidationError):
-        ReaderRecordAskEvidenceScope.model_validate(
-            {**good, "stable_document_id": ""}
-        )
+        ReaderRecordAskEvidenceScope.model_validate({**good, "stable_document_id": ""})
 
     # Nested on completed DTO must also reject (no half-coerce into ok payload).
     completed_base = {
@@ -2242,18 +2224,10 @@ async def test_context_compaction_sse_precedes_agentic_work_and_is_safe() -> Non
     # Compaction still finishes before the first projected work/reasoning
     # event, which is the product contract: no answer work runs against an
     # uncompacted context.
-    assert names.index(EVENT_AGENTIC_RUN_STARTED) < names.index(
-        EVENT_CONTEXT_COMPACTION_STARTED
-    )
-    assert names.index(EVENT_CONTEXT_COMPACTION_COMPLETED) < names.index(
-        EVENT_AGENTIC_PROGRESS
-    )
+    assert names.index(EVENT_AGENTIC_RUN_STARTED) < names.index(EVENT_CONTEXT_COMPACTION_STARTED)
+    assert names.index(EVENT_CONTEXT_COMPACTION_COMPLETED) < names.index(EVENT_AGENTIC_PROGRESS)
 
-    payload = next(
-        data
-        for name, data in events
-        if name == EVENT_CONTEXT_COMPACTION_COMPLETED
-    )
+    payload = next(data for name, data in events if name == EVENT_CONTEXT_COMPACTION_COMPLETED)
     assert payload["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
     assert payload["message_id"]
     assert payload["thread_id"] == str(_THREAD)
@@ -2297,12 +2271,8 @@ async def test_analysis_phase_events_no_longer_emit_reasoning_lifecycle() -> Non
 
 
 @pytest.mark.asyncio
-async def test_provider_reasoning_is_not_public_on_successful_run() -> None:
-    """Provider-private reasoning never enters SSE or persistence.
-
-    The learner-facing process remains available through typed progress
-    events; successful answer streaming/completion is unaffected.
-    """
+async def test_provider_reasoning_streams_and_persists_on_successful_run() -> None:
+    """The readable provider reasoning artifact is hot/cold identical."""
     first_chunk = "先分析句子主干。" * 60  # > holdback → several deltas
     second_chunk = "再确认从句关系。"
 
@@ -2329,37 +2299,42 @@ async def test_provider_reasoning_is_not_public_on_successful_run() -> None:
     assert EVENT_AGENTIC_PROGRESS in names
     assert EVENT_MESSAGE_COMPLETED in names
 
-    wire = json.dumps([data for _, data in events], ensure_ascii=False)
-    assert first_chunk not in wire
-    assert second_chunk not in wire
+    started_i = names.index("agentic.reasoning.started")
+    completed_i = names.index("agentic.reasoning.completed")
+    message_completed_i = names.index(EVENT_MESSAGE_COMPLETED)
+    delta_payloads = [data for name, data in events if name == "agentic.reasoning.delta"]
+    assert started_i < completed_i < message_completed_i
+    assert "".join(data["delta"] for data in delta_payloads) == (first_chunk + second_chunk)
     assert len(repo.completed_writes) == 1
-    assert repo.completed_writes[0]["reasoning_projection"] is None
-
-    # No legacy reasoning lifecycle on the agentic path.
-    assert "reasoning.started" not in names
-    assert "reasoning.completed" not in names
+    persisted = repo.completed_writes[0]["reasoning_projection"]
+    assert persisted == {
+        "projection_policy_version": "provider_reasoning_v1",
+        "text": first_chunk + second_chunk,
+        "char_count": len(first_chunk + second_chunk),
+        "truncated": False,
+        "visibility_status": "complete",
+    }
 
 
 @pytest.mark.asyncio
-async def test_provider_reasoning_is_discarded_before_sse_db_and_logs(
+async def test_provider_reasoning_stops_after_cross_chunk_secret(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Secrets and ordinary model self-talk are both private."""
-    evh = "evh_0123456789abcdef0123456789abcdef"
-    key = "sk-liveKEYMATERIAL0123456789"
-    self_talk = (
-        "The user asks in Chinese. I should answer in Chinese. "
-        "The response should be a grounded_answer and I can cite the evidence handle."
-    )
+    """A secret split across chunks blocks later publication and persists
+    only the exact safe prefix that the user already saw."""
+    safe_prefix = "正在核对文章中的关键依据。" * 80
+    key = "Bearer abcdefghijklmnop"
+    after_secret = "这段内容不应再公开。" * 40
 
     async def _run(**kwargs):
         observer = kwargs["thinking_observer"]
         sink = kwargs["event_sink"]
         sink(AnalysisStartedEvent())
         observer.on_analysis_started()
-        observer.on_reasoning_delta(
-            f"检查 {evh}，使用 {key}。{self_talk}" + "补" * 400
-        )
+        observer.on_reasoning_delta(safe_prefix)
+        observer.on_reasoning_delta("Bearer abcdef")
+        observer.on_reasoning_delta("ghijklmnop")
+        observer.on_reasoning_delta(after_secret)
         observer.on_analysis_finished()
         sink(AnalysisFinishedEvent())
         return _ok_run_result(kwargs)
@@ -2367,19 +2342,15 @@ async def test_provider_reasoning_is_discarded_before_sse_db_and_logs(
     with caplog.at_level(logging.DEBUG):
         events, repo = await _stream_with_run_async(_run)
 
-    wire = json.dumps(
-        [d for _, d in events], ensure_ascii=False
-    )
-    assert evh not in wire
+    wire = json.dumps([d for _, d in events], ensure_ascii=False)
+    assert safe_prefix in wire
     assert key not in wire
-    assert self_talk not in wire
-    assert "grounded_answer" not in wire
-    assert "evidence handle" not in wire
+    assert after_secret not in wire
     persisted = repo.completed_writes[0]["reasoning_projection"]
-    assert persisted is None
-    assert evh not in caplog.text
+    assert persisted["text"] == safe_prefix
+    assert persisted["visibility_status"] == "blocked"
     assert key not in caplog.text
-    assert self_talk not in caplog.text
+    assert after_secret not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2403,9 +2374,39 @@ async def test_agentic_reasoning_no_events_when_provider_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agentic_reasoning_failed_run_no_completed_no_persist() -> None:
-    """Session-visible deltas freeze on failure; completed is never emitted
-    and nothing is persisted."""
+async def test_provider_reasoning_emergency_switch_falls_back_to_progress() -> None:
+    """The default-on operational switch can fail closed without affecting
+    the answer path."""
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        observer.on_reasoning_delta("不会公开的思考。" * 40)
+        observer.on_analysis_finished()
+        sink(AnalysisFinishedEvent())
+        return _ok_run_result(kwargs)
+
+    settings = SimpleNamespace(
+        reader_record_ask_provider_reasoning_enabled=False,
+        reader_record_ask_memory_enabled=False,
+    )
+    with patch(
+        "app.services.reader_record_ask.production_stream.get_settings",
+        return_value=settings,
+    ):
+        events, repo = await _stream_with_run_async(_run)
+
+    names = [name for name, _ in events]
+    assert not any(name.startswith("agentic.reasoning.") for name in names)
+    assert EVENT_AGENTIC_PROGRESS in names
+    assert EVENT_MESSAGE_COMPLETED in names
+    assert repo.completed_writes[0]["reasoning_projection"] is None
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_failed_run_persists_published_partial() -> None:
+    """Failure stores exactly the partial artifact already published."""
 
     async def _run(**kwargs):
         observer = kwargs["thinking_observer"]
@@ -2418,20 +2419,22 @@ async def test_agentic_reasoning_failed_run_no_completed_no_persist() -> None:
     events, repo = await _stream_with_run_async(_run)
     names = [name for name, _ in events]
 
-    # Provider-private reasoning stays absent on failure too.
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
+    published = "".join(data["delta"] for name, data in events if name == "agentic.reasoning.delta")
+    assert published
     terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
     assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
-    # Nothing persisted: no ok write, terminal writes carry no reasoning.
     assert repo.completed_writes == []
     assert repo.terminal_writes
-    assert "reasoning_projection" not in repo.terminal_writes[0]
+    persisted = repo.terminal_writes[0]["reasoning_projection"]
+    assert persisted["text"] == published
+    assert persisted["projection_policy_version"] == "provider_reasoning_v1"
 
 
 @pytest.mark.asyncio
-async def test_agentic_reasoning_cancel_no_completed_no_persist() -> None:
-    """Cancellation: deltas freeze interrupted; no completed, no persist.
+async def test_agentic_reasoning_cancel_persists_partial_without_completed() -> None:
+    """Cancellation persists the published partial but emits no completed.
 
     The cancel path re-raises CancelledError after emitting the typed
     terminal (existing contract) — consume inside try/except.
@@ -2467,6 +2470,11 @@ async def test_agentic_reasoning_cancel_no_completed_no_persist() -> None:
     assert repo.completed_writes == []
     terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
     assert terminal["final_status"] == "cancelled"
+    published = "".join(d["delta"] for n, d in events if n == EVENT_AGENTIC_REASONING_DELTA)
+    persisted = repo.terminal_writes[0]["reasoning_projection"]
+    assert published
+    assert persisted["text"] == published
+    assert persisted["projection_policy_version"] == "provider_reasoning_v1"
 
 
 @pytest.mark.asyncio
@@ -2700,7 +2708,7 @@ async def test_message_delta_partial_then_failure_no_completed() -> None:
 
 # ---------------------------------------------------------------------------
 # H1: success-path DB persistence failure emits typed terminal
-    # (regression: stream used to end without message.completed/terminal
+# (regression: stream used to end without message.completed/terminal
 #  when repo.complete_agentic_turn_run raised, leaving the frontend hanging)
 # ---------------------------------------------------------------------------
 
@@ -2841,9 +2849,7 @@ async def test_retry_agentic_resets_message_and_reuses_user_content() -> None:
     assert repo.reset_calls == [existing_assistant_id]
 
     # No new user message was created (retry mode reuses existing).
-    new_user_msgs = [
-        m for m in repo.messages if m.get("role") == "user"
-    ]
+    new_user_msgs = [m for m in repo.messages if m.get("role") == "user"]
     assert new_user_msgs == []
 
     # Agent received the original user content.

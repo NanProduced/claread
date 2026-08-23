@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -112,10 +114,63 @@ class _StreamLifecycleContext:
             )
 
 
+class _ReaderAskStreamingResponse(StreamingResponse):
+    """StreamingResponse owning the streaming-model cleanup at the ASGI boundary.
+
+    Starlette 0.48 ``stream_response`` has no finally and never calls
+    ``body_iterator.aclose()``, so neither the pre-first-byte model
+    release nor the mid-stream generator close cascade can live on the
+    iterator side. The ONLY lifecycle boundary the framework always
+    executes is this response's ``__call__`` — both cleanups therefore
+    live in its outer finally.
+
+    Order matters: the body iterator closes first (its finally chain
+    exits a claimed model and reconciles the turn); ``early_close`` —
+    the prepared execution's ``release_model`` hook — then closes the
+    model only if the stream generator never claimed it. Every request
+    path closes the model at most once.
+    """
+
+    def __init__(self, *args: Any, early_close: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._early_close = early_close
+        self._released = False
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Starlette never acloses ``body_iterator``: on a mid-stream
+            # ``send`` failure the streaming generator stays suspended and
+            # its finally chain (model exit + turn reconciliation) never
+            # runs. Closing it here makes that cleanup deterministic on
+            # every exit path — completion, error, disconnect, cancellation.
+            body_aclose = getattr(self.body_iterator, "aclose", None)
+            if body_aclose is not None:
+                try:
+                    await body_aclose()
+                except BaseException:  # noqa: BLE001 — never mask the in-flight exception
+                    logger.warning(
+                        "reader_record_ask stream close failed code=stream_close_failed"
+                    )
+            if self._early_close is not None and not self._released:
+                self._released = True
+                # Cleanup must never mask the disconnect/cancel in flight.
+                try:
+                    result = self._early_close()
+                    if inspect.isawaitable(result):
+                        await result
+                except BaseException:  # noqa: BLE001 — never mask the in-flight exception
+                    logger.warning(
+                        "reader_record_ask model close failed code=model_close_failed"
+                    )
+
+
 def _streaming_response(
     generator,
     *,
     lifecycle: _StreamLifecycleContext | None = None,
+    early_close: Any = None,
 ) -> StreamingResponse:
     """Wrap an async generator in a StreamingResponse with terminal cleanup.
 
@@ -128,6 +183,12 @@ def _streaming_response(
 
     The reconciliation is idempotent (``WHERE status = 'streaming'``)
     and skipped when the generator already emitted a typed terminal.
+
+    ``early_close`` is the prepared execution's ``release_model`` hook,
+    owned by the response's ASGI call (see
+    :class:`_ReaderAskStreamingResponse`): it runs even when the client
+    disconnects before the first byte, and is a no-op once the stream
+    generator has claimed the model.
     """
 
     async def event_stream():
@@ -157,10 +218,18 @@ def _streaming_response(
                 f"{json.dumps(payload, ensure_ascii=False)}\n\n"
             )
         finally:
-            if lifecycle is not None:
-                await lifecycle.reconcile_if_streaming()
+            try:
+                # Deterministically cascade the close into the business
+                # stream generator (its finally chain exits the model);
+                # ``async for`` does not aclose its iterator on unwind.
+                await generator.aclose()
+            finally:
+                # Reconciliation must run even when the close above
+                # raises — never let cleanup mask cleanup.
+                if lifecycle is not None:
+                    await lifecycle.reconcile_if_streaming()
 
-    return StreamingResponse(
+    return _ReaderAskStreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={
@@ -168,6 +237,7 @@ def _streaming_response(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+        early_close=early_close,
     )
 
 
@@ -343,6 +413,9 @@ async def stream_reading_record_ask_thread_message(
             lifecycle=lifecycle,
         ),
         lifecycle=lifecycle,
+        # Release the prepared model if the response ends before the
+        # generator claimed it; no-op once claimed.
+        early_close=getattr(prepared.execution, "release_model", None),
     )
 
 
@@ -471,4 +544,6 @@ async def retry_reading_record_ask_message(
             lifecycle=lifecycle,
         ),
         lifecycle=lifecycle,
+        # Same unclaimed-model release hook as the send path.
+        early_close=getattr(prepared.execution, "release_model", None),
     )

@@ -1797,17 +1797,44 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("回答过程")).toBeNull();
   });
 
-  it.skip("legacy provider reasoning shimmer UI is removed from the v2 Ask panel", async () => {
-    mockThreadMessages([
-      createAssistantMessage({
-        status: "streaming",
-        content_md: "",
-        reasoning_md: "",
-        reasoning_status: "streaming",
-      }),
-    ]);
+  it("renders the streaming reasoning shimmer shell before any reasoning content arrives", async () => {
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "agentic.run_started",
+        data: {
+          execution_version: "reader_record_ask_agentic_v2",
+          message_id: FIXTURE_ASSISTANT_ID,
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          has_initial_selection: false,
+        },
+      });
+      onEvent({
+        event: "agentic.reasoning.started",
+        data: {
+          execution_version: "reader_record_ask_agentic_v2",
+          message_id: FIXTURE_ASSISTANT_ID,
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 0,
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
+      // Hold the turn open: no reasoning delta, no answer terminal yet.
+      await streamGate;
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
 
     const { container } = renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句话的语法结构" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
       expect(screen.getByText("思考中")).not.toBeNull();
@@ -1826,6 +1853,8 @@ describe("AiWorkspacePanel", () => {
     await waitFor(() => {
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
     });
+
+    releaseStream();
   });
 
   it.skip("legacy raw tool trace disclosure is removed from the v2 Ask panel", async () => {
@@ -2095,20 +2124,57 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
-  it.skip("legacy streamed provider reasoning UI is removed from the v2 Ask panel", async () => {
-    mockThreadMessages([
-      createAssistantMessage({
-        status: "streaming",
-        content_md: "正文正在生成。",
-        reasoning_md: "先判断句子主干。",
-        reasoning_status: "streaming",
-      }),
-    ]);
+  it("reveals live-streamed provider reasoning when expanded during streaming", async () => {
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "agentic.run_started",
+        data: {
+          execution_version: "reader_record_ask_agentic_v2",
+          message_id: FIXTURE_ASSISTANT_ID,
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          has_initial_selection: false,
+        },
+      });
+      onEvent({
+        event: "agentic.reasoning.started",
+        data: {
+          execution_version: "reader_record_ask_agentic_v2",
+          message_id: FIXTURE_ASSISTANT_ID,
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 0,
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
+      onEvent({
+        event: "agentic.reasoning.delta",
+        data: {
+          execution_version: "reader_record_ask_agentic_v2",
+          message_id: FIXTURE_ASSISTANT_ID,
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 1,
+          delta: "先判断句子主干。",
+        },
+      });
+      // Hold the turn open: reasoning has arrived, the answer has not.
+      await streamGate;
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
 
     const { container } = renderPanel();
 
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释这句话的语法结构" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
     await waitFor(() => {
-      expect(screen.getByText("正文正在生成。")).not.toBeNull();
       expect(screen.getByText("思考中")).not.toBeNull();
     });
 
@@ -2117,14 +2183,16 @@ describe("AiWorkspacePanel", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("先判断句子主干。")).toBeNull();
 
-    // Expanding reveals the live content.
+    // Expanding reveals the live content before the answer completes.
     fireEvent.click(screen.getByText("思考中"));
     await waitFor(() => {
       expect(screen.getByText("先判断句子主干。")).not.toBeNull();
     });
+
+    releaseStream();
   });
 
-  it.skip("legacy provider reasoning hydration UI is removed from the v2 Ask panel", async () => {
+  it("restores reloaded provider reasoning as a completed surface without issuing retry/stream", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);
     mockThreadMessages([
@@ -2132,7 +2200,6 @@ describe("AiWorkspacePanel", () => {
         status: "streaming",
         content_md: "刷新后仍可见的正文片段。",
         reasoning_md: "刷新后仍可见的 thinking 片段。",
-        reasoning_status: "streaming",
       }),
     ]);
 
@@ -2140,13 +2207,15 @@ describe("AiWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("刷新后仍可见的正文片段。")).not.toBeNull();
-      expect(screen.getByText("思考中")).not.toBeNull();
     });
 
-    // Collapsed by default; the rehydrated projection is expandable.
+    // Cold history never keeps a live streaming reasoning lane: the
+    // reloaded turn renders its persisted reasoning as a completed,
+    // collapsed surface.
+    expect(screen.queryByText("思考中")).toBeNull();
     const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(screen.getByText("思考中"));
+    fireEvent.click(screen.getByText("思考过程"));
     await waitFor(() => {
       expect(screen.getByText("刷新后仍可见的 thinking 片段。")).not.toBeNull();
     });
@@ -2159,11 +2228,11 @@ describe("AiWorkspacePanel", () => {
     ).toBe(false);
   });
 
-  it.skip("legacy completed provider reasoning UI is removed from the v2 Ask panel", async () => {
+  it("renders completed provider reasoning as expandable plain text", async () => {
     mockThreadMessages([
       createAssistantMessage({
         content_md: "这里是答案正文。",
-        reasoning_md: "推理细节在这里。",
+        reasoning_md: "**推理细节**在这里。",
         reasoning_status: "completed",
       }),
     ]);
@@ -2185,35 +2254,9 @@ describe("AiWorkspacePanel", () => {
     await waitFor(() => {
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
       expect(content?.getAttribute("data-state")).toBe("open");
-      expect(screen.getByText("推理细节在这里。")).not.toBeNull();
+      expect(screen.getByText("**推理细节**在这里。")).not.toBeNull();
     });
-  });
-
-  it.skip("legacy hydrated provider reasoning UI is removed from the v2 Ask panel", async () => {
-    mockThreadMessages([
-      createAssistantMessage({
-        status: "completed",
-        content_md: "最终答案。",
-        reasoning_md: "这是刷新后恢复的推理内容。",
-        reasoning_status: "completed",
-      }),
-    ]);
-
-    const { container } = renderPanel();
-
-    await waitFor(() => {
-      expect(screen.getByText("最终答案。")).not.toBeNull();
-    });
-
-    // Completed reasoning must be collapsed, not streaming
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-
-    // User can expand to see the reasoning content
-    fireEvent.click(screen.getByText("思考过程"));
-    await waitFor(() => {
-      expect(screen.getByText("这是刷新后恢复的推理内容。")).not.toBeNull();
-    });
+    expect(content?.querySelector("strong")).toBeNull();
   });
 
   it("renders no reasoning element when the model returned no reasoning text", async () => {
@@ -2860,271 +2903,10 @@ describe("createSseMessageHandler – replan.started", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createSseMessageHandler – reasoning lifecycle tests
-// ---------------------------------------------------------------------------
-
-describe.skip("removed provider reasoning lifecycle", () => {
-  let rafCallbacks: FrameRequestCallback[] = [];
-  let rafIdCounter = 1;
-
-  beforeEach(() => {
-    rafCallbacks = [];
-    rafIdCounter = 1;
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-      const id = rafIdCounter++;
-      rafCallbacks.push(cb);
-      return id;
-    });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  function flushRaf() {
-    const callbacks = [...rafCallbacks];
-    rafCallbacks = [];
-    for (const cb of callbacks) {
-      cb(0);
-    }
-  }
-
-  type Msg = ReaderAskUiMessageDto;
-
-  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
-    return {
-      id: "msg-1",
-      thread_id: "thread-1",
-      role: "assistant",
-      status: "streaming",
-      content_md: "",
-      provisional_content_md: null,
-      reasoning_md: null,
-      reasoning_status: null,
-      context_anchors: [],
-      citations: [],
-      action_proposals: [],
-      tool_trace: [],
-      evidence: [],
-      trace_summary: null,
-      disambiguation: null,
-      external_asset_disambiguation: null,
-      response_cards: [],
-      supplement_candidates: [],
-      persisted_supplements: [],
-      created_at: "2026-05-20T00:00:00Z",
-      updated_at: "2026-05-20T00:00:00Z",
-      ...overrides,
-    };
-  }
-
-  function setupHandler(messages: Msg[]) {
-    let updatedMessages: Msg[] = messages;
-    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
-      updatedMessages = updater(updatedMessages);
-    };
-    const onError = vi.fn();
-    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
-    return {
-      getMessages: () => updatedMessages,
-      handler,
-      onError,
-    };
-  }
-
-  it("enters streaming on reasoning.started even when reasoning_md is empty", () => {
-    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
-
-    handler({ event: "reasoning.started", data: { message_id: "msg-1" } });
-    flushRaf();
-
-    expect(getMessages()[0].reasoning_status).toBe("streaming");
-    expect(getMessages()[0].reasoning_md).toBe("");
-  });
-
-  it("appends reasoning.delta content without losing prior deltas", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "" }),
-    ]);
-
-    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: "step 1" } });
-    flushRaf();
-    expect(getMessages()[0].reasoning_md).toBe("step 1");
-
-    handler({ event: "reasoning.delta", data: { message_id: "msg-1", delta: " step 2" } });
-    flushRaf();
-    expect(getMessages()[0].reasoning_md).toBe("step 1 step 2");
-    expect(getMessages()[0].reasoning_status).toBe("streaming");
-  });
-
-  it("transitions to completed on reasoning.completed", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({ reasoning_status: "streaming", reasoning_md: "thinking content" }),
-    ]);
-
-    handler({ event: "reasoning.completed", data: { message_id: "msg-1" } });
-    flushRaf();
-
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-    // reasoning_md must not be cleared
-    expect(getMessages()[0].reasoning_md).toBe("thinking content");
-  });
-
-  it("preserves streamed reasoning_md when message.completed payload has empty reasoning_md", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: "completed",
-        reasoning_md: "accumulated thinking",
-        content_md: "partial answer",
-      }),
-    ]);
-
-    handler({
-      event: "message.completed",
-      data: {
-        id: "msg-1",
-        thread_id: "thread-1",
-        content_md: "final answer",
-        submission_mode: "chat",
-        resolved_intent: "explain",
-        citations: [],
-        action_proposals: [],
-        tool_trace: [],
-        evidence: [],
-        response_cards: [],
-        supplement_candidates: [],
-        persisted_supplements: [],
-        // Server sends empty reasoning_md — frontend must keep its accumulated content
-        reasoning_md: "",
-        reasoning_status: "completed",
-      },
-    });
-
-    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-    expect(getMessages()[0].content_md).toBe("final answer");
-  });
-
-  it("preserves streamed reasoning_md when message.completed payload omits reasoning fields", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: "completed",
-        reasoning_md: "accumulated thinking",
-        content_md: "partial answer",
-      }),
-    ]);
-
-    handler({
-      event: "message.completed",
-      data: {
-        id: "msg-1",
-        thread_id: "thread-1",
-        content_md: "final answer",
-        submission_mode: "chat",
-        resolved_intent: "explain",
-        citations: [],
-        action_proposals: [],
-        tool_trace: [],
-        evidence: [],
-        response_cards: [],
-        supplement_candidates: [],
-        persisted_supplements: [],
-        // Server omits reasoning_md and reasoning_status entirely
-      },
-    });
-
-    expect(getMessages()[0].reasoning_md).toBe("accumulated thinking");
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-  });
-
-  it("infers reasoning_status=completed when payload has reasoning_md but no reasoning_status", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: null,
-        reasoning_md: null,
-        content_md: "",
-      }),
-    ]);
-
-    handler({
-      event: "message.completed",
-      data: {
-        id: "msg-1",
-        thread_id: "thread-1",
-        content_md: "final answer",
-        submission_mode: "chat",
-        resolved_intent: "explain",
-        citations: [],
-        action_proposals: [],
-        tool_trace: [],
-        evidence: [],
-        response_cards: [],
-        supplement_candidates: [],
-        persisted_supplements: [],
-        // Server sends reasoning_md but omits reasoning_status
-        reasoning_md: "server-side reasoning content",
-      },
-    });
-
-    expect(getMessages()[0].reasoning_md).toBe("server-side reasoning content");
-    // Must infer "completed" from the presence of reasoning_md
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-  });
-
-  it("does not leave reasoning in streaming after message.interrupted", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: "streaming",
-        reasoning_md: "partial thinking",
-        content_md: "partial answer",
-      }),
-    ]);
-
-    handler({ event: "message.interrupted", data: { content_md: "partial answer" } });
-
-    expect(getMessages()[0].status).toBe("interrupted");
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-    expect(getMessages()[0].reasoning_md).toBe("partial thinking");
-  });
-
-  it("does not leave reasoning in streaming after message.interrupted with empty reasoning_md", () => {
-    // reasoning.started fired but no delta arrived yet
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: "streaming",
-        reasoning_md: "",
-        content_md: "",
-      }),
-    ]);
-
-    handler({ event: "message.interrupted", data: {} });
-
-    expect(getMessages()[0].status).toBe("interrupted");
-    // Even with empty reasoning_md, streaming status must not persist
-    expect(getMessages()[0].reasoning_status).toBe("completed");
-  });
-
-  it("keeps reasoning_status unchanged on interrupt when reasoning was never started", () => {
-    const { handler, getMessages } = setupHandler([
-      makeStreamingAssistant({
-        reasoning_status: null,
-        reasoning_md: null,
-        content_md: "partial",
-      }),
-    ]);
-
-    handler({ event: "message.interrupted", data: {} });
-
-    expect(getMessages()[0].status).toBe("interrupted");
-    expect(getMessages()[0].reasoning_status).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // createSseMessageHandler – v2 reasoning firewall
 // ---------------------------------------------------------------------------
 
-describe("createSseMessageHandler – v2 reasoning firewall", () => {
+describe("createSseMessageHandler – v2 reasoning stream", () => {
   type Msg = ReaderAskUiMessageDto;
 
   function makeStreamingAssistant(): Msg {
@@ -3154,7 +2936,7 @@ describe("createSseMessageHandler – v2 reasoning firewall", () => {
     };
   }
 
-  it("ignores agentic.reasoning.* and removes stale reasoning fields at v2 start", () => {
+  it("streams identity-bound provider reasoning into the single reasoning surface", () => {
     let updatedMessages: Msg[] = [makeStreamingAssistant()];
     const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
       updatedMessages = updater(updatedMessages);
@@ -3178,20 +2960,94 @@ describe("createSseMessageHandler – v2 reasoning firewall", () => {
 
     handler({
       event: "agentic.reasoning.started",
-      data: { message_id: "msg-1", delta: "raw provider reasoning" },
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 0,
+        projection_policy_version: "provider_reasoning_v1",
+      },
     });
     handler({
       event: "agentic.reasoning.delta",
-      data: { message_id: "msg-1", seq: 1, delta: "more raw provider reasoning" },
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 1,
+        delta: "first chunk",
+      },
+    });
+    // Duplicate start must not reset an accepted stream.
+    handler({
+      event: "agentic.reasoning.started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 0,
+        projection_policy_version: "provider_reasoning_v1",
+      },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 2,
+        delta: " + second chunk",
+      },
     });
     handler({
       event: "agentic.reasoning.completed",
-      data: { message_id: "msg-1", seq: 2, has_content: true },
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 3,
+        has_content: true,
+        truncated: false,
+        visibility_status: "complete",
+        projection_policy_version: "provider_reasoning_v1",
+      },
+    });
+    // Completion seals the stream; later frames cannot append or reopen it.
+    handler({
+      event: "agentic.reasoning.delta",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 4,
+        delta: " leaked late chunk",
+      },
+    });
+    handler({
+      event: "agentic.reasoning.completed",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        seq: 5,
+        has_content: true,
+        truncated: false,
+        visibility_status: "complete",
+        projection_policy_version: "provider_reasoning_v1",
+      },
     });
 
-    expect(updatedMessages[0].reasoning_md).toBeNull();
-    expect(updatedMessages[0].reasoning_status).toBeNull();
-    expect(updatedMessages[0].reasoning_truncated).toBeNull();
+    expect(updatedMessages[0].reasoning_md).toBe("first chunk + second chunk");
+    expect(updatedMessages[0].reasoning_status).toBe("completed");
+    expect(updatedMessages[0].reasoning_truncated).toBe(false);
+    expect(updatedMessages[0].reasoning_visibility_status).toBe("complete");
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -3232,127 +3088,6 @@ describe("createSseMessageHandler – v2 reasoning firewall", () => {
     expect(updatedMessages[0].reasoning_md).toBeNull();
     expect(updatedMessages[0].reasoning_status).toBeNull();
     expect(updatedMessages[0].reasoning_truncated).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// createSseMessageHandler – learner_reasoning snapshot
-// ---------------------------------------------------------------------------
-
-describe("createSseMessageHandler – learner_reasoning snapshot", () => {
-  type Msg = ReaderAskUiMessageDto;
-
-  function makeStreamingAssistant(): Msg {
-    return {
-      id: "msg-1",
-      thread_id: "thread-1",
-      role: "assistant",
-      status: "streaming",
-      content_md: "",
-      provisional_content_md: null,
-      reasoning_md: null,
-      reasoning_status: null,
-      context_anchors: [],
-      citations: [],
-      action_proposals: [],
-      tool_trace: [],
-      evidence: [],
-      trace_summary: null,
-      disambiguation: null,
-      external_asset_disambiguation: null,
-      response_cards: [],
-      supplement_candidates: [],
-      persisted_supplements: [],
-      created_at: "2026-05-20T00:00:00Z",
-      updated_at: "2026-05-20T00:00:00Z",
-    };
-  }
-
-  function learnerSnap(overrides: Record<string, unknown> = {}) {
-    return {
-      execution_version: "reader_record_ask_agentic_v2",
-      message_id: "msg-1",
-      thread_id: "thread-1",
-      turn_run_id: "run-1",
-      sequence: 1,
-      revision: 1,
-      generation_id: 0,
-      stage: "analyzing",
-      text: "正在梳理问题要点",
-      policy_version: "learner_reasoning_v1",
-      ...overrides,
-    };
-  }
-
-  it("applies snapshot via production reducer after activeRunIdentity", () => {
-    let updatedMessages: Msg[] = [makeStreamingAssistant()];
-    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
-      updatedMessages = updater(updatedMessages);
-    };
-    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, vi.fn());
-
-    // Missing identity → reject
-    handler({
-      event: "agentic.learner_reasoning.snapshot",
-      data: learnerSnap(),
-    });
-    expect(updatedMessages[0].learner_reasoning_text).toBeUndefined();
-
-    handler({
-      event: "agentic.run_started",
-      data: {
-        execution_version: "reader_record_ask_agentic_v2",
-        message_id: "msg-1",
-        thread_id: "thread-1",
-        turn_run_id: "run-1",
-        has_initial_selection: false,
-      },
-    });
-
-    handler({
-      event: "agentic.learner_reasoning.snapshot",
-      data: learnerSnap(),
-    });
-    expect(updatedMessages[0].learner_reasoning_text).toBe("正在梳理问题要点");
-    expect(updatedMessages[0].learner_reasoning_status).toBe("streaming");
-    expect(updatedMessages[0].learner_reasoning_stage).toBe("analyzing");
-
-    // Replace (not append)
-    handler({
-      event: "agentic.learner_reasoning.snapshot",
-      data: learnerSnap({
-        sequence: 2,
-        revision: 2,
-        stage: "synthesizing",
-        text: "结合证据核对结论",
-      }),
-    });
-    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
-    expect(updatedMessages[0].learner_reasoning_text).not.toContain("正在梳理");
-
-    // Foreign identity rejected
-    handler({
-      event: "agentic.learner_reasoning.snapshot",
-      data: learnerSnap({
-        sequence: 3,
-        revision: 3,
-        message_id: "other-msg",
-        text: "外来帧不应出现",
-      }),
-    });
-    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
-
-    // Missing generation_id rejected
-    handler({
-      event: "agentic.learner_reasoning.snapshot",
-      data: learnerSnap({
-        sequence: 4,
-        revision: 4,
-        generation_id: undefined,
-        text: "缺 generation 不应出现",
-      }),
-    });
-    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
   });
 });
 
@@ -4920,6 +4655,38 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     expect(normalized.agentic_citations?.[0]?.citation_id).toBe("c1");
     expect(normalized.article_rag).toBeNull();
     expect(normalized.evidence).toEqual([]);
+  });
+
+  it("restores the exact persisted provider reasoning for completed and terminal turns", () => {
+    const [completed, terminal] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        id: "msg-reasoning-completed",
+        execution_version: "reader_record_ask_agentic_v2",
+        final_status: "ok",
+        reasoning_md: " first line\nsecond line ",
+        reasoning_status: "completed",
+        reasoning_truncated: true,
+        reasoning_visibility_status: "truncated",
+      }),
+      createAssistantMessage({
+        id: "msg-reasoning-terminal",
+        status: "failed",
+        execution_version: "reader_record_ask_agentic_v2",
+        final_status: "failed",
+        reasoning_md: "published before failure",
+        reasoning_status: "interrupted",
+        reasoning_truncated: false,
+        reasoning_visibility_status: "blocked",
+      }),
+    ]);
+
+    expect(completed.reasoning_md).toBe(" first line\nsecond line ");
+    expect(completed.reasoning_status).toBe("completed");
+    expect(completed.reasoning_truncated).toBe(true);
+    expect(completed.reasoning_visibility_status).toBe("truncated");
+    expect(terminal.reasoning_md).toBe("published before failure");
+    expect(terminal.reasoning_status).toBe("interrupted");
+    expect(terminal.reasoning_visibility_status).toBe("blocked");
   });
 
   it("cold history never stores scope identity in browser state", () => {
@@ -7088,6 +6855,7 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
       reasoning_md: "冷推理文本。",
       reasoning_status: "completed",
       reasoning_truncated: false,
+      reasoning_visibility_status: "complete",
       agentic_answer_blocks: [{ text: "冷答案。", citation_ids: [] }],
       agentic_citations: [],
       agentic_web_search: null,
@@ -7139,45 +6907,80 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
 
     renderPanel();
 
-    // Cold history carries compatibility reasoning fields but no same-session
-    // process snapshot, so v2 must not fabricate an Answer Process.
+    // Cold history restores persisted reasoning but does not fabricate a
+    // same-session Answer Process snapshot.
     await waitFor(() => {
       expect(screen.getByText("冷答案。")).not.toBeNull();
     });
     expect(screen.queryByTestId("ask-turn-process")).toBeNull();
-    expect(screen.queryByText("冷推理文本。")).toBeNull();
     const bubble = screen
       .getByText("冷答案。")
       .closest("[data-message-role='assistant']");
-    expect(bubble?.querySelector("[data-slot='reasoning']")).toBeNull();
+    expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
+    fireEvent.click(screen.getByText("思考过程"));
+    await waitFor(() => {
+      expect(screen.getByText("冷推理文本。")).not.toBeNull();
+    });
   });
 
-  it("v2 ignores provider reasoning events and never renders the legacy reasoning panel", async () => {
+  it("v2 renders provider reasoning events in the single reasoning panel", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
-      onEvent({ event: "agentic.reasoning.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      onEvent({ event: "agentic.run_started", data: runStartedPayload() });
+      onEvent({
+        event: "agentic.reasoning.started",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 0,
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
       onEvent({
         event: "agentic.reasoning.delta",
-        data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", delta: "legacy thinking" },
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 1,
+          delta: "provider thinking",
+        },
       });
-      onEvent({ event: "agentic.reasoning.completed", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
-      onEvent({ event: "message.completed", data: completedPayload });
+      onEvent({
+        event: "agentic.reasoning.completed",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 2,
+          has_content: true,
+          truncated: false,
+          visibility_status: "complete",
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
+      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
 
     renderPanel();
     await sendTurn();
     await waitFor(() => {
-      expect(screen.getByText("解释完成。")).not.toBeNull();
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
     });
 
-    // Provider reasoning is fail-closed; only learner_reasoning snapshots may
-    // enter the public disclosure.
     const bubble = screen
-      .getByText("解释完成。")
+      .getByText("已完成回答。")
       .closest("[data-message-role='assistant']");
-    expect(bubble?.querySelector("[data-slot='reasoning']")).toBeNull();
-    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+    expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
+    fireEvent.click(screen.getByText("思考过程"));
+    await waitFor(() => {
+      expect(screen.getByText("provider thinking")).not.toBeNull();
+    });
   });
 
   // -------------------------------------------------------------------------

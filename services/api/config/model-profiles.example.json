@@ -205,6 +205,24 @@
         "timeout": 120.0
       }
     },
+    "dashscope-deepseek-v4-flash-0731": {
+      "_field_notes": "测试专用 DashScope 免费额度模型；不替换默认 workflow preset。",
+      "provider": "dashscope_compat",
+      "model_name": "deepseek-v4-flash-0731",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 120.0
+      }
+    },
+    "dashscope-deepseek-v4-pro-0813": {
+      "_field_notes": "测试专用 DashScope 免费额度模型；不替换默认 workflow preset。",
+      "provider": "dashscope_compat",
+      "model_name": "deepseek-v4-pro-0813",
+      "model_settings": {
+        "temperature": 0.2,
+        "timeout": 120.0
+      }
+    },
     "deepseek-v4-pro-tool-required": {
       "_field_notes": "DeepSeek V4 Pro 实验配置：显式声明 openai_supports_tool_choice_required=true + default_structured_output_mode=tool，用于 tool_choice=required A/B 实验。不替换 deepseek-v4-pro 生产 model。",
       "provider": "deepseek",
@@ -285,6 +303,24 @@
           "thinking": {
             "type": "disabled"
           }
+        }
+      }
+    },
+    "workflow-dashscope-deepseek-v4-flash-0731": {
+      "_field_notes": "测试专用 DashScope profile；显式关闭思考以控制 token，按需由测试 route 选择。",
+      "model": "dashscope-deepseek-v4-flash-0731",
+      "model_settings": {
+        "extra_body": {
+          "enable_thinking": false
+        }
+      }
+    },
+    "workflow-dashscope-deepseek-v4-pro-0813": {
+      "_field_notes": "测试专用 DashScope profile；显式关闭思考以控制 token，按需由测试 route 选择。",
+      "model": "dashscope-deepseek-v4-pro-0813",
+      "model_settings": {
+        "extra_body": {
+          "enable_thinking": false
         }
       }
     },

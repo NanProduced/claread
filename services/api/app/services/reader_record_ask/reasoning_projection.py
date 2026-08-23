@@ -1,8 +1,8 @@
 """ASK-REASONING-/the single approved reasoning projection chokepoint.
 
-Provider reasoning (``ThinkingPart`` content) is raw provider output. Raw
-reasoning must never be logged, persisted, or published — not into SSE,
-DTOs, the database, history, browser state, or logs.
+Provider reasoning (``ThinkingPart`` content) is untrusted provider output.
+It must never be logged or leave this chokepoint without deterministic
+filtering.
 
 This module is the ONLY path by which reasoning may become user-visible:
 
@@ -16,10 +16,9 @@ This module is the ONLY path by which reasoning may become user-visible:
   handles, envelope/record identity, authentication material, system
   instruction fragments, and provider raw wrappers;
 - a bounded host-side quota caps the visible projection per turn;
-- only the validated summary is published as
-  ``agentic.learner_reasoning.snapshot``
-  runtime events that production stream maps 1:1 onto SSE and, on
-  successful turns, persists atomically with the final answer.
+- only the filtered projection is published as ordered
+  ``agentic.reasoning.*`` runtime events and persisted with the terminal
+  turn snapshot.
 
 Fail-closed overflow semantics: when an unterminated sensitive
 region exceeds its scan ceiling, or a single ambiguous token exceeds the
@@ -49,7 +48,7 @@ from app.services.reader_record_ask.runtime_events import (
     RuntimeEvent,
 )
 
-PROJECTION_POLICY_VERSION: str = "reasoning_projection_v1"
+PROJECTION_POLICY_VERSION: str = "provider_reasoning_v1"
 
 # Host-side quota for one turn's visible projection (code points).
 # ASK-TURN-LIFECYCLE raised from 4_000 to 14_000 (within the audit-
@@ -88,8 +87,6 @@ DEFAULT_PROJECTION_CHAR_CAP: int = _resolve_projection_char_cap()
 # producing an undeclared gap in the visible projection. The turn-level
 # total cap is the ONLY quota: ``truncated`` now accurately reflects
 # whether the user-visible projection was truncated by the total cap.
-# ``advance_round()`` is retained as a no-op for backward-compat with
-# thinking_transport boundary calls — it no longer affects quota.
 
 # Appended exactly once when the quota is hit; part of the visible text so
 # hot deltas, persisted snapshot, and cold history stay byte-identical.
@@ -157,9 +154,7 @@ _REDACTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # Locator surfaces. URL bodies are ASCII printable chars only so CJK
     # prose/punctuation glued to a URL survives.
     (
-        re.compile(
-            r"(?<![A-Za-z0-9])https?://(?:(?=[!-~])[^<>\s\"')\]])+"
-        ),
+        re.compile(r"(?<![A-Za-z0-9])https?://(?:(?=[!-~])[^<>\s\"')\]])+"),
         "",
     ),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), ""),
@@ -172,6 +167,25 @@ _REDACTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "",
     ),
+)
+
+# Trust-boundary failures stop the public reasoning stream for the turn.
+# These are narrower than the ordinary redaction rules: harmless locators
+# may be redacted and processing may continue, while credentials, private
+# keys, internal evidence handles, connection strings, and illegal control
+# characters fail closed.
+_HARD_BLOCK_RE = re.compile(
+    r"(?i:"
+    r"(?<![A-Za-z0-9_])evh_[0-9A-Fa-f]{8,64}"
+    r"|(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._\-]{12,}"
+    r"|(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{12,}"
+    r"|(?<![A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,})"
+    r"|(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?"
+    r"[A-Za-z0-9._/+\-=]{8,}"
+    r"|(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://\S+"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r")"
+    r"|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"
 )
 
 # Final-flush only: a trailing unterminated line that begins with a known
@@ -286,6 +300,7 @@ def _remove_pem_regions(text: str) -> str:
         i = end_pos
     return "".join(out)
 
+
 # Trailing ambiguous tails held back in NORMAL state. A held tail is the
 # MINIMAL region that could still resolve into a sensitive pattern once
 # more raw text arrives:
@@ -307,6 +322,11 @@ _SPECIAL_TAIL_RE = re.compile(
     r"(?:(?=[!-~])[^'\",;)}\]\s])*"
     # In-progress Bearer credential: Bearer / Bearer<ws> / Bearer<ws>token.
     r"|Bearer(?:\s+[A-Za-z0-9._\-]*)?"
+    # In-progress labelled credential or database connection string.
+    r"|(?i:(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?"
+    r"[A-Za-z0-9._/+\-=]*)"
+    r"|(?i:(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)"
+    r"(?::(?:/{0,2}[^\s]*)?)?)"
     # In-progress reasoning_content wrapper: key / key: / key:".
     r"|(?i:reasoning_content(?:\s*[:=]\s*\"?)?)"
     # Trailing angle-bracket fragment that could become a wrapper tag.
@@ -319,9 +339,7 @@ _SPECIAL_TAIL_RE = re.compile(
 )
 
 # Trailing region that could still become a PEM terminator (IN_PEM state).
-_PEM_END_TAIL_RE = re.compile(
-    r"(?:-{1,5}|-----E(?:N(?:D(?: [A-Z ]*(?:-{1,5})?)?)?)?)\Z"
-)
+_PEM_END_TAIL_RE = re.compile(r"(?:-{1,5}|-----E(?:N(?:D(?: [A-Z ]*(?:-{1,5})?)?)?)?)\Z")
 
 
 def redact_reasoning_text(text: str, *, final: bool = False) -> str:
@@ -335,6 +353,9 @@ def redact_reasoning_text(text: str, *, final: bool = False) -> str:
     """
     if not text:
         return ""
+    hard_block = _HARD_BLOCK_RE.search(text)
+    if hard_block is not None:
+        text = text[: hard_block.start()]
     projected = _redact_block(text)
     if final:
         projected = _TRAILING_MARKER_LINE_RE.sub("", projected)
@@ -381,6 +402,10 @@ class IncrementalRedactor:
         self._sealed: bool = False
 
     @property
+    def blocked(self) -> bool:
+        return self._sealed
+
+    @property
     def sealed(self) -> bool:
         return self._sealed
 
@@ -412,6 +437,11 @@ class IncrementalRedactor:
 
     def _feed_normal(self, chunk: str) -> str:
         self._pending += chunk
+        hard_block = _HARD_BLOCK_RE.search(self._pending)
+        if hard_block is not None:
+            released = redact_reasoning_text(self._pending[: hard_block.start()])
+            self._seal()
+            return released
         # A BEGIN whose matching END has not arrived yet opens a discard
         # region: commit the redacted text before the BEGIN, then discard
         # the body until the matching END arrives (strict label pairing —
@@ -463,9 +493,7 @@ class IncrementalRedactor:
         partial_line = text[line_start:]
         if partial_line:
             for marker in _SYSTEM_LINE_PREFIXES:
-                if marker.startswith(partial_line) or partial_line.startswith(
-                    marker
-                ):
+                if marker.startswith(partial_line) or partial_line.startswith(marker):
                     start = min(start, line_start)
                     break
         return start
@@ -532,16 +560,13 @@ class ReasoningProjectionBuffer:
     ASK-TURN-LIFECYCLE the per-round sub-cap was removed. The
     turn-level total cap is the ONLY quota. ``truncated=True`` iff the
     total cap was hit (marker appended exactly once at the end).
-    ``advance_round()`` is a no-op retained for backward-compat with
-    thinking_transport boundary calls.
     """
 
     char_cap: int = DEFAULT_PROJECTION_CHAR_CAP
-    _redactor: IncrementalRedactor = field(
-        default_factory=IncrementalRedactor, init=False
-    )
+    _redactor: IncrementalRedactor = field(default_factory=IncrementalRedactor, init=False)
     _text: str = field(default="", init=False)
     _truncated: bool = field(default=False, init=False)
+    _blocked: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         marker_len = len(TRUNCATION_MARKER)
@@ -551,28 +576,22 @@ class ReasoningProjectionBuffer:
             or self.char_cap < marker_len
         ):
             raise ValueError(
-                "char_cap must be an integer greater than or equal to "
-                "the truncation marker length"
+                "char_cap must be an integer greater than or equal to the truncation marker length"
             )
 
-    def advance_round(self) -> None:
-        """No-op retained for backward-compat with thinking_transport.
-
-        The per-round sub-cap was removed. The turn-level total
-        cap is the only quota. This method is now a no-op so callers
-        (thinking_transport tool-result boundary) don't need changes.
-        """
-        return None
-
     def feed(self, raw_chunk: str) -> str:
-        if self._truncated or not raw_chunk:
+        if self._truncated or self._blocked or not raw_chunk:
             return ""
-        return self._absorb(self._redactor.feed(raw_chunk))
+        increment = self._absorb(self._redactor.feed(raw_chunk))
+        self._blocked = self._redactor.blocked
+        return increment
 
     def flush(self) -> str:
-        if self._truncated:
+        if self._truncated or self._blocked:
             return ""
-        return self._absorb(self._redactor.flush())
+        increment = self._absorb(self._redactor.flush())
+        self._blocked = self._redactor.blocked
+        return increment
 
     def _absorb(self, projected: str) -> str:
         if not projected:
@@ -611,6 +630,14 @@ class ReasoningProjectionBuffer:
         return self._truncated
 
     @property
+    def visibility_status(self) -> str:
+        if self._blocked:
+            return "blocked"
+        if self._truncated:
+            return "truncated"
+        return "complete"
+
+    @property
     def char_count(self) -> int:
         return len(self._text)
 
@@ -625,6 +652,7 @@ class ReasoningProjectionBuffer:
             "text": self._text,
             "char_count": self.char_count,
             "truncated": self._truncated,
+            "visibility_status": self.visibility_status,
         }
 
 
@@ -634,7 +662,13 @@ class ReasoningProjectionBuffer:
 # ---------------------------------------------------------------------------
 
 _CANONICAL_SNAPSHOT_KEYS = frozenset(
-    {"projection_policy_version", "text", "char_count", "truncated"}
+    {
+        "projection_policy_version",
+        "text",
+        "char_count",
+        "truncated",
+        "visibility_status",
+    }
 )
 
 
@@ -666,6 +700,11 @@ def validate_reasoning_snapshot(payload: Any) -> dict[str, Any] | None:
     truncated = payload["truncated"]
     if not isinstance(truncated, bool):
         return None
+    visibility_status = payload["visibility_status"]
+    if visibility_status not in {"complete", "truncated", "blocked"}:
+        return None
+    if truncated != (visibility_status == "truncated"):
+        return None
     # Truncation-marker invariants (exact-cap protocol):
     #   truncated=True  ⇔ marker present, exactly once, at the text end
     #   truncated=False ⇒ marker appears nowhere
@@ -684,18 +723,10 @@ def validate_reasoning_snapshot(payload: Any) -> dict[str, Any] | None:
 
 
 class UserSafeReasoningObserver:
-    """Fail-closed observer for provider-private reasoning.
+    """Emergency kill-switch observer that discards reasoning at ingress.
 
-    Provider reasoning is not a user-facing explanation. Even after secret
-    redaction it can contain internal self-instructions, response-schema
-    names, tool strategy, and other implementation details that are
-    confusing for Ask Claread's language-learning audience. The public
-    process UI is therefore driven exclusively by typed lifecycle events.
-
-    This observer intentionally discards reasoning at ingress. It emits no
-    SSE reasoning events, retains no text, and produces no persistence
-    payload. Keeping the full ThinkingObserver/host API makes the safety
-    boundary explicit without changing provider transports.
+    It emits no SSE events, retains no text, and produces no persistence
+    payload while leaving progress and final-answer transport unchanged.
     """
 
     def __init__(
@@ -719,9 +750,6 @@ class UserSafeReasoningObserver:
     def on_analysis_finished(self) -> None:
         return None
 
-    def advance_round(self) -> None:
-        return None
-
     @property
     def started(self) -> bool:
         return False
@@ -738,6 +766,10 @@ class UserSafeReasoningObserver:
     def truncated(self) -> bool:
         return False
 
+    @property
+    def visibility_status(self) -> str:
+        return "complete"
+
     def persistence_payload(self) -> None:
         return None
 
@@ -745,8 +777,8 @@ class UserSafeReasoningObserver:
         return None
 
 
-class ReasoningProjectorObserver:
-    """Legacy v1 reasoning projector retained for data-validation tests.
+class ProviderReasoningObserver:
+    """Production observer for provider-supplied readable reasoning.
 
     It publishes the deterministic redaction as
     ``AgenticReasoningStartedEvent`` / ``AgenticReasoningDeltaEvent`` via
@@ -754,10 +786,8 @@ class ReasoningProjectorObserver:
     projected increment exists — a provider that returns no non-empty
     reasoning produces no events at all.
 
-    Redaction is not a user-safe explanation: ordinary model self-talk can
-    remain after secrets and internal identifiers are removed. Production
-    must use :class:`UserSafeReasoningObserver`; this class is not wired to
-    an Ask Claread request path.
+    This is a deterministic host gate, not an LLM projector: ordinary model
+    self-talk can remain after secrets and internal identifiers are removed.
 
     ``AgenticReasoningCompletedEvent`` is built by
     :meth:`build_completed_event` and emitted by the host only after the
@@ -805,18 +835,6 @@ class ReasoningProjectorObserver:
 
     # -- Host API ------------------------------------------------------------
 
-    def advance_round(self) -> None:
-        """Signal a tool/retry boundary to the projection buffer.
-
-        ASK-TURN-LIFECYCLE the per-round sub-cap was removed. The
-        turn-level total cap is the ONLY quota. This method is now a no-op
-        retained for backward-compat with thinking_transport boundary
-        calls — the buffer ignores it entirely. Idempotent.
-        """
-        if self._sealed:
-            return
-        self._buffer.advance_round()
-
     @property
     def started(self) -> bool:
         return self._started
@@ -834,8 +852,17 @@ class ReasoningProjectorObserver:
     def truncated(self) -> bool:
         return self._buffer.truncated
 
+    @property
+    def visibility_status(self) -> str:
+        """Buffer safety state: ``complete`` / ``truncated`` / ``blocked``.
+
+        Read by the host for the non-sensitive reasoning observation on
+        usage events / logs — a typed status string, never reasoning text.
+        """
+        return self._buffer.visibility_status
+
     def persistence_payload(self) -> dict[str, Any] | None:
-        """Canonical snapshot for the ok-turn transaction; None otherwise.
+        """Canonical snapshot for a normal terminal transaction.
 
         Validated through :func:`validate_reasoning_snapshot` at the write
         boundary (fail-closed): an invalid shape persists nothing and cold
@@ -863,6 +890,7 @@ class ReasoningProjectorObserver:
             seq=self._seq,
             has_content=True,
             truncated=self._buffer.truncated,
+            visibility_status=self._buffer.visibility_status,
             projection_policy_version=PROJECTION_POLICY_VERSION,
         )
 
@@ -901,7 +929,7 @@ __all__ = [
     "TRUNCATION_MARKER",
     "IncrementalRedactor",
     "ReasoningProjectionBuffer",
-    "ReasoningProjectorObserver",
+    "ProviderReasoningObserver",
     "UserSafeReasoningObserver",
     "redact_reasoning_text",
     "validate_reasoning_snapshot",

@@ -85,7 +85,7 @@ Ask 面板向用户展示"系统正在做什么"（流式进度、上下文压�
 - 基于当前文章 ContextEnvelope 的回答（baseline 上下文、选区 model view、文章语义地图）。
 - 证据展开工具 `expand_evidence`：按 opaque 指针逐步展开已注册证据，零工具调用时也能基于初始选区证据回答。
 - 文章 RAG 检索工具 `search_current_article`：在文章 RAG 索引可用时挂载（每轮最多 1 次调用）；索引未就绪/未建索引/检索不可用时返回 typed 状态，模型不会看到该工具。
-- 学习者推理摘要：流式 `agentic.learner_reasoning.snapshot` 事件 + 随 turn run 持久化的中性短摘要（功能开关控制，默认关闭）。
+- Provider reasoning：默认启用；provider 提供的可读思考内容经确定性安全闸后通过 `agentic.reasoning.started|delta|completed` 流式展示，并在所有正常终态保存用户已见文本。无第二次模型调用；紧急开关关闭时只隐藏 reasoning，不影响进度和答案。
 
 ### Web search（显式授权）
 
@@ -122,7 +122,7 @@ Ask 面板向用户展示"系统正在做什么"（流式进度、上下文压�
 - focus anchor 显式上下文入口
 - citation 回源导航
 - 客户端提交幂等 reconcile
-- thread memory compaction 与 learner reasoning 投影
+- thread memory compaction 与 provider reasoning 投影
 
 ### 明确不作为当前承诺的部分
 

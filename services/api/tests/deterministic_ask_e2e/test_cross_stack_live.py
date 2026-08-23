@@ -1,12 +1,20 @@
 """Opt-in live cross-stack acceptance: Browser-facing BFF → API → PG.
 
-Requires a running test-only deterministic API (and optionally a running
-Web dev server pointing at it). Enable with::
+Requires a running test-only deterministic API (and optionally a Web dev
+server pointing at it). Enable with::
 
     CLAREAD_RUN_ASK_DETERMINISTIC_E2E=1 \
     CLAREAD_ASK_E2E_API_BASE=http://127.0.0.1:8010 \
-    CLAREAD_ASK_E2E_WEB_BASE=http://127.0.0.1:3000 \
+    CLAREAD_ASK_E2E_WEB_BASE=http://127.0.0.1:3200 \
     uv run pytest tests/deterministic_ask_e2e/test_cross_stack_live.py -v
+
+Fail-closed deterministic preflight: before any
+auth, record creation or Ask POST, the suite PROVES the runtimes are
+the deterministic ones — the API must serve a clean provider-guard
+report, and the BFF must serve the deterministic model option through
+its product model-options endpoint. A wrong API_BASE or a BFF pointing
+at a non-deterministic upstream fails immediately (see
+``test_preflight_fail_closed.py``).
 
 Scenarios (handoff spec D):
 
@@ -22,9 +30,12 @@ Scenarios (handoff spec D):
 6. old namespaces are absent (FastAPI ``/reader-ask/*``, BFF
    ``/api/web/reader-ask/*``) and the provider guard counter is zero.
 
-BFF-layer tests run only when the Web server is reachable; they use a
-real ``claread_web_session`` cookie obtained through the BFF phone-auth
-flow (upstream FastAPI mock provider, code 888888).
+BFF-layer tests are opt-in: they run ONLY when
+``CLAREAD_ASK_E2E_WEB_BASE`` is explicitly set to a Web server whose
+upstream is the deterministic API (proven via model-options before any
+Ask POST). They use a real ``claread_web_session`` cookie obtained
+through the BFF phone-auth flow (upstream FastAPI mock provider, code
+888888).
 """
 
 from __future__ import annotations
@@ -42,13 +53,20 @@ from .models import (
     DETERMINISTIC_ARTICLE_ANSWER,
     DETERMINISTIC_GENERAL_ANSWER,
     DETERMINISTIC_MARKER,
-    FIXTURE_ARTICLE_TEXT,
+    DETERMINISTIC_REASONING_TEXT,
     FIXTURE_QUESTION,
+)
+from .preflight import (
+    bootstrap_deterministic_api_context,
+    bootstrap_deterministic_bff_context,
 )
 
 RUN_GATE = os.environ.get("CLAREAD_RUN_ASK_DETERMINISTIC_E2E", "") == "1"
 API_BASE = os.environ.get("CLAREAD_ASK_E2E_API_BASE", "http://127.0.0.1:8010").rstrip("/")
-WEB_BASE = os.environ.get("CLAREAD_ASK_E2E_WEB_BASE", "http://127.0.0.1:3000").rstrip("/")
+# Opt-in only: no default BFF base. An explicit CLAREAD_ASK_E2E_WEB_BASE
+# must point at a Web server whose upstream is the deterministic API —
+# the BFF preflight proves it via model-options before any Ask POST.
+WEB_BASE = os.environ.get("CLAREAD_ASK_E2E_WEB_BASE", "").rstrip("/")
 PHONE = os.environ.get("CLAREAD_ASK_E2E_PHONE", "13800138000")
 
 EXECUTION_V2 = "reader_record_ask_agentic_v2"
@@ -127,40 +145,9 @@ def assert_completed_is_deterministic_v2(payload: dict, *, thread_id: str) -> No
 @pytest.fixture(scope="module")
 def api_ctx() -> Iterator[dict[str, Any]]:
     with httpx.Client(base_url=API_BASE, timeout=60) as client:
-        r = client.post("/auth/phone/request-code", json={"phone": PHONE})
-        assert r.status_code == 200, r.text
-        r = client.post("/auth/phone/verify-code", json={"phone": PHONE, "code": "888888"})
-        assert r.status_code == 200, r.text
-        token = r.json()["session_token"]
-        client.headers["Authorization"] = f"Bearer {token}"
-
-        r = client.get("/health/ready")
-        assert r.status_code == 200, r.text
-
-        r = client.post(
-            "/reader/records/input",
-            json={
-                "source_type": "pasted_text",
-                "text": FIXTURE_ARTICLE_TEXT,
-                "language": "en",
-                "client_record_id": str(uuid.uuid4()),
-            },
-        )
-        assert r.status_code == 200, r.text
-        submit = r.json()
-        assert submit.get("outcome") == "stable_document_ready", submit
-        record_id = submit["reading_record_id"]
-
-        r = client.post(f"/reader/records/{record_id}/ask/threads/default", json={})
-        assert r.status_code == 200, r.text
-        thread_id = r.json()["id"]
-
-        yield {
-            "client": client,
-            "token": token,
-            "record_id": record_id,
-            "thread_id": thread_id,
-        }
+        # Fail-closed bootstrap: the deterministic guard preflight runs
+        # BEFORE any auth or business write (see preflight.py).
+        yield bootstrap_deterministic_api_context(client, phone=PHONE)
 
 
 @pytest.fixture(scope="module")
@@ -368,6 +355,156 @@ def test_retry_after_submission_id_turn(api_ctx, send_result):
     assert DETERMINISTIC_ARTICLE_ANSWER in cold_texts
 
 
+# ---------------------------------------------------------------------------
+# Provider reasoning streaming, persistence, and recovery acceptance
+# over the real product chain.
+# ---------------------------------------------------------------------------
+
+
+def _reasoning_frames(frames: list[tuple[str | None, str]]) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+    for name, data in frames:
+        if name and name.startswith("agentic.reasoning."):
+            out.append((name, json.loads(data)))
+    return out
+
+
+def _assert_reasoning_sse_contract(frames: list[tuple[str | None, str]]) -> str:
+    """Order + seq + visibility contract for one streamed turn.
+
+    Returns the concatenated visible reasoning text.
+    """
+    names = [name for name, _ in frames]
+    started_idx = names.index("agentic.reasoning.started")
+    completed_idx = names.index("agentic.reasoning.completed")
+    message_completed_idx = names.index("message.completed")
+    delta_idxs = [i for i, n in enumerate(names) if n == "agentic.reasoning.delta"]
+    answer_delta_idxs = [i for i, n in enumerate(names) if n == "message.delta"]
+
+    # 1. SSE order: started → deltas → completed → answer terminal.
+    assert started_idx < delta_idxs[0] < delta_idxs[-1] < completed_idx
+    assert completed_idx < message_completed_idx
+    # 2. Reasoning is visible before the answer completes.
+    assert started_idx < message_completed_idx
+    if answer_delta_idxs:
+        assert started_idx < answer_delta_idxs[0]
+
+    reasoning = _reasoning_frames(frames)
+    seqs = [payload["seq"] for _, payload in reasoning]
+    assert seqs == sorted(seqs), "reasoning seq must be monotonic"
+    assert len(set(seqs)) == len(seqs), "reasoning seq must never repeat"
+    assert seqs[0] == 0
+
+    started = [p for n, p in reasoning if n == "agentic.reasoning.started"]
+    deltas = [p for n, p in reasoning if n == "agentic.reasoning.delta"]
+    completed = [p for n, p in reasoning if n == "agentic.reasoning.completed"]
+    assert len(started) == 1
+    assert len(completed) == 1
+    assert completed[0]["seq"] == seqs[-1]
+    assert completed[0]["has_content"] is True
+    assert completed[0]["truncated"] is False
+    assert completed[0]["visibility_status"] == "complete"
+
+    visible = "".join(p["delta"] for p in deltas)
+    assert visible == DETERMINISTIC_REASONING_TEXT, (
+        "projected reasoning must be the deterministic multi-round text"
+    )
+    return visible
+
+
+def test_send_reasoning_streams_before_answer_terminal(api_ctx, send_result):
+    """Provider reasoning streams across a tool/retry round, completes
+    before the answer terminal, and never leaks internal identity."""
+    visible = _assert_reasoning_sse_contract(send_result["frames"])
+    assert visible
+    assert "evh_" not in visible
+    assert "envelope_fingerprint" not in visible
+
+
+def test_cold_history_reasoning_matches_hot_deltas(api_ctx, send_result):
+    """Cold reload restores the exact reasoning text that streamed."""
+    client: httpx.Client = api_ctx["client"]
+    record_id = api_ctx["record_id"]
+    thread_id = api_ctx["thread_id"]
+    payload = send_result["payload"]
+
+    hot_visible = _assert_reasoning_sse_contract(send_result["frames"])
+
+    r = client.get(f"/reader/records/{record_id}/ask/threads/{thread_id}")
+    assert r.status_code == 200, r.text
+    assistant = next(
+        m
+        for m in r.json()["messages"]
+        if m["role"] == "assistant" and m["id"] == payload["message_id"]
+    )
+    assert assistant["reasoning_md"] == hot_visible, (
+        "cold reasoning text must equal the hot streamed deltas byte-for-byte"
+    )
+    assert assistant["reasoning_status"] == "completed"
+    assert assistant["reasoning_truncated"] is False
+    assert assistant["reasoning_visibility_status"] == "complete"
+    assert_public_surface_is_clean(json.dumps(assistant))
+
+    # 6. History load must not trigger any model call.
+    r = client.get("/__deterministic_guard__/provider-calls")
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["installed"] is True
+    assert report["blocked_call_count"] == 0, report
+    assert report["blocked_attempts"] == []
+
+
+def test_retry_reasoning_is_fresh_attempt_without_stale_mix(api_ctx):
+    """Retry produces a fresh self-consistent reasoning sequence and the
+    cold message reflects only the new attempt's reasoning."""
+    client: httpx.Client = api_ctx["client"]
+    record_id = api_ctx["record_id"]
+    thread_id = api_ctx["thread_id"]
+
+    # Own message (no client_submission_id → sequential create path).
+    r = client.post(
+        f"/reader/records/{record_id}/ask/threads/{thread_id}/messages/stream",
+        json={"content": "Reasoning retry check: who founded the library?"},
+    )
+    assert r.status_code == 200, r.text
+    frames = parse_sse_frames(r.text)
+    payload = terminal_completed(frames)
+    message_id = payload["message_id"]
+    first_visible = _assert_reasoning_sse_contract(frames)
+
+    r = client.post(
+        f"/reader/records/{record_id}/ask/threads/{thread_id}/messages/{message_id}/retry/stream",
+        json={},
+    )
+    assert r.status_code == 200, r.text
+    retry_frames = parse_sse_frames(r.text)
+    retried = terminal_completed(retry_frames)
+    assert retried["message_id"] == message_id
+
+    retry_reasoning = _reasoning_frames(retry_frames)
+    started = [p for n, p in retry_reasoning if n == "agentic.reasoning.started"]
+    deltas = [p for n, p in retry_reasoning if n == "agentic.reasoning.delta"]
+    completed = [p for n, p in retry_reasoning if n == "agentic.reasoning.completed"]
+    # Fresh attempt: exactly one started / completed, seq restarts at 0.
+    assert len(started) == 1 and started[0]["seq"] == 0
+    assert len(completed) == 1
+    retry_visible = "".join(p["delta"] for p in deltas)
+    assert retry_visible == DETERMINISTIC_REASONING_TEXT
+    # No stale attempt reasoning mixed into the new stream.
+    assert retry_visible.count(DETERMINISTIC_REASONING_TEXT) == 1
+    assert len(retry_visible) == len(DETERMINISTIC_REASONING_TEXT)
+    del first_visible  # both attempts share the deterministic script
+
+    # Cold history shows only the newest attempt's reasoning.
+    r = client.get(f"/reader/records/{record_id}/ask/threads/{thread_id}")
+    assert r.status_code == 200, r.text
+    assistant = next(
+        m for m in r.json()["messages"] if m["role"] == "assistant" and m["id"] == message_id
+    )
+    assert assistant["reasoning_md"] == retry_visible
+    assert assistant["reasoning_status"] == "completed"
+
+
 def test_old_namespaces_absent_and_guard_counter_zero(api_ctx):
     client: httpx.Client = api_ctx["client"]
 
@@ -387,33 +524,24 @@ def test_old_namespaces_absent_and_guard_counter_zero(api_ctx):
     assert report["blocked_attempts"] == []
 
 
-def _web_reachable() -> bool:
-    try:
-        r = httpx.get(f"{WEB_BASE}/api/web/session", timeout=5)
-        return r.status_code < 500
-    except httpx.HTTPError:
-        return False
-
-
 @pytest.fixture(scope="module")
-def web_ctx() -> Iterator[dict[str, Any]]:
-    if not _web_reachable():
-        pytest.skip(f"Web server not reachable at {WEB_BASE}")
+def web_ctx(api_ctx) -> Iterator[dict[str, Any]]:
+    # BFF tests are opt-in ONLY: never fall back to an implicit
+    # ``:3000`` (or any default) — an unrelated dev server there once
+    # pointed at a production API and produced a real model answer.
+    if not WEB_BASE:
+        pytest.skip(
+            "BFF tests are opt-in: set CLAREAD_ASK_E2E_WEB_BASE to a Web "
+            "server whose upstream is the deterministic API"
+        )
     with httpx.Client(base_url=WEB_BASE, timeout=60) as client:
-        r = client.post("/api/web/auth/phone/request-code", json={"phone": PHONE})
-        assert r.status_code == 200, r.text
-        r = client.post(
-            "/api/web/auth/phone/verify-code",
-            json={"phone": PHONE, "code": "888888"},
+        # Fail-closed BFF bootstrap: BFF login, then the deterministic
+        # upstream proof (model-options) BEFORE any BFF Ask POST.
+        yield bootstrap_deterministic_bff_context(
+            client,
+            phone=PHONE,
+            record_id=api_ctx["record_id"],
         )
-        assert r.status_code == 200, r.text
-        assert "claread_web_session" in client.cookies, (
-            "BFF must establish a real claread_web_session cookie"
-        )
-        r = client.get("/api/web/session")
-        assert r.status_code == 200, r.text
-        assert r.json()["state"] == "signed_in", r.text
-        yield {"client": client}
 
 
 def test_bff_ask_send_and_history_through_real_cookie(api_ctx, web_ctx, send_result):

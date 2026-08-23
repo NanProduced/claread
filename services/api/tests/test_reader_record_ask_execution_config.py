@@ -26,22 +26,23 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.services.reader_record_ask import model_options as model_options_svc
-from app.services.reader_record_ask.model_options import (
-    ReaderAskRuntimeBudgetConfig,
-    ResolvedReaderAskModelOption,
-)
 from app.services.reader_record_ask.execution_config import (
     EXECUTION_CONFIG_POLICY_VERSION,
     ReaderRecordAskExecutionSnapshot,
     ReaderRecordAskExecutionUnavailable,
     resolve_reader_record_ask_execution,
+)
+from app.services.reader_record_ask.model_options import (
+    ReaderAskRuntimeBudgetConfig,
+    ResolvedReaderAskModelOption,
 )
 
 
@@ -902,3 +903,300 @@ def test_model_settings_payload_not_described_as_safely_loggable() -> None:
 
     module_flat = re.sub(r"\s+", " ", _execution_config_source()).lower()
     assert "callers can log the dict form safely" not in module_flat
+
+
+# ---------------------------------------------------------------------------
+# Production thinking contract (config files + resolver, offline).
+# ---------------------------------------------------------------------------
+
+_API_ROOT = Path(__file__).resolve().parents[1]
+_OPTIONS_FILE = _API_ROOT / "config" / "reader-ask-model-options.json"
+_MODEL_PROFILES_FILE = _API_ROOT / "config" / "model-profiles.json"
+
+# The currently published production options. Update this tuple only when
+# the public catalog changes; the contract tests below fail-closed on any
+# option that stops resolving or stops requesting provider thinking.
+PRODUCTION_ASK_OPTION_KEYS: tuple[str, ...] = (
+    "deepseek-v4-flash",
+    "qwen-max",
+    "deepseek-pro",
+)
+
+
+def _production_config_settings() -> Settings:
+    """Settings pointing at the real production config files (resolve-only
+    usage — no model build, no key access, no network)."""
+    return Settings(
+        model_profiles_json="config/model-profiles.json",
+        reader_ask_model_options_json="config/reader-ask-model-options.json",
+    )
+
+
+def _production_catalog_payload() -> dict:
+    return json.loads(_OPTIONS_FILE.read_text(encoding="utf-8"))
+
+
+def _reader_ask_thinking_contract(
+    settings: Settings,
+    selection: Any,
+) -> Any:
+    """Resolve one option's reader_ask route and enforce the thinking
+    contract. Raises AssertionError on any violation (fail-closed)."""
+    from app.llm.router import ModelSelectionError, resolve_model_config
+
+    try:
+        config = resolve_model_config(settings, "reader_ask", selection)
+    except ModelSelectionError as exc:
+        raise AssertionError(f"reader_ask route failed to resolve: {exc}") from None
+    if config is None:
+        raise AssertionError("reader_ask route did not resolve for the option selection")
+    if not config.model_settings or not config.model_settings.thinking_enabled():
+        raise AssertionError(
+            "resolved profile does not request provider thinking "
+            f"(profile={config.profile_name!r})"
+        )
+    return config
+
+
+@pytest.mark.parametrize("option_key", PRODUCTION_ASK_OPTION_KEYS)
+def test_production_option_reader_ask_thinking_contract(option_key: str) -> None:
+    """Each published production option resolves on the reader_ask route
+    to the configured profile/model/adapter with thinking requested."""
+    from app.llm.types import ModelSelection
+
+    settings = _production_config_settings()
+    catalog = _production_catalog_payload()
+    entry = catalog["options"][option_key]
+    selection = ModelSelection.model_validate(entry["selection"])
+
+    config = _reader_ask_thinking_contract(settings, selection)
+    expected_profile = entry["selection"]["routes"]["reader_ask"]["profile"]
+    assert config.profile_name == expected_profile
+
+    profiles = json.loads(_MODEL_PROFILES_FILE.read_text(encoding="utf-8"))
+    profile_model = profiles["profiles"][expected_profile]["model"]
+    expected_model_name = profiles["models"][profile_model]["model_name"]
+    assert config.model_name == expected_model_name
+    assert config.adapter
+    # The option's declared main model matches the resolved one.
+    assert entry["selection"]["routes"]["reader_ask"]["profile"] == config.profile_name
+
+
+def test_production_options_are_exactly_the_published_set() -> None:
+    """The contract tuple tracks the published catalog (no stale probes)."""
+    catalog = _production_catalog_payload()
+    enabled = {key for key, opt in catalog["options"].items() if opt.get("enabled", True)}
+    assert set(PRODUCTION_ASK_OPTION_KEYS) == enabled
+
+
+def test_unknown_option_key_fails_closed() -> None:
+    """A key absent from the catalog raises the typed option error."""
+    settings = _three_option_settings()
+    with pytest.raises(model_options_svc.ReaderAskModelOptionError):
+        _resolve_option(settings, "not-a-real-option")
+
+
+def test_wrong_profile_fails_closed() -> None:
+    """A selection routing reader_ask to an unknown profile resolves to
+    None → the contract helper fails closed."""
+    from app.llm.types import ModelSelection
+
+    settings = _three_option_settings()
+    selection = ModelSelection(
+        routes={"reader_ask": {"profile": "no-such-profile"}}
+    )
+    with pytest.raises(AssertionError, match="failed to resolve"):
+        _reader_ask_thinking_contract(settings, selection)
+
+
+def test_reasoning_off_profile_fails_closed() -> None:
+    """A profile whose settings disable thinking violates the contract."""
+    profiles_json = json.dumps(
+        {
+            "providers": {
+                "test-provider": {
+                    "adapter": "openai_compatible",
+                    "base_url": "https://example.test/v1",
+                    "api_key": "test-key-do-not-leak",
+                }
+            },
+            "models": {
+                "off-model": {"provider": "test-provider", "model_name": "off-model"},
+            },
+            "profiles": {
+                "ask-main-thinking-off": {
+                    "model": "off-model",
+                    "model_settings": {
+                        "extra_body": {"thinking": {"type": "disabled"}}
+                    },
+                },
+            },
+        }
+    )
+    settings = Settings(model_profiles_json=profiles_json)
+    from app.llm.types import ModelSelection
+
+    selection = ModelSelection(routes={"reader_ask": {"profile": "ask-main-thinking-off"}})
+    with pytest.raises(AssertionError, match="does not request provider thinking"):
+        _reader_ask_thinking_contract(settings, selection)
+
+
+def _thinking_enabled_catalog(profile_map: dict[str, str], *, enabled: bool) -> str:
+    thinking_payload = (
+        {"thinking": {"type": "enabled"}} if enabled else {"thinking": {"type": "disabled"}}
+    )
+    return json.dumps(
+        {
+            "providers": {
+                "test-provider": {
+                    "adapter": "openai_compatible",
+                    "base_url": "https://example.test/v1",
+                    "api_key": "test-key-do-not-leak",
+                }
+            },
+            "models": {
+                f"{profile_name}__model": {
+                    "provider": "test-provider",
+                    "model_name": model_name,
+                }
+                for profile_name, model_name in profile_map.items()
+            },
+            "profiles": {
+                profile_name: {
+                    "model": f"{profile_name}__model",
+                    "model_settings": {"extra_body": thinking_payload},
+                }
+                for profile_name in profile_map
+            },
+        }
+    )
+
+
+def test_snapshot_carries_thinking_requested_true() -> None:
+    """The execution snapshot records the resolved thinking request fact."""
+    settings = Settings(
+        annotation_model_profile="annotation",
+        ask_claread_profile="ask-main-on",
+        reader_ask_replan_model_profile="ask-replan-on",
+        model_profiles_json=_thinking_enabled_catalog(
+            {
+                "annotation": "annotation-model",
+                "ask-main-on": "on-model",
+                "ask-replan-on": "on-model",
+            },
+            enabled=True,
+        ),
+        reader_ask_model_options_json=json.dumps(
+            {
+                "default_option": "on-option",
+                "options": {
+                    "on-option": {
+                        "label": "On",
+                        "selection": {
+                            "routes": {
+                                "reader_ask": {"profile": "ask-main-on"},
+                                "reader_ask_replan": {"profile": "ask-replan-on"},
+                            }
+                        },
+                    }
+                },
+            }
+        ),
+    )
+    option = _resolve_option(settings, "on-option")
+    execution = resolve_reader_record_ask_execution(option, settings=settings)
+    assert execution.snapshot is not None
+    assert execution.snapshot.thinking_requested is True
+
+
+def test_snapshot_carries_thinking_requested_false_for_off_profile() -> None:
+    """A reasoning-off profile yields thinking_requested=False — the
+    snapshot never guesses from model names, only resolved settings."""
+    settings = Settings(
+        annotation_model_profile="annotation",
+        ask_claread_profile="ask-main-off",
+        reader_ask_replan_model_profile="ask-replan-off",
+        model_profiles_json=_thinking_enabled_catalog(
+            {
+                "annotation": "annotation-model",
+                "ask-main-off": "off-model",
+                "ask-replan-off": "off-model",
+            },
+            enabled=False,
+        ),
+        reader_ask_model_options_json=json.dumps(
+            {
+                "default_option": "off-option",
+                "options": {
+                    "off-option": {
+                        "label": "Off",
+                        "selection": {
+                            "routes": {
+                                "reader_ask": {"profile": "ask-main-off"},
+                                "reader_ask_replan": {"profile": "ask-replan-off"},
+                            }
+                        },
+                    }
+                },
+            }
+        ),
+    )
+    option = _resolve_option(settings, "off-option")
+    execution = resolve_reader_record_ask_execution(option, settings=settings)
+    assert execution.snapshot is not None
+    assert execution.snapshot.thinking_requested is False
+
+
+# ---------------------------------------------------------------------------
+# RED-A (resolver layer): post-build compile failure after the model was
+# already built must surface as the typed unavailable error and hand the
+# constructed model back to the caller for cleanup — never a raw exception
+# that leaks the built (provider-client-carrying) model.
+# ---------------------------------------------------------------------------
+
+
+class _ResolverCloseTrackingModel:
+    """Minimal enter/exit recorder standing in for an owned provider model."""
+
+    def __init__(self) -> None:
+        self.enter_count = 0
+        self.exit_count = 0
+
+    async def __aenter__(self):
+        self.enter_count += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.exit_count += 1
+        return False
+
+
+class TestResolverPostBuildLifecycle:
+    def test_post_build_failure_raises_typed_unavailable_carries_failed_model(self) -> None:
+        settings = _three_option_settings()
+        option = _resolve_option(settings, "deepseek-v4-flash")
+        tracker = _ResolverCloseTrackingModel()
+        module = "app.services.reader_record_ask.execution_config"
+
+        with (
+            patch(
+                f"{module}.build_model_for_route",
+                return_value=(tracker, MagicMock()),
+            ),
+            patch(
+                f"{module}._resolve_model_settings",
+                side_effect=RuntimeError("post-build failure"),
+            ),
+        ):
+            with pytest.raises(ReaderRecordAskExecutionUnavailable) as excinfo:
+                resolve_reader_record_ask_execution(option, settings=settings)
+
+        # Typed fail-closed contract — no raw exception text leakage.
+        assert excinfo.value.option_key == "deepseek-v4-flash"
+        assert excinfo.value.reason == "model_compile_failed"
+        assert "post-build failure" not in str(excinfo.value)
+        # The already-built model is handed back for caller cleanup.
+        assert getattr(excinfo.value, "_failed_model", None) is tracker
+        # The sync resolver itself never enters/exits the model.
+        assert tracker.enter_count == 0
+        assert tracker.exit_count == 0

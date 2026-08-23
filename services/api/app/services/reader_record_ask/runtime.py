@@ -118,6 +118,11 @@ class ReadingRecordAskRunResult:
     # Terminal-only aggregate; production_stream logs it but never serializes
     # it into SSE, completed DTOs, history, or persistence JSON.
     web_search_turn_observation: WebSearchTurnObservation | None = None
+    # Provider usage facts from the same agent run (public API only).
+    # ``None`` means the provider did not report usage — never fabricated.
+    # Persisted on ``reader_ask_turn_runs.usage_summary_json`` and mirrored
+    # into one invocation-keyed ``ai_usage_events`` row by the stream.
+    usage_summary: dict[str, Any] | None = None
 
 
 async def run_reading_record_ask(
@@ -474,4 +479,5 @@ async def run_reading_record_ask(
         baseline_context=baseline,
         web_search_calls=deps.web_search_calls,
         web_search_turn_observation=web_search_turn_observation,
+        usage_summary=streamed.usage_summary,
     )

@@ -70,7 +70,7 @@ import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
 import { AssistantMessage } from "@/components/reader/ask-chat/AssistantMessage";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
 import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestions";
-import { LearnerReasoningPanel } from "@/components/reader/ask-chat/LearnerReasoningPanel";
+import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
 import { TurnProcessDisclosure } from "@/components/reader/ask-chat/turn-process";
 import {
   readerCommandControl,
@@ -889,19 +889,18 @@ function MessageBubble({
                     key={`${message.id}-${block.kind}-${index}`}
                     className="px-0.5"
                     reasoning={
-                      <LearnerReasoningPanel
+                      <ReasoningPanel
                         className="w-full max-w-[38rem]"
-                        text={message.learner_reasoning_text}
-                        status={
-                          message.status === "streaming"
-                            ? message.learner_reasoning_status === "streaming"
-                              ? "streaming"
-                              : message.learner_reasoning_text
-                                ? "streaming"
-                                : null
-                            : message.learner_reasoning_text
-                              ? "completed"
-                              : null
+                        reasoningMd={
+                          message.reasoning_md ?? message.learner_reasoning_text
+                        }
+                        reasoningStatus={
+                          message.reasoning_status ??
+                          (message.learner_reasoning_text ? "completed" : null)
+                        }
+                        reasoningTruncated={message.reasoning_truncated === true}
+                        reasoningVisibilityStatus={
+                          message.reasoning_visibility_status
                         }
                       />
                     }

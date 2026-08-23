@@ -127,6 +127,37 @@ class DirectDeepSeekChatModel(OpenAIChatModel):
             return tools, None
         return tools, tool_choice
 
+    def prepare_request(  # type: ignore[override]
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Reentrant, per-request output-cap wire-name seam.
+
+        DeepSeek's official API documents ``max_tokens`` — and its
+        integration notes explicitly say NOT ``max_completion_tokens``,
+        the wire name PydanticAI's OpenAI mapping sends by default. With
+        the default name the project's output cap has no wire-level
+        guarantee for DeepSeek (it may be rejected or silently ignored).
+
+        This seam moves a present project ``max_tokens`` setting into
+        ``extra_body["max_tokens"]`` after the base merge: the OpenAI SDK
+        merges ``extra_body`` into the top-level request JSON (official
+        wire name delivered) while the ``max_completion_tokens`` argument
+        stays OMIT (never sent alongside). Stateless — copies the dicts,
+        never mutates the caller's settings or shared instance state.
+        """
+        settings, request_params = super().prepare_request(
+            model_settings, model_request_parameters
+        )
+        if not settings or "max_tokens" not in settings:
+            return settings, request_params
+        merged: dict[str, Any] = dict(settings)
+        extra_body: dict[str, Any] = dict(merged.get("extra_body") or {})
+        extra_body.setdefault("max_tokens", merged.pop("max_tokens"))
+        merged["extra_body"] = extra_body
+        return merged, request_params  # type: ignore[return-value]
+
 
 def deepseek_v4_openai_profile() -> OpenAIModelProfile:
     """Profile ensuring reasoning_content parse + send-back for DeepSeek V4.

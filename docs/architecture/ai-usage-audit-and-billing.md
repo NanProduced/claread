@@ -68,7 +68,7 @@
 | Daily Reader scoring | `system_internal` | `internal_only` | `daily_reader_scoring` | 候选文章 LLM 评分 |
 | Daily Reader workflow / retry | `system_internal` | `internal_only` | `daily_reader_pipeline` | 精读正文生成与重跑 |
 
-Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event_id` 落账）已预留字段，实际写账接入尚未实现。
+Ask 链路的 provider usage 审计已接入生产链：usage 来自同一次主 agent run 的 PydanticAI 公开 API（两个 agent 入口共享同一个 `RunUsage` accumulator，含 tool round / output-validator retry 的 run 级聚合），规范化后写入 turn run `usage_summary_json`，并以 invocation key `reader_ask:turn:<turn_run_id>` 幂等落一条 `ai_usage_events`（`user_billed` / `user_points`）；turn run `usage_event_id` 指向该记录，regenerate 产生新 turn run 与新事件，同 key 不同 observation 判 `conflict` 时只保留 summary、不链接旧 event id。终态失败/取消的 turn 仍保留 provider 已确认的部分 usage（`metadata.usage_completeness=partial`）；typed 终态（context_stale / invalid_citations / cancelled 等）原样进入 `metadata.final_status` 与 `error_code`；provider 未报告 usage 时保持 `NULL` 不伪造。每条 usage event metadata 同时携带非敏感 reasoning 观测（`reasoning_requested` / `reasoning_projection_enabled` / `reasoning_observed` / `reasoning_outcome` / `reasoning_char_count` / `projection_policy_version`，outcome 为六值枚举）；无 usage event 的终态以固定脱敏日志记录相同观测。用户积分预扣、差额结算与退款尚未实现：`billed_points` 保持 `NULL`（不代表 token usage 缺失），成本以 `metadata_json.computed_cost_points` 审计记录。
 
 ## 计费策略现状
 
@@ -82,7 +82,7 @@ Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event
   - policy: `analysis_weighted_tokens_v1`
   - 计费配置按 Ask model option 挂载（`price_multiplier` 来自 `reader-ask-model-options.json`）
   - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
-  - turn run 已预留 `usage_summary_json` / `usage_event_id` 字段；实际预扣/结算写账接入尚未实现
+  - provider usage 捕获、usage event、turn run 关联与成本测算已完成（`billed_points=NULL` 仅为未结算标记）；实际预扣/差额结算/退款写账接入尚未实现
 
 `analysis_full` 与 `analysis_weighted_tokens_v1` 的加权公式保留为通用计费策略；Reader orchestration worker 当前按 `system_internal` / `internal_only` 只审计不结算，用户侧计费口径待统一监测与计费适配收口。
 

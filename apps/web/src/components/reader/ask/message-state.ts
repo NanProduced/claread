@@ -12,15 +12,11 @@ import {
 } from "./agentic-activity";
 import { formatStreamErrorMessage } from "./ask-error-messages";
 import {
-  EMPTY_LEARNER_REASONING_STATE,
-  learnerReasoningMessagePatch,
-  reduceLearnerReasoningSnapshot,
-  type ActiveRunIdentity,
-  type LearnerReasoningState,
-} from "./learner-reasoning";
-import {
   isReaderAskAgenticCompletedPayload,
   isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticReasoningCompletedPayload,
+  isReaderAskAgenticReasoningDeltaPayload,
+  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
   isReaderAskContextCompactionPayload,
@@ -29,7 +25,6 @@ import {
   isReaderAskAgenticAnswerBlockList,
   isReaderAskAgenticCitationList,
   isReaderAskAgenticFinalStatus,
-  isReaderAskLearnerReasoningSnapshotPayload,
   isReaderAskWebSearchSummary,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
 } from "@/types/api/reader-ask";
@@ -273,13 +268,14 @@ export function createSseMessageHandler(
   } | null = null;
   // identity of the active run, captured when agentic.run_started
   // is accepted. Every v2 event that can mutate the turn must match this
-  // identity. Provider reasoning events are intentionally not part of the
-  // public v2 contract and are ignored at this boundary.
+  // identity, including the user-visible provider reasoning stream.
   let activeRunIdentity: {
     messageId: string;
     threadId: string;
     turnRunId: string;
   } | null = null;
+  let reasoningSequence: number | null = null;
+  let reasoningSealed = false;
   // generation_id tracking for message.preview_reset /
   // message.delta attribution. ``null`` means no preview_reset has been
   // accepted yet — the first generation (generation_id=0) is implicitly
@@ -315,6 +311,7 @@ export function createSseMessageHandler(
     if (!matchesActiveRunIdentity(payload)) {
       return;
     }
+    reasoningSealed = true;
     // Capture the streaming temp id BEFORE reassignment so we can still find it.
     const previousMessageId = currentMessageId;
     if (payload.message_id) {
@@ -377,16 +374,18 @@ export function createSseMessageHandler(
           supplement_candidates: [],
           persisted_supplements: [],
           follow_up_suggestions: [],
-          // Public v2 never stores or rehydrates provider raw reasoning.
-          reasoning_md: null,
-          reasoning_status: null,
-          reasoning_truncated: null,
-          // Settle learner summary: keep last replace snapshot as completed.
-          learner_reasoning_text: message.learner_reasoning_text ?? null,
-          learner_reasoning_status: message.learner_reasoning_text
-            ? "completed"
-            : null,
-          learner_reasoning_stage: message.learner_reasoning_stage ?? null,
+          reasoning_md: message.reasoning_md ?? null,
+          reasoning_status:
+            message.reasoning_status === "streaming"
+              ? "completed"
+              : message.reasoning_status ?? null,
+          reasoning_truncated: message.reasoning_truncated ?? null,
+          reasoning_visibility_status:
+            message.reasoning_visibility_status ?? null,
+          learner_reasoning_text: null,
+          learner_reasoning_status: null,
+          learner_reasoning_stage: null,
+          learner_reasoning_sequence: null,
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
@@ -477,10 +476,14 @@ export function createSseMessageHandler(
           // half answer visible in the bubble.
           content_md: message.content_md,
           provisional_content_md: null,
-          // Public v2 never stores or rehydrates provider reasoning.
-          reasoning_md: null,
-          reasoning_status: null,
-          reasoning_truncated: null,
+          reasoning_md: message.reasoning_md ?? null,
+          reasoning_status:
+            message.reasoning_md || message.reasoning_status === "streaming"
+              ? "interrupted"
+              : null,
+          reasoning_truncated: message.reasoning_truncated ?? null,
+          reasoning_visibility_status:
+            message.reasoning_visibility_status ?? null,
           // Failed/cancelled turns never keep learner reasoning in cold history;
           // drop hot provisional summary as well (silent, no error UI).
           learner_reasoning_text: null,
@@ -587,9 +590,9 @@ export function createSseMessageHandler(
         };
         activeGenerationId = 0;
         answerGenerationStarted = null;
-        // Clear any stale reasoning-shaped fields before the v2 turn starts.
-        // The v2 lane exposes only public activity steps, never provider
-        // reasoning, even if a malformed or legacy payload is encountered.
+        reasoningSequence = null;
+        reasoningSealed = false;
+        // A retry owns a fresh stream; clear the previous attempt first.
         commitStreamingMessageUpdate(
           (messages) =>
             messages.map((message) =>
@@ -599,6 +602,11 @@ export function createSseMessageHandler(
                     reasoning_md: null,
                     reasoning_status: null,
                     reasoning_truncated: null,
+                    reasoning_visibility_status: null,
+                    learner_reasoning_text: null,
+                    learner_reasoning_status: null,
+                    learner_reasoning_stage: null,
+                    learner_reasoning_sequence: null,
                   }
                 : message,
             ),
@@ -639,60 +647,96 @@ export function createSseMessageHandler(
       return;
     }
 
-    // Provider raw reasoning is never a public v2 event. Legacy names stay
-    // fail-closed. Learner summaries use agentic.learner_reasoning.*.
-    if (
-      event.event === "agentic.reasoning.started" ||
-      event.event === "agentic.reasoning.delta" ||
-      event.event === "agentic.reasoning.completed"
-    ) {
+    if (event.event === "agentic.reasoning.started") {
+      if (
+        agenticTerminalHandled ||
+        reasoningSealed ||
+        reasoningSequence !== null ||
+        !isReaderAskAgenticReasoningStartedPayload(event.data) ||
+        !matchesActiveRunIdentity(event.data)
+      ) {
+        return;
+      }
+      const payload = event.data;
+      reasoningSequence = 0;
+      commitStreamingMessageUpdate(
+        (messages) =>
+          messages.map((message) =>
+            message.id === currentMessageId || message.id === payload.message_id
+              ? {
+                  ...message,
+                  reasoning_md: "",
+                  reasoning_status: "streaming",
+                  reasoning_truncated: false,
+                  reasoning_visibility_status: null,
+                }
+              : message,
+          ),
+        true,
+      );
+      return;
+    }
+
+    if (event.event === "agentic.reasoning.delta") {
+      if (
+        agenticTerminalHandled ||
+        reasoningSealed ||
+        reasoningSequence == null ||
+        !isReaderAskAgenticReasoningDeltaPayload(event.data) ||
+        !matchesActiveRunIdentity(event.data) ||
+        event.data.seq !== reasoningSequence + 1
+      ) {
+        return;
+      }
+      const payload = event.data;
+      reasoningSequence = payload.seq;
+      commitStreamingMessageUpdate((messages) =>
+        messages.map((message) =>
+          message.id === currentMessageId || message.id === payload.message_id
+            ? {
+                ...message,
+                reasoning_md: `${message.reasoning_md ?? ""}${payload.delta}`,
+                reasoning_status: "streaming",
+              }
+            : message,
+        ),
+      );
+      return;
+    }
+
+    if (event.event === "agentic.reasoning.completed") {
+      if (
+        agenticTerminalHandled ||
+        reasoningSealed ||
+        reasoningSequence == null ||
+        !isReaderAskAgenticReasoningCompletedPayload(event.data) ||
+        !matchesActiveRunIdentity(event.data) ||
+        event.data.seq !== reasoningSequence + 1
+      ) {
+        return;
+      }
+      const payload = event.data;
+      reasoningSequence = payload.seq;
+      reasoningSealed = true;
+      commitStreamingMessageUpdate(
+        (messages) =>
+          messages.map((message) =>
+            message.id === currentMessageId || message.id === payload.message_id
+              ? {
+                  ...message,
+                  reasoning_status: payload.has_content ? "completed" : null,
+                  reasoning_truncated: payload.truncated,
+                  reasoning_visibility_status: payload.visibility_status,
+                }
+              : message,
+          ),
+        true,
+      );
       return;
     }
 
     if (event.event === "agentic.learner_reasoning.snapshot") {
-      // Requires activeRunIdentity (from agentic.run_started) — never
-      // contextCompactionIdentity. Production path uses the shared reducer.
-      if (!isReaderAskLearnerReasoningSnapshotPayload(event.data)) {
-        return;
-      }
-      if (agenticTerminalHandled) {
-        return;
-      }
-      const payload = event.data;
-      updateMessage((messages) =>
-        messages.map((message) => {
-          if (
-            message.id !== currentMessageId &&
-            message.id !== payload.message_id
-          ) {
-            return message;
-          }
-          if (message.status !== "streaming" && message.status !== "pending") {
-            return message;
-          }
-          const prev: LearnerReasoningState = {
-            ...EMPTY_LEARNER_REASONING_STATE,
-            text: message.learner_reasoning_text ?? null,
-            status: message.learner_reasoning_status ?? null,
-            stage: message.learner_reasoning_stage ?? null,
-            sequence: message.learner_reasoning_sequence ?? 0,
-            revision: 0,
-          };
-          const next = reduceLearnerReasoningSnapshot(
-            prev,
-            payload,
-            activeRunIdentity
-          );
-          // No accept (missing identity / foreign / order / invalid).
-          if (next.sequence === prev.sequence && next.text === prev.text) {
-            return message;
-          }
-          return {
-            ...message,
-            ...learnerReasoningMessagePatch(next),
-          };
-        })
-      );
+      // Retired projector event: never open a second live reasoning lane.
       return;
     }
 
@@ -974,6 +1018,18 @@ function normalizeReaderAskMessages(
     const finalStatus = isAssistantMessage && isReaderAskAgenticFinalStatus(message.final_status)
       ? message.final_status
       : null;
+    const reasoningText =
+      isCanonicalV2Assistant &&
+      typeof message.reasoning_md === "string" &&
+      message.reasoning_md.trim()
+        ? message.reasoning_md
+        : null;
+    const reasoningVisibility =
+      message.reasoning_visibility_status === "complete" ||
+      message.reasoning_visibility_status === "truncated" ||
+      message.reasoning_visibility_status === "blocked"
+        ? message.reasoning_visibility_status
+        : null;
 
     // Non-ok terminals never keep citations or web-search summary (matches
     // hot applyAgenticTerminal — a terminal turn did not produce a completed
@@ -1004,11 +1060,17 @@ function normalizeReaderAskMessages(
       // Article-RAG is not a v2 browser surface. Drop any stale persisted
       // sidecar instead of allowing it to survive through object spread.
       article_rag: null,
-      // Public v2 never hydrates legacy provider reasoning. Learner summary
-      // is restored only when the backend policy-gated field is present.
-      reasoning_md: null,
-      reasoning_status: null,
-      reasoning_truncated: null,
+      // The backend already validated and persisted the exact text that was
+      // published to this user; preserve whitespace on cold restore.
+      reasoning_md: reasoningText,
+      reasoning_status: reasoningText
+        ? finalStatus != null && finalStatus !== "ok"
+          ? "interrupted"
+          : "completed"
+        : null,
+      reasoning_truncated:
+        reasoningText && uiState.reasoning_truncated === true ? true : null,
+      reasoning_visibility_status: reasoningText ? reasoningVisibility : null,
       learner_reasoning_text:
         isAssistantMessage &&
         typeof message.learner_reasoning_text === "string" &&

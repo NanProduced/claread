@@ -450,9 +450,7 @@ export async function consumeReaderAskSse(
  *
  * Mapping (frontend approximation of backend phases):
  *
- * - ``agentic.learner_reasoning.snapshot`` → ``first_reasoning``. The
- *   learner snapshot is the sole public reasoning marker; provider/raw
- *   reasoning events never drive this metric.
+ * - ``agentic.reasoning.started`` → ``first_reasoning``.
  * - ``message.delta`` → ``first_answer_delta`` / ``last_answer_delta``.
  * - a non-started ``agentic.progress`` row with phase
  *   ``validating_evidence`` → ``validation_done``.
@@ -469,7 +467,7 @@ function markEventMetrics(
     return;
   }
   switch (event.event) {
-    case "agentic.learner_reasoning.snapshot":
+    case "agentic.reasoning.started":
       metrics.markFirstReasoning();
       break;
     case "message.delta":

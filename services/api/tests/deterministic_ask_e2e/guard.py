@@ -5,8 +5,8 @@ turn (or the API lifespan) could touch, at the transport level:
 
 - ALL outbound HTTP: ``httpx.AsyncClient.send`` / ``httpx.Client.send`` —
   every request the openai SDK (DeepSeek/Moonshot/MiniMax/DashScope
-  OpenAI-compatible main lane + learner projector) or the Web Search
-  backends can issue funnels through ``send``;
+  OpenAI-compatible main lane) or the Web Search backends can issue
+  funnels through ``send``;
 - DashScope native SDK entry points: ``AioGeneration`` / ``Generation``
   (main model) and ``TextEmbedding`` / ``TextReRank`` (article RAG),
   both top-level and on the repo's ``app.infra`` / ``app.llm`` module

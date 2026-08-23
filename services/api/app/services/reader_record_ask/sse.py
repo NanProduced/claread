@@ -23,9 +23,9 @@ EVENT_AGENTIC_TERMINAL = "agentic.terminal"
 # on the legacy reader_ask path); the agentic path no longer maps analysis
 # phase events onto reasoning lifecycle signals — progress and reasoning
 # are separate channels.
-# Learner reasoning summary. Snapshots are replace-semantics only — no empty
-# started shell and no provider chain-of-thought event family.
-EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT = "agentic.learner_reasoning.snapshot"
+EVENT_AGENTIC_REASONING_STARTED = "agentic.reasoning.started"
+EVENT_AGENTIC_REASONING_DELTA = "agentic.reasoning.delta"
+EVENT_AGENTIC_REASONING_COMPLETED = "agentic.reasoning.completed"
 # Thread-memory lifecycle. These always precede reasoning.started for a turn.
 EVENT_CONTEXT_COMPACTION_STARTED = "context.compaction.started"
 EVENT_CONTEXT_COMPACTION_COMPLETED = "context.compaction.completed"

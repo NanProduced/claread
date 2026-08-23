@@ -111,6 +111,10 @@ class ReaderRecordAskExecutionUnavailable(RuntimeError):
         super().__init__(f"execution_unavailable option={option_key}: {reason}")
         self.option_key = option_key
         self.reason = reason
+        # Server-internal reference to a model that was already built
+        # when the failure occurred, so the async caller can close it.
+        # Never part of the message, never logged, never on the wire.
+        self._failed_model: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +189,22 @@ class ReaderRecordAskExecutionSnapshot(BaseModel):
     # ``used_fallback`` mirrors ResolvedReaderAskModelOption.used_fallback
     # so observers can tell a persisted default from an explicit choice.
     used_fallback: bool = False
+    # Audit billing echo from the selected option's billing config
+    # (``price_multiplier`` + policy identity). Safe to persist on usage
+    # events / logs — these are public product pricing facts, not secrets.
+    # Defaults mirror DEFAULT_READER_ASK_BILLING_CONFIG so snapshots built
+    # without an option (tests) keep the standard reader-ask policy.
+    price_multiplier: float = Field(default=1.0, gt=0.0)
+    billing_policy_version: str | None = Field(
+        default="analysis_weighted_tokens_v1",
+        min_length=1,
+        max_length=64,
+    )
+    # Resolved provider-thinking request fact, from the resolved profile's
+    # ``model_settings.thinking_enabled()`` — never guessed from model
+    # names, never parsed from raw provider payloads. Feeds the
+    # non-sensitive reasoning observation on usage events / logs.
+    thinking_requested: bool = False
     # G0-b6: web search capability echo (safe names only — no API key,
     # no provider payload). ``web_search_enabled_for_turn`` mirrors
     # :attr:`ResolvedWebSearchCapability.enabled_for_turn` so an operator
@@ -214,6 +234,36 @@ def _budget_fingerprint(budget: ReaderAskRuntimeBudgetConfig) -> str:
         f"buf={budget.prompt_buffer_tokens}"
     ).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+@dataclass(slots=True)
+class _ModelOwnership:
+    """Explicit single-owner handoff state for the compiled model.
+
+    The resolver builds the provider model and owns it until delivery.
+    The service stream generator claims it on start (its AsyncExitStack
+    performs the only enter/exit pair on the streaming path); a pre-
+    first-byte response close releases it only while unclaimed. Every
+    transition is idempotent, so each path closes the model at most once.
+    """
+
+    claimed: bool = False
+    released: bool = False
+
+
+async def _close_owned_model(model: Any) -> None:
+    """Close an owned model via the enter/exit pair (client shutdown).
+
+    Failures are swallowed with a fixed, sanitized log line — never the
+    model repr, URL, headers, tokens, or exception payload.
+    """
+    if not (hasattr(model, "__aenter__") and hasattr(model, "__aexit__")):
+        return
+    try:
+        await model.__aenter__()
+        await model.__aexit__(None, None, None)
+    except Exception:  # noqa: BLE001 — cleanup must never mask the caller
+        logger.warning("reader_record_ask model close failed code=model_close_failed")
 
 
 @dataclass(slots=True, frozen=True)
@@ -277,6 +327,12 @@ class ReaderRecordAskExecutionConfig:
     # persisted model option + web_search_mode so the backend identity
     # is deterministic.
     web_search_backend: WebSearchBackend | None = field(default=None, repr=False)
+    # Explicit model ownership handoff state (see :class:`_ModelOwnership`).
+    # Mutable by design; excluded from repr/eq — it is lifecycle state,
+    # not part of the compiled execution identity.
+    _ownership: _ModelOwnership = field(
+        default_factory=_ModelOwnership, repr=False, compare=False
+    )
     # R1A: thread-memory compactor budget placeholder. ``None`` when
     # ``settings.reader_record_ask_memory_enabled`` is False (default —
     # the assembly path behaves exactly as today). When non-None,
@@ -301,6 +357,28 @@ class ReaderRecordAskExecutionConfig:
             return None
         payload = copy.deepcopy(self.model_settings_payload)
         return ModelSettings(payload)  # type: ignore[arg-type]
+
+    def claim_model(self) -> bool:
+        """Stream generator claims ownership before entering the model.
+
+        Returns ``False`` when the model was already claimed or released
+        (double-start guard — the caller must not enter it again).
+        """
+        if self._ownership.claimed or self._ownership.released:
+            return False
+        self._ownership.claimed = True
+        return True
+
+    async def release_model(self) -> None:
+        """Idempotent close for the unclaimed model (pre-first-byte close).
+
+        No-op once the generator claimed the model — its AsyncExitStack
+        is then the sole exit path — and no-op on repeat calls.
+        """
+        if self._ownership.claimed or self._ownership.released:
+            return
+        self._ownership.released = True
+        await _close_owned_model(self.model)
 
 
 def _resolve_model_settings(
@@ -473,79 +551,106 @@ def resolve_reader_record_ask_execution(
             reason="model_unconfigured",
         )
 
-    budget = option.runtime_budget
-    payload, merged_settings = _resolve_model_settings(
-        base=model_config.model_settings,
-        max_output_tokens=budget.max_output_tokens,
-    )
-    usage_limits = _resolve_usage_limits(
-        max_turn_output_tokens=budget.max_turn_output_tokens,
-    )
+    # Fail-closed fence: everything after a successful model build is compiled
+    # inside this try. On any post-build failure the already-built model
+    # is attached to the typed error for caller cleanup — it never leaks
+    # behind a raw exception, and no exception text reaches the wire.
+    try:
+        budget = option.runtime_budget
+        payload, merged_settings = _resolve_model_settings(
+            base=model_config.model_settings,
+            max_output_tokens=budget.max_output_tokens,
+        )
+        usage_limits = _resolve_usage_limits(
+            max_turn_output_tokens=budget.max_turn_output_tokens,
+        )
 
-    # G3-capability + backend produced by the SAME registry resolution
-    # call via the canonical :func:`resolve_web_search_binding` helper.
-    # The helper is the single source of truth — callers MUST NOT
-    # re-derive capability from ``model_config`` separately, and MUST NOT
-    # construct a second production registry instance. When
-    # ``web_search_mode="disabled"`` the binding is short-circuited at
-    # the resolver layer (capability=None, backend=None).
-    if web_search_mode == "disabled":
-        web_search_capability: ResolvedWebSearchCapability | None = None
-        web_search_backend: WebSearchBackend | None = None
-    else:
-        binding = web_search_common.resolve_web_search_binding(model_config)
-        web_search_capability = binding.capability
-        web_search_backend = binding.backend
+        # G3-capability + backend produced by the SAME registry resolution
+        # call via the canonical :func:`resolve_web_search_binding` helper.
+        # The helper is the single source of truth — callers MUST NOT
+        # re-derive capability from ``model_config`` separately, and MUST NOT
+        # construct a second production registry instance. When
+        # ``web_search_mode="disabled"`` the binding is short-circuited at
+        # the resolver layer (capability=None, backend=None).
+        if web_search_mode == "disabled":
+            web_search_capability: ResolvedWebSearchCapability | None = None
+            web_search_backend: WebSearchBackend | None = None
+        else:
+            binding = web_search_common.resolve_web_search_binding(model_config)
+            web_search_capability = binding.capability
+            web_search_backend = binding.backend
 
-    snapshot = ReaderRecordAskExecutionSnapshot(
-        option_key=option.key,
-        provider=model_config.provider,
-        model_name=model_config.model_name,
-        profile_name=model_config.profile_name,
-        adapter=model_config.adapter,
-        max_output_tokens=budget.max_output_tokens,
-        max_turn_output_tokens=budget.max_turn_output_tokens,
-        max_input_tokens=budget.max_input_tokens,
-        prompt_buffer_tokens=budget.prompt_buffer_tokens,
-        policy_version=EXECUTION_CONFIG_POLICY_VERSION,
-        budget_fingerprint=_budget_fingerprint(budget),
-        used_fallback=option.used_fallback,
-        web_search_enabled_for_turn=(
-            web_search_capability is not None
-            and web_search_capability.enabled_for_turn
-        ),
-        web_search_provider=(
-            web_search_capability.provider if web_search_capability is not None else None
-        ),
-        web_search_protocol=(
-            web_search_capability.protocol if web_search_capability is not None else None
-        ),
-        web_search_policy_version=(
-            web_search_capability.policy_version
-            if web_search_capability is not None
-            else None
-        ),
-    )
+        snapshot = ReaderRecordAskExecutionSnapshot(
+            option_key=option.key,
+            provider=model_config.provider,
+            model_name=model_config.model_name,
+            profile_name=model_config.profile_name,
+            adapter=model_config.adapter,
+            max_output_tokens=budget.max_output_tokens,
+            max_turn_output_tokens=budget.max_turn_output_tokens,
+            max_input_tokens=budget.max_input_tokens,
+            prompt_buffer_tokens=budget.prompt_buffer_tokens,
+            policy_version=EXECUTION_CONFIG_POLICY_VERSION,
+            budget_fingerprint=_budget_fingerprint(budget),
+            used_fallback=option.used_fallback,
+            price_multiplier=option.billing.price_multiplier,
+            billing_policy_version=option.billing.billing_policy_version,
+            thinking_requested=(
+                bool(model_config.model_settings.thinking_enabled())
+                if model_config.model_settings is not None
+                else False
+            ),
+            web_search_enabled_for_turn=(
+                web_search_capability is not None
+                and web_search_capability.enabled_for_turn
+            ),
+            web_search_provider=(
+                web_search_capability.provider if web_search_capability is not None else None
+            ),
+            web_search_protocol=(
+                web_search_capability.protocol if web_search_capability is not None else None
+            ),
+            web_search_policy_version=(
+                web_search_capability.policy_version
+                if web_search_capability is not None
+                else None
+            ),
+        )
 
-    return ReaderRecordAskExecutionConfig(
-        option_key=option.key,
-        model=model,
-        resolved_model_config=model_config,
-        model_settings_payload=payload,
-        usage_limits=usage_limits,
-        runtime_budget=budget,
-        snapshot=snapshot,
-        web_search_capability=web_search_capability,
-        web_search_backend=web_search_backend,
-        # R1A: compile compactor budget placeholder when memory lane is
-        # enabled. R1A does NOT invoke the compactor — will consume
-        # this config to build and call the compactor agent.
-        compactor_budget=(
-            CompactorBudgetConfig()
-            if cfg.reader_record_ask_memory_enabled
-            else None
-        ),
-    )
+        return ReaderRecordAskExecutionConfig(
+            option_key=option.key,
+            model=model,
+            resolved_model_config=model_config,
+            model_settings_payload=payload,
+            usage_limits=usage_limits,
+            runtime_budget=budget,
+            snapshot=snapshot,
+            web_search_capability=web_search_capability,
+            web_search_backend=web_search_backend,
+            # R1A: compile compactor budget placeholder when memory lane is
+            # enabled. R1A does NOT invoke the compactor — will consume
+            # this config to build and call the compactor agent.
+            compactor_budget=(
+                CompactorBudgetConfig()
+                if cfg.reader_record_ask_memory_enabled
+                else None
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — fail closed, no leakage
+        logger.warning(
+            "reader_record_ask execution resolve failed: option=%s "
+            "error_type=%s",
+            option.key,
+            type(exc).__name__,
+        )
+        unavailable = ReaderRecordAskExecutionUnavailable(
+            option_key=option.key,
+            reason="model_compile_failed",
+        )
+        # Hand the already-built model back so the async caller closes
+        # it exactly once (the sync resolver cannot await the close).
+        unavailable._failed_model = model
+        raise unavailable from None
 
 
 __all__ = [

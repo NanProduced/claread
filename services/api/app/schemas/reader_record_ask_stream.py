@@ -155,9 +155,7 @@ class ReaderRecordAskEvidenceItem(BaseModel):
         # rag_citation presence rules.
         if self.kind == "search_hit":
             if self.rag_citation is None:
-                raise ValueError(
-                    "search_hit evidence requires a complete rag_citation"
-                )
+                raise ValueError("search_hit evidence requires a complete rag_citation")
         else:
             if self.rag_citation is not None:
                 raise ValueError(
@@ -223,9 +221,7 @@ class ReaderRecordAskCompletedDTO(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        EXECUTION_VERSION_AGENTIC_V2
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = EXECUTION_VERSION_AGENTIC_V2
     final_status: Literal["ok"] = "ok"
     answer_text: str
     answer_blocks: list[PublicAnswerBlock] = Field(default_factory=list)
@@ -252,9 +248,7 @@ class ReaderRecordAskTerminalDTO(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        EXECUTION_VERSION_AGENTIC_V2
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = EXECUTION_VERSION_AGENTIC_V2
     final_status: FinalStatus
     message_id: str | None = None
     thread_id: str | None = None
@@ -265,9 +259,7 @@ class ReaderRecordAskTerminalDTO(BaseModel):
 class ReaderRecordAskRunStartedDTO(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        EXECUTION_VERSION_AGENTIC_V2
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = EXECUTION_VERSION_AGENTIC_V2
     message_id: str
     thread_id: str
     turn_run_id: str
@@ -290,9 +282,7 @@ class ReaderRecordAskProgressDTO(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        EXECUTION_VERSION_AGENTIC_V2
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = EXECUTION_VERSION_AGENTIC_V2
     sequence: int = Field(ge=1)
     phase: ProgressPhase
     activity: ProgressActivity
@@ -409,12 +399,14 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
+    reasoning_md: str | None = None
+    reasoning_status: Literal["idle", "streaming", "completed", "interrupted"] | None = None
+    reasoning_truncated: bool | None = None
+    reasoning_visibility_status: Literal["complete", "truncated", "blocked"] | None = None
     # Public learner summary fields.
     learner_reasoning_text: str | None = None
     learner_reasoning_status: Literal["streaming", "completed"] | None = None
-    learner_reasoning_stage: (
-        Literal["analyzing", "article", "web", "synthesizing"] | None
-    ) = None
+    learner_reasoning_stage: Literal["analyzing", "article", "web", "synthesizing"] | None = None
     usage_event_id: str | None = None
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     execution_version: Literal["reader_record_ask_agentic_v2"] | None = None

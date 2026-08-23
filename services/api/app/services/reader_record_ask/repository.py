@@ -335,7 +335,9 @@ class ReaderRecordAskRepository:
         return {
             "id": str(row["id"]),
             "user_id": str(row["user_id"]),
-            "record_id": str(row["reading_record_id"]) if row["reading_record_id"] is not None else None,
+            "record_id": str(row["reading_record_id"])
+            if row["reading_record_id"] is not None
+            else None,
             "record_scope": "reading_record" if row["reading_record_id"] is not None else None,
             "reading_record_id": (
                 str(row["reading_record_id"]) if row["reading_record_id"] is not None else None
@@ -657,6 +659,8 @@ class ReaderRecordAskRepository:
         resolved_evidence: list[dict[str, Any]],
         final_status: str = "ok",
         reasoning_projection: dict[str, Any] | None = None,
+        usage_summary: dict[str, Any] | None = None,
+        usage_event_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Idempotent success-terminal write.
 
@@ -703,6 +707,8 @@ class ReaderRecordAskRepository:
                             user_visible_output_json = $3::jsonb,
                             resolved_evidence_json = $4::jsonb,
                             reasoning_projection_json = $6::jsonb,
+                            usage_summary_json = $7::jsonb,
+                            usage_event_id = $8,
                             completed_at = $5,
                             updated_at = $5
                         WHERE id = $1 AND status = 'streaming'
@@ -710,6 +716,8 @@ class ReaderRecordAskRepository:
                                   user_visible_output_json,
                                   resolved_evidence_json,
                                   reasoning_projection_json,
+                                  usage_summary_json,
+                                  usage_event_id,
                                   envelope_fingerprint,
                                   execution_version
                         """,
@@ -721,6 +729,10 @@ class ReaderRecordAskRepository:
                         jsonb_param(reasoning_projection)
                         if reasoning_projection is not None
                         else None,
+                        jsonb_param(usage_summary)
+                        if usage_summary is not None
+                        else None,
+                        usage_event_id,
                     )
                     if owns_message
                     else None
@@ -793,6 +805,8 @@ class ReaderRecordAskRepository:
                 "user_visible_output_json": None,
                 "resolved_evidence_json": None,
                 "reasoning_projection_json": None,
+                "usage_summary_json": None,
+                "usage_event_id": None,
                 "envelope_fingerprint": winning.get("envelope_fingerprint"),
                 "execution_version": winning.get("execution_version")
                 or EXECUTION_VERSION_AGENTIC_V2,
@@ -814,6 +828,10 @@ class ReaderRecordAskRepository:
             "user_visible_output_json": row["user_visible_output_json"],
             "resolved_evidence_json": row["resolved_evidence_json"],
             "reasoning_projection_json": row["reasoning_projection_json"],
+            "usage_summary_json": row["usage_summary_json"],
+            "usage_event_id": (
+                str(row["usage_event_id"]) if row["usage_event_id"] is not None else None
+            ),
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
         }
@@ -827,13 +845,15 @@ class ReaderRecordAskRepository:
         final_status: str,
         terminal_reason: str | None,
         terminal_dto: dict[str, Any] | None = None,
+        reasoning_projection: dict[str, Any] | None = None,
+        usage_summary: dict[str, Any] | None = None,
+        usage_event_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Persist non-ok terminal (stale / invalid / cancelled / failed).
 
-        ASK-REASONING-``reasoning_projection_json`` is explicitly
-        forced to NULL on every terminal path — fail-closed by statement,
-        not by relying on fresh rows starting empty. Cancel / validation
-        failure / budget / persist failure never persist reasoning.
+        ``reasoning_projection_json`` stores only the validated projection
+        that was already published to the user. It never stores raw provider
+        reasoning or an uncommitted redactor tail.
 
         ASK-TURN-LIFECYCLE the ``WHERE status = 'streaming'`` guard
         makes the write idempotent — a second call after the row already
@@ -867,14 +887,17 @@ class ReaderRecordAskRepository:
                         terminal_reason = $4,
                         user_visible_output_json = $5::jsonb,
                         resolved_evidence_json = '[]'::jsonb,
-                        reasoning_projection_json = NULL,
+                        reasoning_projection_json = $6::jsonb,
+                        usage_summary_json = $8::jsonb,
+                        usage_event_id = $9,
                         failed_at = CASE WHEN $2 IN ('failed', 'stale', 'cancelled')
-                                         THEN $6 ELSE failed_at END,
-                        completed_at = CASE WHEN $2 = 'stale' THEN $6 ELSE completed_at END,
-                        updated_at = $6
+                                         THEN $7 ELSE failed_at END,
+                        completed_at = CASE WHEN $2 = 'stale' THEN $7 ELSE completed_at END,
+                        updated_at = $7
                     WHERE id = $1 AND status = 'streaming'
                     RETURNING id, status, final_status, terminal_reason,
                               user_visible_output_json, reasoning_projection_json,
+                              usage_summary_json, usage_event_id,
                               envelope_fingerprint, execution_version
                     """,
                     turn_run_id,
@@ -882,7 +905,10 @@ class ReaderRecordAskRepository:
                     final_status,
                     terminal_reason,
                     jsonb_param(terminal_dto) if terminal_dto is not None else None,
+                    jsonb_param(reasoning_projection) if reasoning_projection is not None else None,
                     now,
+                    jsonb_param(usage_summary) if usage_summary is not None else None,
+                    usage_event_id,
                 )
                 if row is not None and owns_message:
                     # ASK-RETRY-CONTRACT-if regenerate stored a fallback
@@ -970,6 +996,8 @@ class ReaderRecordAskRepository:
                 "terminal_reason": None,
                 "user_visible_output_json": None,
                 "reasoning_projection_json": None,
+                "usage_summary_json": None,
+                "usage_event_id": None,
                 "envelope_fingerprint": None,
                 "execution_version": EXECUTION_VERSION_AGENTIC_V2,
             }
@@ -980,6 +1008,10 @@ class ReaderRecordAskRepository:
             "terminal_reason": row["terminal_reason"],
             "user_visible_output_json": row["user_visible_output_json"],
             "reasoning_projection_json": row["reasoning_projection_json"],
+            "usage_summary_json": row["usage_summary_json"],
+            "usage_event_id": (
+                str(row["usage_event_id"]) if row["usage_event_id"] is not None else None
+            ),
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
         }

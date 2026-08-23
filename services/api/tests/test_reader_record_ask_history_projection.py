@@ -184,9 +184,7 @@ def test_source_unavailable_projects_fixed_copy() -> None:
 
 
 def test_legacy_v1_history_is_quarantined_fail_closed() -> None:
-    projected = project_agentic_history_message(
-        **_base_kwargs(user_visible_output_json=_LEGACY_V1)
-    )
+    projected = project_agentic_history_message(**_base_kwargs(user_visible_output_json=_LEGACY_V1))
     assert projected["status"] == "failed"
     assert projected["content_md"] == ""
     assert projected["execution_version"] is None
@@ -369,9 +367,7 @@ def _agentic_row(**overrides: Any) -> dict[str, Any]:
         "current_turn_run_execution_version": EXECUTION_VERSION_AGENTIC_V2,
         "current_turn_run_final_status": "ok",
         "current_turn_run_terminal_reason": None,
-        "current_turn_run_resolved_evidence_json": [
-            {"citation_id": "c1", "handle_id": _HANDLE}
-        ],
+        "current_turn_run_resolved_evidence_json": [{"citation_id": "c1", "handle_id": _HANDLE}],
         "current_turn_run_envelope_fingerprint": "env-fp-secret",
         "eval_trace_turn_run_id": None,
         "trace_schema_version": None,
@@ -391,12 +387,8 @@ def _agentic_row(**overrides: Any) -> dict[str, Any]:
     row["turn_run_final_status"] = row.get("current_turn_run_final_status")
     row["turn_run_terminal_reason"] = row.get("current_turn_run_terminal_reason")
     row["turn_run_execution_version"] = row.get("current_turn_run_execution_version")
-    row["turn_run_resolved_evidence_json"] = row.get(
-        "current_turn_run_resolved_evidence_json"
-    )
-    row["turn_run_envelope_fingerprint"] = row.get(
-        "current_turn_run_envelope_fingerprint"
-    )
+    row["turn_run_resolved_evidence_json"] = row.get("current_turn_run_resolved_evidence_json")
+    row["turn_run_envelope_fingerprint"] = row.get("current_turn_run_envelope_fingerprint")
     return row
 
 
@@ -628,15 +620,16 @@ def test_message_row_to_history_user_message_preserves_content_md_with_agentic_m
 # ---------------------------------------------------------------------------
 
 _REASONING_PROJECTION = {
-    "projection_policy_version": "reasoning_projection_v1",
+    "projection_policy_version": "provider_reasoning_v1",
     "text": "先分析句子主干，再确认从句关系。",
     "char_count": len("先分析句子主干，再确认从句关系。"),
     "truncated": False,
+    "visibility_status": "complete",
 }
 
 
-def test_ok_turn_does_not_restore_legacy_provider_reasoning() -> None:
-    """Cold history retires v1 provider reasoning fail-closed."""
+def test_ok_turn_restores_provider_reasoning_projection() -> None:
+    """Cold history restores the exact canonical provider artifact."""
     projected = project_agentic_history_message(
         **_base_kwargs(
             current_turn_run={
@@ -646,12 +639,9 @@ def test_ok_turn_does_not_restore_legacy_provider_reasoning() -> None:
             }
         )
     )
-    assert "reasoning_md" not in projected
-    assert "reasoning_status" not in projected
-    assert "reasoning_truncated" not in projected
-    assert _REASONING_PROJECTION["text"] not in json.dumps(
-        projected, ensure_ascii=False
-    )
+    assert projected["reasoning_md"] == _REASONING_PROJECTION["text"]
+    assert projected["reasoning_status"] == "completed"
+    assert projected["reasoning_truncated"] is False
     # The raw JSONB payload never rides on the wire turn_run dict.
     assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
     blob = json.dumps(projected, ensure_ascii=False)
@@ -688,9 +678,8 @@ def test_ok_turn_with_malformed_reasoning_payload_fails_closed() -> None:
         assert "reasoning_status" not in projected, f"payload={bad_payload!r}"
 
 
-def test_terminal_turn_never_resurrects_reasoning() -> None:
-    """Fail-closed: terminal rows carry no cold reasoning even if a stray
-    projection payload existed on the turn run."""
+def test_terminal_turn_restores_published_reasoning_as_interrupted() -> None:
+    """A failed turn restores only its previously published artifact."""
     terminal_visible = {
         "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         "final_status": "failed",
@@ -715,8 +704,9 @@ def test_terminal_turn_never_resurrects_reasoning() -> None:
         )
     )
     assert projected["status"] == "failed"
-    assert "reasoning_md" not in projected
-    assert "reasoning_status" not in projected
+    assert projected["reasoning_md"] == _REASONING_PROJECTION["text"]
+    assert projected["reasoning_status"] == "interrupted"
+    assert projected["reasoning_truncated"] is False
     assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
 
 
@@ -823,9 +813,8 @@ def test_ok_turn_with_invalid_snapshot_never_shows_reasoning() -> None:
         )
 
 
-def test_terminal_update_sql_forces_reasoning_null() -> None:
-    """Static pin: every terminal persist explicitly NULLs the reasoning
-    column (fail-closed by statement, not by fresh-row assumption)."""
+def test_terminal_update_sql_writes_published_reasoning_snapshot() -> None:
+    """Every terminal write persists the already-published projection."""
     import inspect
 
     from app.services.reader_record_ask.repository import (
@@ -833,7 +822,7 @@ def test_terminal_update_sql_forces_reasoning_null() -> None:
     )
 
     source = inspect.getsource(ReaderRecordAskRepository.terminal_agentic_turn_run)
-    assert "reasoning_projection_json = NULL" in source
+    assert "reasoning_projection_json = $6::jsonb" in source
 
 
 def test_complete_update_sql_writes_reasoning_in_same_statement() -> None:

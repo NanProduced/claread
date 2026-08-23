@@ -35,6 +35,25 @@ from app.schemas.reader_record_ask_stream import (
     ReaderRecordAskTerminalDTO,
     evidence_item_from_observation,
 )
+from app.services.ai_usage.billing import (
+    DEFAULT_READER_ASK_BILLING_CONFIG,
+    WeightedTokensBillingConfig,
+    build_reader_ask_billing_metadata,
+    compute_reader_ask_cost_points,
+)
+from app.services.ai_usage.capabilities import CAPABILITY_READER_ASK
+from app.services.ai_usage.service import (
+    AIUsageEventCreate,
+    compute_usage_invocation_observation_hash,
+    record_invocation_keyed_usage_event,
+    update_ai_usage_event_outcome,
+)
+from app.services.ai_usage.types import (
+    BILLING_MODE_USER_POINTS,
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_USER_BILLED,
+)
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
@@ -45,16 +64,15 @@ from app.services.reader_record_ask.envelope_builder import (
     document_access_from_facts,
 )
 from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
+from app.services.reader_record_ask.execution_config import (
+    ReaderRecordAskExecutionSnapshot,
+)
 from app.services.reader_record_ask.finalizer import FinalizedAskResult
 
 # M3 wiring: map-source material provider for heading enrichment (§4.2).
 # Imported lazily inside stream_agentic_thread_message to avoid module-load
 # cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
 # runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
-from app.services.reader_record_ask.learner_reasoning.sidecar import (
-    LearnerReasoningSnapshotEvent,
-    build_learner_reasoning_observer,
-)
 from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
 )
@@ -62,6 +80,11 @@ from app.services.reader_record_ask.production_wiring import (
     build_production_article_rag_port,
     load_active_stable_document_id,
     resolve_agentic_model,
+)
+from app.services.reader_record_ask.reasoning_projection import (
+    PROJECTION_POLICY_VERSION,
+    ProviderReasoningObserver,
+    UserSafeReasoningObserver,
 )
 from app.services.reader_record_ask.repository import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -73,6 +96,9 @@ from app.services.reader_record_ask.runtime import (
 )
 from app.services.reader_record_ask.runtime_deps import RuntimeObservation
 from app.services.reader_record_ask.runtime_events import (
+    AgenticReasoningCompletedEvent,
+    AgenticReasoningDeltaEvent,
+    AgenticReasoningStartedEvent,
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
@@ -90,8 +116,10 @@ from app.services.reader_record_ask.runtime_events import (
     WebSearchResultEvent,
 )
 from app.services.reader_record_ask.sse import (
-    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
     EVENT_AGENTIC_PROGRESS,
+    EVENT_AGENTIC_REASONING_COMPLETED,
+    EVENT_AGENTIC_REASONING_DELTA,
+    EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_CONTEXT_COMPACTION_COMPLETED,
@@ -283,6 +311,7 @@ def _submission_status_from_terminal_chunk(
         return "failed"
     return "failed"
 
+
 # Stable external terminal reasons. Must not leak pydantic-ai / provider
 # internals (exception text, schema bodies, raw responses, thinking).
 TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
@@ -341,11 +370,7 @@ def _encode_context_compaction_sse(
         "failed": EVENT_CONTEXT_COMPACTION_FAILED,
         "fallback": EVENT_CONTEXT_COMPACTION_FALLBACK,
     }[event.phase]
-    detail_code = (
-        event.detail_code
-        if event.detail_code in _SAFE_COMPACTION_DETAIL_CODES
-        else None
-    )
+    detail_code = event.detail_code if event.detail_code in _SAFE_COMPACTION_DETAIL_CODES else None
     return encode_sse(
         event_name,
         {
@@ -463,6 +488,29 @@ def _find_host_budget_exhausted(
     return None
 
 
+def _unwrap_agent_task_result(agent_task: asyncio.Task[Any]) -> Any:
+    """Return the agent task result, collapsing safe exception groups.
+
+    A pure ``ExceptionGroup`` (every member is an ``Exception``) collapses
+    to its first member so the caller's existing ``HostBudgetExhausted`` /
+    ``UnexpectedModelBehavior`` / generic ``Exception`` handlers run
+    unchanged — re-raising the member from inside an ``except`` block of
+    the same ``try`` would instead escape the whole handler chain. Budget
+    exhaustion at any nesting depth re-raises as the typed error. Groups
+    carrying non-``Exception`` members (cancellation and other base
+    exceptions) propagate untouched — never swallowed.
+    """
+    try:
+        return agent_task.result()
+    except BaseExceptionGroup as group:
+        budget_exc = _find_host_budget_exhausted(group)
+        if budget_exc is not None:
+            raise budget_exc from None
+        if isinstance(group, ExceptionGroup) and group.exceptions:
+            raise group.exceptions[0] from None
+        raise
+
+
 # Stable terminal reason when search_hit evidence conflicts with envelope scope.
 # Do not embed raw ids, hashes, or provider detail in this string.
 TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT = "evidence_scope_invariant_violation"
@@ -529,9 +577,7 @@ def assert_evidence_scope_matches_items(
     for item in search_hits:
         citation = item.rag_citation
         if citation is None:
-            raise EvidenceScopeInvariantError(
-                "search_hit evidence item is missing rag_citation"
-            )
+            raise EvidenceScopeInvariantError("search_hit evidence item is missing rag_citation")
         if citation.stable_document_id != scope.stable_document_id:
             raise EvidenceScopeInvariantError(
                 "search_hit rag_citation.stable_document_id mismatches evidence_scope"
@@ -560,9 +606,7 @@ def build_restricted_evidence_json(
     finalized = run_result.finalized
     scope = evidence_scope_from_envelope(envelope)
     # Defense-in-depth: search_hit identity must still match envelope scope.
-    evidence_items = [
-        evidence_item_from_observation(obs) for obs in finalized.resolved_evidence
-    ]
+    evidence_items = [evidence_item_from_observation(obs) for obs in finalized.resolved_evidence]
     assert_evidence_scope_matches_items(scope, evidence_items)
 
     bindings = list(finalized.citation_bindings)
@@ -676,7 +720,7 @@ class _TurnLifecycleMetrics:
 
     Lifecycle phases tracked (contract):
 
-    - ``first_reasoning_ms``: first learner-reasoning snapshot arrival.
+    - ``first_reasoning_ms``: first provider-reasoning frame arrival.
       ``None`` when no reasoning was emitted this turn.
     - ``first_answer_delta_ms`` / ``last_answer_delta_ms``: first and
       last ``AnswerDeltaEvent`` arrival times. ``None`` when no answer
@@ -751,19 +795,11 @@ def _log_web_search_turn_observation(
     this function nor its format string accepts query/URL/title/raw-provider
     data.
     """
-    observation = (
-        run_result.web_search_turn_observation
-        if run_result is not None
-        else None
-    )
+    observation = run_result.web_search_turn_observation if run_result is not None else None
     if observation is None:
         finalized = run_result.finalized if run_result is not None else None
-        web_summary = (
-            finalized.web_search_summary if finalized is not None else None
-        )
-        citations = (
-            finalized.public_citations if finalized is not None else ()
-        )
+        web_summary = finalized.web_search_summary if finalized is not None else None
+        citations = finalized.public_citations if finalized is not None else ()
         web_citations = [
             citation
             for citation in citations
@@ -1145,9 +1181,7 @@ class _ProgressProjector:
             web_activity: ProgressActivity = (
                 "completed"
                 if turn_outcome in ("completed", "no_results")
-                else (
-                    "unavailable" if turn_outcome == "timeout" else turn_outcome
-                )
+                else ("unavailable" if turn_outcome == "timeout" else turn_outcome)
             )
             web_outcome: ProgressOutcome = {
                 "completed": "success",
@@ -1252,6 +1286,272 @@ def _make_queue_sink(
     return _sink
 
 
+# ---------------------------------------------------------------------------
+# Provider usage accounting (same-run aggregate → one keyed audit event)
+# ---------------------------------------------------------------------------
+
+UsageEventRecorder = Callable[..., Any]
+
+
+def ask_turn_usage_invocation_key(turn_run_id: UUID | str) -> str:
+    """Stable invocation key: one turn_run owns at most one usage event."""
+    return f"reader_ask:turn:{turn_run_id}"
+
+
+# ---------------------------------------------------------------------------
+# Non-sensitive reasoning observation (audit facts, never reasoning text).
+# ---------------------------------------------------------------------------
+
+REASONING_OUTCOME_PROJECTION_DISABLED = "projection_disabled"
+REASONING_OUTCOME_NOT_REQUESTED = "not_requested"
+REASONING_OUTCOME_PROVIDER_EMPTY = "provider_empty"
+REASONING_OUTCOME_COMPLETE = "complete"
+REASONING_OUTCOME_TRUNCATED = "truncated"
+REASONING_OUTCOME_BLOCKED = "blocked"
+
+
+def build_reasoning_observation(
+    *,
+    reasoning_requested: bool | None,
+    reasoning_projection_enabled: bool,
+    observer: Any,
+) -> dict[str, Any]:
+    """Deterministic, non-sensitive reasoning facts for one terminal.
+
+    Outcome precedence (fixed): host projection kill switch → resolved
+    thinking request flag → observed projection state. Never reads or
+    derives anything from reasoning text, model names, or raw provider
+    payloads — only booleans, the projection policy version, and the
+    projected character count.
+    """
+    observed = bool(getattr(observer, "has_content", False))
+    char_count = len(getattr(observer, "projection_text", "") or "")
+    visibility = getattr(observer, "visibility_status", None)
+    if not reasoning_projection_enabled:
+        outcome = REASONING_OUTCOME_PROJECTION_DISABLED
+    elif reasoning_requested is False:
+        outcome = REASONING_OUTCOME_NOT_REQUESTED
+    elif visibility == REASONING_OUTCOME_BLOCKED:
+        # The redactor may seal on the very first characters, leaving
+        # ``has_content=False`` with a blocked visibility — the safety
+        # block must outrank "provider reported nothing".
+        outcome = REASONING_OUTCOME_BLOCKED
+    elif not observed:
+        outcome = REASONING_OUTCOME_PROVIDER_EMPTY
+    else:
+        outcome = (
+            visibility
+            if visibility
+            in (
+                REASONING_OUTCOME_COMPLETE,
+                REASONING_OUTCOME_TRUNCATED,
+                REASONING_OUTCOME_BLOCKED,
+            )
+            else REASONING_OUTCOME_COMPLETE
+        )
+    return {
+        "reasoning_requested": reasoning_requested,
+        "reasoning_projection_enabled": reasoning_projection_enabled,
+        "reasoning_observed": observed,
+        "reasoning_outcome": outcome,
+        "reasoning_char_count": char_count,
+        "projection_policy_version": PROJECTION_POLICY_VERSION,
+    }
+
+
+def _log_reasoning_observation(
+    *,
+    turn_run_id: UUID,
+    observation: dict[str, Any],
+) -> None:
+    """One fixed, sanitized terminal log line when no usage event exists.
+
+    The same non-sensitive facts that would live on the usage event
+    metadata survive here — never reasoning text, prompts, answers,
+    secrets, or exception payloads.
+    """
+    logger.info(
+        "reader_ask reasoning observation: turn_run_id=%s "
+        "reasoning_requested=%s reasoning_projection_enabled=%s "
+        "reasoning_observed=%s reasoning_outcome=%s "
+        "reasoning_char_count=%s projection_policy_version=%s",
+        turn_run_id,
+        observation["reasoning_requested"],
+        observation["reasoning_projection_enabled"],
+        observation["reasoning_observed"],
+        observation["reasoning_outcome"],
+        observation["reasoning_char_count"],
+        observation["projection_policy_version"],
+    )
+
+
+def build_ask_usage_billing_config(
+    *,
+    price_multiplier: float | None,
+    billing_policy_version: str | None,
+) -> WeightedTokensBillingConfig:
+    """Reader-ask billing config from the resolved execution snapshot.
+
+    Falls back to ``DEFAULT_READER_ASK_BILLING_CONFIG`` field values when
+    the snapshot (or a field) is absent — the standard weighted-token
+    policy with multiplier 1.0.
+    """
+    updates: dict[str, Any] = {}
+    if price_multiplier is not None:
+        updates["price_multiplier"] = float(price_multiplier)
+    if billing_policy_version is not None:
+        updates["billing_policy_version"] = str(billing_policy_version)
+    if not updates:
+        return DEFAULT_READER_ASK_BILLING_CONFIG
+    return DEFAULT_READER_ASK_BILLING_CONFIG.model_copy(update=updates)
+
+
+def build_ask_usage_event(
+    *,
+    usage_summary: dict[str, Any],
+    user_id: UUID,
+    reading_record_id: UUID,
+    thread_id: UUID,
+    message_id: UUID,
+    turn_run_id: UUID,
+    run_attempt: int,
+    final_status: str,
+    model_route: str,
+    model_provider: str | None,
+    model_name: str | None,
+    model_profile: str | None,
+    model_option_key: str | None,
+    price_multiplier: float | None,
+    billing_policy_version: str | None,
+    usage_completeness: str = "complete",
+    reasoning_observation: dict[str, Any] | None = None,
+) -> AIUsageEventCreate:
+    """Build the audit-only usage event for one agent run.
+
+    ``final_status`` is the TYPED product terminal status (``ok`` /
+    ``context_stale`` / ``invalid_citations`` / ``cancelled`` /
+    ``failed``) — it is preserved verbatim in ``metadata.final_status``
+    and ``error_code`` so the audit trail keeps the real outcome; the
+    ``status`` column stays the schema-conventional succeeded/failed
+    binary. ``usage_completeness`` is ``complete`` for finished runs and
+    ``partial`` when only earlier provider responses were confirmed
+    before a failure/cancellation.
+
+    Metadata carries identity + billing facts only — never prompt, answer
+    text, reasoning, evidence bodies, secrets, or raw exception text.
+    ``billed_points`` is deliberately NULL: user-point reservation,
+    settlement, and refunds are a separate future task; the computed cost
+    is recorded as ``metadata_json.computed_cost_points`` for audit.
+    ``latency_ms`` stays NULL — no provider-latency semantics exist for
+    the agent-run aggregate, and total wall time must not masquerade as
+    provider latency.
+    """
+    billing_config = build_ask_usage_billing_config(
+        price_multiplier=price_multiplier,
+        billing_policy_version=billing_policy_version,
+    )
+    cost_points = compute_reader_ask_cost_points(usage_summary, billing_config)
+    is_ok = final_status == "ok"
+    metadata_json: dict[str, Any] = {
+        "thread_id": str(thread_id),
+        "assistant_message_id": str(message_id),
+        "turn_run_id": str(turn_run_id),
+        "run_attempt": int(run_attempt),
+        "model_option_key": model_option_key,
+        "usage_completeness": usage_completeness,
+        "final_status": final_status,
+        **build_reader_ask_billing_metadata(usage_summary, billing_config),
+        "computed_cost_points": cost_points,
+    }
+    if reasoning_observation is not None:
+        metadata_json.update(reasoning_observation)
+    return AIUsageEventCreate(
+        usage_scope=USAGE_SCOPE_USER_BILLED,
+        capability_code=CAPABILITY_READER_ASK,
+        billing_mode=BILLING_MODE_USER_POINTS,
+        status=(STATUS_SUCCEEDED if is_ok else STATUS_FAILED),
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        request_id=str(turn_run_id),
+        model_route=model_route,
+        model_profile=model_profile,
+        model_profile_id=model_profile,
+        model_provider=model_provider,
+        model_name=model_name,
+        usage_data=usage_summary,
+        billed_points=None,
+        billing_policy_version=billing_config.billing_policy_version,
+        error_code=(None if is_ok else str(final_status)[:64]),
+        metadata_json=metadata_json,
+    )
+
+
+async def record_ask_turn_usage_event(
+    *,
+    usage_summary: dict[str, Any],
+    user_id: UUID,
+    reading_record_id: UUID,
+    thread_id: UUID,
+    message_id: UUID,
+    turn_run_id: UUID,
+    run_attempt: int,
+    final_status: str,
+    model_route: str,
+    model_provider: str | None,
+    model_name: str | None,
+    model_profile: str | None,
+    model_option_key: str | None,
+    price_multiplier: float | None,
+    billing_policy_version: str | None,
+    usage_completeness: str = "complete",
+    reasoning_observation: dict[str, Any] | None = None,
+    pool: Any | None = None,
+    recorder: UsageEventRecorder | None = None,
+) -> tuple[UUID | None, str]:
+    """Persist exactly one invocation-keyed usage event for one turn.
+
+    Delegates idempotent persistence (advisory lock → replay / conflict /
+    insert; old rows never overwritten) to the shared
+    ``record_invocation_keyed_usage_event`` primitive. The observation
+    hash covers invocation identity, status, model identity, and the
+    normalized usage totals — a same-key replay with a different
+    observation fails closed as ``conflict``.
+    """
+    event = build_ask_usage_event(
+        usage_summary=usage_summary,
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        thread_id=thread_id,
+        message_id=message_id,
+        turn_run_id=turn_run_id,
+        run_attempt=run_attempt,
+        final_status=final_status,
+        model_route=model_route,
+        model_provider=model_provider,
+        model_name=model_name,
+        model_profile=model_profile,
+        model_option_key=model_option_key,
+        price_multiplier=price_multiplier,
+        billing_policy_version=billing_policy_version,
+        usage_completeness=usage_completeness,
+        reasoning_observation=reasoning_observation,
+    )
+    invocation_key = ask_turn_usage_invocation_key(turn_run_id)
+    observation_hash = compute_usage_invocation_observation_hash(
+        invocation_key=invocation_key,
+        event=event,
+        snapshot_fragment=None,
+        attempt_ordinal=run_attempt,
+    )
+    target_recorder = recorder or record_invocation_keyed_usage_event
+    return await target_recorder(
+        event,
+        invocation_key=invocation_key,
+        observation_hash=observation_hash,
+        pool=pool,
+    )
+
+
 async def _run_agentic_turn(
     *,
     repo: ReaderRecordAskRepository,
@@ -1287,12 +1587,17 @@ async def _run_agentic_turn(
     # behavior, exactly like the existing ``model`` / ``run_fn`` seams.
     memory_enabled_override: bool | None = None,
     memory_compactor: Any | None = None,
-    # ASK-LEARNER-REASONING-PROJECTOR- test seams (production leaves None).
-    learner_reasoning_enabled_override: bool | None = None,
-    learner_reasoning_run_fn: Any | None = None,
-    learner_reasoning_model_config: Any | None = None,
-    learner_reasoning_test_route: Any | None = None,
-    learner_reasoning_finalize_grace: float | None = None,
+    # Usage-accounting identity. ``execution_snapshot`` carries the
+    # resolved model/provider/profile/option identity plus the billing
+    # echo (price_multiplier, billing policy) from the selected model
+    # option; ``None`` falls back to the stream-level model route and the
+    # default reader-ask billing config.
+    execution_snapshot: ReaderRecordAskExecutionSnapshot | None = None,
+    model_option_key: str | None = None,
+    # Test seam replacing the invocation-keyed usage-event recorder.
+    # Production passes ``None`` (the real ``record_invocation_keyed_usage_event``
+    # against the shared pool).
+    usage_event_recorder: UsageEventRecorder | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -1365,38 +1670,16 @@ async def _run_agentic_turn(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
-    # ASK-LEARNER-REASONING-PROJECTOR-flag OFF → discard at ingress.
-    # Flag ON → use the *same* ResolvedModelConfig that built active_model
-    # (never re-resolve the default MODEL_ROUTE_READER_ASK here).
-    _lr_settings = get_settings()
-    _lr_enabled = (
-        bool(learner_reasoning_enabled_override)
-        if learner_reasoning_enabled_override is not None
-        else bool(_lr_settings.reader_record_ask_learner_reasoning_enabled)
-    )
-    _lr_main_config = learner_reasoning_model_config
-    _lr_grace = (
-        float(learner_reasoning_finalize_grace)
-        if learner_reasoning_finalize_grace is not None
-        else 0.75
-    )
-    reasoning_projector = build_learner_reasoning_observer(
+    _reasoning_enabled = bool(get_settings().reader_record_ask_provider_reasoning_enabled)
+    observer_type = ProviderReasoningObserver if _reasoning_enabled else UserSafeReasoningObserver
+    reasoning_observer = observer_type(
         emit=sink,
         message_id=assistant_msg["id"],
         thread_id=str(thread_id),
         turn_run_id=turn["id"],
-        enabled=_lr_enabled,
-        main_model_config=_lr_main_config,
-        run_fn=learner_reasoning_run_fn,
-        test_route=learner_reasoning_test_route,
-        finalize_grace_seconds=_lr_grace,
     )
 
-    active_ledger = (
-        pointer_ledger
-        if pointer_ledger is not None
-        else get_process_pointer_ledger()
-    )
+    active_ledger = pointer_ledger if pointer_ledger is not None else get_process_pointer_ledger()
     # ASK-WEB-create a RuntimeObservation so the runtime tracks
     # output_validation_final_attempts / output_validation_retry_requests
     # for per-turn observability. Never serialised; never on any public
@@ -1432,7 +1715,7 @@ async def _run_agentic_turn(
             model_settings=model_settings,
             usage_limits=usage_limits,
             observation=runtime_observation,
-            thinking_observer=reasoning_projector,
+            thinking_observer=reasoning_observer,
             web_search_capability=web_search_capability,
             web_search_backend=web_search_backend,
             web_evidence_registry=web_evidence_registry,
@@ -1455,58 +1738,103 @@ async def _run_agentic_turn(
 
     run_result: ReadingRecordAskRunResult | None = None
     terminal_emitted = False
-    # Learner-reasoning lifecycle state machine (idempotent, all exits):
-    #   open → frozen (success grace) → closed
-    #   open → closed (fail/cancel immediate freeze+aclose)
-    _lr_state: Literal["open", "frozen", "closed"] = "open"
-    _grace_snapshots: list[LearnerReasoningSnapshotEvent] = []
 
-    async def _learner_cleanup(*, success: bool) -> None:
-        """Idempotent learner finalizer — at most one terminal transition.
+    async def _record_turn_usage_event(
+        *,
+        final_status: str,
+        usage_summary: dict[str, Any] | None,
+        usage_completeness: str = "complete",
+    ) -> UUID | None:
+        """Record the invocation-keyed usage event for one terminal outcome.
 
-        success=True: freeze intake → grace drain → snapshot freeze (no aclose yet).
-        success=False: freeze intake + aclose immediately; no cold persist.
-        After success freeze, a later fail only acloses (no unpublish).
+        Returns the event id ONLY for a fresh insert or an identical
+        replay. A ``conflict`` (same invocation key, different
+        observation — a stale event from an earlier observation of this
+        turn) must NOT be linked to the fresh usage summary: the caller
+        persists the summary with ``usage_event_id=NULL`` instead, so the
+        turn never carries mismatched event/summary token totals.
+        Accounting failures never raise and never change the answer or
+        the terminal status.
         """
-        nonlocal _lr_state
-        if _lr_state == "closed":
-            return
-        if success:
-            if _lr_state == "open":
-                finalize_fn = getattr(
-                    reasoning_projector, "finalize_for_persist", None
+        reasoning_observation = build_reasoning_observation(
+            reasoning_requested=(
+                execution_snapshot.thinking_requested
+                if execution_snapshot is not None
+                else None
+            ),
+            reasoning_projection_enabled=_reasoning_enabled,
+            observer=reasoning_observer,
+        )
+        if usage_summary is None:
+            # No usage event exists — the same non-sensitive reasoning
+            # facts still survive in one fixed terminal log line.
+            _log_reasoning_observation(
+                turn_run_id=turn_run_id,
+                observation=reasoning_observation,
+            )
+            return None
+        try:
+            event_id, disposition = await record_ask_turn_usage_event(
+                usage_summary=usage_summary,
+                user_id=envelope.user_id,
+                reading_record_id=envelope.reading_record_id,
+                thread_id=thread_id,
+                message_id=message_id,
+                turn_run_id=turn_run_id,
+                run_attempt=int(turn.get("run_attempt") or 1),
+                final_status=final_status,
+                model_route="reader_ask",
+                model_provider=(
+                    execution_snapshot.provider if execution_snapshot is not None else None
+                ),
+                model_name=(
+                    execution_snapshot.model_name
+                    if execution_snapshot is not None
+                    else _safe_model_route(active_model)
+                ),
+                model_profile=(
+                    execution_snapshot.profile_name
+                    if execution_snapshot is not None
+                    else None
+                ),
+                model_option_key=(
+                    execution_snapshot.option_key
+                    if execution_snapshot is not None
+                    else model_option_key
+                ),
+                price_multiplier=(
+                    execution_snapshot.price_multiplier
+                    if execution_snapshot is not None
+                    else None
+                ),
+                billing_policy_version=(
+                    execution_snapshot.billing_policy_version
+                    if execution_snapshot is not None
+                    else None
+                ),
+                usage_completeness=usage_completeness,
+                reasoning_observation=reasoning_observation,
+                recorder=usage_event_recorder,
+            )
+        except Exception as exc:  # noqa: BLE001 - accounting must not break the turn
+            # Fixed sanitized log: never the exception payload.
+            logger.error(
+                "reader_ask usage event recording failed: turn_run_id=%s "
+                "error_category=%s",
+                turn_run_id,
+                type(exc).__name__,
+            )
+            return None
+        if disposition not in ("inserted", "replayed"):
+            if disposition == "conflict":
+                # Fixed sanitized log only — no usage payload, no event body.
+                logger.error(
+                    "reader_ask usage_invocation_conflict turn_run_id=%s "
+                    "disposition=conflict",
+                    turn_run_id,
                 )
-                if callable(finalize_fn):
-                    try:
-                        await finalize_fn(grace_seconds=_lr_grace)
-                    except Exception:  # noqa: BLE001
-                        pass
-                await asyncio.sleep(0)
-                while not event_queue.empty():
-                    try:
-                        item = event_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    if isinstance(item, LearnerReasoningSnapshotEvent):
-                        metrics.mark_first_reasoning()
-                        _grace_snapshots.append(item)
-                _lr_state = "frozen"
-            return
-        # fail / cancel
-        if _lr_state == "open":
-            freeze_fn = getattr(reasoning_projector, "freeze_intake", None)
-            if callable(freeze_fn):
-                try:
-                    freeze_fn()
-                except Exception:  # noqa: BLE001
-                    pass
-        close_fn = getattr(reasoning_projector, "aclose", None)
-        if callable(close_fn):
-            try:
-                await close_fn()
-            except Exception:  # noqa: BLE001
-                pass
-        _lr_state = "closed"
+            return None
+        return event_id
 
     async def _failure_terminal_frames(
         *,
@@ -1514,13 +1842,10 @@ async def _run_agentic_turn(
         run_status: Literal["failed", "cancelled", "stale"],
         terminal_reason: str | None,
         finalized: FinalizedAskResult | None = None,
+        usage_summary: dict[str, Any] | None = None,
+        usage_event_id: UUID | None = None,
     ) -> tuple[str, ...]:
-        """Unified fail path: cleanup first, then best-effort terminal DB, then SSE.
-
-        Consumers that read the returned frames see terminal only after
-        sidecar aclose (limiter released). Never relies on post-yield finally.
-        """
-        await _learner_cleanup(success=False)
+        """Persist a terminal snapshot before publishing its SSE frame."""
         terminal = build_terminal_dto(
             finalized=finalized,
             message_id=assistant_msg["id"],
@@ -1540,11 +1865,13 @@ async def _run_agentic_turn(
                 terminal_reason=terminal_reason
                 or str(terminal_json.get("terminal_reason") or "failed"),
                 terminal_dto=terminal_json,
+                reasoning_projection=reasoning_observer.persistence_payload(),
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             )
         except Exception:
             logger.exception(
-                "reader_record_ask terminal persist failed: turn_run_id=%s "
-                "final_status=%s",
+                "reader_record_ask terminal persist failed: turn_run_id=%s final_status=%s",
                 turn_run_id,
                 final_status,
             )
@@ -1567,11 +1894,16 @@ async def _run_agentic_turn(
             item = await event_queue.get()
             if item is _AGENT_DONE:
                 break
-            if isinstance(item, LearnerReasoningSnapshotEvent):
-                # Learner-facing stage summary (replace semantics).
+            if isinstance(item, AgenticReasoningStartedEvent):
                 metrics.mark_first_reasoning()
                 yield encode_sse(
-                    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
+                    EVENT_AGENTIC_REASONING_STARTED,
+                    item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, AgenticReasoningDeltaEvent):
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
                 )
                 continue
@@ -1645,10 +1977,7 @@ async def _run_agentic_turn(
                     turn_run_id=turn["id"],
                 )
                 continue
-            if (
-                isinstance(item, ValidatingEvidenceEvent)
-                and item.activity != "started"
-            ):
+            if isinstance(item, ValidatingEvidenceEvent) and item.activity != "started":
                 metrics.mark_validation_done()
             for progress in projector.project(item):
                 yield encode_sse(
@@ -1668,10 +1997,16 @@ async def _run_agentic_turn(
                 break
             if item is _AGENT_DONE:
                 continue
-            if isinstance(item, LearnerReasoningSnapshotEvent):
+            if isinstance(item, AgenticReasoningStartedEvent):
                 metrics.mark_first_reasoning()
                 yield encode_sse(
-                    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
+                    EVENT_AGENTIC_REASONING_STARTED,
+                    item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, AgenticReasoningDeltaEvent):
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
                 )
                 continue
@@ -1709,10 +2044,7 @@ async def _run_agentic_turn(
                         turn_run_id=turn["id"],
                     )
                     continue
-                if (
-                    isinstance(item, ValidatingEvidenceEvent)
-                    and item.activity != "started"
-                ):
+                if isinstance(item, ValidatingEvidenceEvent) and item.activity != "started":
                     metrics.mark_validation_done()
                 for progress in projector.project(item):
                     yield encode_sse(
@@ -1721,12 +2053,18 @@ async def _run_agentic_turn(
                     )
 
         try:
-            run_result = agent_task.result()
+            # Safe ExceptionGroups collapse here (budget extracted / first
+            # member unwrapped) so the handlers below run unchanged; groups
+            # carrying base exceptions propagate untouched.
+            run_result = _unwrap_agent_task_result(agent_task)
         except asyncio.CancelledError:
             raise
         except HostBudgetExhausted as exc:
             # Typed host budget terminal — before generic exception handling.
             # Never surface account dumps, body, or denial text on the wire.
+            # Covers both a bare budget error and one nested in an
+            # ExceptionGroup from the tool path (extracted by the unwrap
+            # helper above).
             logger.warning(
                 "reader_record_ask budget exhausted: account=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
@@ -1739,39 +2077,22 @@ async def _run_agentic_turn(
                 max(0, int((time.perf_counter() - started_at) * 1000)),
                 metrics.to_log_dict(),
             )
+            partial_usage = runtime_observation.usage_summary
+            usage_event_id = await _record_turn_usage_event(
+                final_status="failed",
+                usage_summary=partial_usage,
+                usage_completeness=(runtime_observation.usage_completeness or "partial"),
+            )
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
+                usage_summary=partial_usage,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             terminal_emitted = True
             return
-        except BaseExceptionGroup as exc_group:
-            # Tool-path HostBudgetExhausted may surface inside ExceptionGroup.
-            budget_exc = _find_host_budget_exhausted(exc_group)
-            if budget_exc is not None:
-                logger.warning(
-                    "reader_record_ask budget exhausted (group): account=%s "
-                    "turn_run_id=%s message_id=%s lifecycle=%s",
-                    budget_exc.account,
-                    turn["id"],
-                    assistant_msg["id"],
-                    metrics.to_log_dict(),
-                )
-                for frame in await _failure_terminal_frames(
-                    final_status="failed",
-                    run_status="failed",
-                    terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
-                ):
-                    yield frame
-                terminal_emitted = True
-                return
-            # Fall through to UnexpectedModelBehavior / generic handling.
-            if isinstance(exc_group, ExceptionGroup):
-                # Re-raise first non-budget sub-exception path via generic.
-                raise exc_group.exceptions[0] from None
-            raise
         except UnexpectedModelBehavior as exc:
             logger.warning(
                 "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
@@ -1794,10 +2115,18 @@ async def _run_agentic_turn(
                 runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
+            partial_usage = runtime_observation.usage_summary
+            usage_event_id = await _record_turn_usage_event(
+                final_status="failed",
+                usage_summary=partial_usage,
+                usage_completeness=(runtime_observation.usage_completeness or "partial"),
+            )
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+                usage_summary=partial_usage,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             terminal_emitted = True
@@ -1806,9 +2135,7 @@ async def _run_agentic_turn(
             raise_site = getattr(exc, "reader_ask_raise_site", "transport")
             if raise_site not in {"transport", "runtime_type", "runtime_blocks"}:
                 raise_site = "transport"
-            final_output_type = getattr(
-                exc, "reader_ask_final_output_type", "unavailable"
-            )
+            final_output_type = getattr(exc, "reader_ask_final_output_type", "unavailable")
             if not isinstance(final_output_type, str) or not final_output_type:
                 final_output_type = "unavailable"
             tool_sequence = ">".join(projector.tool_call_sequence) or "none"
@@ -1837,10 +2164,18 @@ async def _run_agentic_turn(
                 tool_sequence,
                 metrics.to_log_dict(),
             )
+            partial_usage = runtime_observation.usage_summary
+            usage_event_id = await _record_turn_usage_event(
+                final_status="failed",
+                usage_summary=partial_usage,
+                usage_completeness=(runtime_observation.usage_completeness or "partial"),
+            )
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
+                usage_summary=partial_usage,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             terminal_emitted = True
@@ -1863,16 +2198,21 @@ async def _run_agentic_turn(
                 max(0, int((time.perf_counter() - started_at) * 1000)),
                 metrics.to_log_dict(),
             )
+            partial_usage = runtime_observation.usage_summary
+            usage_event_id = await _record_turn_usage_event(
+                final_status="cancelled",
+                usage_summary=partial_usage,
+                usage_completeness=(runtime_observation.usage_completeness or "partial"),
+            )
             for frame in await _failure_terminal_frames(
                 final_status="cancelled",
                 run_status="cancelled",
                 terminal_reason="client disconnect or cancellation",
+                usage_summary=partial_usage,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             terminal_emitted = True
-        else:
-            # Already terminal elsewhere — still ensure limiter release.
-            await _learner_cleanup(success=False)
         raise
     finally:
         if not agent_task.done():
@@ -1881,31 +2221,22 @@ async def _run_agentic_turn(
                 await agent_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
-        # Safety net for agent-phase exits that skipped explicit cleanup.
-        if _lr_state == "open" and (terminal_emitted or run_result is None):
-            try:
-                await _learner_cleanup(success=False)
-            except Exception:  # noqa: BLE001
-                pass
         _log_web_search_turn_observation(
             run_result=run_result,
             model_route=_safe_model_route(active_model),
             provider=(
-                web_search_capability.provider
-                if web_search_capability is not None
-                else None
+                web_search_capability.provider if web_search_capability is not None else None
             ),
         )
 
     # Post-agent phase: success or late failure.
-    # try/finally guarantees sidecar close on every exit.
     try:
         if terminal_emitted or run_result is None:
-            await _learner_cleanup(success=False)
             return
 
         total_ms = max(0, int((time.perf_counter() - started_at) * 1000))
         finalized = run_result.finalized
+        usage_summary = run_result.usage_summary
         if finalized is None or finalized.status != "ok" or run_result.final_text is None:
             status = finalized.status if finalized is not None else "failed"
             run_status = "stale" if status == "context_stale" else "failed"
@@ -1950,11 +2281,20 @@ async def _run_agentic_turn(
                 runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
+            # Usage event is created AFTER the formal terminal mapping so
+            # the typed status (context_stale / invalid_citations / …)
+            # reaches metadata.final_status and error_code verbatim.
+            usage_event_id = await _record_turn_usage_event(
+                final_status=wire_final_status,
+                usage_summary=usage_summary,
+            )
             for frame in await _failure_terminal_frames(
                 final_status=wire_final_status,
                 run_status=run_status,
                 terminal_reason=typed_reason,
                 finalized=finalized,
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             return
@@ -1989,35 +2329,47 @@ async def _run_agentic_turn(
                 TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
                 metrics.to_log_dict(),
             )
+            usage_event_id = await _record_turn_usage_event(
+                final_status="failed",
+                usage_summary=usage_summary,
+            )
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             return
 
         completed_json = completed.model_dump(mode="json")
-        # Success learner path: freeze → grace drain → freeze snapshot → yield.
-        await _learner_cleanup(success=True)
-        for snap in _grace_snapshots:
-            yield encode_sse(
-                EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
-                snap.model_dump(mode="json"),
-            )
         try:
             restricted_evidence = build_restricted_evidence_json(
                 run_result=run_result,
                 envelope=envelope,
             )
         except EvidenceScopeInvariantError:
+            usage_event_id = await _record_turn_usage_event(
+                final_status="failed",
+                usage_summary=usage_summary,
+            )
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             return
+        # Success path: record the usage event BEFORE the terminal write so
+        # the CAS write can link usage_event_id; an accounting failure
+        # still persists usage_summary_json with usage_event_id=NULL.
+        usage_event_id = await _record_turn_usage_event(
+            final_status="ok",
+            usage_summary=usage_summary,
+        )
         try:
             persisted = await repo.complete_agentic_turn_run(
                 turn_run_id=turn_run_id,
@@ -2026,7 +2378,9 @@ async def _run_agentic_turn(
                 completed_dto=completed_json,
                 resolved_evidence=restricted_evidence,
                 final_status="ok",
-                reasoning_projection=reasoning_projector.persistence_payload(),
+                reasoning_projection=reasoning_observer.persistence_payload(),
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             )
         except Exception:
             # Success-path DB persistence failed. Unified order:
@@ -2056,10 +2410,42 @@ async def _run_agentic_turn(
                 TERMINAL_REASON_PERSIST_FAILED,
                 metrics.to_log_dict(),
             )
+            # The usage event was created with the pre-persist outcome
+            # (ok). Amend the SAME event to the real product terminal
+            # (failed / persist_failed) via the shared outcome updater —
+            # never a second event, never the invocation key. Only a
+            # successful amendment may keep the event linked on the
+            # failed terminal write; otherwise fail-closed to
+            # usage_event_id=NULL (summary still persisted). The patch
+            # carries typed codes only — no exception text, SQL, usage
+            # payload, prompt, answer, or reasoning.
+            if usage_event_id is not None:
+                amended = False
+                try:
+                    amended = await update_ai_usage_event_outcome(
+                        usage_event_id,
+                        status=STATUS_FAILED,
+                        metadata_patch={
+                            "final_status": "failed",
+                            "terminal_reason": TERMINAL_REASON_PERSIST_FAILED,
+                        },
+                        error_code=TERMINAL_REASON_PERSIST_FAILED,
+                    )
+                except Exception as exc:  # noqa: BLE001 - amendment must not break the terminal
+                    logger.error(
+                        "reader_ask usage event outcome amendment failed: "
+                        "turn_run_id=%s error_category=%s",
+                        turn_run_id,
+                        type(exc).__name__,
+                    )
+                if not amended:
+                    usage_event_id = None
             for frame in await _failure_terminal_frames(
                 final_status="failed",
                 run_status="failed",
                 terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
+                usage_summary=usage_summary,
+                usage_event_id=usage_event_id,
             ):
                 yield frame
             return
@@ -2070,10 +2456,8 @@ async def _run_agentic_turn(
         # actually flipped the row from streaming → completed with
         # final_status=ok) may emit reasoning.completed and message.completed.
         # The CAS loser (status == "already_terminal") must NOT emit
-        # completed — the winning writer owns the terminal. Always aclose
-        # BEFORE any terminal frames or silent return so the consumer never
-        # observes terminal while the learner worker still holds a limiter
-        # slot. Winning non-ok → project real terminal; winning ok → silent.
+        # completed — the winning writer owns the terminal. Winning non-ok
+        # projects the real terminal; winning ok ends silently.
         if persisted.get("status") == "already_terminal":
             winning_final_status = persisted.get("winning_final_status")
             winning_terminal_reason = persisted.get("winning_terminal_reason")
@@ -2090,8 +2474,6 @@ async def _run_agentic_turn(
                 total_ms,
                 metrics.to_log_dict(),
             )
-            # Always aclose before any terminal frames or silent return.
-            await _learner_cleanup(success=False)
             metrics.mark_terminal_sent()
             if winning_final_status in ("failed", "cancelled", "context_stale"):
                 # Project the real persisted terminal. Prefer the winning
@@ -2107,8 +2489,7 @@ async def _run_agentic_turn(
                         turn_run_id=turn["id"],
                         envelope_fingerprint=envelope.envelope_fingerprint,
                         final_status=winning_final_status,
-                        terminal_reason=winning_terminal_reason
-                        or TERMINAL_REASON_AGENT_RUN_FAILED,
+                        terminal_reason=winning_terminal_reason or TERMINAL_REASON_AGENT_RUN_FAILED,
                     )
                     terminal_json = terminal.model_dump(mode="json")
                 yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
@@ -2123,19 +2504,24 @@ async def _run_agentic_turn(
         # and the answer are now committed in one transaction, so from this
         # point on any reload returns the same visible reasoning text. Only
         # now may the completion promise be emitted — and it must precede
-        # message.completed. aclose after persist, before message.completed.
-        await _learner_cleanup(success=False)
+        # message.completed.
         metrics.mark_terminal_sent()
+        reasoning_completed = reasoning_observer.build_completed_event()
+        if isinstance(reasoning_completed, AgenticReasoningCompletedEvent):
+            yield encode_sse(
+                EVENT_AGENTIC_REASONING_COMPLETED,
+                reasoning_completed.model_dump(mode="json"),
+            )
         yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
 
-
     finally:
-        # Post-agent safety net: every exit closes the sidecar.
-        if _lr_state != "closed":
+        close_fn = getattr(reasoning_observer, "aclose", None)
+        if callable(close_fn):
             try:
-                await _learner_cleanup(success=False)
+                await close_fn()
             except Exception:  # noqa: BLE001
                 pass
+
 
 async def stream_agentic_thread_message(
     *,
@@ -2193,12 +2579,13 @@ async def stream_agentic_thread_message(
     # callers pass none of these.
     memory_enabled_override: bool | None = None,
     memory_compactor: Any | None = None,
-    # Same ResolvedModelConfig used to build ``model`` (server-only).
-    main_model_config: Any | None = None,
-    learner_reasoning_enabled_override: bool | None = None,
-    learner_reasoning_run_fn: Any | None = None,
-    learner_reasoning_test_route: Any | None = None,
-    learner_reasoning_finalize_grace: float | None = None,
+    # Usage-accounting identity from the resolved execution config
+    # (model/provider/profile/option + billing echo). ``None`` falls back
+    # to the stream-level model route and the default reader-ask billing
+    # config (see ``_run_agentic_turn``).
+    execution_snapshot: ReaderRecordAskExecutionSnapshot | None = None,
+    # Test seam replacing the invocation-keyed usage-event recorder.
+    usage_event_recorder: UsageEventRecorder | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -2351,11 +2738,12 @@ async def stream_agentic_thread_message(
         # preceding user message's content.  No new user message is created.
         # ASK-RETRY-CONTRACT-content_md is preserved until the new run
         # commits; supersedes_run_id + run_attempt link the regenerate chain.
-        existing_assistant, existing_user = (
-            await repo.get_assistant_message_with_preceding_user_message(
-                thread_id=thread_id,
-                message_id=retry_message_id,
-            )
+        (
+            existing_assistant,
+            existing_user,
+        ) = await repo.get_assistant_message_with_preceding_user_message(
+            thread_id=thread_id,
+            message_id=retry_message_id,
         )
         if existing_assistant is None or existing_user is None:
             yield encode_sse(
@@ -2431,9 +2819,7 @@ async def stream_agentic_thread_message(
                 web_search_mode=persisted_web_search_mode,
                 # Persist the full validated focus set (canonical
                 # dicts) so regenerate replays the same user focus.
-                focus_anchors=[
-                    entry.model_dump(mode="json") for entry in focus_anchors
-                ]
+                focus_anchors=[entry.model_dump(mode="json") for entry in focus_anchors]
                 if focus_anchors
                 else None,
             )
@@ -2454,9 +2840,7 @@ async def stream_agentic_thread_message(
                 content_md=content,
                 metadata={
                     "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                    "retry_contract_version": retry_snapshot[
-                        "retry_contract_version"
-                    ],
+                    "retry_contract_version": retry_snapshot["retry_contract_version"],
                     "web_search_mode": persisted_web_search_mode,
                     "model_option_key": model_option_key,
                     "retry_snapshot": retry_snapshot,
@@ -2469,9 +2853,7 @@ async def stream_agentic_thread_message(
                 content_md="",
                 metadata={
                     "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                    "retry_contract_version": retry_snapshot[
-                        "retry_contract_version"
-                    ],
+                    "retry_contract_version": retry_snapshot["retry_contract_version"],
                     "model_option_key": model_option_key,
                     "retry_snapshot": retry_snapshot,
                 },
@@ -2506,9 +2888,7 @@ async def stream_agentic_thread_message(
             claim_generation=claim_generation,
             assistant_message_id=asst_uuid,
         )
-        effective_known = (
-            known if known is not None else known_submission_status
-        )
+        effective_known = known if known is not None else known_submission_status
 
         async def _load_msg_status() -> str | None:
             if asst_uuid is None:
@@ -2519,15 +2899,12 @@ async def stream_agentic_thread_message(
             await apply_agentic_submission_terminal(
                 hook=hook,
                 known=effective_known,
-                load_message_status=(
-                    _load_msg_status if effective_known is None else None
-                ),
+                load_message_status=(_load_msg_status if effective_known is None else None),
                 repo=repo,
             )
         except Exception:  # noqa: BLE001
             logger.warning(
-                "agentic submission terminal sync failed "
-                "client_submission_id=%s assistant_id=%s",
+                "agentic submission terminal sync failed client_submission_id=%s assistant_id=%s",
                 client_submission_id,
                 asst_uuid,
                 exc_info=True,
@@ -2656,11 +3033,9 @@ async def stream_agentic_thread_message(
             web_evidence_registry=wired_web_evidence_registry,
             memory_enabled_override=memory_enabled_override,
             memory_compactor=memory_compactor,
-            learner_reasoning_enabled_override=learner_reasoning_enabled_override,
-            learner_reasoning_run_fn=learner_reasoning_run_fn,
-            learner_reasoning_model_config=main_model_config,
-            learner_reasoning_test_route=learner_reasoning_test_route,
-            learner_reasoning_finalize_grace=learner_reasoning_finalize_grace,
+            execution_snapshot=execution_snapshot,
+            model_option_key=model_option_key,
+            usage_event_recorder=usage_event_recorder,
         ):
             yield chunk
             # ASK-TURN-LIFECYCLE mark terminal-emitted as soon as the
@@ -2729,7 +3104,12 @@ async def retry_agentic_thread_message(
     web_evidence_registry: WebEvidenceRegistry | None = None,
     # ASK-TURN-LIFECYCLE forwarded to ``stream_agentic_thread_message``.
     lifecycle: StreamLifecycleHook | None = None,
-    main_model_config: Any | None = None,
+    # Usage-accounting identity forwarded to
+    # ``stream_agentic_thread_message``. Retry resolves the same execution
+    # config family as the original send, so the usage event for the new
+    # turn_run carries the same model/billing identity.
+    execution_snapshot: ReaderRecordAskExecutionSnapshot | None = None,
+    usage_event_recorder: UsageEventRecorder | None = None,
 ) -> AsyncIterator[str]:
     """Retry an existing assistant message via the agentic path.
 
@@ -2778,7 +3158,8 @@ async def retry_agentic_thread_message(
         web_search_backend=web_search_backend,
         web_evidence_registry=web_evidence_registry,
         lifecycle=lifecycle,
-        main_model_config=main_model_config,
+        execution_snapshot=execution_snapshot,
+        usage_event_recorder=usage_event_recorder,
     ):
         yield chunk
     return

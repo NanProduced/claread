@@ -251,8 +251,8 @@ export function parseSubmissionReconcilePayload(
  * user input. The metric set is the union of backend-emitted and
  * frontend-only-emitted kinds:
  *
- * - ``first_reasoning`` — first ``agentic.learner_reasoning.snapshot``
- *   arrival. ``null`` if no learner snapshot was emitted this turn.
+ * - ``first_reasoning`` — first ``agentic.reasoning.started`` arrival.
+ *   ``null`` if the provider emitted no readable reasoning this turn.
  * - ``first_answer_delta`` / ``last_answer_delta`` — first and last
  *   ``message.delta`` arrival times. ``null`` if no answer delta
  *   arrived (e.g., early validation failure). The gap

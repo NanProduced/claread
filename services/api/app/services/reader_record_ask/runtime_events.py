@@ -175,7 +175,7 @@ class ValidatingEvidenceEvent(BaseModel):
 class AgenticReasoningStartedEvent(BaseModel):
     """Safe reasoning projection signal: first non-empty projected chunk.
 
-    Emitted by the approved reasoning projector only — never by phase
+    Emitted by the provider reasoning safety observer only — never by phase
     events. Carries only identity binding and policy version; never raw
     reasoning, length, hash, or provider payloads. ``seq`` is always 0
     and the event fires at most once per turn.
@@ -184,9 +184,7 @@ class AgenticReasoningStartedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["agentic_reasoning_started"] = "agentic_reasoning_started"
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        "reader_record_ask_agentic_v2"
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = "reader_record_ask_agentic_v2"
     message_id: str
     thread_id: str
     turn_run_id: str
@@ -207,9 +205,7 @@ class AgenticReasoningDeltaEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["agentic_reasoning_delta"] = "agentic_reasoning_delta"
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        "reader_record_ask_agentic_v2"
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = "reader_record_ask_agentic_v2"
     message_id: str
     thread_id: str
     turn_run_id: str
@@ -231,15 +227,14 @@ class AgenticReasoningCompletedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["agentic_reasoning_completed"] = "agentic_reasoning_completed"
-    execution_version: Literal["reader_record_ask_agentic_v2"] = (
-        "reader_record_ask_agentic_v2"
-    )
+    execution_version: Literal["reader_record_ask_agentic_v2"] = "reader_record_ask_agentic_v2"
     message_id: str
     thread_id: str
     turn_run_id: str
     seq: int = Field(ge=1)
     has_content: bool
     truncated: bool
+    visibility_status: Literal["complete", "truncated", "blocked"]
     projection_policy_version: str
 
 
@@ -324,15 +319,13 @@ class WebSearchResultEvent(BaseModel):
     # reformulation without contacting a provider.
     attempt_count: int = Field(default=0, ge=0)
     # Per-attempt outcome (this single call only).
-    outcome: Literal[
-        "completed", "no_results", "unavailable", "failed", "timeout"
-    ]
+    outcome: Literal["completed", "no_results", "unavailable", "failed", "timeout"]
     # Turn-level aggregated outcome at the time of this attempt.
     # The projector uses this for UI activity so call_limit after
     # success does not degrade to ``unavailable``.
-    turn_outcome: Literal[
-        "completed", "no_results", "unavailable", "failed", "timeout"
-    ] = Field(default="unavailable")
+    turn_outcome: Literal["completed", "no_results", "unavailable", "failed", "timeout"] = Field(
+        default="unavailable"
+    )
     # Per-attempt safe detail code (never query / URL / payload).
     detail_code: str | None = Field(default=None, max_length=64)
     # Count of host-minted :class:`WebEvidence` entries from this call.
