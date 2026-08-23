@@ -412,6 +412,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           </span>
         ) : null}
         <img
+          draggable={false}
           data-image-state={loadState === "loaded" ? "loaded" : undefined}
           src={effectiveUrl as string}
           alt={altText}

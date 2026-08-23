@@ -9417,4 +9417,136 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     expect(imageItem?.hasAttribute("data-unit-id")).toBe(false);
     expect(imageItem?.hasAttribute("data-anchor-segment-id")).toBe(false);
   });
+
+  // G3b-R4: draggable=false is this round's real production fix (RED-1).
+  // The two A→B tests below lock in the Surface's existing isolation behavior:
+  // setValue remounts the image element, so a late load/error dispatched on
+  // the detached old img node cannot reach any live handler. They are
+  // regression locks for that combination, not evidence of a URL-state bug.
+  it("native reader img itself sets draggable=false", () => {
+    const url = "https://example.com/a.png";
+    const snapshot = makeImgSnapshotForSurface(
+      [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload(url, "alt", null, url) })],
+    );
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const img = container.querySelector('[data-reader-image="true"] img[src]');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("draggable")).toBe("false");
+  });
+
+  it("after effectiveUrl A→B, a late load from A cannot mark B loaded and copy uses B", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const urlA = "https://example.com/a.png";
+    const urlB = "https://example.com/b.png?v=2#Frag";
+    const mkSnapshot = (effectiveUrl: string | null) =>
+      makeImgSnapshotForSurface(
+        [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+        [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload(urlA, "alt", null, effectiveUrl) })],
+      );
+    const { container, rerender } = render(<ReaderRecordPlateSurface snapshot={mkSnapshot(urlA)} />);
+    const imgA = container.querySelector('[data-reader-image="true"] img');
+    expect(imgA).not.toBeNull();
+    expect(imgA?.getAttribute("src")).toBe(urlA);
+
+    rerender(<ReaderRecordPlateSurface snapshot={mkSnapshot(urlB)} />);
+    // setValue commits asynchronously (MessageChannel); wait for observable DOM
+    const imgB = await waitFor(() => {
+      const el = container.querySelector('[data-reader-image="true"] img');
+      if (!el || el.getAttribute("src") !== urlB) {
+        throw new Error("imgB with verbatim src B not rendered yet");
+      }
+      return el;
+    });
+    // URL B assigned verbatim, no trim/lowercase/normalize
+    // B must be loading, not yet loaded
+    expect(container.querySelector('[data-image-state="loading"]')).not.toBeNull();
+    expect(container.querySelector('[data-image-state="loaded"]')).toBeNull();
+    // A and B must not share the same native request node
+    expect(imgB).not.toBe(imgA);
+
+    // late load from the old URL A must not flip B to loaded
+    await act(async () => {
+      fireEvent(imgA as Element, new Event("load"));
+    });
+    expect(container.querySelector('[data-reader-image="true"] img')?.getAttribute("src")).toBe(urlB);
+    expect(container.querySelector('[data-image-state="loaded"]')).toBeNull();
+    expect(container.querySelector('[data-image-state="loading"]')).not.toBeNull();
+
+    // only B's own load enters loaded
+    await act(async () => {
+      fireEvent(imgB as Element, new Event("load"));
+    });
+    expect(container.querySelector('[data-image-state="loaded"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(urlB);
+  });
+
+  it("after effectiveUrl A→B, a late error from A cannot mark B load_failed and copy uses B", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const urlA = "https://example.com/a.png";
+    const urlB = "https://example.com/b.png?v=2#Frag";
+    const mkSnapshot = (effectiveUrl: string | null) =>
+      makeImgSnapshotForSurface(
+        [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+        [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload(urlA, "alt", null, effectiveUrl) })],
+      );
+    const { container, rerender } = render(<ReaderRecordPlateSurface snapshot={mkSnapshot(urlA)} />);
+    const imgA = container.querySelector('[data-reader-image="true"] img');
+    expect(imgA).not.toBeNull();
+    expect(imgA?.getAttribute("src")).toBe(urlA);
+
+    rerender(<ReaderRecordPlateSurface snapshot={mkSnapshot(urlB)} />);
+    // setValue commits asynchronously (MessageChannel); wait for observable DOM
+    const imgB = await waitFor(() => {
+      const el = container.querySelector('[data-reader-image="true"] img');
+      if (!el || el.getAttribute("src") !== urlB) {
+        throw new Error("imgB with verbatim src B not rendered yet");
+      }
+      return el;
+    });
+    expect(container.querySelector('[data-image-state="loading"]')).not.toBeNull();
+    expect(container.querySelector('[data-image-state="load_failed"]')).toBeNull();
+    expect(imgB).not.toBe(imgA);
+
+    // late error from the old URL A must not flip B to load_failed
+    await act(async () => {
+      fireEvent(imgA as Element, new Event("error"));
+    });
+    expect(container.querySelector('[data-image-state="load_failed"]')).toBeNull();
+    expect(container.querySelector('[data-image-state="loading"]')).not.toBeNull();
+
+    // only B's own error enters load_failed
+    await act(async () => {
+      fireEvent(imgB as Element, new Event("error"));
+    });
+    expect(container.querySelector('[data-image-state="load_failed"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(urlB);
+  });
+
+  it("safe → unsafe/null effectiveUrl unmounts img[src] and never falls back to sourceUrl as src", async () => {
+    const safeUrl = "https://example.com/a.png";
+    const unsafeSource = "/local/relative.png";
+    const mkSnapshot = (effectiveUrl: string | null) =>
+      makeImgSnapshotForSurface(
+        [{ unitId: "u1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+        [wgNode({ block_id: "img1", block_type: "image", payload: imgPayload(unsafeSource, "alt", null, effectiveUrl) })],
+      );
+    const { container, rerender } = render(<ReaderRecordPlateSurface snapshot={mkSnapshot(safeUrl)} />);
+    expect(container.querySelector('[data-reader-image="true"] img[src]')).not.toBeNull();
+
+    rerender(<ReaderRecordPlateSurface snapshot={mkSnapshot(null)} />);
+    // setValue commits asynchronously (MessageChannel); wait for observable DOM
+    await waitFor(() => {
+      expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
+      expect(container.textContent).toContain("链接不安全");
+    });
+    // source surface keeps source_url text; no img fallback to sourceUrl
+    expect(container.textContent).toContain(unsafeSource);
+  });
 });
