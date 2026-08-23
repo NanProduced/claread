@@ -37,6 +37,8 @@ import type { Descendant } from "platejs";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
 import { InputMarkdownImagePlugin } from "@/components/editor/plugins/input-markdown-image-kit";
+import { markdownTextInputPlugins } from "@/app/(private)/app/read/MarkdownTextInput";
+import { deserializeMarkdownToBlocksWithStatus } from "@/lib/reader-plate/markdown/deserialize";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
 import {
   NOTION_CALLOUT_DUAL_MIME_HTML,
@@ -771,5 +773,566 @@ describe("G1P-B-A dual-MIME Layer A boundary", () => {
     // plain 的 typescript fence 语言不进入 HTML
     expect(result.html).toContain("language-python");
     expect(result.html).not.toContain("typescript");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-B · bounded non-URL companion-field fusion。所有用例都经公开 seam：
+// negotiateClipboardSource → deserializeHybridClipboardFragment，且两侧
+// deserializer 均为实际 mounted input editor（markdownTextInputPlugins）。
+// HTML 始终是结构 truth；只补真正 missing 的 alt/title/code language。
+// ---------------------------------------------------------------------------
+
+function createMountedInputEditor() {
+  return createPlateEditor({ plugins: markdownTextInputPlugins });
+}
+
+function createMountedDependencies() {
+  const editor = createMountedInputEditor();
+  return {
+    deserializeHtml: (body: HTMLElement) =>
+      editor.api.html.deserialize({ element: body }) as never,
+    deserializeMarkdown: (markdown: string) =>
+      editor.getApi(MarkdownPlugin).markdown.deserialize(markdown) as never,
+  };
+}
+
+/** negotiate + fragment 应用全链路（公开 seam）。 */
+function fuseClipboardFragment(html: string, plain: string) {
+  const dependencies = createMountedDependencies();
+  const result = negotiateClipboardSource({ html, plain }, dependencies);
+  if (result.kind !== "hybrid" || !result.fusion) {
+    return { result, fragment: null };
+  }
+  return {
+    result,
+    fragment: deserializeHybridClipboardFragment(
+      result.html,
+      result.fusion,
+      dependencies,
+    ),
+  };
+}
+
+function collectByType(
+  nodes: Descendant[],
+  type: string,
+): Array<Record<string, unknown>> {
+  const found: Array<Record<string, unknown>> = [];
+  const walk = (ns: Descendant[]) => {
+    for (const n of ns) {
+      const node = n as Record<string, unknown>;
+      if (node.type === type) found.push(node);
+      if (Array.isArray(node.children)) {
+        walk(node.children as Descendant[]);
+      }
+    }
+  };
+  walk(nodes);
+  return found;
+}
+
+function allLeafText(nodes: Descendant[]): string {
+  let text = "";
+  const walk = (ns: Descendant[]) => {
+    for (const n of ns) {
+      const node = n as Record<string, unknown>;
+      if (typeof node.text === "string") text += node.text;
+      if (Array.isArray(node.children)) {
+        walk(node.children as Descendant[]);
+      }
+    }
+  };
+  walk(nodes);
+  return text;
+}
+
+function codeBlockBody(node: Record<string, unknown>): string {
+  return (
+    (node.children as Array<{ children?: Array<{ text?: string }> }> | undefined)
+      ?.map((line) => line.children?.map((c) => c.text ?? "").join("") ?? "")
+      .join("\n") ?? ""
+  );
+}
+
+describe("G1P-B-B image missing-field fusion（Sliding A）", () => {
+  it.each([
+{
+        label: "alt missing",
+        html: `<p>before <img src="https://example.com/a.png"> after</p>`,
+        plain: `before ![plain-alt](https://example.com/a.png) after`,
+        plainAlt: "plain-alt",
+        htmlAlt: "",
+        expectedAlt: "plain-alt",
+        expectedTitle: undefined as string | undefined,
+      },
+    {
+      label: "title missing",
+      html: `<p>before <img src="https://example.com/a.png" alt="html-alt"> after</p>`,
+      plain: `before ![html-alt](https://example.com/a.png "plain-title") after`,
+      plainAlt: "html-alt",
+      htmlAlt: "html-alt",
+      expectedAlt: undefined as string | undefined,
+      expectedTitle: "plain-title",
+    },
+    {
+      label: "alt and title both missing",
+      html: `<p>before <img src="https://example.com/a.png"> after</p>`,
+      plain: `before ![plain-alt](https://example.com/a.png "plain-title") after`,
+      plainAlt: "plain-alt",
+      htmlAlt: "",
+      expectedAlt: "plain-alt",
+      expectedTitle: "plain-title",
+    },
+  ])(
+    "$label：只补 missing 字段，URL 保持 HTML 原值，数量/path/邻接文本不变",
+    ({ html, plain, plainAlt, htmlAlt, expectedAlt, expectedTitle }) => {
+      const { result, fragment } = fuseClipboardFragment(html, plain);
+
+      // 正向存在性：HTML fragment 确实含 img；plain deserializer 确实产出
+      // companion img 与候选字段。
+      const htmlEditor = createMountedInputEditor();
+      const htmlFragment = htmlEditor.api.html.deserialize({
+        element: new DOMParser().parseFromString(html, "text/html").body,
+      }) as Descendant[];
+      expect(collectByType(htmlFragment, "img")).toHaveLength(1);
+      const plainEditor = createMountedInputEditor();
+      const plainFragment = plainEditor
+        .getApi(MarkdownPlugin)
+        .markdown.deserialize(plain) as Descendant[];
+      const plainImgs = collectByType(plainFragment, "img");
+      expect(plainImgs).toHaveLength(1);
+      expect((plainImgs[0] as { caption?: Descendant[] }).caption).toEqual([
+        { text: plainAlt },
+      ]);
+
+      // 融合后：kind hybrid、字段补齐、URL 与邻接结构守恒。
+      expect(result.kind).toBe("hybrid");
+      expect(result.reason).toBe("html_plain_fields_fused");
+      expect(fragment).not.toBeNull();
+      const imgs = collectByType(fragment as Descendant[], "img");
+      expect(imgs).toHaveLength(1);
+      const img = imgs[0] as {
+        url?: string;
+        caption?: Descendant[];
+        title?: string;
+      };
+      expect(img.url).toBe("https://example.com/a.png");
+      expect(img.caption).toEqual([{ text: expectedAlt ?? htmlAlt }]);
+      if (expectedTitle !== undefined) {
+        expect(img.title).toBe(expectedTitle);
+      } else {
+        expect(img).not.toHaveProperty("title");
+      }
+      // 邻接正文不变（HTML 反序列化在 inline void 旁折叠空白，与未融合
+      // fragment 完全一致）；字段值不进正文 leaf、plain URL 未写入任何位置
+      const leafText = allLeafText(fragment as Descendant[]);
+      expect(leafText).toBe("before after");
+      expect(leafText).not.toContain("plain-alt");
+      expect(leafText).not.toContain("plain-title");
+    },
+  );
+
+  it("markdown serialize 观察：补齐的 alt/title 进 fence 风格输出，正文零漂移", () => {
+    const { fragment } = fuseClipboardFragment(
+      `<p>before <img src="https://example.com/a.png"> after</p>`,
+      `before ![plain-alt](https://example.com/a.png "plain-title") after`,
+    );
+    expect(fragment).not.toBeNull();
+    const editor = createMountedInputEditor();
+    const md = editor
+      .getApi(MarkdownPlugin)
+      .markdown.serialize({ value: fragment as Descendant[] });
+    expect(md).toContain("![plain-alt](https://example.com/a.png \"plain-title\")");
+    expect(md).toContain("before");
+    expect(md).toContain("after");
+  });
+});
+
+describe("G1P-B-B code language fusion（Slice B）", () => {
+  it("lang 缺失时从唯一对应 fence 补齐；code body 含内部空行逐字守恒", () => {
+    const html = `<pre><code>line1\n\nline3</code></pre>`;
+    const plain = "```python\nline1\n\nline3\n```";
+
+    // 正向存在性：HTML code_block 存在且无 lang；plain fence 有 lang。
+    const htmlEditor = createMountedInputEditor();
+    const htmlFragment = htmlEditor.api.html.deserialize({
+      element: new DOMParser().parseFromString(html, "text/html").body,
+    }) as Descendant[];
+    const htmlBlocks = collectByType(htmlFragment, "code_block");
+    expect(htmlBlocks).toHaveLength(1);
+    expect(htmlBlocks[0]).not.toHaveProperty("lang");
+    const plainEditor = createMountedInputEditor();
+    const plainBlocks = collectByType(
+      plainEditor.getApi(MarkdownPlugin).markdown.deserialize(plain) as Descendant[],
+      "code_block",
+    );
+    expect(plainBlocks).toHaveLength(1);
+    expect((plainBlocks[0] as { lang?: string }).lang).toBe("python");
+
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("hybrid");
+    expect(result.reason).toBe("html_plain_fields_fused");
+    expect(fragment).not.toBeNull();
+    const blocks = collectByType(fragment as Descendant[], "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ type: "code_block", lang: "python" });
+    expect(codeBlockBody(blocks[0])).toBe("line1\n\nline3");
+    // 节点数量与位置不变：仍是三个 code_line
+    expect((blocks[0].children as unknown[]).length).toBe(3);
+    expect(fragment).toHaveLength(1);
+
+    const editor = createMountedInputEditor();
+    const md = editor
+      .getApi(MarkdownPlugin)
+      .markdown.serialize({ value: fragment as Descendant[] });
+    expect(md).toContain("```python");
+    expect(md).toContain("line1");
+    expect(md).toContain("line3");
+  });
+
+  it("HTML lang 已存在、plain 冲突：HTML 胜出，不覆盖", () => {
+    const { result, fragment } = fuseClipboardFragment(
+      `<pre><code class="language-python">x = 1</code></pre>`,
+      "```typescript\nx = 1\n```",
+    );
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).toContain("language-python");
+    expect(result.html).not.toContain("typescript");
+  });
+});
+
+describe("G1P-B-B trust-boundary guards（Slice C）", () => {
+  it("HTML alt=\"\" 是显式空值：plain alt 不得覆盖", () => {
+    const { result, fragment } = fuseClipboardFragment(
+      `<p>before <img src="https://example.com/a.png" alt=""> after</p>`,
+      `before ![plain-alt](https://example.com/a.png) after`,
+    );
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    // sanitizer 后 DOM hasAttribute("alt") 仍为 true：显式空值
+    const dom = new DOMParser().parseFromString(result.html, "text/html");
+    const domImg = dom.querySelector("img");
+    expect(domImg?.hasAttribute("alt")).toBe(true);
+  });
+
+  it("HTML title=\"\" 是显式空值：plain title 不得覆盖", () => {
+    const { result, fragment } = fuseClipboardFragment(
+      `<p>before <img src="https://example.com/a.png" alt="a" title=""> after</p>`,
+      `before ![a](https://example.com/a.png "plain-title") after`,
+    );
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).toContain('title=""');
+  });
+
+  it("HTML alt/title 已存在且与 plain 冲突：不融合", () => {
+    const { result, fragment } = fuseClipboardFragment(
+      `<p>before <img src="https://example.com/a.png" alt="html-alt" title="html-title"> after</p>`,
+      `before ![plain-alt](https://example.com/a.png "plain-title") after`,
+    );
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+  });
+
+  it("HTML missing src + safe plain URL：不补 URL（fail closed，alt 也不补）", () => {
+    const html = `<p>before <img alt="x"> after</p>`;
+    const plain = `before ![plain-alt](https://example.com/a.png) after`;
+    // 正向存在性：HTML fragment 确有 img；plain 有 companion img + URL。
+    const htmlEditor = createMountedInputEditor();
+    const htmlFragment = htmlEditor.api.html.deserialize({
+      element: new DOMParser().parseFromString(html, "text/html").body,
+    }) as Descendant[];
+    const htmlImgs = collectByType(htmlFragment, "img");
+    expect(htmlImgs).toHaveLength(1);
+    expect(htmlImgs[0]).not.toHaveProperty("url");
+    const plainEditor = createMountedInputEditor();
+    const plainImgs = collectByType(
+      plainEditor.getApi(MarkdownPlugin).markdown.deserialize(plain) as Descendant[],
+      "img",
+    );
+    expect(plainImgs).toHaveLength(1);
+    expect((plainImgs[0] as { url?: string }).url).toBe(
+      "https://example.com/a.png",
+    );
+
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).not.toContain("src=");
+  });
+
+  it("sanitizer 摘除 unsafe src + safe plain URL：不恢复原 URL、不用 plain URL", () => {
+    const html = `<p>before <img src="data:image/png;base64,AAAA" alt="kept"> after</p>`;
+    const plain = `before ![plain-alt](https://example.com/a.png) after`;
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).not.toContain("src=");
+    expect(result.html).not.toContain("data:image");
+  });
+
+  it("safe HTML URL A + plain URL B：URL 冲突，不融合，保留 A", () => {
+    const html = `<p>before <img src="https://example.com/A.png"> after</p>`;
+    const plain = `before ![plain-alt](https://example.com/B.png) after`;
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).toContain("https://example.com/A.png");
+    expect(result.html).not.toContain("B.png");
+  });
+
+  it("通过 loadability 的 plain URL 仍不得进入 img url", () => {
+    const html = `<p>before <img alt="x"> after</p>`;
+    const plain = `before ![plain-alt](https://loadable.example.com/i.png) after`;
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).not.toContain("loadable.example.com");
+    const dom = new DOMParser().parseFromString(result.html, "text/html");
+    expect(dom.querySelector("img[src]")).toBeNull();
+  });
+
+  it("重复相同图片无法唯一消歧：整个重复组不融合", () => {
+    const html =
+      `<p><img src="https://example.com/dup.png"></p>` +
+      `<p><img src="https://example.com/dup.png"></p>`;
+    const plain = `![dup](https://example.com/dup.png) ![dup](https://example.com/dup.png)`;
+    // 正向存在性：两侧各有至少两个候选 img。
+    const htmlEditor = createMountedInputEditor();
+    const htmlFragment = htmlEditor.api.html.deserialize({
+      element: new DOMParser().parseFromString(html, "text/html").body,
+    }) as Descendant[];
+    expect(collectByType(htmlFragment, "img")).toHaveLength(2);
+    const plainEditor = createMountedInputEditor();
+    const plainImgs = collectByType(
+      plainEditor.getApi(MarkdownPlugin).markdown.deserialize(plain) as Descendant[],
+      "img",
+    );
+    expect(plainImgs.length).toBeGreaterThanOrEqual(2);
+
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+  });
+
+  it("重复相同 code body 无法唯一消歧：整个重复组不融合", () => {
+    const html =
+      `<pre><code>a\n\nb</code></pre>` +
+      `<pre><code>a\n\nb</code></pre>`;
+    const plain = "```go\na\n\nb\n```\n\ntext\n\n```go\na\n\nb\n```";
+    // 正向存在性：两侧各有至少两个候选 code_block。
+    const htmlEditor = createMountedInputEditor();
+    const htmlFragment = htmlEditor.api.html.deserialize({
+      element: new DOMParser().parseFromString(html, "text/html").body,
+    }) as Descendant[];
+    expect(collectByType(htmlFragment, "code_block")).toHaveLength(2);
+    const plainEditor = createMountedInputEditor();
+    const plainBlocks = collectByType(
+      plainEditor.getApi(MarkdownPlugin).markdown.deserialize(plain) as Descendant[],
+      "code_block",
+    );
+    expect(plainBlocks.length).toBeGreaterThanOrEqual(2);
+
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+  });
+
+  it("某字段冲突时，不部分补同一节点的另一个 missing 字段", () => {
+    const html = `<p>before <img src="https://example.com/A.png"> after</p>`;
+    const plain = `before ![plain-alt](https://example.com/B.png "plain-title") after`;
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    // alt/title 均未被补（URL 冲突 → 整节点 fail closed）
+    expect(result.html).toContain("https://example.com/A.png");
+    expect(result.html).not.toContain("plain-alt");
+    expect(result.html).not.toContain("plain-title");
+  });
+
+  it("rich heading/list/table/marks/link 结构不被 plain 替换；字段融合只补缺失项", () => {
+    const html = [
+      `<h2>Title</h2>`,
+      `<p>before <img src="https://example.com/a.png"> after</p>`,
+      `<ul><li>first <strong>strong</strong></li></ul>`,
+      `<table><tr><th>H</th></tr><tr><td>cell</td></tr></table>`,
+      `<p>Read the <a href="https://example.com/guide">guide</a>.</p>`,
+      `<pre><code>print(1)</code></pre>`,
+    ].join("");
+    const plain = [
+      `## Title`,
+      ``,
+      `before ![plain-alt](https://example.com/a.png) after`,
+      ``,
+      `- first **strong**`,
+      ``,
+      `| H |`,
+      `| --- |`,
+      `| cell |`,
+      ``,
+      `Read the [guide](https://example.com/guide).`,
+      ``,
+      "```python\nprint(1)\n```",
+    ].join("\n");
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("hybrid");
+    expect(result.reason).toBe("html_plain_fields_fused");
+    expect(fragment).not.toBeNull();
+    const nodes = fragment as Descendant[];
+    const imgs = collectByType(nodes, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      url: "https://example.com/a.png",
+      caption: [{ text: "plain-alt" }],
+    });
+    const blocks = collectByType(nodes, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ lang: "python" });
+    // rich 结构原样保留
+    const types = nodes.map((n) => (n as { type?: string }).type);
+    expect(types).toContain("h2");
+    expect(types).toContain("ul");
+    expect(types).toContain("table");
+    expect(allLeafText(nodes)).toContain("guide");
+    expect(allLeafText(nodes)).toContain("strong");
+  });
+
+  it("plain 只有图/code、HTML 没有对应节点：不新增节点", () => {
+    const html = `<p>just text</p>`;
+    const plain = "![only-plain](https://example.com/p.png)\n\n```python\nx = 1\n```\n\njust text";
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).not.toContain("<img");
+    expect(result.html).not.toContain("<pre");
+  });
+
+  it("HTML 只有图/code、plain 没有对应节点：HTML 原样", () => {
+    const html = `<p>before <img src="https://example.com/a.png"> after</p><pre><code>print(1)</code></pre>`;
+    const plain = `before and after only`;
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("html");
+    expect(fragment).toBeNull();
+    expect(result.html).toContain("https://example.com/a.png");
+    expect(result.html).toContain("<pre>");
+  });
+
+  it("callout all-or-nothing 既有行为不变（无字段融合时仍 declined）", () => {
+    const result = negotiateClipboardSource({
+      html: "<p>&lt;aside&gt;</p><p><strong>Alignment</strong>: read the <a href=\"https://trusted.example/guide\">guide</a>.</p><p>&lt;/aside&gt;</p>",
+      plain: "<aside>\n**Alignment**: read the [guide](https://other.example/guide).\n</aside>",
+    });
+    expect(result.kind).toBe("html");
+    expect(result.reason).toBe("html_aside_fusion_declined");
+  });
+
+  it("callout 与唯一 media 字段融合共存：各自在原位置生效，不交换不重复", () => {
+    // 图片段与 aside 区域之间放列表块：HTML deserializer 会把相邻纯 inline
+    // 段落合并为一个 run，slot 机制要求 region 邻接块级元素才能保持 marker
+    // 段落独立（既有合同）；列表分隔让 img 段与 callout 各自独立定位。
+    const html = [
+      `<p>before <img src="https://example.com/i.png"> after</p>`,
+      `<ul><li>between</li></ul>`,
+      `<p>&lt;aside&gt;</p><p>🎯</p>`,
+      `<p><strong>Alignment</strong>: keep the body.</p>`,
+      `<p>&lt;/aside&gt;</p>`,
+      `<p>Trailing.</p>`,
+    ].join("");
+    const plain = [
+      `before ![plain-alt](https://example.com/i.png) after`,
+      ``,
+      `- between`,
+      ``,
+      `<aside>`,
+      `🎯`,
+      ``,
+      `**Alignment**: keep the body.`,
+      `</aside>`,
+      ``,
+      `Trailing.`,
+    ].join("\n");
+    const { result, fragment } = fuseClipboardFragment(html, plain);
+    expect(result.kind).toBe("hybrid");
+    expect(result.reason).toBe("html_plain_aside_fused");
+    expect(fragment).not.toBeNull();
+    const nodes = fragment as Descendant[];
+    const callouts = collectByType(nodes, "source_callout");
+    expect(callouts).toHaveLength(1);
+    const imgs = collectByType(nodes, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      url: "https://example.com/i.png",
+      caption: [{ text: "plain-alt" }],
+    });
+    // 原位置：img 在 callout 之前，Trailing 在最后
+    const types = nodes.map((n) => (n as { type?: string }).type);
+    expect(types.indexOf("source_callout")).toBeGreaterThan(
+      types.indexOf("img"),
+    );
+    expect(types[types.length - 1]).toBe("p");
+    expect(allLeafText(nodes)).toContain("Trailing.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-B-R1 · production plain-deserializer wiring。真实 MarkdownTextInput
+// 注入的 deserializeMarkdown 是默认 projection deserializer
+// （deserializeMarkdownToBlocksWithStatus(md).blocks，不产生 typed img），
+// 因此 image alt/title fusion 必须在内部分辨 input-aware plain blocks，
+// 而不是依赖调用方注入形态。
+// ---------------------------------------------------------------------------
+
+describe("G1P-B-B production plain-deserializer wiring（R1）", () => {
+  it("注入默认 projection deserializer 时 image field fusion 仍建立 plan", () => {
+    const html = `<p>before <img src="https://example.com/a.png"> after</p>`;
+    const plain = `before ![plain-alt](https://example.com/a.png "plain-title") after`;
+
+    // 模拟真实生产调用关系：HTML 走 mounted input editor；plain 走
+    // 默认/projection-only deserializer（不产生 typed img）。
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    const dependencies = {
+      deserializeHtml: (body: HTMLElement) =>
+        editor.api.html.deserialize({ element: body }) as never,
+      deserializeMarkdown: (markdown: string) =>
+        deserializeMarkdownToBlocksWithStatus(markdown).blocks as never,
+    };
+
+    // 正向存在性：注入的 plain deserializer 确实不产出 img。
+    const injectedPlain = dependencies.deserializeMarkdown(plain) as Descendant[];
+    expect(collectByType(injectedPlain, "img")).toHaveLength(0);
+
+    const result = negotiateClipboardSource({ html, plain }, dependencies);
+    // 1. negotiation 产生 field-fusion plan
+    expect(result.kind).toBe("hybrid");
+    expect(result.reason).toBe("html_plain_fields_fused");
+    expect(result.fusion?.imageFieldMatches).toHaveLength(1);
+    const match = result.fusion?.imageFieldMatches?.[0] as
+      | { htmlSrc?: string; url?: unknown }
+      | undefined;
+    // 4. plain URL 不作为 replacement 进入 plan；htmlSrc 是 HTML 自身值
+    expect(match).toBeDefined();
+    expect(match?.url).toBeUndefined();
+    expect(match?.htmlSrc).toBe("https://example.com/a.png");
+
+    const fragment = deserializeHybridClipboardFragment(
+      result.html,
+      result.fusion as NonNullable<typeof result.fusion>,
+      dependencies,
+    );
+    expect(fragment).not.toBeNull();
+    const imgs = collectByType(fragment as Descendant[], "img");
+    // 5. 节点数量不变
+    expect(imgs).toHaveLength(1);
+    const img = imgs[0] as { url?: string; caption?: Descendant[]; title?: string };
+    // 2. 补入 plain alt/title
+    expect(img.caption).toEqual([{ text: "plain-alt" }]);
+    expect(img.title).toBe("plain-title");
+    // 3. URL 仍精确来自 HTML
+    expect(img.url).toBe("https://example.com/a.png");
+    // 5. 邻接正文与 path 不变
+    expect(allLeafText(fragment as Descendant[])).toBe("before after");
+    expect(collectByType(fragment as Descendant[], "code_block")).toHaveLength(0);
   });
 });

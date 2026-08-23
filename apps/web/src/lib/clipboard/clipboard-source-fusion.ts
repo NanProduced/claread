@@ -2,7 +2,11 @@ import type { Descendant } from "platejs";
 
 import {
   type ClipboardAsideFusionPlan,
+  codeBodyText,
+  fieldKeyOf,
   findEscapedAsideDomRegions,
+  imageCaptionText,
+  scanClipboardFragment,
 } from "./clipboard-source-negotiation";
 
 const FUSION_SLOT_TEXT_PREFIX = "\uE000claread-source-callout-slot-";
@@ -166,44 +170,141 @@ function replaceDomRegionWithSlot(
 }
 
 /**
+ * G1P-B-B：fragment 应用前按 plan 重新验证 path/type/既有字段/identity；
+ * 任一失败返回 null，调用方保留 sanitized HTML。只改 caption/title/lang
+ * 字段，不动节点数量、path、parent/order、正文、marks 或 URL。
+ */
+function applyFieldPatches(
+  nodes: Descendant[],
+  fusion: ClipboardAsideFusionPlan,
+): Descendant[] | null {
+  const { images, codes } = scanClipboardFragment(nodes);
+  const imageByKey = new Map(images.map((img) => [img.key, img]));
+  const codeByKey = new Map(codes.map((code) => [code.key, code]));
+
+  const patches: Array<{ realPath: number[]; replacement: Descendant }> = [];
+  for (const match of fusion.imageFieldMatches ?? []) {
+    const scan = imageByKey.get(fieldKeyOf(match.blockPath, match.ordinal));
+    if (!scan) return null;
+    if (scan.node.type !== "img") return null;
+    // identity 重验证：HTML src 仍是唯一 URL truth
+    if (scan.node.url !== match.htmlSrc) return null;
+    if (match.alt !== undefined) {
+      // 既有字段重验证：alt 必须仍是 missing（caption 为空）
+      if (imageCaptionText(scan.node) !== "") return null;
+    }
+    if (match.title !== undefined) {
+      // 既有字段重验证：title 必须仍是 missing
+      if (typeof scan.node.title === "string") return null;
+    }
+    patches.push({
+      realPath: scan.realPath,
+      replacement: {
+        ...scan.node,
+        ...(match.alt !== undefined ? { caption: [{ text: match.alt }] } : {}),
+        ...(match.title !== undefined ? { title: match.title } : {}),
+      } as Descendant,
+    });
+  }
+
+  for (const match of fusion.codeLanguageMatches ?? []) {
+    const scan = codeByKey.get(fieldKeyOf(match.blockPath));
+    if (!scan) return null;
+    if (scan.node.type !== "code_block") return null;
+    // body 逐字守恒重验证
+    if (codeBodyText(scan.node) !== match.body) return null;
+    // lang 必须仍是 missing（HTML 胜出语义不变）
+    if (typeof scan.node.lang === "string") return null;
+    patches.push({
+      realPath: scan.realPath,
+      replacement: { ...scan.node, lang: match.language } as Descendant,
+    });
+  }
+
+  let output = nodes;
+  for (const patch of patches) {
+    const patched = replaceAtPath(output, patch.realPath, patch.replacement);
+    if (!patched) return null;
+    output = patched;
+  }
+  return output;
+}
+
+function replaceAtPath(
+  nodes: Descendant[],
+  path: number[],
+  replacement: Descendant,
+): Descendant[] | null {
+  const head = path[0];
+  if (head === undefined) return null;
+  const rest = path.slice(1);
+  if (rest.length === 0) {
+    return nodes.map((node, index) => (index === head ? replacement : node));
+  }
+  const target = nodes[head];
+  if (!target || typeof target !== "object") return null;
+  const children = (target as UnknownPlateNode).children;
+  if (!Array.isArray(children)) return null;
+  const patchedChildren = replaceAtPath(
+    children as Descendant[],
+    rest,
+    replacement,
+  );
+  if (!patchedChildren) return null;
+  return nodes.map((node, index) =>
+    index === head
+      ? ({ ...node, children: patchedChildren } as Descendant)
+      : node,
+  );
+}
+
+/**
  * Merge every validated Notion escaped-aside region at the Plate fragment
  * seam. Rich HTML is deserialized as one document; each DOM region is replaced
  * by an indexed slot, and its matching plain slice is parsed through the
  * existing Markdown/SourceCallout parser. No partial or full-document
- * HTML/plain fallback exists.
+ * HTML/plain fallback exists. G1P-B-B field matches are re-validated against
+ * the fragment before any field is patched.
  */
 export function deserializeHybridClipboardFragment(
   html: string,
   fusion: ClipboardAsideFusionPlan,
   dependencies: ClipboardFragmentFusionDependencies,
 ): Descendant[] | null {
-  if (!html.trim() || fusion.matches.length === 0) return null;
+  if (!html.trim()) return null;
+  const hasCallouts = fusion.matches.length > 0;
+  const hasFields =
+    (fusion.imageFieldMatches?.length ?? 0) > 0 ||
+    (fusion.codeLanguageMatches?.length ?? 0) > 0;
+  if (!hasCallouts && !hasFields) return null;
   if (html.includes(FUSION_SLOT_TEXT_PREFIX)) return null;
 
   const document = new DOMParser().parseFromString(html, "text/html");
-  const regions = findEscapedAsideDomRegions(document.body);
-  if (regions.length !== fusion.matches.length) return null;
-
   const callouts: Descendant[][] = [];
-  for (let index = 0; index < fusion.matches.length; index += 1) {
-    const region = regions[index];
-    const match = fusion.matches[index];
-    if (!region || !match) return null;
-    replaceDomRegionWithSlot(region, fusionSlotText(index));
+  if (hasCallouts) {
+    const regions = findEscapedAsideDomRegions(document.body);
+    if (regions.length !== fusion.matches.length) return null;
 
-    const callout = dependencies.deserializeMarkdown(match.plainAsideMarkdown);
-    if (
-      callout.length === 0 ||
-      callout.filter(
-        (node) =>
-          Boolean(node) &&
-          typeof node === "object" &&
-          (node as UnknownPlateNode).type === "source_callout",
-      ).length !== 1
-    ) {
-      return null;
+    for (let index = 0; index < fusion.matches.length; index += 1) {
+      const region = regions[index];
+      const match = fusion.matches[index];
+      if (!region || !match) return null;
+      replaceDomRegionWithSlot(region, fusionSlotText(index));
+
+      const callout = dependencies.deserializeMarkdown(match.plainAsideMarkdown);
+      if (
+        callout.length === 0 ||
+        callout.filter(
+          (node) =>
+            Boolean(node) &&
+            typeof node === "object" &&
+            (node as UnknownPlateNode).type === "source_callout",
+        ).length !== 1
+      ) {
+        return null;
+      }
+      callouts.push(callout);
     }
-    callouts.push(callout);
   }
 
   const rich = dependencies.deserializeHtml(document.body);
@@ -218,6 +319,10 @@ export function deserializeHybridClipboardFragment(
     );
     if (replaced.count !== 1) return null;
     nodes = replaced.nodes;
+  }
+
+  if (hasFields) {
+    return applyFieldPatches(nodes, fusion);
   }
   return nodes;
 }
