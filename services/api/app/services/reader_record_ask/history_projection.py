@@ -128,12 +128,12 @@ def _sanitize_turn_run_for_wire(turn_run: dict[str, Any] | None) -> dict[str, An
 
 
 def _safe_reasoning_projection(
-    turn_run: dict[str, Any] | None
+    turn_run: dict[str, Any] | None,
 ) -> tuple[str | None, bool | None, str | None]:
-    """Policy-gated cold restore of learner-reasoning summary.
+    """Policy-gated cold restore of provider reasoning or legacy summary.
 
-    Reuses the live text/schema/stage/basis validator. Legacy
-    ``reasoning_projection_v1`` remains fail-closed.
+    Provider reasoning reuses the same canonical snapshot validator as the
+    write path. Existing learner summaries retain their legacy validator.
     Returns ``(text, truncated, stage)``.
     """
     if not isinstance(turn_run, dict):
@@ -141,6 +141,17 @@ def _safe_reasoning_projection(
     payload = turn_run.get("reasoning_projection_json")
     if not isinstance(payload, dict):
         return None, None, None
+    from app.services.reader_record_ask.reasoning_projection import (
+        PROJECTION_POLICY_VERSION,
+        validate_reasoning_snapshot,
+    )
+
+    if payload.get("projection_policy_version") == PROJECTION_POLICY_VERSION:
+        snapshot = validate_reasoning_snapshot(payload)
+        if snapshot is None:
+            return None, None, None
+        return snapshot["text"], snapshot["truncated"], None
+
     from app.services.reader_record_ask.learner_reasoning.validator import (
         validate_cold_learner_payload,
     )
@@ -240,14 +251,33 @@ def project_agentic_history_message(
     del row_status  # reserved for future streaming mid-run projection
     del resolved_evidence_json  # restricted server-only; never cold-project
     anchors = list(context_anchors or [])
-    # ASK-REASONING-cold reasoning comes only from the persisted
-    # projection (committed atomically with the ok answer). Extracted
+    # ASK-REASONING-cold reasoning comes only from the persisted terminal
+    # projection (committed with either the answer or terminal snapshot). Extracted
     # before wire sanitization strips the raw JSONB payload.
     # Extract both text and truncated flag from the same validated
     # snapshot so hot SSE, DB snapshot, and cold history stay consistent.
-    reasoning_text, _, learner_stage = _safe_reasoning_projection(
-        current_turn_run
+    reasoning_text, _, learner_stage = _safe_reasoning_projection(current_turn_run)
+    reasoning_payload = (
+        current_turn_run.get("reasoning_projection_json")
+        if isinstance(current_turn_run, dict)
+        else None
     )
+    from app.services.reader_record_ask.reasoning_projection import (
+        PROJECTION_POLICY_VERSION,
+    )
+
+    is_provider_reasoning = (
+        isinstance(reasoning_payload, dict)
+        and reasoning_payload.get("projection_policy_version") == PROJECTION_POLICY_VERSION
+        and reasoning_text is not None
+    )
+    reasoning_fields: dict[str, Any] = {}
+    if is_provider_reasoning:
+        reasoning_fields = {
+            "reasoning_md": reasoning_text,
+            "reasoning_truncated": bool(reasoning_payload.get("truncated")),
+            "reasoning_visibility_status": reasoning_payload.get("visibility_status"),
+        }
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
     base_kwargs = {
         "message_id": message_id,
@@ -288,13 +318,17 @@ def project_agentic_history_message(
                 "resolved_intent": None,
                 "context_anchors": anchors,
                 **_empty_history_lists(),
+                **reasoning_fields,
+                **({"reasoning_status": "completed"} if is_provider_reasoning else {}),
                 # Learner-reasoning summary (policy learner_reasoning_v1).
                 # Public fields use the canonical learner_reasoning_* shape.
-                "learner_reasoning_text": reasoning_text,
+                "learner_reasoning_text": (None if is_provider_reasoning else reasoning_text),
                 "learner_reasoning_status": (
-                    "completed" if reasoning_text is not None else None
+                    "completed"
+                    if reasoning_text is not None and not is_provider_reasoning
+                    else None
                 ),
-                "learner_reasoning_stage": learner_stage,
+                "learner_reasoning_stage": (None if is_provider_reasoning else learner_stage),
                 "usage_event_id": usage_event_id,
                 "current_turn_run_id": current_turn_run_id,
                 "current_turn_run": safe_turn_run,
@@ -351,6 +385,8 @@ def project_agentic_history_message(
             "resolved_intent": None,
             "context_anchors": anchors,
             **_empty_history_lists(),
+            **reasoning_fields,
+            **({"reasoning_status": "interrupted"} if is_provider_reasoning else {}),
             "usage_event_id": usage_event_id,
             "current_turn_run_id": current_turn_run_id,
             "current_turn_run": safe_turn_run,

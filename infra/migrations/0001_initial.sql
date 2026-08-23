@@ -1146,7 +1146,7 @@ COMMENT ON COLUMN reader_ask_turn_runs.terminal_reason IS 'Typed terminal failur
 
 COMMENT ON COLUMN reader_ask_turn_runs.resolved_evidence_json IS 'Finalizer-resolved typed evidence array for agentic turns.';
 
-COMMENT ON COLUMN reader_ask_turn_runs.reasoning_projection_json IS 'Safe learner-reasoning or legacy reasoning projection committed atomically with the ok answer (same UPDATE). Discriminator: projection_policy_version. learner_reasoning_v1 shape: {projection_policy_version, schema, text, stage, basis, revision, sequence, generation_id, truncated}. reasoning_projection_v1 (legacy) is retired at the public boundary. NULL when no summary was produced or the turn was not ok. Never carries raw provider reasoning, secrets, handles, or unredacted text.';
+COMMENT ON COLUMN reader_ask_turn_runs.reasoning_projection_json IS 'Safe reasoning projection committed atomically with the terminal snapshot (same UPDATE as the ok answer or typed terminal). Discriminator: projection_policy_version. Current write shape is provider_reasoning_v1: {projection_policy_version, text, char_count, truncated, visibility_status} — the deterministic redaction of the provider thinking stream, persisted on every normal terminal (ok or failed/cancelled), NULL when the turn produced no visible reasoning. Legacy learner_reasoning_v1 rows {projection_policy_version, schema, text, stage, basis, revision, sequence, generation_id, truncated} are read-compatible only (fail-closed cold validator) and no longer produced. Never carries raw provider reasoning, secrets, handles, or unredacted text.';
 
 CREATE TABLE reader_event_sequences (
     reading_record_id uuid NOT NULL,

@@ -75,14 +75,11 @@ class Settings(BaseSettings):
     # compactor is guarded by deterministic Host validation and an emergency
     # fallback; failures remain fail-soft for the user turn.
     reader_record_ask_memory_enabled: bool = False
-    # Learner reasoning summary via a
-    # same-authority cheap non-thinking projector. Default OFF. When OFF,
-    # production discards private reasoning at ingress (byte-stable with
-    # the prior UserSafeReasoningObserver path). When ON, turn-local raw
-    # reasoning is scrubbed and retransmitted only to the same provider
-    # authority; public surfaces receive only Host-validated Chinese
-    # stage summaries. Raw reasoning never enters SSE/DTO/DB/logs.
-    reader_record_ask_learner_reasoning_enabled: bool = False
+    # Provider-supplied readable reasoning projection. Default ON; this is
+    # an emergency operational kill switch, not a rollout allowlist. When
+    # disabled, Ask keeps typed progress and the final answer but discards
+    # provider reasoning at ingress.
+    reader_record_ask_provider_reasoning_enabled: bool = True
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""

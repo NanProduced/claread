@@ -1,4 +1,11 @@
-"""Fail-closed validation of projector model output and cold payloads."""
+"""Fail-closed validation of legacy ``learner_reasoning_v1`` cold payloads.
+
+Read compatibility only: the projector / sidecar execution chain that once
+produced these payloads has been removed from the production path. This
+validator exists so ``history_projection`` can safely restore historical
+``reasoning_projection_json`` rows — anything that deviates from the
+legacy shape fails closed to no reasoning.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +18,6 @@ from app.services.reader_record_ask.learner_reasoning.schemas import (
     LEARNER_REASONING_SCHEMA_VERSION,
     TEXT_ZH_MAX_CHARS,
     TEXT_ZH_MIN_CHARS,
-    LearnerReasoningDraft,
 )
 
 _URL_RE = re.compile(r"https?://", re.I)
@@ -40,9 +46,7 @@ _VALID_BASIS = frozenset({"article", "web", "general"})
 
 def _grapheme_len(text: str) -> int:
     normalized = unicodedata.normalize("NFKC", text)
-    cleaned = "".join(
-        ch for ch in normalized if unicodedata.category(ch) not in {"Cf", "Cc"}
-    )
+    cleaned = "".join(ch for ch in normalized if unicodedata.category(ch) not in {"Cf", "Cc"})
     return len(cleaned)
 
 
@@ -52,9 +56,7 @@ def _cjk_ratio(text: str) -> float:
     cjk = sum(
         1
         for ch in text
-        if "\u4e00" <= ch <= "\u9fff"
-        or "\u3400" <= ch <= "\u4dbf"
-        or "\uf900" <= ch <= "\ufaff"
+        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" or "\uf900" <= ch <= "\ufaff"
     )
     return cjk / max(len(text), 1)
 
@@ -94,13 +96,6 @@ def validate_learner_text_zh(text: str) -> str | None:
     return cleaned
 
 
-def validate_learner_draft(draft: LearnerReasoningDraft | object) -> str | None:
-    text = getattr(draft, "text_zh", None)
-    if not isinstance(text, str):
-        return None
-    return validate_learner_text_zh(text)
-
-
 def validate_cold_learner_payload(
     payload: dict[str, Any] | None,
 ) -> tuple[str | None, str | None, list[str] | None]:
@@ -110,9 +105,7 @@ def validate_cold_learner_payload(
     """
     if not isinstance(payload, dict):
         return None, None, None
-    policy = payload.get("projection_policy_version") or payload.get(
-        "policy_version"
-    )
+    policy = payload.get("projection_policy_version") or payload.get("policy_version")
     if policy != LEARNER_REASONING_POLICY_VERSION:
         return None, None, None
     schema = payload.get("schema")
@@ -146,6 +139,5 @@ def validate_cold_learner_payload(
 
 __all__ = [
     "validate_cold_learner_payload",
-    "validate_learner_draft",
     "validate_learner_text_zh",
 ]

@@ -2,10 +2,10 @@
 
 import {
   Reasoning,
-  ReasoningContent,
   ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { CollapsibleContent } from "@/components/ui/collapsible";
 import { cn } from "@/lib/cn";
 import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
 
@@ -19,6 +19,7 @@ type ReasoningPanelProps = {
    * body itself never carries a truncation marker.
    */
   reasoningTruncated?: boolean;
+  reasoningVisibilityStatus?: ReaderAskMessageDto["reasoning_visibility_status"];
   className?: string;
   // markdownComponents?: Partial<Components>; // TODO: ai-elements/reasoning
   // uses Streamdown internally; once it exposes markdownComponents we can
@@ -45,6 +46,7 @@ export function ReasoningPanel({
   reasoningMd,
   reasoningStatus,
   reasoningTruncated,
+  reasoningVisibilityStatus,
   className,
 }: ReasoningPanelProps) {
   const reasoningText = reasoningMd ?? "";
@@ -61,7 +63,7 @@ export function ReasoningPanel({
     <div data-slot="reasoning" className={cn(className)}>
       <Reasoning isStreaming={isStreaming} defaultOpen={false}>
         <ReasoningTrigger
-          className="gap-1.5 text-[12px] font-medium text-muted-foreground"
+          className="gap-1.5 text-xs font-medium text-muted-foreground"
           data-slot="reasoning-trigger"
           getThinkingMessage={(streaming, duration) =>
             streaming ? (
@@ -73,12 +75,14 @@ export function ReasoningPanel({
             )
           }
         />
-        <ReasoningContent
-          className="mt-2 pl-5"
+        <CollapsibleContent
+          className="mt-2 pl-5 text-sm leading-relaxed text-muted-foreground"
           data-slot="reasoning-content"
         >
-          {reasoningText}
-        </ReasoningContent>
+          <div className="border-l border-border/60 pl-3 whitespace-pre-wrap break-words">
+            {reasoningText}
+          </div>
+        </CollapsibleContent>
       </Reasoning>
       {reasoningTruncated ? (
         <div
@@ -86,9 +90,18 @@ export function ReasoningPanel({
           data-testid="ask-reasoning-truncated"
           role="status"
           aria-label="推理已达到展示上限"
-          className="mt-1 pl-5 text-[11px] leading-4 text-muted-foreground"
+          className="mt-1 pl-5 text-xs leading-4 text-muted-foreground"
         >
           已达到展示上限，仅显示部分推理内容。
+        </div>
+      ) : null}
+      {reasoningVisibilityStatus === "blocked" ? (
+        <div
+          data-slot="reasoning-blocked"
+          role="status"
+          className="mt-1 pl-5 text-xs leading-4 text-muted-foreground"
+        >
+          部分思考内容因安全规则未展示。
         </div>
       ) : null}
     </div>

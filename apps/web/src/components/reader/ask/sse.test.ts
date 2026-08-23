@@ -17,6 +17,7 @@ import {
   isReaderAskAgenticCompletedPayload as reexportedCompletedGuard,
   READER_ASK_AGENTIC_EXECUTION_VERSION as reexportedVersion,
 } from "./sse";
+import { TurnLifecycleMetrics } from "./turn-lifecycle";
 
 function makeSseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -1606,7 +1607,7 @@ describe("agentic reasoning payload guards", () => {
       isReaderAskAgenticReasoningStartedPayload({
         ...BASE,
         seq: 0,
-        projection_policy_version: "reasoning_projection_v1",
+        projection_policy_version: "provider_reasoning_v1",
       }),
     ).toBe(true);
     expect(
@@ -1622,7 +1623,8 @@ describe("agentic reasoning payload guards", () => {
         seq: 2,
         has_content: true,
         truncated: false,
-        projection_policy_version: "reasoning_projection_v1",
+        visibility_status: "complete",
+        projection_policy_version: "provider_reasoning_v1",
       }),
     ).toBe(true);
   });
@@ -1632,7 +1634,7 @@ describe("agentic reasoning payload guards", () => {
       isReaderAskAgenticReasoningStartedPayload({
         ...BASE,
         seq: 0,
-        projection_policy_version: "reasoning_projection_v1",
+        projection_policy_version: "provider_reasoning_v1",
         delta: "leak",
       }),
     ).toBe(false);
@@ -1658,7 +1660,8 @@ describe("agentic reasoning payload guards", () => {
         seq: 2,
         has_content: true,
         truncated: false,
-        projection_policy_version: "reasoning_projection_v1",
+        visibility_status: "complete",
+        projection_policy_version: "provider_reasoning_v1",
         delta: "leak",
       }),
     ).toBe(false);
@@ -1690,9 +1693,9 @@ describe("agentic reasoning payload guards", () => {
 
   it("parses agentic.reasoning.delta frames through the SSE consumer", async () => {
     const events = await collectEvents([
-      `event: agentic.reasoning.started\ndata: ${JSON.stringify({ ...BASE, seq: 0, projection_policy_version: "reasoning_projection_v1" })}\n\n`,
+      `event: agentic.reasoning.started\ndata: ${JSON.stringify({ ...BASE, seq: 0, projection_policy_version: "provider_reasoning_v1" })}\n\n`,
       `event: agentic.reasoning.delta\ndata: ${JSON.stringify({ ...BASE, seq: 1, delta: "思考" })}\n\n`,
-      `event: agentic.reasoning.completed\ndata: ${JSON.stringify({ ...BASE, seq: 2, has_content: true, truncated: false, projection_policy_version: "reasoning_projection_v1" })}\n\n`,
+      `event: agentic.reasoning.completed\ndata: ${JSON.stringify({ ...BASE, seq: 2, has_content: true, truncated: false, visibility_status: "complete", projection_policy_version: "provider_reasoning_v1" })}\n\n`,
     ]);
 
     expect(events.map((e) => e.event)).toEqual([
@@ -1703,5 +1706,19 @@ describe("agentic reasoning payload guards", () => {
     expect(isReaderAskAgenticReasoningStartedPayload(events[0].data)).toBe(true);
     expect(isReaderAskAgenticReasoningDeltaPayload(events[1].data)).toBe(true);
     expect(isReaderAskAgenticReasoningCompletedPayload(events[2].data)).toBe(true);
+  });
+
+  it("records first_reasoning from the provider reasoning start event", async () => {
+    const metrics = new TurnLifecycleMetrics();
+    await consumeReaderAskSse(
+      makeSseResponse([
+        `event: agentic.reasoning.started\ndata: ${JSON.stringify({ ...BASE, seq: 0, projection_policy_version: "provider_reasoning_v1" })}\n\n`,
+      ]),
+      () => {},
+      undefined,
+      metrics,
+    );
+
+    expect(metrics.toJSON().first_reasoning).not.toBeNull();
   });
 });

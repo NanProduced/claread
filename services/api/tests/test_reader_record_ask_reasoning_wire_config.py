@@ -25,9 +25,12 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+
 from app.config.settings import Settings
 from app.llm.deepseek_direct import DirectDeepSeekChatModel
-from app.llm.router import build_model_for_route
+from app.llm.router import build_model_for_route, resolve_model_config
 from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
@@ -78,6 +81,7 @@ def production_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     return Settings(
         model_profiles_json=_runtime_profiles_json(),
         reader_ask_model_options_json=_OPTIONS_PATH.read_text(encoding="utf-8"),
+        _env_file=None,
     )
 
 
@@ -245,3 +249,93 @@ def test_main_and_replan_flash_share_wire_thinking_contract(
     assert isinstance(replan_model, DirectDeepSeekChatModel)
     assert main_model.deepseek_effective_wire_mode == "enabled"
     assert replan_model.deepseek_effective_wire_mode == "enabled"
+
+
+# ---------------------------------------------------------------------------
+# 4. Production qwen-max structured-output streaming contract
+#
+# The production DashScope OpenAI-compatible profile for qwen37-max must
+# use prompted structured output so the canonical final answer streams as
+# TextPart content — the same cross-provider AnswerDeltaEvent contract the
+# DeepSeek options already satisfy. The override is model-level only: the
+# dashscope provider-level reasoning fields (reasoning_content thinking
+# field, field send-back, no tool_choice=required) must survive the merge.
+# Anchored against the TRACKED example catalog (portable); the real-provider
+# probe separately resolves the machine-local production registry.
+# ---------------------------------------------------------------------------
+
+_QWEN_MAX_OPTION_KEY = "qwen-max"
+_QWEN_MAX_RESOLVED_MODEL_NAME = "qwen3.7-max"
+
+
+@pytest.fixture()
+def production_registry_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    """Settings backed by the TRACKED example catalogs (portable).
+
+    The tracked ``model-profiles.example.json`` (notes stripped) plus the
+    tracked ``reader-ask-model-options.json`` reproduce the model-level
+    prompted merge for qwen37-max without the machine-local
+    ``config/model-profiles.json`` (gitignored) or ``.env``. The fake env
+    key keeps resolution off real credentials; no network call happens
+    during model construction.
+    """
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-only-not-a-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only-not-a-secret")
+    return Settings(
+        model_profiles_json=_runtime_profiles_json(),
+        reader_ask_model_options_json=_OPTIONS_PATH.read_text(encoding="utf-8"),
+        _env_file=None,
+    )
+
+
+def test_production_qwen_max_resolves_prompted_structured_output(
+    production_registry_settings: Settings,
+) -> None:
+    """The published qwen-max option resolves the repaired model contract:
+    OpenAI-compatible DashScope transport, prompted structured output, and
+    the provider reasoning fields intact after the model-level merge."""
+    option = model_options_svc.resolve_reader_ask_model_option(
+        production_registry_settings, _QWEN_MAX_OPTION_KEY, strict=True
+    )
+    config = resolve_model_config(
+        production_registry_settings, MODEL_ROUTE_READER_ASK, option.selection
+    )
+    assert config is not None
+    assert config.adapter == "openai_compatible"
+    assert config.provider == "dashscope_compat"
+    assert config.model_name == _QWEN_MAX_RESOLVED_MODEL_NAME
+    profile = config.openai_profile
+    assert profile is not None
+    assert profile.default_structured_output_mode == "prompted"
+    assert profile.openai_chat_thinking_field == "reasoning_content"
+    assert profile.openai_chat_send_back_thinking_parts == "field"
+    assert profile.openai_supports_tool_choice_required is False
+    assert config.model_settings is not None
+    assert config.model_settings.thinking_enabled() is True
+
+
+@pytest.mark.parametrize(
+    "route",
+    [MODEL_ROUTE_READER_ASK, MODEL_ROUTE_READER_ASK_REPLAN],
+)
+def test_production_qwen_max_routes_build_prompted_streaming_model(
+    production_registry_settings: Settings,
+    route: str,
+) -> None:
+    """ask-main and ask-replan inherit the same repaired model contract
+    through the shared qwen37-max model definition."""
+    option = model_options_svc.resolve_reader_ask_model_option(
+        production_registry_settings, _QWEN_MAX_OPTION_KEY, strict=True
+    )
+    model, model_config = build_model_for_route(
+        production_registry_settings, route, option.selection
+    )
+    assert model is not None and model_config is not None
+    assert isinstance(model, OpenAIChatModel)
+    oai = OpenAIModelProfile.from_profile(model.profile)
+    assert oai.default_structured_output_mode == "prompted"
+    assert oai.openai_chat_thinking_field == "reasoning_content"
+    assert oai.openai_chat_send_back_thinking_parts == "field"
+    assert oai.openai_supports_tool_choice_required is False
+    settings = _model_settings_dict(model)
+    assert settings["extra_body"]["enable_thinking"] is True

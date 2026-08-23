@@ -23,6 +23,13 @@ const FIXTURE_QUESTION =
 const DETERMINISTIC_MARKER = "deterministic-e2e-r0";
 const EXECUTION_V2 = "reader_record_ask_agentic_v2";
 
+// Deterministic provider reasoning streamed by the offline model (must
+// stay byte-identical to the API fixture constants).
+const DETERMINISTIC_REASONING_TEXT =
+  "第一步：先阅读问题，确认要找的是图书馆的创立者与最初地点。" +
+  "接着在文章中定位与创立相关的句子。" +
+  "结合工具返回的原文，整理出最终答案。";
+
 type JsonBody = Record<string, unknown>;
 
 type BrowserJsonResult = {
@@ -98,6 +105,58 @@ function parseCompletedSse(body: string): JsonBody {
   expect(body).not.toContain("envelope_fingerprint");
   expect(body).not.toContain("source_fingerprint");
   return asObject(JSON.parse(completed[0]!.data), "message.completed payload");
+}
+
+function reasoningFrames(frames: SseFrame[]): Array<{ event: string; payload: JsonBody }> {
+  return frames
+    .filter((frame) => frame.event?.startsWith("agentic.reasoning."))
+    .map((frame) => ({
+      event: frame.event!,
+      payload: asObject(JSON.parse(frame.data), "reasoning frame payload"),
+    }));
+}
+
+/**
+ * Provider reasoning streaming contract for one streamed turn over the
+ * real BFF chain: started → deltas… → completed before the answer terminal,
+ * strictly monotonic seq, and the deterministic multi-round text projected
+ * verbatim. Returns the concatenated visible reasoning text.
+ */
+function assertReasoningSseContract(body: string): string {
+  const frames = parseSseFrames(body);
+  const names = frames.map((frame) => frame.event);
+  const startedIdx = names.indexOf("agentic.reasoning.started");
+  const completedIdx = names.indexOf("agentic.reasoning.completed");
+  const messageCompletedIdx = names.indexOf("message.completed");
+  expect(startedIdx, "reasoning.started frame").toBeGreaterThanOrEqual(0);
+  expect(completedIdx, "reasoning.completed frame").toBeGreaterThanOrEqual(0);
+  const deltaIdxs = names.flatMap((name, idx) =>
+    name === "agentic.reasoning.delta" ? [idx] : [],
+  );
+  expect(deltaIdxs.length, "reasoning.delta frames").toBeGreaterThan(0);
+  // SSE order: started → deltas… → completed → answer terminal.
+  expect(startedIdx).toBeLessThan(deltaIdxs[0]!);
+  expect(deltaIdxs[deltaIdxs.length - 1]!).toBeLessThan(completedIdx);
+  expect(completedIdx).toBeLessThan(messageCompletedIdx);
+
+  const reasoning = reasoningFrames(frames);
+  const seqs = reasoning.map((entry) => Number(entry.payload.seq));
+  expect(seqs, "reasoning seq monotonic").toEqual([...seqs].sort((a, b) => a - b));
+  expect(new Set(seqs).size, "reasoning seq unique").toBe(seqs.length);
+  expect(seqs[0]).toBe(0);
+
+  const deltas = reasoning.filter((entry) => entry.event === "agentic.reasoning.delta");
+  const visible = deltas.map((entry) => String(entry.payload.delta)).join("");
+  expect(visible, "deterministic multi-round reasoning text").toBe(
+    DETERMINISTIC_REASONING_TEXT,
+  );
+  const completed = reasoning.filter(
+    (entry) => entry.event === "agentic.reasoning.completed",
+  );
+  expect(completed).toHaveLength(1);
+  expect(completed[0]!.payload.visibility_status).toBe("complete");
+  expect(completed[0]!.payload.truncated).toBe(false);
+  return visible;
 }
 
 async function browserJson(
@@ -334,6 +393,31 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     await page.getByRole("button", { name: "发送" }).click();
     const sendResponse = await sendResponsePromise;
     expect(sendResponse.status(), "BFF send response").toBe(200);
+
+    // Live reasoning streaming acceptance: prove the reasoning surface is
+    // live in the REAL UI while the answer is still streaming (the
+    // deterministic model emits with a small fixed pacing when
+    // DETERMINISTIC_E2E_STREAM_DELAY_MS is set on the API process):
+    // 1. the reasoning trigger appears BEFORE the answer terminal;
+    // 2. the UI is in the "thinking" state;
+    // 3. expanding reveals the reasoning text that has already arrived.
+    const reasoningTrigger = page.locator('[data-slot="reasoning-trigger"]');
+    await expect
+      .poll(async () => reasoningTrigger.textContent(), {
+        timeout: 15_000,
+        intervals: [50, 100, 200],
+        message: "reasoning trigger must reach the thinking state mid-stream",
+      })
+      .toContain("思考中");
+    // The answer terminal has not landed while reasoning streams.
+    await expect(page.getByTestId("agentic-answer-blocks")).toHaveCount(0);
+    await expect(reasoningTrigger).toHaveAttribute("aria-expanded", "false");
+    // Expand mid-stream: the already-arrived reasoning text is visible.
+    await reasoningTrigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]')).toContainText(
+      "第一步",
+    );
+
     const sendSseBody = await readCapturedSseBody(
       page,
       new URL(sendResponse.url()).pathname,
@@ -344,6 +428,14 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     });
     const completed = parseCompletedSse(sendSseBody);
     const sendFrames = parseSseFrames(sendSseBody);
+    // Provider reasoning streaming contract: reasoning streams across the
+    // tool/retry round, completes before the answer terminal, and the
+    // answer itself streams via message.delta.
+    const sendReasoningVisible = assertReasoningSseContract(sendSseBody);
+    const sendAnswerDeltaCount = sendFrames.filter(
+      (frame) => frame.event === "message.delta",
+    ).length;
+    expect(sendAnswerDeltaCount, "streamed answer message.delta frames").toBeGreaterThan(0);
     console.log(
       `[ask-live] send frames=${sendFrames.map((frame) => frame.event).join(",")}`,
     );
@@ -351,6 +443,19 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
       `[ask-live] send run_started=${sendFrames.find((frame) => frame.event === "agentic.run_started")?.data ?? "missing"}`,
     );
     await expect(page.getByTestId("agentic-answer-blocks")).toBeVisible({ timeout: 30_000 });
+
+    // 4. After the answer completes, the reasoning surface is in the
+    //    completed state and can be collapsed and re-opened.
+    await expect
+      .poll(async () => reasoningTrigger.textContent(), { timeout: 10_000 })
+      .toContain("思考过程");
+    // The mid-stream expand left it open: collapse, then re-open.
+    await reasoningTrigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]')).toBeHidden();
+    await reasoningTrigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]')).toContainText(
+      sendReasoningVisible,
+    );
 
     expect(completed.execution_version).toBe(EXECUTION_V2);
     expect(completed.final_status).toBe("ok");
@@ -434,6 +539,11 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     expect(retried.final_status).toBe("ok");
     expect(retried.message_id).toBe(messageId);
     expect(retried.thread_id).toBe(threadId);
+    // Retry produces a fresh self-consistent reasoning attempt with no
+    // stale reasoning mixed in (identical deterministic script, exactly
+    // once).
+    const retryReasoningVisible = assertReasoningSseContract(retrySseBody);
+    expect(retryReasoningVisible).toBe(sendReasoningVisible);
 
     const assistantMessages = page.locator(
       '[data-testid="ask-assistant-message"][data-message-role="assistant"]',
@@ -467,6 +577,11 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
         expect.objectContaining({ text: expect.stringContaining(DETERMINISTIC_MARKER) }),
       ]),
     );
+    // Cold history restores the retry attempt's reasoning byte-identically.
+    expect(coldAssistant.reasoning_md).toBe(retryReasoningVisible);
+    expect(coldAssistant.reasoning_status).toBe("completed");
+    expect(coldAssistant.reasoning_truncated).toBe(false);
+    expect(coldAssistant.reasoning_visibility_status).toBe("complete");
 
     await page.reload();
     await expect(page.locator(".reader-record-plate-document")).toBeVisible({
@@ -485,6 +600,19 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     ).toHaveCount(1);
     await expect(page.getByTestId("agentic-answer-blocks")).toContainText(DETERMINISTIC_MARKER);
 
+    // 5. Reload restores the same reasoning surface in the real UI
+    //    (cold recovery — no model call; the guard is asserted at the
+    //    end of this test).
+    const reloadedReasoningTrigger = page
+      .locator('[data-slot="reasoning-trigger"]')
+      .first();
+    await expect(reloadedReasoningTrigger).toContainText("思考过程");
+    await expect(reloadedReasoningTrigger).toHaveAttribute("aria-expanded", "false");
+    await reloadedReasoningTrigger.click();
+    await expect(
+      page.locator('[data-slot="reasoning-content"]').first(),
+    ).toContainText(retryReasoningVisible);
+
     const reloadCitationTrigger = page
       .getByRole("button", { name: /查看来源 .*详情/ })
       .first();
@@ -500,6 +628,9 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     expect(reloadedAssistant.execution_version).toBe(EXECUTION_V2);
     expect(citationIds(reloadedAssistant)).toEqual(citationIds(coldAssistant));
     expect(reloadedAssistant.agentic_answer_blocks).toEqual(coldAssistant.agentic_answer_blocks);
+    // Page refresh restores the same reasoning text — no extra model call
+    // happened (guard asserted at the end of this test).
+    expect(reloadedAssistant.reasoning_md).toBe(retryReasoningVisible);
 
     for (const oldAskPath of [
       "/api/web/reader-ask/model-options",

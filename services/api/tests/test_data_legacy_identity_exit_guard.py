@@ -62,7 +62,6 @@ DROPPED_COLUMN_IDENTS = (
 # purpose so leaked reasoning text is still scrubbed.
 DROPPED_COLUMN_ALLOWLIST = {
     APP_ROOT / "services" / "reader_record_ask" / "reasoning_projection.py",
-    APP_ROOT / "services" / "reader_record_ask" / "learner_reasoning" / "scrub.py",
 }
 
 # Write/read paths of ai_usage_events and user_credit_ledger where the

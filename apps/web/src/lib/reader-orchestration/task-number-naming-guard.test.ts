@@ -9,7 +9,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -427,10 +427,15 @@ function damageHits(items: readonly SyntaxItem[]): string[] {
 }
 
 const TRACKED_PATHS = trackedPaths();
-const TYPESCRIPT_PATHS = TRACKED_PATHS.filter((path) =>
-  [".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(
-    extname(path).toLowerCase(),
-  ),
+const TYPESCRIPT_PATHS = TRACKED_PATHS.filter(
+  (path) =>
+    [".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(
+      extname(path).toLowerCase(),
+    ) &&
+    // Working-tree deletions (pending, unstaged removals) still appear
+    // in git ls-files output; only files that exist on disk are
+    // scannable.
+    existsSync(resolve(REPO_ROOT, path)),
 );
 const PARSE_RESULTS = TYPESCRIPT_PATHS.filter((path) => path !== GUARD_SELF).map(
   scanTypeScript,
@@ -488,9 +493,11 @@ describe("Syntax-aware task-history governance", () => {
     // Ratchet count: 732 tracked sources at 2a0039df + 8 new TS/TSX
     // files from the Wave 10 lifecycle UI work = 740; + 5 new TS/TSX
     // files from the progressive-analysis merge (analysis progress
-    // control + wire contracts) = 745.  Bump this number whenever
-    // tracked TypeScript files are added.
-    expect(TYPESCRIPT_PATHS).toHaveLength(745);
+    // control + wire contracts) = 745; - 4 files removed on disk by the
+    // provider-reasoning cleanup (LearnerReasoningPanel +
+    // learner-reasoning, deletions pending in the worktree) = 743.
+    // Bump this number whenever tracked TypeScript files are added.
+    expect(TYPESCRIPT_PATHS).toHaveLength(743);
     expect(PARSE_RESULTS.length).toBeGreaterThan(0);
     expect(
       PARSE_RESULTS.flatMap((result) =>

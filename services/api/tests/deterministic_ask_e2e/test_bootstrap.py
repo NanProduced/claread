@@ -16,6 +16,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -44,8 +45,12 @@ from .guard import (
 )
 from .models import (
     DETERMINISTIC_ARTICLE_ANSWER,
+    DETERMINISTIC_REASONING_ROUND1_CHUNKS,
+    DETERMINISTIC_REASONING_ROUND2,
     DeterministicModelMissingEvidenceError,
     deterministic_ask_model_fn,
+    deterministic_ask_stream_fn,
+    stream_delay_seconds,
 )
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -146,6 +151,106 @@ def test_deterministic_model_output_validates_against_agent_schema():
     assert draft.answer_blocks[0].evidence_handles == [handle]
     assert draft.answer_blocks[1].evidence_handles == []
     assert DETERMINISTIC_ARTICLE_ANSWER in draft.answer_blocks[0].text
+
+
+# ---------------------------------------------------------------------------
+# Provider reasoning streaming model script (offline, no DB).
+# ---------------------------------------------------------------------------
+
+_Handle = "evh_" + "ab" * 16
+
+
+def _stream_items(messages, info):
+    async def _collect():
+        return [item async for item in deterministic_ask_stream_fn(messages, info)]
+
+    return asyncio.run(_collect())
+
+
+def _messages_with_parts(parts):
+    return [SimpleNamespace(parts=parts)]
+
+
+def test_stream_model_round1_expands_evidence_when_tool_mounted():
+    from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall
+
+    info = SimpleNamespace(function_tools=[SimpleNamespace(name="expand_evidence")])
+    messages = _messages_with_parts(
+        [SimpleNamespace(content=f"baseline context with handle {_Handle}")]
+    )
+    items = _stream_items(messages, info)
+    assert len(items) == 3
+    assert items[0] == {0: DeltaThinkingPart(content=DETERMINISTIC_REASONING_ROUND1_CHUNKS[0])}
+    assert items[1] == {0: DeltaThinkingPart(content=DETERMINISTIC_REASONING_ROUND1_CHUNKS[1])}
+    tool_call = items[2][1]
+    assert isinstance(tool_call, DeltaToolCall)
+    assert tool_call.name == "expand_evidence"
+    assert json.loads(tool_call.json_args) == {"pointer": _Handle}
+
+
+def test_stream_model_round1_falls_back_to_output_retry_without_tool():
+    from pydantic_ai.models.function import DeltaToolCall
+
+    info = SimpleNamespace(function_tools=[])
+    messages = _messages_with_parts(
+        [SimpleNamespace(content=f"baseline context with handle {_Handle}")]
+    )
+    items = _stream_items(messages, info)
+    assert len(items) == 3
+    tool_call = items[2][1]
+    assert isinstance(tool_call, DeltaToolCall)
+    assert tool_call.name == "final_result"
+    payload = json.loads(tool_call.json_args)
+    # Schema-legal draft citing an unknown handle → grounding ModelRetry.
+    assert payload["answer_blocks"][0]["evidence_handles"] == ["evh_" + "0" * 32]
+
+
+def test_stream_model_round2_streams_thinking_then_text_answer():
+    ToolReturnPart = type("ToolReturnPart", (), {})
+    info = SimpleNamespace(function_tools=[SimpleNamespace(name="expand_evidence")])
+    messages = _messages_with_parts(
+        [
+            SimpleNamespace(content=f"baseline context with handle {_Handle}"),
+            ToolReturnPart(),
+        ]
+    )
+    items = _stream_items(messages, info)
+    # Round 2: one thinking delta, then text chunks of the answer JSON.
+    from pydantic_ai.models.function import DeltaThinkingPart
+
+    assert items[0] == {0: DeltaThinkingPart(content=DETERMINISTIC_REASONING_ROUND2)}
+    text = "".join(item for item in items[1:] if isinstance(item, str))
+    payload = json.loads(text)
+    assert payload["response_kind"] == "grounded_answer"
+    assert payload["answer_blocks"][0]["evidence_handles"] == [_Handle]
+
+
+def test_stream_model_refuses_without_visible_handles():
+    info = SimpleNamespace(function_tools=[])
+    messages = _messages_with_parts([SimpleNamespace(content="no handles here")])
+    with pytest.raises(DeterministicModelMissingEvidenceError):
+        _stream_items(messages, info)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", 0.0),
+        ("0", 0.0),
+        ("250", 0.25),
+        ("12.5", 0.0125),
+        ("-5", 0.0),
+        ("not-a-number", 0.0),
+    ],
+)
+def test_stream_delay_env_parsing(monkeypatch, raw, expected):
+    monkeypatch.setenv("DETERMINISTIC_E2E_STREAM_DELAY_MS", raw)
+    assert stream_delay_seconds() == expected
+
+
+def test_stream_delay_defaults_to_zero_when_unset(monkeypatch):
+    monkeypatch.delenv("DETERMINISTIC_E2E_STREAM_DELAY_MS", raising=False)
+    assert stream_delay_seconds() == 0.0
 
 
 def test_execution_swap_returns_function_model_config(deterministic_execution):

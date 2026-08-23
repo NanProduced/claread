@@ -1,17 +1,16 @@
 """Ask thinking transport spine.
 
-Internal-only: captures provider reasoning for a bounded in-memory observer
-and emits **safe** analysis-phase runtime events. Never writes raw
-reasoning text, length, hash, or provider payloads into SSE/DTO/DB/logs.
+Captures provider reasoning through one injected observer. Production wires
+the deterministic projection chokepoint; tests may use a bounded in-memory
+observer. This module itself never logs or persists provider content.
 
-Learner reasoning (ASK-LEARNER-REASONING-PROJECTOR-)
------------------------------------------------------
-The observer injection point is the only structural path by which provider
-reasoning can leave this module. The default production path discards at
-ingress (feature flag OFF). When the flag is ON, a turn-local learner-
-reasoning sidecar may buffer raw text in memory and publish only Host-
-validated Chinese stage summaries via ``agentic.learner_reasoning.snapshot``.
-Raw reasoning remains forbidden from SSE/DTO/DB/logs/telemetry.
+The :class:`ThinkingObserver` protocol is the minimal surface the raw
+provider-reasoning chain needs: ``on_analysis_started``,
+``on_reasoning_delta``, ``on_analysis_finished``. The observer is never
+invoked at tool-result / ModelRetry boundaries — generation-boundary state
+(preview reset, lifecycle resets) is owned by this module, so any observer
+implementing the protocol survives multi-round turns (tool calls, tool-arg
+retries, output-validator retries) without argument-contract hazards.
 
 Does **not** import legacy ``reader_ask`` agent_runner.
 
@@ -54,9 +53,10 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
 )
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_core import from_json
 
+from app.observability.workflow_tracing import build_usage_metadata
 from app.services.reader_record_ask.grounding_validator import (
     AgentAnswerDraftOutput,
 )
@@ -76,12 +76,8 @@ DEFAULT_THINKING_OBSERVER_CHAR_CAP: int = 8_000
 class ThinkingObserver(Protocol):
     """Injected probe receiving raw provider reasoning chunks.
 
-    Raw reasoning is never safe content. Implementations must never log,
-    persist, or publish raw content. Production may wire a learner-
-    reasoning sidecar that buffers turn-local raw text and publishes
-    only Host-validated Chinese stage summaries via
-    ``agentic.learner_reasoning.snapshot``. The default production path
-    when the feature flag is OFF discards at ingress (zero collection).
+    Provider reasoning is untrusted content. Implementations must never log
+    it and may publish or persist only after the production projection gate.
     """
 
     def on_analysis_started(self) -> None: ...
@@ -125,12 +121,38 @@ class BoundedThinkingObserver:
         return "".join(self.chunks)
 
 
+def normalize_run_usage(usage: Any) -> dict[str, Any] | None:
+    """Normalize a same-run ``RunUsage`` into the shared usage summary.
+
+    Uses the project-wide ``build_usage_metadata`` normalization. Returns
+    ``None`` when the provider did not report any usage values — a
+    missing aggregate must stay unavailable, never a fabricated zero
+    usage dict. Never guesses tokens from reasoning text or SSE deltas.
+    """
+    if usage is None:
+        return None
+    try:
+        if not usage.has_values():
+            return None
+    except Exception:  # noqa: BLE001 - duck-typed guard
+        return None
+    return dict(build_usage_metadata(usage))
+
+
 @dataclass(frozen=True, slots=True)
 class StreamedAgentOutcome:
-    """Result of a streamed agent run (output + safe phase events)."""
+    """Result of a streamed agent run (output + safe phase events).
+
+    ``usage_summary`` is the same-run agent aggregate usage from the
+    PydanticAI public API (``AgentRunResult.usage`` / the streamed
+    ``AgentRunResultEvent.result.usage``), normalized via
+    :func:`normalize_run_usage`. ``None`` means the provider did not
+    report usage for this run (no fabrication).
+    """
 
     output: AgentAnswerDraftOutput
     phase_events: tuple[RuntimeEvent, ...] = ()
+    usage_summary: dict[str, Any] | None = None
 
 
 def _model_supports_request_stream(model: Any) -> bool:
@@ -392,9 +414,34 @@ async def run_agent_with_thinking_transport(
     phase_events: list[RuntimeEvent] = []
     analysis_started = False
     final_output: Any = None
+    run_usage: Any = None
     lifecycle = ThinkingPartLifecycle()
     answer_streamer = _AnswerTextStreamer()
     answer_streamed_indices: set[int] = set()
+    # Shared external usage accumulator handed to BOTH agent entry points
+    # (``agent.run`` / ``agent.run_stream_events``). PydanticAI increments
+    # it in place as provider responses complete, so it retains the
+    # confirmed usage of earlier rounds even when a later round fails or
+    # the run is cancelled — the same-run public API, never re-derived.
+    usage_accumulator = RunUsage()
+    run_finished = False
+
+    def _publish_usage(completeness: str) -> None:
+        """Snapshot the accumulator onto the observation seam.
+
+        ``complete`` after the run returned; ``partial`` when the run
+        ended mid-way (only responses the provider confirmed). No-op
+        when the observation is absent or nothing was reported.
+        """
+        observation = deps.observation
+        if observation is None:
+            return
+        summary = normalize_run_usage(usage_accumulator)
+        if summary is None:
+            return
+        observation.usage_summary = summary
+        observation.usage_completeness = completeness
+
     # Generation_id tracks the current model-response generation.
     # Starts at 0 (first generation). Incremented on every tool-result /
     # ModelRetry boundary BEFORE the new generation begins. Each
@@ -468,291 +515,207 @@ async def run_agent_with_thinking_transport(
         deps.emit_event(event)
 
     active_model = model if model is not None else getattr(agent, "model", None)
-    if not _model_supports_request_stream(active_model):
-        result = await agent.run(
-            prompt,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-        )
-        final_output = result.output
-        _notify_observer_from_messages(
-            messages=getattr(result, "all_messages", lambda: ())(),
-            deps=deps,
-            thinking_observer=thinking_observer,
-            phase_events=phase_events,
-        )
-    else:
-        # Context-managed event stream (PydanticAI-recommended API; direct
-        # iteration of ``AgentEventStream`` is deprecated). ``__aexit__``
-        # guarantees deterministic generator cleanup on normal completion,
-        # exception, and cancellation; multi-round tool-call behavior is
-        # unchanged (same events, same order, same lifecycle resets).
-        # When ToolOutput path rejects via output_validator ModelRetry,
-        # pydantic-ai emits OutputToolResultEvent(RetryPromptPart) and then a
-        # legacy FunctionToolResultEvent(RetryPromptPart). Skip the legacy
-        # twin so generation only advances once (output_validator_retry).
-        skip_legacy_function_retry = False
+    try:
+        if not _model_supports_request_stream(active_model):
+            result = await agent.run(
+                prompt,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage_accumulator,
+            )
+            final_output = result.output
+            run_usage = getattr(result, "usage", None)
+            _notify_observer_from_messages(
+                messages=getattr(result, "all_messages", lambda: ())(),
+                deps=deps,
+                thinking_observer=thinking_observer,
+                phase_events=phase_events,
+            )
+        else:
+            # Context-managed event stream (PydanticAI-recommended API; direct
+            # iteration of ``AgentEventStream`` is deprecated). ``__aexit__``
+            # guarantees deterministic generator cleanup on normal completion,
+            # exception, and cancellation; multi-round tool-call behavior is
+            # unchanged (same events, same order, same lifecycle resets).
+            # When ToolOutput path rejects via output_validator ModelRetry,
+            # pydantic-ai emits OutputToolResultEvent(RetryPromptPart) and then a
+            # legacy FunctionToolResultEvent(RetryPromptPart). Skip the legacy
+            # twin so generation only advances once (output_validator_retry).
+            skip_legacy_function_retry = False
 
-        async with agent.run_stream_events(
-            prompt,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-        ) as stream:
-            async for event in stream:
-                event_kind = getattr(event, "event_kind", None)
-                if deps.observation is not None:
-                    deps.observation.agent_event_topology.append(
-                        type(event).__name__
-                    )
+            async with agent.run_stream_events(
+                prompt,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage_accumulator,
+            ) as stream:
+                async for event in stream:
+                    event_kind = getattr(event, "event_kind", None)
+                    if deps.observation is not None:
+                        deps.observation.agent_event_topology.append(type(event).__name__)
 
-                if event_kind == "agent_run_result":
-                    run_result = getattr(event, "result", None)
-                    if run_result is not None:
-                        final_output = getattr(run_result, "output", run_result)
-                    continue
+                    if event_kind == "agent_run_result":
+                        run_result = getattr(event, "result", None)
+                        if run_result is not None:
+                            final_output = getattr(run_result, "output", run_result)
+                            run_usage = getattr(run_result, "usage", None)
+                        continue
 
-                # use isinstance type guards (not event_kind
-                # string matching) so mypy narrows the union type and the
-                # reset boundary is detected robustly across pydantic-ai
-                # versions. Each tool-result boundary starts a NEW model
-                # response generation — emit a preview_reset so the client
-                # clears provisional_content_md before the new generation
-                # streams its first delta.
+                    # use isinstance type guards (not event_kind
+                    # string matching) so mypy narrows the union type and the
+                    # reset boundary is detected robustly across pydantic-ai
+                    # versions. Each tool-result boundary starts a NEW model
+                    # response generation — emit a preview_reset so the client
+                    # clears provisional_content_md before the new generation
+                    # streams its first delta.
 
-                # Prefer OutputToolResultEvent before FunctionToolResultEvent:
-                # output-tool ModelRetry emits both (Output first, then legacy
-                # Function twin). Only RetryPromptPart advances generation;
-                # successful ToolReturnPart must not advance (end of turn).
-                if isinstance(event, OutputToolResultEvent):
-                    is_output_retry = isinstance(event.part, RetryPromptPart)
-                    if is_output_retry:
-                        skip_legacy_function_retry = True
+                    # Prefer OutputToolResultEvent before FunctionToolResultEvent:
+                    # output-tool ModelRetry emits both (Output first, then legacy
+                    # Function twin). Only RetryPromptPart advances generation;
+                    # successful ToolReturnPart must not advance (end of turn).
+                    if isinstance(event, OutputToolResultEvent):
+                        is_output_retry = isinstance(event.part, RetryPromptPart)
+                        if is_output_retry:
+                            skip_legacy_function_retry = True
+                            _emit_preview_reset(reason="output_validator_model_retry")
+                            lifecycle.reset_stream()
+                            answer_streamer.reset()
+                            answer_streamed_indices.clear()
+                        # Successful output ToolReturnPart: terminal output tool
+                        # result — no generation advance, no evidence boundary.
+                        continue
+
+                    if isinstance(event, FunctionToolResultEvent):
+                        # FunctionToolResultEvent carries ToolReturnPart (regular
+                        # tool return) or RetryPromptPart (tool-arg ModelRetry).
+                        # Both end the current generation and start a new one —
+                        # except the legacy twin of an OutputToolResultEvent retry.
+                        is_retry = isinstance(event.part, RetryPromptPart)
+                        if is_retry and skip_legacy_function_retry:
+                            skip_legacy_function_retry = False
+                            continue
                         _emit_preview_reset(
-                            reason="output_validator_model_retry"
+                            reason=(
+                                "tool_argument_model_retry" if is_retry else "tool_result_boundary"
+                            )
                         )
                         lifecycle.reset_stream()
                         answer_streamer.reset()
                         answer_streamed_indices.clear()
-                        if thinking_observer is not None:
-                            advance_fn = getattr(
-                                thinking_observer, "advance_round", None
-                            )
-                            if callable(advance_fn):
-                                advance_fn("output_validator_retry")
-                    # Successful output ToolReturnPart: terminal output tool
-                    # result — no generation advance, no evidence boundary.
-                    continue
-
-                if isinstance(event, FunctionToolResultEvent):
-                    # FunctionToolResultEvent carries ToolReturnPart (regular
-                    # tool return) or RetryPromptPart (tool-arg ModelRetry).
-                    # Both end the current generation and start a new one —
-                    # except the legacy twin of an OutputToolResultEvent retry.
-                    is_retry = isinstance(event.part, RetryPromptPart)
-                    if is_retry and skip_legacy_function_retry:
-                        skip_legacy_function_retry = False
                         continue
-                    if thinking_observer is not None and not is_retry:
-                        # Evidence result only sets evidence_seen — never a
-                        # reasoning checkpoint by itself (tool results must
-                        # not masquerade as private reasoning).
-                        evidence_fn = getattr(
-                            thinking_observer, "on_evidence_boundary", None
+
+                    if isinstance(event, BuiltinToolResultEvent):
+                        # Deprecated event; treat as a regular tool-result
+                        # boundary. Newer pydantic-ai versions may not emit
+                        # this, but we cover it for safety.
+                        _emit_preview_reset(reason="tool_result_boundary")
+                        lifecycle.reset_stream()
+                        answer_streamer.reset()
+                        answer_streamed_indices.clear()
+                        continue
+
+                    # Isinstance type guards for PartStart/Delta/End so
+                    # mypy narrows the union — no more event_kind string check
+                    # followed by unsafe union-attribute access.
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+                        piece = lifecycle.on_start(
+                            event.index,
+                            str(event.part.content) if event.part.content else None,
                         )
-                        if callable(evidence_fn):
-                            # Prefer part.tool_name — event.result is deprecated
-                            # in pydantic-ai and must not be read (DeprecationWarning).
-                            tool_name = getattr(event.part, "tool_name", None)
-                            if tool_name is None:
-                                tool_name = getattr(event, "tool_name", None)
-                            evidence_fn(
-                                tool_name=tool_name,
-                                is_retry=False,
-                            )
-                    _emit_preview_reset(
-                        reason=(
-                            "tool_argument_model_retry"
-                            if is_retry
-                            else "tool_result_boundary"
-                        )
-                    )
-                    lifecycle.reset_stream()
-                    answer_streamer.reset()
-                    answer_streamed_indices.clear()
-                    if thinking_observer is not None:
-                        advance_fn = getattr(
-                            thinking_observer, "advance_round", None
-                        )
-                        if callable(advance_fn):
-                            advance_fn(
-                                "tool_argument_retry"
-                                if is_retry
-                                else "normal_tool_result"
-                            )
-                    continue
+                        _emit_reasoning(piece)
+                        continue
 
-                if isinstance(event, BuiltinToolResultEvent):
-                    # Deprecated event; treat as a regular tool-result
-                    # boundary. Newer pydantic-ai versions may not emit
-                    # this, but we cover it for safety.
-                    if thinking_observer is not None:
-                        evidence_fn = getattr(
-                            thinking_observer, "on_evidence_boundary", None
-                        )
-                        if callable(evidence_fn):
-                            tool_name = getattr(event, "tool_name", None)
-                            evidence_fn(
-                                tool_name=tool_name,
-                                is_retry=False,
-                            )
-                    _emit_preview_reset(reason="tool_result_boundary")
-                    lifecycle.reset_stream()
-                    answer_streamer.reset()
-                    answer_streamed_indices.clear()
-                    if thinking_observer is not None:
-                        advance_fn = getattr(
-                            thinking_observer, "advance_round", None
-                        )
-                        if callable(advance_fn):
-                            advance_fn("normal_tool_result")
-                    continue
-
-                # Isinstance type guards for PartStart/Delta/End so
-                # mypy narrows the union — no more event_kind string check
-                # followed by unsafe union-attribute access.
-                if isinstance(event, PartStartEvent) and isinstance(
-                    event.part, ThinkingPart
-                ):
-                    piece = lifecycle.on_start(
-                        event.index,
-                        str(event.part.content) if event.part.content else None,
-                    )
-                    _emit_reasoning(piece)
-                    continue
-
-                if isinstance(event, PartDeltaEvent) and isinstance(
-                    event.delta, ThinkingPartDelta
-                ):
-                    piece = lifecycle.on_delta(
-                        event.index,
-                        (
-                            str(event.delta.content_delta)
-                            if event.delta.content_delta
-                            else None
-                        ),
-                    )
-                    _emit_reasoning(piece)
-                    continue
-
-                if isinstance(event, PartEndEvent) and isinstance(
-                    event.part, ThinkingPart
-                ):
-                    piece = lifecycle.on_end(
-                        event.index,
-                        str(event.part.content) if event.part.content else None,
-                    )
-                    _emit_reasoning(piece)
-                    # Learner-reasoning CP1/CP2: freeze buffer slice here at
-                    # the event source (not in the outer queue consumer).
-                    if thinking_observer is not None:
-                        segment_end = getattr(
-                            thinking_observer,
-                            "on_reasoning_segment_end",
-                            None,
-                        )
-                        if callable(segment_end):
-                            segment_end()
-                    continue
-
-                # Answer-block text streaming. TextPart carries
-                # streamed structured-output JSON; feed content into the
-                # partial parser and emit AnswerDeltaEvent prefix
-                # increments. Fully isolated from the ThinkingPart path
-                # above: no observer calls, no AnalysisStarted synthesis,
-                # no shared content.
-                if isinstance(event, PartStartEvent) and isinstance(
-                    event.part, TextPart
-                ):
-                    content = (
-                        str(event.part.content) if event.part.content else None
-                    )
-                    if content:
-                        answer_streamed_indices.add(event.index)
-                        delta = answer_streamer.feed(content)
-                        if delta:
-                            _emit_answer_delta(delta)
-                            if thinking_observer is not None:
-                                first_ans = getattr(
-                                    thinking_observer,
-                                    "on_first_answer_delta",
-                                    None,
-                                )
-                                if callable(first_ans):
-                                    first_ans()
-                    continue
-
-                if isinstance(event, PartDeltaEvent) and isinstance(
-                    event.delta, TextPartDelta
-                ):
-                    piece = (
-                        str(event.delta.content_delta)
-                        if event.delta.content_delta
-                        else None
-                    )
-                    if piece:
-                        answer_streamed_indices.add(event.index)
-                        delta = answer_streamer.feed(piece)
-                        if delta:
-                            _emit_answer_delta(delta)
-                            if thinking_observer is not None:
-                                first_ans = getattr(
-                                    thinking_observer,
-                                    "on_first_answer_delta",
-                                    None,
-                                )
-                                if callable(first_ans):
-                                    first_ans()
-                    continue
-
-                if isinstance(event, PartEndEvent) and isinstance(
-                    event.part, TextPart
-                ):
-                    # PartEnd-only delivery: full content without prior
-                    # start/delta for this index.
-                    if (
-                        event.index not in answer_streamed_indices
-                        and event.part.content
+                    if isinstance(event, PartDeltaEvent) and isinstance(
+                        event.delta, ThinkingPartDelta
                     ):
-                        answer_streamed_indices.add(event.index)
-                        _emit_answer_delta(
-                            answer_streamer.feed(str(event.part.content))
+                        piece = lifecycle.on_delta(
+                            event.index,
+                            (str(event.delta.content_delta) if event.delta.content_delta else None),
                         )
-                    continue
+                        _emit_reasoning(piece)
+                        continue
 
-        if analysis_started:
-            _finish_analysis()
+                    if isinstance(event, PartEndEvent) and isinstance(event.part, ThinkingPart):
+                        piece = lifecycle.on_end(
+                            event.index,
+                            str(event.part.content) if event.part.content else None,
+                        )
+                        _emit_reasoning(piece)
+                        continue
 
-    if final_output is None:
-        error = RuntimeError("agent run produced no final output")
-        error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
-        error.reader_ask_final_output_type = "NoneType"  # type: ignore[attr-defined]
-        raise error
+                    # Answer-block text streaming. TextPart carries
+                    # streamed structured-output JSON; feed content into the
+                    # partial parser and emit AnswerDeltaEvent prefix
+                    # increments. Fully isolated from the ThinkingPart path
+                    # above: no observer calls, no AnalysisStarted synthesis,
+                    # no shared content.
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                        content = str(event.part.content) if event.part.content else None
+                        if content:
+                            answer_streamed_indices.add(event.index)
+                            delta = answer_streamer.feed(content)
+                            if delta:
+                                _emit_answer_delta(delta)
+                        continue
 
-    if deps.observation is not None:
-        deps.observation.transport_final_output_object_id = id(final_output)
+                    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                        raw_delta = event.delta.content_delta
+                        piece = str(raw_delta) if raw_delta else None
+                        if piece:
+                            answer_streamed_indices.add(event.index)
+                            delta = answer_streamer.feed(piece)
+                            if delta:
+                                _emit_answer_delta(delta)
+                        continue
 
-    if not isinstance(final_output, AgentAnswerDraftOutput):
-        error = TypeError("agent transport received an invalid structured output")
-        error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
-        error.reader_ask_final_output_type = type(final_output).__name__  # type: ignore[attr-defined]
-        raise error
+                    if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart):
+                        # PartEnd-only delivery: full content without prior
+                        # start/delta for this index.
+                        if event.index not in answer_streamed_indices and event.part.content:
+                            answer_streamed_indices.add(event.index)
+                            _emit_answer_delta(answer_streamer.feed(str(event.part.content)))
+                        continue
 
-    return StreamedAgentOutcome(
-        output=final_output,
-        phase_events=tuple(phase_events),
-    )
+            if analysis_started:
+                _finish_analysis()
+
+        # The agent run returned: publish the complete usage snapshot
+        # BEFORE post-run output validation can raise, so a typed
+        # transport error never downgrades confirmed usage to partial.
+        run_finished = True
+        _publish_usage("complete")
+
+        if final_output is None:
+            error = RuntimeError("agent run produced no final output")
+            error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
+            error.reader_ask_final_output_type = "NoneType"  # type: ignore[attr-defined]
+            raise error
+
+        if deps.observation is not None:
+            deps.observation.transport_final_output_object_id = id(final_output)
+
+        if not isinstance(final_output, AgentAnswerDraftOutput):
+            error = TypeError("agent transport received an invalid structured output")
+            error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
+            error.reader_ask_final_output_type = type(final_output).__name__  # type: ignore[attr-defined]
+            raise error
+
+        return StreamedAgentOutcome(
+            output=final_output,
+            phase_events=tuple(phase_events),
+            usage_summary=normalize_run_usage(
+                run_usage if run_usage is not None else usage_accumulator
+            ),
+        )
+    except BaseException:
+        # Failure or cancellation mid-run: publish whatever the provider
+        # already confirmed on the shared accumulator (partial). Only
+        # same-run public API values — never guessed, never fabricated.
+        if not run_finished:
+            _publish_usage("partial")
+        raise
 
 
 __all__ = [
@@ -761,5 +724,6 @@ __all__ = [
     "StreamedAgentOutcome",
     "ThinkingObserver",
     "ThinkingPartLifecycle",
+    "normalize_run_usage",
     "run_agent_with_thinking_transport",
 ]

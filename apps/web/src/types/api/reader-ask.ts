@@ -464,10 +464,11 @@ export interface ReaderAskMessageDto {
    * Reasoning UI state shared by both lanes (no parallel state):
    * - legacy reader_ask `reasoning.*` uses idle/streaming/completed;
    * - agentic `agentic.reasoning.*` additionally freezes
-   *   session-visible partial reasoning as `interrupted` on cancel/failure
-   *   terminals — cold history never carries interrupted reasoning.
+   *   visible partial reasoning as `interrupted` on cancel/failure terminals;
+   *   cold history restores that same terminal snapshot.
    */
   reasoning_status?: "idle" | "streaming" | "completed" | "interrupted" | null;
+  reasoning_visibility_status?: "complete" | "truncated" | "blocked" | null;
   /**
    * Public learner summary fields.
    * Prefer these over ambiguous reasoning_md on agentic v2.
@@ -860,8 +861,9 @@ export interface ReaderAskSubmissionPublicMessageDto {
   status: "pending" | "streaming" | "completed" | "failed" | "interrupted";
   content_md: string;
   reasoning_md?: string | null;
-  reasoning_status?: "idle" | "streaming" | "completed" | null;
+  reasoning_status?: "idle" | "streaming" | "completed" | "interrupted" | null;
   reasoning_truncated?: boolean | null;
+  reasoning_visibility_status?: "complete" | "truncated" | "blocked" | null;
   citations?: unknown[];
   agentic_citations?: unknown[] | null;
   agentic_answer_blocks?: unknown[] | null;
@@ -931,7 +933,7 @@ export type ReaderAskStreamEventName =
   | "agentic.reasoning.started"
   | "agentic.reasoning.delta"
   | "agentic.reasoning.completed"
-  // Learner stage summary (replace).
+  // Legacy learner-stage summary (read/ignore compatibility only).
   | "agentic.learner_reasoning.snapshot"
   // Duplicate client_submission_id short-circuits
   // the model; payload is a public reconcile snapshot (no secrets).
@@ -1258,6 +1260,7 @@ export interface ReaderAskAgenticReasoningCompletedPayloadDto {
   seq: number;
   has_content: boolean;
   truncated: boolean;
+  visibility_status: "complete" | "truncated" | "blocked";
   projection_policy_version: string;
 }
 
@@ -1907,7 +1910,7 @@ export function isReaderAskAgenticReasoningStartedPayload(
     typeof payload.thread_id === "string" &&
     typeof payload.turn_run_id === "string" &&
     payload.seq === 0 &&
-    typeof payload.projection_policy_version === "string" &&
+    payload.projection_policy_version === "provider_reasoning_v1" &&
     !("envelope_fingerprint" in payload) &&
     !("delta" in payload)
   );
@@ -1951,7 +1954,10 @@ export function isReaderAskAgenticReasoningCompletedPayload(
     payload.seq >= 1 &&
     typeof payload.has_content === "boolean" &&
     typeof payload.truncated === "boolean" &&
-    typeof payload.projection_policy_version === "string" &&
+    (payload.visibility_status === "complete" ||
+      payload.visibility_status === "truncated" ||
+      payload.visibility_status === "blocked") &&
+    payload.projection_policy_version === "provider_reasoning_v1" &&
     !("delta" in payload) &&
     !("envelope_fingerprint" in payload)
   );

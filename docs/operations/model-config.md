@@ -57,7 +57,10 @@ Claread 后端当前使用三层模型配置：
   "models": {
     "qwen37-max": {
       "provider": "dashscope",
-      "model_name": "qwen3.7-max"
+      "model_name": "qwen3.7-max",
+      "openai_profile": {
+        "default_structured_output_mode": "prompted"
+      }
     }
   },
   "profiles": {
@@ -86,7 +89,15 @@ Claread 后端当前使用三层模型配置：
 - workflow 和 Ask 主回答复用同一个远端 `qwen3.7-max`
 - workflow profile 关闭 thinking
 - Ask profile 开启 thinking
-- 兼容性差异由 `dashscope` provider 统一声明，而不是分散在每个 model 上
+- 兼容性差异由 `dashscope` provider 统一声明，而不是分散在每个 model 上；唯一的模型级例外是结构化输出模式——`qwen37-max` 在 model 层声明 `default_structured_output_mode: "prompted"`（见下节），merge 后 provider 级 reasoning 字段仍然保留
+
+## qwen37-max 的 prompted 结构化输出
+
+`qwen37-max`（OpenAI 兼容 DashScope 传输）在 model 层声明 `default_structured_output_mode: "prompted"`，使最终结构化答案以 TextPart 内容流式返回。这是跨 provider 统一的答案流式合同：Ask 的 thinking transport 只从 TextPart 生成 answer delta 事件，DeepSeek 两个 option 通过 provider 级 prompted 声明满足同一合同。该 override 只作用于 `qwen37-max` 模型定义——`ask-main-qwen37-max` 与 `ask-replan-qwen37-max` 经共同模型定义继承，不改变 `dashscope` provider 的默认行为，也不影响其他 Qwen / GLM / embedding / rerank 或 native adapter。provider 级 reasoning 字段（`openai_chat_thinking_field: "reasoning_content"`、`openai_chat_send_back_thinking_parts: "field"`、`openai_supports_tool_choice_required: false`）在 model 级 override merge 后保留。
+
+prompted 模式不要求 `supports_json_object_output`：PydanticAI 在该模式下把输出 JSON schema 指令注入 prompt，`response_format={"type":"json_object"}` 仅在 `supports_json_object_output=true` 时随请求发送，二者相互独立。
+
+工具轮、reasoning 与 answer streaming 是三个不同的事件面：reasoning 始终来自 `reasoning_content` 字段流；业务工具轮走 tool call lane；最终答案走 TextPart 内容流。该合同由离线测试锁定：生产配置解析合同（`tests/test_reader_record_ask_reasoning_wire_config.py`）与 MockTransport 两轮 SDK 形状行为测试（`tests/test_reader_record_ask_thinking_real_llm_probe.py`，覆盖 reasoning → tool round → streamed answer → canonical output，并验证 wire 携带 `enable_thinking=true`、`max_completion_tokens` 预算与 reasoning_content 回传）。真实 probe 已运行并通过：qwen3.7-max-2026-05-17 实测 reasoning → tool_round → answer、流式 answer delta 存在、canonical output 存在、request_count = 2、output_tokens 在预算内；DeepSeek 两个 option 的功能性 probe 亦通过（FUNCTIONAL_PROVIDER_REASONING_PASS）。浏览器真实产品验收未运行。
 
 ## Ask Claread 选项层
 
@@ -148,13 +159,31 @@ Claread 后端当前使用三层模型配置：
 说明：
 
 - 默认档位是 DeepSeek V4 Flash；Flash profile 默认关闭模型内部 thinking，以控制延迟和成本。
-- 用户可见运行步骤由安全的 Agent activity/progress 协议提供，不展示原始 chain-of-thought。
+- 用户可见运行步骤由安全的 Agent activity/progress 协议提供；Ask 主链开启 thinking 时，provider 可读思考内容经确定性安全闸（`agentic.reasoning.*`）流式展示并随终态持久化，不会出现第二次模型调用。紧急开关 `READER_RECORD_ASK_PROVIDER_REASONING_ENABLED=false` 只隐藏 reasoning，不影响进度和答案。
 - DeepSeek V4 Pro 是显式高质量备选，不作为 Flash 的静默 fallback。
 - Article RAG 是否开启与主回答模型选择正交；RAG-off 不得依赖切换模型。
 
 这里的 `description` 既是前端提示文案，也承担“注释”作用。因为配置文件使用严格 JSON，不支持额外注释字段。
 
-结算上，Ask 的加权计费配置已按 model option 挂载；turn run 的 `usage_summary_json` / `usage_event_id` 落账闭环尚未实现，接入前不要把预扣金额当作已生效扣费。
+结算上，Ask 的加权计费配置已按 model option 挂载；provider usage 审计已接入（turn run `usage_summary_json` / `usage_event_id` 落账 + 幂等 `ai_usage_events` 记录，成本记为 `computed_cost_points`）。用户积分预扣、差额结算与退款尚未实现：`billed_points` 保持 `NULL`，不要把预扣金额当作已生效扣费。
+
+Ask 三个公开 option（deepseek-v4-flash / qwen-max / deepseek-pro）的 reader_ask profile 均显式请求 provider thinking（`thinking.type=enabled` 或 `enable_thinking=true`），该合同由离线合同测试锁定：未配置 option、错误 profile 或回落到 reasoning-off profile 均判失败。execution snapshot 以 `thinking_requested` 记录该事实，usage event metadata 与终态日志据此区分 `projection_disabled / not_requested / provider_empty / complete / truncated / blocked` 六种 reasoning 观测（均非敏感字段；首字符即被安全闸封锁的 turn 记为 `blocked`，不误记为 `provider_empty`）。
+
+输出 token 上限存在两个名字，配置时须区分：项目/PydanticAI 设置名统一为 `max_tokens`；到达 provider 的 wire 参数名因 provider 而异——DeepSeek 官方只确认 `max_tokens`（其集成说明明确指出不是 `max_completion_tokens`），`DirectDeepSeekChatModel` 会在每请求边界把项目 `max_tokens` 转换为 wire `max_tokens` 并确保不同时发送 `max_completion_tokens`；Qwen（DashScope OpenAI 兼容）沿 PydanticAI 默认映射发送 `max_completion_tokens`，且官方文档声明实际输出可比设置值多至多 10 tokens。真实 provider 验收 probe（`services/api/tests/test_reader_record_ask_thinking_real_llm_probe.py`）覆盖全部三个 option：real_llm triple gate 默认关闭，每 probe ≤2 次 provider 请求、每请求 max output tokens 246（吸收 Qwen 10-token 容差后 (246+10)×2 = 总输出预算 512——PydanticAI 的累计 `output_tokens_limit` 只在响应到达后检查，per-request 拆分才是硬上限）、无重试无回退、只输出隐私安全报告；probe 实际发送 resolved 生产 model settings（含 thinking wire 参数，仅覆盖 `max_tokens`），tracing 隔离使用 per-call `disabled_tracing()` + `agent.instrument=False`（不改动进程环境变量），请求计数基于 pydantic-ai 原生 `WrapperModel`。两个 wire 名均有离线 HTTP 捕获测试锁定（DeepSeek：`max_tokens` 存在且 `max_completion_tokens` 不存在；Qwen：`max_completion_tokens` 存在）。真实 probe 已运行并通过（FUNCTIONAL_PROVIDER_REASONING_PASS）：qwen3.7-max-2026-05-17 实测 reasoning → tool_round → answer、流式 answer delta 存在、canonical output 存在、request_count = 2、output_tokens 在预算内；DeepSeek 两个 option 的功能性 probe 亦通过。
+
+### Qwen teardown warning 定性（长期限制）
+
+真实 Qwen probe 运行期出现一条 teardown warning，正式定性为：
+
+- **FUNCTIONAL_PROVIDER_REASONING_PASS**：功能验收通过，不阻塞产品功能。
+- **KNOWN_UPSTREAM_OPENAI_STREAM_FINALIZER_WARNING**：OpenAI SDK 是生产相关的主要上游 owner；httpx/httpcore 存在 iterator cascade cleanup gap（httpcore `PoolByteStream` 在 loop teardown 时被 finalize，`aclose` 未被 await）。不宣称上游问题已修复；这不是 Claread `thinking_transport` 的根因。
+- 该 warning 不阻止进入长生命周期本地 API 的浏览器验收；浏览器验收必须观察是否出现持续资源累积、pending task 或请求失败。
+- 禁止的“修复”方式：sleep/等待 GC、全局 monkeypatch、fork/复制 OpenAI/httpx/httpcore 实现、修改 site-packages、依赖升级、在 Claread 层伪造 consume-to-EOF、增加 retries/fallback/额外 Provider 请求。
+
+### 模型名限制
+
+- `qwen3.7-max-2026-05-17`：已通过真实 probe 验收的固定模型名（配置中的 `qwen37-max` 模型定义当前指向该版本）。
+- `qwen3.7-max-2026-05-20`：禁止使用，不允许在任何配置、env 或请求中选择该模型名。
 
 ## 环境变量建议
 

@@ -26,8 +26,8 @@ from app.services.reader_record_ask.reasoning_projection import (
     PROJECTION_POLICY_VERSION,
     TRUNCATION_MARKER,
     IncrementalRedactor,
+    ProviderReasoningObserver,
     ReasoningProjectionBuffer,
-    ReasoningProjectorObserver,
     redact_reasoning_text,
     validate_reasoning_snapshot,
 )
@@ -56,8 +56,8 @@ def _observer(
     events: list[RuntimeEvent],
     *,
     char_cap: int = DEFAULT_PROJECTION_CHAR_CAP,
-) -> ReasoningProjectorObserver:
-    return ReasoningProjectorObserver(
+) -> ProviderReasoningObserver:
+    return ProviderReasoningObserver(
         emit=events.append,
         message_id="msg-1",
         thread_id="thr-1",
@@ -67,9 +67,7 @@ def _observer(
 
 
 def _dump(events: list[RuntimeEvent]) -> str:
-    return json.dumps(
-        [event.model_dump(mode="json") for event in events], ensure_ascii=False
-    )
+    return json.dumps([event.model_dump(mode="json") for event in events], ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +75,7 @@ def _dump(events: list[RuntimeEvent]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_redaction_removes_internal_sentinels() -> None:
+def test_hard_secret_stops_whole_text_projection() -> None:
     raw = (
         f"Let me check {_EVH_SENTINEL} and {_UUID_SENTINEL}. "
         f"Key {_SK_SENTINEL}, auth {_BEARER_SENTINEL}. "
@@ -98,11 +96,7 @@ def test_redaction_removes_internal_sentinels() -> None:
         "reasoning_content",
     ):
         assert sentinel not in out
-    # The evidence handle becomes the neutral citation marker.
-    assert "〔引用〕" in out
-    # Legitimate surrounding wording survives.
-    assert "Let me check" in out
-    assert "payload done." in out
+    assert out == "Let me check "
 
 
 def test_redaction_drops_system_instruction_lines() -> None:
@@ -114,12 +108,12 @@ def test_redaction_drops_system_instruction_lines() -> None:
     assert "visible line two" in out
 
 
-def test_redaction_pem_block_removed() -> None:
+def test_private_key_stops_whole_text_projection() -> None:
     raw = "before -----BEGIN RSA PRIVATE KEY-----\nMIIBsecret\n-----END RSA PRIVATE KEY----- after"
     out = redact_reasoning_text(raw)
     assert "MIIBsecret" not in out
     assert "BEGIN RSA" not in out
-    assert "before" in out and "after" in out
+    assert out == "before "
 
 
 def test_redaction_works_adjacent_to_cjk_characters() -> None:
@@ -134,11 +128,11 @@ def test_redaction_works_adjacent_to_cjk_characters() -> None:
     assert _EVH_SENTINEL not in out
     assert "sk-secretKEY" not in out
     assert "fp_abc123secret" not in out
-    # CJK prose — including text glued right after sentinels — survives.
+    # Only prose before the first hard blocker survives.
     assert "访问" in out
     assert "再查" in out
-    assert "完。" in out
-    assert "尾部保留。" in out
+    assert "完。" not in out
+    assert "尾部保留。" not in out
 
 
 def test_redaction_empty_and_passthrough() -> None:
@@ -154,10 +148,7 @@ def test_redaction_empty_and_passthrough() -> None:
 
 @pytest.mark.parametrize("split", [1, 3, 5, 8, 12, 20])
 def test_incremental_redaction_matches_whole_text_across_splits(split: int) -> None:
-    raw = (
-        f"分析 {_EVH_SENTINEL} 之后，再看 {_UUID_SENTINEL}，"
-        f"最后检查 {_FP_SENTINEL}。结束。"
-    )
+    raw = f"分析 {_EVH_SENTINEL} 之后，再看 {_UUID_SENTINEL}，最后检查 {_FP_SENTINEL}。结束。"
     expected = redact_reasoning_text(raw)
     redactor = IncrementalRedactor()
     pieces: list[str] = []
@@ -167,7 +158,7 @@ def test_incremental_redaction_matches_whole_text_across_splits(split: int) -> N
     assert "".join(pieces) == expected
 
 
-def test_incremental_redactor_holds_partial_handle_until_complete() -> None:
+def test_incremental_redactor_blocks_partial_handle_once_complete() -> None:
     # Half of a handle must never be emitted in a form that survives
     # redaction once the full handle arrives.
     redactor = IncrementalRedactor()
@@ -177,8 +168,8 @@ def test_incremental_redactor_holds_partial_handle_until_complete() -> None:
     combined = first + second + tail
     assert _EVH_SENTINEL not in combined
     assert "evh_0123" not in combined.replace("〔引用〕", "")
-    assert "〔引用〕" in combined
-    assert "引用开始" in combined and "结束" in combined
+    assert redactor.blocked
+    assert combined == "引用开始 "
 
 
 def test_incremental_redactor_releases_safe_text_immediately() -> None:
@@ -195,7 +186,7 @@ def test_incremental_redactor_releases_safe_text_immediately() -> None:
     assert redactor.flush() == ""  # idempotent
 
 
-def test_unterminated_pem_body_never_leaks_and_terminator_resumes() -> None:
+def test_private_key_block_never_resumes_after_terminator() -> None:
     # Fail-closed: an unterminated PEM block discards its whole body
     # (not just the BEGIN/END markers — the base64 key material itself)
     # until the terminator arrives; text after the terminator resumes.
@@ -209,7 +200,7 @@ def test_unterminated_pem_body_never_leaks_and_terminator_resumes() -> None:
     assert "more-secret-body" not in out1 + out2 + out3
     assert "still-secret" not in out1 + out2 + out3
     assert "BEGIN" not in out1 + out2 + out3
-    # The terminator closes the region; trailing text resumes normally.
+    # A private-key marker permanently blocks the public stream.
     out4 = redactor.feed("-----END RSA PRIVATE KEY----- after")
     out5 = redactor.flush()
     combined = out1 + out2 + out3 + out4 + out5
@@ -217,7 +208,8 @@ def test_unterminated_pem_body_never_leaks_and_terminator_resumes() -> None:
     assert "more-secret-body" not in combined
     assert "still-secret" not in combined
     assert "before" in combined
-    assert "after" in combined
+    assert "after" not in combined
+    assert redactor.blocked
     assert combined == redact_reasoning_text(
         "before -----BEGIN RSA PRIVATE KEY-----\n"
         + body_sentinel
@@ -271,12 +263,7 @@ def test_pem_mismatched_end_never_reopens_normal_output() -> None:
     # (task example): BEGIN RSA … SECRET_ONE / END CERTIFICATE
     # (mismatch) / SECRET_TWO. BEGIN RSA has no matching END, so the whole
     # region — including SECRET_TWO after the mismatched END — is dropped.
-    raw = (
-        "-----BEGIN RSA PRIVATE KEY-----\n"
-        "SECRET_ONE\n"
-        "-----END CERTIFICATE-----\n"
-        "SECRET_TWO"
-    )
+    raw = "-----BEGIN RSA PRIVATE KEY-----\nSECRET_ONE\n-----END CERTIFICATE-----\nSECRET_TWO"
     # Whole-text projection.
     out = redact_reasoning_text(raw)
     assert "SECRET_ONE" not in out
@@ -306,7 +293,7 @@ def test_pem_mismatched_end_cross_chunk() -> None:
     assert "SECRET_TWO" not in combined
 
 
-def test_pem_multiple_mismatched_ends_then_correct_end_recovers() -> None:
+def test_private_key_with_mismatched_ends_never_recovers() -> None:
     # Mismatched ENDs are body; the matching END closes the region and
     # trailing visible text resumes.
     raw = (
@@ -324,11 +311,12 @@ def test_pem_multiple_mismatched_ends_then_correct_end_recovers() -> None:
     assert "SECRET_ONE" not in out
     assert "CERTIFICATE" not in out and "PUBLIC KEY" not in out
     assert "lead" in out
-    assert "VISIBLE" in out
+    assert "VISIBLE" not in out
+    assert redactor.blocked
     assert out == whole
 
 
-def test_pem_correct_end_split_across_chunks_recovers() -> None:
+def test_private_key_split_terminator_does_not_resume() -> None:
     # The matching END terminator is split across chunk boundaries; the END
     # prefix tail is retained so the region still closes and trailing text
     # resumes.
@@ -342,10 +330,11 @@ def test_pem_correct_end_split_across_chunks_recovers() -> None:
     combined = "".join(outs)
     assert "SECRET" not in combined
     assert "lead" in combined
-    assert "VISIBLE" in combined
+    assert "VISIBLE" not in combined
+    assert redactor.blocked
 
 
-def test_pem_label_normalization_pairs_across_whitespace() -> None:
+def test_private_key_label_whitespace_still_blocks() -> None:
     # Labels are normalized (whitespace collapsed) before pairing, so a
     # double-spaced BEGIN label still pairs with a single-spaced END.
     raw = "x -----BEGIN RSA  PRIVATE KEY-----\nSEC\n-----END RSA PRIVATE KEY----- y"
@@ -353,7 +342,8 @@ def test_pem_label_normalization_pairs_across_whitespace() -> None:
     out = redactor.feed(raw) + redactor.flush()
     whole = redact_reasoning_text(raw)
     assert "SEC" not in out
-    assert "x" in out and "y" in out
+    assert "x" in out and "y" not in out
+    assert redactor.blocked
     assert out == whole
 
 
@@ -423,15 +413,15 @@ def test_ambiguous_token_overflow_seals_redactor_permanently() -> None:
     assert out4 == ""
 
 
-def test_committed_prefix_redacts_complete_sentinel() -> None:
-    # A sentinel fully inside the committed region is redacted there.
+def test_committed_prefix_stops_at_complete_hard_sentinel() -> None:
     raw = "正" * 100 + " " + _EVH_SENTINEL + " " + "尾" * 500
     redactor = IncrementalRedactor()
     out1 = redactor.feed(raw)
     out2 = redactor.flush()
     combined = out1 + out2
     assert _EVH_SENTINEL not in combined
-    assert "〔引用〕" in combined
+    assert combined == "正" * 100 + " "
+    assert redactor.blocked
     assert combined == redact_reasoning_text(raw)
 
 
@@ -485,9 +475,7 @@ def test_streaming_projection_equivalent_to_whole_text(raw: str, split: int) -> 
     # lost — the hot≡cold construction invariant).
     expected = redact_reasoning_text(raw)
     redactor = IncrementalRedactor()
-    pieces = [
-        redactor.feed(raw[i : i + split]) for i in range(0, len(raw), split)
-    ]
+    pieces = [redactor.feed(raw[i : i + split]) for i in range(0, len(raw), split)]
     pieces.append(redactor.flush())
     assert "".join(pieces) == expected
 
@@ -545,15 +533,17 @@ def test_buffer_snapshot_shape() -> None:
         "text": "可见内容。",
         "char_count": len("可见内容。"),
         "truncated": False,
+        "visibility_status": "complete",
     }
 
 
-def test_buffer_redacts_while_projecting() -> None:
+def test_buffer_blocks_hard_sentinel_while_projecting() -> None:
     buffer = ReasoningProjectionBuffer()
     out = buffer.feed(f"检查 {_EVH_SENTINEL}。") + buffer.flush()
     assert _EVH_SENTINEL not in out
-    assert "〔引用〕" in out
+    assert out == "检查 "
     assert _EVH_SENTINEL not in buffer.text
+    assert buffer.visibility_status == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -570,8 +560,7 @@ def test_observer_started_only_on_first_nonempty_projection() -> None:
     assert events == []
     observer.on_reasoning_delta(f"仅包含 {_EVH_SENTINEL}。")
     observer.on_analysis_finished()  # releases the incremental holdback
-    # The handle redacts to 〔引用〕 — that IS non-empty visible content,
-    # so started fires exactly once.
+    # The safe prefix before the handle is visible, so started fires once.
     started = [e for e in events if isinstance(e, AgenticReasoningStartedEvent)]
     assert len(started) == 1
     assert started[0].seq == 0
@@ -579,9 +568,9 @@ def test_observer_started_only_on_first_nonempty_projection() -> None:
     assert started[0].message_id == "msg-1"
     assert started[0].thread_id == "thr-1"
     assert started[0].turn_run_id == "run-1"
-    # The raw handle never appears; the projection does.
+    # The raw handle and all later text never appear.
     assert _EVH_SENTINEL not in _dump(events)
-    assert "〔引用〕" in _dump(events)
+    assert "仅包含 " in _dump(events)
 
 
 def test_observer_no_events_when_reasoning_entirely_invisible() -> None:
@@ -630,9 +619,7 @@ def test_observer_delta_seq_strictly_monotonic() -> None:
     observer2.on_reasoning_delta("")  # raw empty
     observer2.on_reasoning_delta(_SYSTEM_LINE_SENTINEL + "\n")  # line dropped
     observer2.on_analysis_finished()
-    deltas2 = [
-        e for e in observer2_events if isinstance(e, AgenticReasoningDeltaEvent)
-    ]
+    deltas2 = [e for e in observer2_events if isinstance(e, AgenticReasoningDeltaEvent)]
     seqs2 = [e.seq for e in deltas2]
     assert seqs2 == [1, 2]
     assert "".join(d.delta for d in deltas2) == "实。\n"
@@ -648,12 +635,8 @@ def test_observer_completed_seq_is_last_and_host_built() -> None:
     observer.on_reasoning_delta("思考二。")
     observer.on_analysis_finished()
     # The observer never emits completed itself.
-    assert not any(
-        isinstance(e, AgenticReasoningCompletedEvent) for e in events
-    )
-    last_delta_seq = max(
-        e.seq for e in events if isinstance(e, AgenticReasoningDeltaEvent)
-    )
+    assert not any(isinstance(e, AgenticReasoningCompletedEvent) for e in events)
+    last_delta_seq = max(e.seq for e in events if isinstance(e, AgenticReasoningDeltaEvent))
     completed = observer.build_completed_event()
     assert completed is not None
     assert completed.seq == last_delta_seq + 1
@@ -747,9 +730,9 @@ def test_observer_raw_sentinel_never_published_or_logged(
     assert _EVH_SENTINEL not in wire
     assert _SK_SENTINEL not in wire
     assert "fp_" not in wire
-    # Projected content does flow (wording preserved).
+    # Only the safe prefix before the first hard blocker flows.
     assert "先检查" in wire
-    assert "〔引用〕" in wire
+    assert "再用" not in wire
     # And nothing raw reached logs.
     assert _EVH_SENTINEL not in caplog.text
     assert _SK_SENTINEL not in caplog.text
@@ -763,6 +746,7 @@ def test_completed_event_carries_no_content_field() -> None:
         seq=3,
         has_content=True,
         truncated=False,
+        visibility_status="complete",
         projection_policy_version=PROJECTION_POLICY_VERSION,
     )
     dumped = completed.model_dump(mode="json")
@@ -877,12 +861,9 @@ def test_quota_exact_fit_has_no_marker() -> None:
     # Exact-cap protocol: text without a marker may fill up to
     # char_cap − len(marker) (the content reservation) and stays
     # truncated=False with no marker.
-    # NOTE: advance_round is a no-op — this test exercises the
-    # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
-    buffer.advance_round() # no-op
     buffer.feed("字" * content_cap)  # exactly fills the content reservation
     buffer.flush()
     assert not buffer.truncated
@@ -896,12 +877,9 @@ def test_quota_fill_reservation_then_overflow_appends_marker_once() -> None:
     # appends the marker exactly once, landing the total at exactly char_cap
     # (marker at end). This is the case got wrong (truncated=True with no
     # marker).
-    # NOTE: advance_round() is a no-op — this test exercises the
-    # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
-    buffer.advance_round() # no-op
     buffer.feed("字" * content_cap)
     assert not buffer.truncated
     assert TRUNCATION_MARKER not in buffer.text
@@ -972,6 +950,7 @@ def _canonical_snapshot(**overrides: object) -> dict[str, object]:
         "text": "先判断句子主干。",
         "char_count": len("先判断句子主干。"),
         "truncated": False,
+        "visibility_status": "complete",
     }
     snap.update(overrides)
     return snap
@@ -984,6 +963,7 @@ def test_validate_reasoning_snapshot_accepts_canonical_shape() -> None:
         text="思" * 3900 + TRUNCATION_MARKER,
         char_count=3900 + len(TRUNCATION_MARKER),
         truncated=True,
+        visibility_status="truncated",
     )
     assert validate_reasoning_snapshot(truncated) == truncated
 
@@ -1001,43 +981,53 @@ def test_validate_reasoning_snapshot_accepts_canonical_shape() -> None:
         lambda: _canonical_snapshot(text=""),  # empty text
         lambda: _canonical_snapshot(text=None),
         lambda: _canonical_snapshot(text=123),
-        lambda: _canonical_snapshot(text="x" * (DEFAULT_PROJECTION_CHAR_CAP + 1),
-                                    char_count=DEFAULT_PROJECTION_CHAR_CAP + 1),  # over cap
+        lambda: _canonical_snapshot(
+            text="x" * (DEFAULT_PROJECTION_CHAR_CAP + 1), char_count=DEFAULT_PROJECTION_CHAR_CAP + 1
+        ),  # over cap
         lambda: _canonical_snapshot(char_count=3),  # count mismatch
         lambda: _canonical_snapshot(char_count="8"),
         lambda: _canonical_snapshot(char_count=True),  # bool is not an int count
         lambda: _canonical_snapshot(truncated="yes"),  # strict bool
         lambda: _canonical_snapshot(truncated=None),
         # Raw sentinels fail the re-projection byte-invariance check.
-        lambda: _canonical_snapshot(text=f"see {_EVH_SENTINEL}",
-                                    char_count=len(f"see {_EVH_SENTINEL}")),
-        lambda: _canonical_snapshot(text=f"id {_UUID_SENTINEL}",
-                                    char_count=len(f"id {_UUID_SENTINEL}")),
-        lambda: _canonical_snapshot(text=f"k {_SK_SENTINEL}",
-                                    char_count=len(f"k {_SK_SENTINEL}")),
-        lambda: _canonical_snapshot(text=f"a {_BEARER_SENTINEL}",
-                                    char_count=len(f"a {_BEARER_SENTINEL}")),
-        lambda: _canonical_snapshot(text=f"s {_FP_SENTINEL}",
-                                    char_count=len(f"s {_FP_SENTINEL}")),
-        lambda: _canonical_snapshot(text=f"u {_URL_SENTINEL}",
-                                    char_count=len(f"u {_URL_SENTINEL}")),
-        lambda: _canonical_snapshot(text="You are Claread hidden",
-                                    char_count=len("You are Claread hidden")),
+        lambda: _canonical_snapshot(
+            text=f"see {_EVH_SENTINEL}", char_count=len(f"see {_EVH_SENTINEL}")
+        ),
+        lambda: _canonical_snapshot(
+            text=f"id {_UUID_SENTINEL}", char_count=len(f"id {_UUID_SENTINEL}")
+        ),
+        lambda: _canonical_snapshot(text=f"k {_SK_SENTINEL}", char_count=len(f"k {_SK_SENTINEL}")),
+        lambda: _canonical_snapshot(
+            text=f"a {_BEARER_SENTINEL}", char_count=len(f"a {_BEARER_SENTINEL}")
+        ),
+        lambda: _canonical_snapshot(text=f"s {_FP_SENTINEL}", char_count=len(f"s {_FP_SENTINEL}")),
+        lambda: _canonical_snapshot(
+            text=f"u {_URL_SENTINEL}", char_count=len(f"u {_URL_SENTINEL}")
+        ),
+        lambda: _canonical_snapshot(
+            text="You are Claread hidden", char_count=len("You are Claread hidden")
+        ),
         # --- truncation-marker invariants ---
         # truncated=True but no marker.
         lambda: _canonical_snapshot(text="x" * 100, char_count=100, truncated=True),
         # truncated=False but a marker is present.
-        lambda: _canonical_snapshot(text="abc" + TRUNCATION_MARKER,
-                                    char_count=len("abc" + TRUNCATION_MARKER),
-                                    truncated=False),
+        lambda: _canonical_snapshot(
+            text="abc" + TRUNCATION_MARKER,
+            char_count=len("abc" + TRUNCATION_MARKER),
+            truncated=False,
+        ),
         # truncated=True but marker not at the end.
-        lambda: _canonical_snapshot(text="abc" + TRUNCATION_MARKER + "xyz",
-                                    char_count=len("abc" + TRUNCATION_MARKER + "xyz"),
-                                    truncated=True),
+        lambda: _canonical_snapshot(
+            text="abc" + TRUNCATION_MARKER + "xyz",
+            char_count=len("abc" + TRUNCATION_MARKER + "xyz"),
+            truncated=True,
+        ),
         # marker duplicated.
-        lambda: _canonical_snapshot(text="a" + TRUNCATION_MARKER + TRUNCATION_MARKER,
-                                    char_count=len("a" + TRUNCATION_MARKER + TRUNCATION_MARKER),
-                                    truncated=True),
+        lambda: _canonical_snapshot(
+            text="a" + TRUNCATION_MARKER + TRUNCATION_MARKER,
+            char_count=len("a" + TRUNCATION_MARKER + TRUNCATION_MARKER),
+            truncated=True,
+        ),
     ],
 )
 def test_validate_reasoning_snapshot_rejects_invalid(mutate: object) -> None:
@@ -1075,8 +1065,7 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
 # Removed the hard round-0 sub-cap (former ROUND0_CAP_FRACTION = 0.65)
 # because it silently dropped up to 35% of round-0 reasoning without setting
 # ``truncated=True``, producing an undeclared gap in the visible projection.
-# The turn-level total cap is the ONLY quota. ``advance_round()`` is a no-op
-# retained for backward-compat with thinking_transport boundary calls.
+# The turn-level total cap is the ONLY quota.
 
 
 def test_no_initial_round_subcap_allows_full_total_budget_in_initial_round() -> None:
@@ -1098,65 +1087,25 @@ def test_no_initial_round_subcap_allows_full_total_budget_in_initial_round() -> 
     assert out_round0 == "字" * content_cap
 
 
-def test_advance_round_is_noop_does_not_affect_quota() -> None:
-    # Advance_round() is a no-op. Calling it does not change the
-    # buffer state or the available budget — the total cap is the only
-    # quota and it is shared across all rounds.
-    cap = 100
-    marker_len = len(TRUNCATION_MARKER)
-    content_cap = cap - marker_len
-    buffer = ReasoningProjectionBuffer(char_cap=cap)
-    # Feed some content.
-    first_batch = 20
-    buffer.feed("字" * first_batch)
-    buffer.flush()
-    assert buffer.char_count == first_batch
-    # Call advance_round — no effect on char_count or budget.
-    buffer.advance_round()
-    assert buffer.char_count == first_batch
-    # Feed more — still under the total cap, accepted in full.
-    second_batch = content_cap - first_batch
-    out = buffer.feed("后" * second_batch) + buffer.flush()
-    assert out == "后" * second_batch
-    assert buffer.char_count == content_cap
-    assert not buffer.truncated
-
-
-def test_total_cap_truncates_with_marker_without_advance_round() -> None:
-    # Total cap truncation works the same with or without
-    # advance_round. The marker is appended exactly once at the end.
+def test_total_cap_truncates_with_marker() -> None:
+    # Total cap truncation appends the marker exactly once at the end.
     cap = 100
     buffer = ReasoningProjectionBuffer(char_cap=cap)
-    # Overflow the total cap immediately — no advance_round needed.
+    # Overflow the total cap immediately.
     buffer.feed("字" * 200)
     buffer.flush()
     assert buffer.truncated
     assert buffer.text.endswith(TRUNCATION_MARKER)
     assert buffer.text.count(TRUNCATION_MARKER) == 1
     assert buffer.char_count == cap  # exactly the total cap
-
-
-def test_advance_round_idempotent_after_total_truncation() -> None:
-    cap = 50
-    buffer = ReasoningProjectionBuffer(char_cap=cap)
-    # Hit total cap immediately in round 0.
-    buffer.feed("字" * 200)
-    buffer.flush()
-    assert buffer.truncated
-    text_before = buffer.text
-    char_count_before = buffer.char_count
-    # advance_round is a no-op once truncated.
-    buffer.advance_round()
-    assert buffer.text == text_before
-    assert buffer.char_count == char_count_before
-    # Further feed is also a no-op.
+    # Further feed after truncation is a no-op.
     assert buffer.feed("更多内容") == ""
     assert buffer.flush() == ""
 
 
-def test_multiple_advance_round_calls_are_all_noops() -> None:
-    # Multiple advance_round calls (multiple tool boundaries) are
-    # all no-ops. The total cap is the only quota — no per-round reserve.
+def test_multi_round_budget_shared_under_total_cap() -> None:
+    # The total cap is the only quota — no per-round reserve. Reasoning
+    # from multiple rounds shares one budget.
     cap = 200
     marker_len = len(TRUNCATION_MARKER)
     content_cap = cap - marker_len
@@ -1165,14 +1114,10 @@ def test_multiple_advance_round_calls_are_all_noops() -> None:
     round0_chars = 40
     buffer.feed("零" * round0_chars)
     buffer.flush()
-    # First tool boundary — no-op.
-    buffer.advance_round()
     # Round 1: consume some budget.
     round1_chars = 30
     buffer.feed("一" * round1_chars)
     buffer.flush()
-    # Second tool boundary — no-op.
-    buffer.advance_round()
     # Round 2: consume the rest of the budget.
     remaining = content_cap - round0_chars - round1_chars
     buffer.feed("二" * remaining)
@@ -1186,13 +1131,12 @@ def test_multiple_advance_round_calls_are_all_noops() -> None:
     assert buffer.text.endswith(TRUNCATION_MARKER)
 
 
-def test_observer_advance_round_is_noop() -> None:
-    # Observer.advance_round() is a no-op — it does not affect
-    # which reasoning is accepted or dropped. All reasoning under the
-    # total cap is accepted regardless of round boundaries.
+def test_observer_accepts_reasoning_across_round_boundaries() -> None:
+    # Round boundaries are transparent to the observer: reasoning after
+    # a tool round is accepted while the total stays under the cap.
     events: list[RuntimeEvent] = []
     cap = 100
-    observer = ReasoningProjectorObserver(
+    observer = ProviderReasoningObserver(
         emit=lambda e: events.append(e),
         message_id="msg-1",
         thread_id="thr-1",
@@ -1203,9 +1147,7 @@ def test_observer_advance_round_is_noop() -> None:
     # sub-cap. All of it is accepted.
     observer.on_reasoning_delta("字" * 50)
     observer.on_analysis_finished()
-    # Tool boundary — no-op.
-    observer.advance_round()
-    # More reasoning — accepted (total still under cap).
+    # More reasoning after a tool round — accepted (total still under cap).
     observer.on_reasoning_delta("后round1内容应该被接受")
     observer.on_analysis_finished()
     # Verify all content made it into the projection.
@@ -1213,21 +1155,6 @@ def test_observer_advance_round_is_noop() -> None:
     visible = "".join(d.delta for d in deltas)
     assert "字" * 50 in visible
     assert "后round1内容应该被接受" in visible
-
-
-def test_observer_advance_round_is_noop_when_sealed() -> None:
-    events: list[RuntimeEvent] = []
-    observer = _observer(events)
-    # Build the completed event — this seals the observer.
-    observer.on_reasoning_delta("一些推理内容。")
-    observer.on_analysis_finished()
-    completed = observer.build_completed_event()
-    assert completed is not None
-    # advance_round after sealing is a no-op (no exception, no effect).
-    observer.advance_round()
-    # Further deltas are dropped.
-    observer.on_reasoning_delta("sealed后不应有任何输出")
-    assert observer.projection_text == "一些推理内容。"
 
 
 def test_default_band_keeps_long_turns_untruncated() -> None:
@@ -1241,8 +1168,6 @@ def test_default_band_keeps_long_turns_untruncated() -> None:
     buffer.feed("字" * round0_chars)
     buffer.flush()
     assert not buffer.truncated
-    # Tool boundary — no-op.
-    buffer.advance_round()
     # Round 1: 4K — total now 10K, still under 14K - marker_len.
     buffer.feed("字" * round1_chars)
     buffer.flush()

@@ -41,7 +41,6 @@ LANGSMITH_OTEL_ENABLED=true
 
 **不产生 LangSmith trace 的路径**：
 
-- learner reasoning projector（`services/api/app/services/reader_record_ask/learner_reasoning/projector.py` 显式 `instrument=False`）。
 - 未开启 OTEL 的进程中的任何 PydanticAI 调用。
 - standalone Reader enhancement worker：入口脚本不调用 `setup_langsmith()`，未注册 `Agent.instrument_all()`。
 - 旧 `/analyze` 主链、旧 eval-center 子路径（`/eval/article-analysis/*`）：已物理删除，不再有对应 trace 行为。

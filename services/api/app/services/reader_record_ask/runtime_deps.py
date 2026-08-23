@@ -202,6 +202,17 @@ class RuntimeObservation:
     # either a legacy observation container or an assembly-phase
     # failure — the classifier treats both as ``runtime_exception``.
     execution_stage: ExecutionStage | None = None
+    # Provider usage facts from the same agent run's shared RunUsage
+    # accumulator. Written by the thinking transport on BOTH the success
+    # path (``complete``) and the failure/cancellation path
+    # (``partial`` — only the responses the provider confirmed before
+    # the run ended). Read by the production stream's exception /
+    # cancellation handlers so a failed or cancelled turn still audits
+    # its confirmed provider usage. Never fabricated: stays ``None``
+    # when the provider reported nothing. Never serialised; never on
+    # any public DTO / SSE / DB surface.
+    usage_summary: dict | None = None
+    usage_completeness: str | None = None
 
 
 @dataclass(slots=True)

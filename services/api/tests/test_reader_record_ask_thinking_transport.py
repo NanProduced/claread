@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -122,9 +123,7 @@ def _thinking_stream_model():
         return ModelResponse(
             parts=[
                 ThinkingPart(content=_SENTINEL + " more"),
-                TextPart(
-                    content=json.dumps(_answer_payload("Which aspect?"))
-                ),
+                TextPart(content=json.dumps(_answer_payload("Which aspect?"))),
             ]
         )
 
@@ -203,9 +202,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
         return ModelResponse(
             parts=[
                 ThinkingPart(content=_SECOND_ROUND_END_MARKER),
-                TextPart(
-                    content=json.dumps(_answer_payload("Which aspect?"))
-                ),
+                TextPart(content=json.dumps(_answer_payload("Which aspect?"))),
             ]
         )
 
@@ -432,9 +429,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
 
     async def stream_fn(messages, info):
         has_retry = any(
-            isinstance(p, RetryPromptPart)
-            for m in messages
-            for p in getattr(m, "parts", []) or []
+            isinstance(p, RetryPromptPart) for m in messages for p in getattr(m, "parts", []) or []
         )
         if not has_retry:
             yield {0: DeltaThinkingPart(content=_SENTINEL)}
@@ -453,9 +448,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
         envelope=envelope,
         document_access=_access(),
         fence=StaticGenerationFence(live_generation=envelope.record_generation),
-        evidence_registry=EvidenceRegistry(
-            envelope_fingerprint=envelope.envelope_fingerprint
-        ),
+        evidence_registry=EvidenceRegistry(envelope_fingerprint=envelope.envelope_fingerprint),
     )
 
     agent = _build_agent(model)
@@ -493,9 +486,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
 
     # Sentinel never leaks into RuntimeEvent payloads.
     for event in deps.events:
-        dumped = (
-            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
-        )
+        dumped = event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         assert _SENTINEL not in json.dumps(dumped)
         assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
@@ -560,9 +551,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
 
     async def stream_fn(messages, info):
         has_retry = any(
-            isinstance(p, RetryPromptPart)
-            for m in messages
-            for p in getattr(m, "parts", []) or []
+            isinstance(p, RetryPromptPart) for m in messages for p in getattr(m, "parts", []) or []
         )
         if not has_retry:
             # Round 1: thinking + tool call (tool will raise ModelRetry).
@@ -607,9 +596,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
         envelope=envelope,
         document_access=_access(),
         fence=StaticGenerationFence(live_generation=envelope.record_generation),
-        evidence_registry=EvidenceRegistry(
-            envelope_fingerprint=envelope.envelope_fingerprint
-        ),
+        evidence_registry=EvidenceRegistry(envelope_fingerprint=envelope.envelope_fingerprint),
     )
 
     agent = _build_agent(model)
@@ -647,9 +634,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
 
     # Sentinel never leaks into RuntimeEvent payloads.
     for event in deps.events:
-        dumped = (
-            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
-        )
+        dumped = event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         assert _SENTINEL not in json.dumps(dumped)
         assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
@@ -678,7 +663,6 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
     from contextlib import asynccontextmanager
     from dataclasses import dataclass, field
     from datetime import UTC, datetime
-    from typing import Any
 
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelResponseStreamEvent
@@ -692,9 +676,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
         run_agent_with_thinking_transport,
     )
 
-    _FINAL_ANSWER = json.dumps(
-        _answer_payload("final answer after tool return")
-    )
+    _FINAL_ANSWER = json.dumps(_answer_payload("final answer after tool return"))
 
     @dataclass
     class _PartEndOnlyStreamedResponse(StreamedResponse):
@@ -702,9 +684,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
 
         _round_number: int
         _model_name: str = "part-end-only-test-model"
-        _timestamp: datetime = field(
-            default_factory=lambda: datetime.now(UTC)
-        )
+        _timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
         async def _get_event_iterator(
             self,
@@ -786,9 +766,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
             model_settings: Any,
             model_request_parameters: ModelRequestParameters,
         ) -> Any:
-            raise NotImplementedError(
-                "Only streaming is supported by this test model."
-            )
+            raise NotImplementedError("Only streaming is supported by this test model.")
 
         @asynccontextmanager
         async def request_stream(
@@ -798,9 +776,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
             model_request_parameters: ModelRequestParameters,
             run_context: Any | None = None,
         ) -> AsyncGenerator[StreamedResponse]:
-            _model_settings, params = self.prepare_request(
-                model_settings, model_request_parameters
-            )
+            _model_settings, params = self.prepare_request(model_settings, model_request_parameters)
             self._round += 1
             yield _PartEndOnlyStreamedResponse(
                 model_request_parameters=params,
@@ -825,9 +801,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
         envelope=envelope,
         document_access=_access(),
         fence=StaticGenerationFence(live_generation=envelope.record_generation),
-        evidence_registry=EvidenceRegistry(
-            envelope_fingerprint=envelope.envelope_fingerprint
-        ),
+        evidence_registry=EvidenceRegistry(envelope_fingerprint=envelope.envelope_fingerprint),
     )
 
     observer = BoundedThinkingObserver(char_cap=2000)
@@ -860,9 +834,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
 
     # Sentinel never leaks into RuntimeEvent payloads.
     for event in deps.events:
-        dumped = (
-            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
-        )
+        dumped = event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         assert _SENTINEL not in json.dumps(dumped)
         assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
@@ -905,9 +877,7 @@ def _transport_deps():
         envelope=envelope,
         document_access=_access(),
         fence=StaticGenerationFence(live_generation=envelope.record_generation),
-        evidence_registry=EvidenceRegistry(
-            envelope_fingerprint=envelope.envelope_fingerprint
-        ),
+        evidence_registry=EvidenceRegistry(envelope_fingerprint=envelope.envelope_fingerprint),
     )
 
 
@@ -948,9 +918,7 @@ async def test_answer_text_chunks_stream_as_answer_delta_events():
     assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert outcome.output.answer_text == "Hello world"
     # phase_events mirror the sink emissions.
-    phase_deltas = [
-        e for e in outcome.phase_events if isinstance(e, AnswerDeltaEvent)
-    ]
+    phase_deltas = [e for e in outcome.phase_events if isinstance(e, AnswerDeltaEvent)]
     assert [e.delta for e in phase_deltas] == ["Hel", "lo world"]
 
 
@@ -1014,12 +982,12 @@ async def test_production_agent_streamed_prompted_output_keeps_validated_artifac
     ]
     assert len(observation.validated_artifact_object_ids) == 1
     assert outcome.output.validated_answer_blocks is not None
-    assert id(outcome.output.validated_answer_blocks) == (
-        observation.validated_artifact_object_ids[0]
+    assert (
+        id(outcome.output.validated_answer_blocks) == (observation.validated_artifact_object_ids[0])
     )
-    assert [
-        block.text for block in outcome.output.validated_answer_blocks.blocks
-    ] == ["Hello world"]
+    assert [block.text for block in outcome.output.validated_answer_blocks.blocks] == [
+        "Hello world"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1112,6 +1080,256 @@ async def test_answer_delta_isolated_from_thinking_transport(caplog):
     assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert outcome.output.answer_text == "Hello world"
     assert _SENTINEL not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Provider reasoning streaming contract: real ProviderReasoningObserver
+# across tool / retry rounds. The production observer must survive every
+# generation boundary the transport emits and keep its public event
+# sequence strictly monotonic with no lost / duplicated reasoning.
+# ---------------------------------------------------------------------------
+
+_ROUND1_REASONING_A = "第一轮思考：先定位问题范围。"
+_ROUND1_REASONING_B = "再核对上下文与证据。"
+_ROUND2_REASONING_A = "第二轮思考：结合工具结果组织答案。"
+
+
+def _collecting_observer():
+    from app.services.reader_record_ask.reasoning_projection import (
+        ProviderReasoningObserver,
+    )
+
+    events: list[Any] = []
+    observer = ProviderReasoningObserver(
+        emit=events.append,
+        message_id="msg-provider-reasoning",
+        thread_id="thr-provider-reasoning",
+        turn_run_id="run-provider-reasoning",
+    )
+    return observer, events
+
+
+def _assert_provider_reasoning_contract(observer, events, expected_text: str) -> None:
+    """Shared contract: started once (seq 0) → deltas strictly increasing →
+    text == concat(deltas) == projection_text; completed is host-built
+    last."""
+    from app.services.reader_record_ask.runtime_events import (
+        AgenticReasoningCompletedEvent,
+        AgenticReasoningDeltaEvent,
+        AgenticReasoningStartedEvent,
+    )
+
+    started = [e for e in events if isinstance(e, AgenticReasoningStartedEvent)]
+    deltas = [e for e in events if isinstance(e, AgenticReasoningDeltaEvent)]
+    assert len(started) == 1, "reasoning.started must fire exactly once per turn"
+    assert started[0].seq == 0
+    assert deltas, "reasoning deltas must be published"
+    seqs = [started[0].seq] + [d.seq for d in deltas]
+    assert seqs == sorted(seqs), "reasoning seq must be monotonic non-decreasing"
+    assert len(set(seqs)) == len(seqs), "reasoning seq must never repeat"
+    assert "".join(d.delta for d in deltas) == expected_text
+    assert observer.projection_text == expected_text
+    assert observer.has_content is True
+
+    completed = observer.build_completed_event()
+    assert isinstance(completed, AgenticReasoningCompletedEvent)
+    assert completed.seq == max(seqs) + 1
+    assert completed.has_content is True
+    assert completed.visibility_status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_provider_reasoning_observer_tool_round_stream() -> None:
+    """Real ProviderReasoningObserver through the transport across one
+    successful tool round: round-1 thinking deltas → tool call → tool
+    return boundary → round-2 thinking → streamed answer text.
+
+    Regression (provider reasoning streaming): the transport used to call
+    hidden legacy-projector callbacks (``advance_round("...")`` etc.) at
+    the tool-result boundary; ``ProviderReasoningObserver.advance_round``
+    accepted no argument, so every provider-reasoning turn that crossed
+    a tool round raised ``TypeError`` and the whole turn failed.
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.models.function import DeltaToolCall
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    answer_json = json.dumps(_answer_payload("round2 final answer"))
+
+    async def stream_fn(messages, info):
+        has_tool_return = any(
+            type(p).__name__ == "ToolReturnPart"
+            for m in messages
+            for p in getattr(m, "parts", []) or []
+        )
+        if not has_tool_return:
+            # Round 1: streamed thinking deltas, then a tool call.
+            yield {0: DeltaThinkingPart(content=_ROUND1_REASONING_A)}
+            yield {0: DeltaThinkingPart(content=_ROUND1_REASONING_B)}
+            yield {
+                1: DeltaToolCall(
+                    name="helper_tool",
+                    json_args=json.dumps({"query": "x"}),
+                    tool_call_id="tc1",
+                )
+            }
+            return
+        # Round 2: thinking delta, then the final answer as streamed text.
+        yield {0: DeltaThinkingPart(content=_ROUND2_REASONING_A)}
+        for chunk in (
+            answer_json[:20],
+            answer_json[20:40],
+            answer_json[40:],
+        ):
+            yield chunk
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=ModelProfile(supports_thinking=True),
+    )
+
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraftOutput,
+        retries={"output": 2},
+    )
+
+    @agent.tool
+    async def helper_tool(ctx, query: str) -> str:
+        return "tool result"
+
+    deps = _transport_deps()
+    observer, events = _collecting_observer()
+
+    outcome = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="use helper_tool",
+        deps=deps,
+        thinking_observer=observer,
+        model=model,
+    )
+
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
+    expected = _ROUND1_REASONING_A + _ROUND1_REASONING_B + _ROUND2_REASONING_A
+    _assert_provider_reasoning_contract(observer, events, expected)
+    # Round boundaries never duplicate or reorder reasoning text.
+    assert observer.projection_text.count(_ROUND1_REASONING_A) == 1
+    assert observer.projection_text.count(_ROUND2_REASONING_A) == 1
+    assert observer.projection_text.index(_ROUND1_REASONING_A) < observer.projection_text.index(
+        _ROUND2_REASONING_A
+    )
+    # Round-2 answer streamed as message deltas after the tool boundary.
+    deltas = [e for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    assert "".join(e.delta for e in deltas) == "round2 final answer"
+    assert all(e.generation_id == 1 for e in deltas), (
+        "answer deltas after a tool-result boundary must belong to generation 1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_provider_reasoning_observer_output_validator_retry_round() -> None:
+    """Real ProviderReasoningObserver across an output-validator
+    ModelRetry round: round-1 thinking + draft → validator retry →
+    round-2 thinking + accepted draft.
+
+    Same regression family as the tool-round test: the hidden
+    ``advance_round("output_validator_retry")`` call raised ``TypeError``
+    on the production observer at the retry boundary.
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.messages import RetryPromptPart
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    validator_calls = {"n": 0}
+
+    def _build_agent(model) -> Agent:
+        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
+            model,
+            deps_type=ReaderRecordAskDeps,
+            output_type=AgentAnswerDraftOutput,
+            retries={"output": 2},
+        )
+
+        @agent.output_validator
+        async def validator(ctx, draft: AgentAnswerDraftOutput) -> AgentAnswerDraftOutput:
+            validator_calls["n"] += 1
+            if validator_calls["n"] == 1:
+                raise ModelRetry("first draft rejected for testing")
+            return draft
+
+        return agent
+
+    async def stream_fn(messages, info):
+        from pydantic_ai.models.function import DeltaToolCall
+
+        has_retry = any(
+            isinstance(p, RetryPromptPart) for m in messages for p in getattr(m, "parts", []) or []
+        )
+        if not has_retry:
+            # Round 1: thinking + final_result OUTPUT TOOL call whose draft
+            # fails the grounding validator (unknown evidence handle) —
+            # the retry surfaces as OutputToolResultEvent(RetryPromptPart).
+            yield {0: DeltaThinkingPart(content=_ROUND1_REASONING_A)}
+            yield {
+                1: DeltaToolCall(
+                    name="final_result",
+                    json_args=json.dumps(
+                        {
+                            "response_kind": "grounded_answer",
+                            "clarification_text": None,
+                            "answer_blocks": [
+                                {
+                                    "text": "round1 draft",
+                                    "basis": "article",
+                                    "evidence_handles": [
+                                        "evh_" + "0" * 32,
+                                    ],
+                                }
+                            ],
+                        }
+                    ),
+                    tool_call_id="tc-retry-1",
+                )
+            }
+            return
+        # Round 2: thinking + accepted clarification text output.
+        yield {0: DeltaThinkingPart(content=_ROUND2_REASONING_A)}
+        yield json.dumps(_answer_payload("round2 final"))
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=ModelProfile(supports_thinking=True),
+    )
+
+    deps = _transport_deps()
+    agent = _build_agent(model)
+    observer, events = _collecting_observer()
+
+    outcome = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="test prompt",
+        deps=deps,
+        thinking_observer=observer,
+        model=model,
+    )
+
+    assert validator_calls["n"] == 2
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
+    _assert_provider_reasoning_contract(
+        observer,
+        events,
+        _ROUND1_REASONING_A + _ROUND2_REASONING_A,
+    )
 
 
 def test_answer_text_streamer_partial_parse_and_monotonic_emission():

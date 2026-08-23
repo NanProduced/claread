@@ -496,6 +496,11 @@ def scan_python_and_config(
         if path_prefix is not None and not relative_path.startswith(path_prefix):
             continue
         path = REPO_ROOT / relative_path
+        # Working-tree deletions (pending, unstaged removals) still appear
+        # in git ls-files output; only files that exist on disk are
+        # scannable.
+        if not path.exists():
+            continue
         suffix = path.suffix.lower()
         if suffix == ".py":
             items.extend(scan_python(path, relative_path))
@@ -589,6 +594,10 @@ def test_python_sources_parse_and_syntax_partitions_are_distinct() -> None:
     parsed = 0
     for relative_path in tracked_paths():
         if relative_path.endswith(".py"):
+            # Pending working-tree deletions are still git-tracked; only
+            # files that exist on disk are parseable.
+            if not (REPO_ROOT / relative_path).exists():
+                continue
             ast.parse(
                 (REPO_ROOT / relative_path).read_text(encoding="utf-8"),
                 filename=relative_path,

@@ -18,9 +18,12 @@ at import time, before ``app.main`` is imported:
    auto-wire fallback is blocked. See execution.py.
 
 Provider-safety configuration is FORCED for this process (env overrides
-``.env``): Article RAG, grammar RAG/Zilliz, LangSmith/OTel, learner
-reasoning projector and Web Search providers are off. ``DATABASE_URL`` /
-``REDIS_URL`` still come from ``services/api/.env`` (real shared PG).
+``.env``): Article RAG, grammar RAG/Zilliz, LangSmith/OTel and Web Search
+providers are off. Provider reasoning projection is ON — the deterministic
+offline FunctionModel streams ThinkingPartDelta through the REAL thinking
+transport + ProviderReasoningObserver, and the provider guard still proves
+zero real provider calls. ``DATABASE_URL`` / ``REDIS_URL`` still come from
+``services/api/.env`` (real shared PG).
 
 ``app.main`` never imports this module and there is no production env
 flag that activates this behaviour from ``app.main:app``. The extra
@@ -52,9 +55,7 @@ _DETERMINISTIC_MODEL_PROFILES = json.dumps(
                 "model_name": "deterministic-e2e-model",
             }
         },
-        "profiles": {
-            _DETERMINISTIC_PROFILE: {"model": "deterministic-e2e-model"}
-        },
+        "profiles": {_DETERMINISTIC_PROFILE: {"model": "deterministic-e2e-model"}},
     },
     separators=(",", ":"),
 )
@@ -84,7 +85,7 @@ _FORCED_ENV: dict[str, str] = {
     "LANGSMITH_OTEL_ENABLED": "false",
     "LANGCHAIN_TRACING": "false",
     "LANGCHAIN_TRACING_V2": "false",
-    "READER_RECORD_ASK_LEARNER_REASONING_ENABLED": "false",
+    "READER_RECORD_ASK_PROVIDER_REASONING_ENABLED": "true",
     "READER_RECORD_ASK_MEMORY_ENABLED": "false",
     "READER_RECORD_ASK_AGENTIC_ENABLED": "true",
     "PHONE_AUTH_PROVIDER": "mock",

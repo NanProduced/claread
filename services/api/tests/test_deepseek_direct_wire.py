@@ -280,6 +280,56 @@ async def test_direct_deepseek_tool_continuation_carries_reasoning_content() -> 
     assert second.get("reasoning_effort") == "max"
 
 
+@pytest.mark.asyncio
+async def test_direct_deepseek_max_tokens_uses_official_wire_name() -> None:
+    """Project ``max_tokens`` must reach the wire as DeepSeek's official
+    ``max_tokens`` — never ``max_completion_tokens``.
+
+    DeepSeek's API documents ``max_tokens`` and its integration notes
+    explicitly say NOT ``max_completion_tokens`` (the wire name
+    PydanticAI's OpenAI mapping uses by default). With the default
+    mapping the output cap has no wire-level guarantee for DeepSeek — it
+    may be rejected or silently ignored. Offline HTTP capture via
+    MockTransport; no network, no paid probe.
+    """
+    transport = _CaptureTransport(_chat_completion_response(content="ok"))
+    model = _build_direct_model(
+        thinking_mode="enabled", effort=None, transport=transport
+    )
+    agent = Agent(model, tools=[], output_type=str)
+    await agent.run("hi", model_settings={"max_tokens": 246})
+
+    assert transport.requests
+    first = transport.requests[0]
+    assert first.get("max_tokens") == 246, (
+        "DeepSeek official wire parameter is max_tokens"
+    )
+    assert "max_completion_tokens" not in first, (
+        "max_completion_tokens is not a confirmed DeepSeek parameter — "
+        "must never be sent alongside max_tokens"
+    )
+    # The thinking payload must survive the settings rewrite.
+    assert first.get("thinking") == {"type": "enabled"}
+
+
+@pytest.mark.asyncio
+async def test_direct_deepseek_no_max_tokens_setting_sends_neither_name() -> None:
+    """Without a ``max_tokens`` setting the wire carries neither name —
+    the rewrite is a pure pass-through, not an injection."""
+    transport = _CaptureTransport(_chat_completion_response(content="ok"))
+    model = _build_direct_model(
+        thinking_mode="enabled", effort=None, transport=transport
+    )
+    agent = Agent(model, tools=[], output_type=str)
+    await agent.run("hi")
+
+    assert transport.requests
+    first = transport.requests[0]
+    assert "max_tokens" not in first
+    assert "max_completion_tokens" not in first
+    assert first.get("thinking") == {"type": "enabled"}
+
+
 def test_factory_applies_deepseek_profile_without_hint() -> None:
     config = ResolvedModelConfig(
         route=MODEL_ROUTE_READER_ASK,
