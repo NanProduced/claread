@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     ? { distDir: ".next-e2e-test" }
     : {}),
   images: {
+    dangerouslyAllowLocalIP: process.env.CLAREAD_E2E_TEST === "1",
     remotePatterns: [
       {
         protocol: "http",
