@@ -3,9 +3,14 @@ import { computeUtf16FNV1a } from "@claread/contracts";
 import type { ReaderRecordAnchorDraft, ReaderRecordAnchorScope } from "./reader-record-anchor-draft";
 import type {
   ReaderRecordPlateDocument,
-  ReaderRecordPlateParagraphBlock,
+  ReaderRecordPlateBlock,
   ReaderRecordPlateTextAnchor,
 } from "./reader-record-plate-document";
+
+type ProjectedParagraphBlock = Extract<
+  ReaderRecordPlateBlock,
+  { type: "paragraph" }
+>;
 
 export type ReaderRecordActiveAnchorSource =
   | "selection"
@@ -95,7 +100,7 @@ function normalizeTextAnchor(anchor: ReaderRecordPlateTextAnchor): NormalizedAct
 function findAnchorSegment(
   document: ReaderRecordPlateDocument,
   anchor: Pick<NormalizedActiveAnchor, "unit_id" | "anchor_segment_id">,
-): ReaderRecordPlateParagraphBlock | null {
+): ProjectedParagraphBlock | null {
   for (const block of document.children) {
     if (block.type !== "paragraph") {
       continue;

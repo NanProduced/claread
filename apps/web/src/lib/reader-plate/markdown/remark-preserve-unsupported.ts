@@ -4,8 +4,6 @@
  * 挂在 remarkGfm 之后，把 Plate 输入端没有完整编辑支持的 mdast 节点
  * 在 deserialize 之前降级为安全节点，保证内容可见保留：
  *
- * - image → link：`![alt](src)` 变为普通链接节点 `[alt](src)`
- *   （无 alt 时用 src 作为可见文本）。输入端可见、可点击、可序列化往返。
  * - footnoteReference → text：`[^1]` 保留为字面文本。
  * - footnoteDefinition → paragraph：`[^1]: ...` 保留为普通段落
  *   （前缀 `[^1]: ` + 原内容），不丢脚注正文。
@@ -15,6 +13,21 @@
  * - raw HTML（mdast `html`，如 `vector<T>` 的 `<T>`、块级 `<div>`）→
  *   字面文本节点。不被 ALLOWED 白名单静默丢弃，可见保留。
  *
+ * image 不在此处降级：`![alt](url "title")` 的 mdast image 节点原样
+ * 通过，由输入端 Markdown options 的 img 规则转换为 typed image element
+ * （见 input-markdown-image-kit；G1′ 前曾降级为 generic link，导致
+ * 图片性与 title 不可逆丢失）。
+ *
+ * reference-style image（G1P-A-R2）：`![alt][ref]` + `[ref]: url` 的
+ * mdast imageReference / definition 都不在输入端 allowedNodes 内，会被
+ * 静默丢弃。插件两遍解析：第一遍收集 definition（identifier 已由
+ * parser 统一规范化为小写 + 空白折叠，ref/def 两侧一致，直接 Map 匹配；
+ * first-wins）；第二遍把 resolved imageReference 内联为标准 image node
+ * （url/title 取 definition，alt 取引用），编辑后 serialize 规范化为
+ * inline image syntax（definition 行被消费）。unresolved 引用（parser
+ * 正常已预解析为字面文本，此处为防御分支）降级为可见字面 Markdown。
+ * linkReference 不处理（ordinary link 行为不变）。
+ *
  * 只用于输入端（MarkdownTextInput 的 MarkdownPlugin 配置），
  * 不影响 reader-plate projection 路径。
  */
@@ -23,6 +36,7 @@ interface MdastNode {
   type: string;
   value?: string;
   url?: string;
+  title?: string | null;
   alt?: string | null;
   identifier?: string;
   label?: string;
@@ -43,18 +57,56 @@ function footnoteId(node: MdastNode): string {
   return node.identifier ?? node.label ?? "?";
 }
 
-function transform(node: MdastNode): void {
+/** definition 收集结果（first-wins）。 */
+interface CollectedDefinition {
+  url?: string;
+  title?: string | null;
+}
+
+/**
+ * 第一遍：收集全树 definition，identifier 相同时首个生效（CommonMark
+ * first-wins）。identifier 复用 parser 的规范化形式，不做二次折叠。
+ */
+function collectDefinitions(
+  node: MdastNode,
+  definitions: Map<string, CollectedDefinition>,
+): void {
+  visit(node, (n) => {
+    if (n.type === "definition" && typeof n.identifier === "string") {
+      if (!definitions.has(n.identifier)) {
+        definitions.set(n.identifier, { url: n.url, title: n.title });
+      }
+    }
+  });
+}
+
+function transform(node: MdastNode, definitions: Map<string, CollectedDefinition>): void {
   // raw inline/block HTML：由 MARKDOWN_PLUGIN_OPTIONS.rules.html 在
   // deserializer 层处理（source_callout 识别 + 非 aside 降级为 text）。
   // 此处不再降级 html 节点，避免 rules.html 永远收不到 html 节点。
-  // 注意：image / footnote / task list 仍在此处降级。
-  // image → link（alt 作为可见文本，无 alt 用 url）
-  if (node.type === "image") {
-    const url = node.url ?? "";
-    const alt = node.alt ?? "";
-    node.type = "link";
-    node.children = [{ type: "text", value: alt || url }];
+  // image 也不在此处降级（G1′）：mdast image 原样通过，typed image
+  // 转换由输入端 Markdown options 的 img 规则完成。
+  // imageReference → 内联 image（G1P-A-R2）：resolved 时用 definition 的
+  // url/title + 引用的 alt；unresolved 降级为可见字面 Markdown（防御
+  // 分支——parser 正常已把无定义引用预解析为字面文本）。
+  if (node.type === "imageReference") {
+    const definition = definitions.get(node.identifier ?? "");
+    if (definition) {
+      node.type = "image";
+      node.url = definition.url ?? "";
+      if (typeof definition.title === "string") {
+        node.title = definition.title;
+      }
+      delete node.identifier;
+      delete node.label;
+      return;
+    }
+    node.type = "text";
+    node.value = `![${node.alt ?? ""}][${node.label ?? node.identifier ?? ""}]`;
     delete node.alt;
+    delete node.identifier;
+    delete node.label;
+    delete node.children;
     return;
   }
   // footnoteReference → 字面文本 [^id]
@@ -100,6 +152,10 @@ function transform(node: MdastNode): void {
  */
 export function remarkPreserveUnsupported() {
   return (tree: MdastNode) => {
-    visit(tree, transform);
+    // 第一遍：收集 definition（引用与定义的相对顺序无关）。
+    const definitions = new Map<string, CollectedDefinition>();
+    collectDefinitions(tree, definitions);
+    // 第二遍：footnote/task-list 降级 + reference-style image 内联。
+    visit(tree, (n) => transform(n, definitions));
   };
 }

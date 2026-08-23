@@ -24,6 +24,7 @@ import pytest
 from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
 from app.database.connection import init_connection
 from app.services.reader_orchestration.article_rag_index_worker import (
+    ArticleRagEmbeddingInvocationResult,
     ArticleRagVectorWriteResult,
     FakeArticleRagEmbeddingProvider,
 )
@@ -270,6 +271,18 @@ class _BlockingEmbeddingProvider:
         self.entered.set()
         await self.release.wait()
         return await self.inner.embed_texts(texts, model=model)
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: same block-then-delegate on the worker's typed
+        # surface (inner fake reports attempted=False -> no usage event).
+        self.entered.set()
+        await self.release.wait()
+        return await self.inner.embed_texts_with_usage(texts, model=model)
 
 
 class _BlockingDeleter:

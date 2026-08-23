@@ -45,13 +45,16 @@ from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ArticleRagIndexBootstrapService,
 )
 from app.services.reader_orchestration.article_rag_index_worker import (
+    ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE,
     ARTICLE_RAG_INDEX_JOB_SOURCE,
     DEFAULT_FAKE_EMBEDDING_DIM,
     DEFAULT_FAKE_EMBEDDING_MODEL,
     DEFAULT_FAKE_VECTOR_COLLECTION,
     DEFAULT_FAKE_VECTOR_STORE_PROVIDER,
     ArticleRagEmbedding,
-    ArticleRagEmbeddingProvider,
+    ArticleRagEmbeddingInvocationResult,
+    ArticleRagEmbeddingUsageReport,
+    ArticleRagIndexEmbeddingProvider,
     ArticleRagIndexWorkerError,
     ArticleRagIndexWorkerResult,
     ArticleRagIndexWorkerService,
@@ -180,7 +183,7 @@ def _build_bootstrap_service(pool: asyncpg.Pool) -> ArticleRagIndexBootstrapServ
 def _build_worker_service(
     pool: asyncpg.Pool,
     *,
-    embedding_provider: ArticleRagEmbeddingProvider | None = None,
+    embedding_provider: ArticleRagIndexEmbeddingProvider | None = None,
     vector_writer: ArticleRagVectorWriter | None = None,
 ) -> ArticleRagIndexWorkerService:
     return ArticleRagIndexWorkerService(
@@ -263,6 +266,37 @@ async def _fetch_run(
 # ---------------------------------------------------------------------------
 
 
+def _unattempted_invocation_result(
+    embeddings: list[ArticleRagEmbedding],
+    *,
+    model: str | None,
+) -> ArticleRagEmbeddingInvocationResult:
+    """Wrap fake-provider embeddings in an attempted=False report.
+
+    OBS-01B-C: these fakes never call a real provider, so the index
+    worker's usage accounting skips the ``ai_usage_events`` row entirely
+    (``provider_call_attempted=False`` — no fabricated tokens).
+    """
+    return ArticleRagEmbeddingInvocationResult(
+        embeddings=tuple(embeddings),
+        usage_report=ArticleRagEmbeddingUsageReport(
+            provider_call_attempted=False,
+            provider_succeeded=True,
+            usage_completeness=ARTICLE_RAG_EMBEDDING_COMPLETENESS_UNAVAILABLE,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            batch_count=0,
+            completed_batch_count=0,
+            failed_batch_ordinal=None,
+            batches=(),
+            batches_truncated_count=0,
+            provider_name="fake",
+            model_name=model or DEFAULT_FAKE_EMBEDDING_MODEL,
+        ),
+    )
+
+
 class _RetryableEmbeddingProvider:
     """Fake embedding provider that always raises a retryable error."""
 
@@ -290,6 +324,17 @@ class _RetryableEmbeddingProvider:
             },
         )
 
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: typed surface; always raises inside embed_texts
+        # (no attempted usage report -> no usage event).
+        embeddings = await self.embed_texts(texts, model=model)
+        return _unattempted_invocation_result(embeddings, model=model)
+
 
 class _TerminalEmbeddingProvider:
     """Fake embedding provider that always raises a terminal error."""
@@ -310,6 +355,17 @@ class _TerminalEmbeddingProvider:
             failure_class="embedding",
             failure_code="embedding_failed",
         )
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: typed surface; always raises inside embed_texts
+        # (no attempted usage report -> no usage event).
+        embeddings = await self.embed_texts(texts, model=model)
+        return _unattempted_invocation_result(embeddings, model=model)
 
 
 class _RetryableVectorWriter:
@@ -448,6 +504,18 @@ class _FenceMutatingEmbeddingProvider:
         # fence in detects the mutation.
         await self._mutate()
         return await self._inner.embed_texts(texts, model=model)
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: same mutate-during-embedding behaviour on the typed
+        # surface; delegates to the inner fake's attempted=False report.
+        self.call_count += 1
+        await self._mutate()
+        return await self._inner.embed_texts_with_usage(texts, model=model)
 
 
 # ---------------------------------------------------------------------------
@@ -2682,6 +2750,17 @@ class _CapturingEmbeddingProvider:
             )
         return results
 
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: typed surface for the model/dim matrix fakes; no
+        # real provider call, so no usage event (attempted=False).
+        embeddings = await self.embed_texts(texts, model=model)
+        return _unattempted_invocation_result(embeddings, model=model)
+
 
 class _PerItemEmbeddingProvider:
     """Test fake: returns per-item configurable embeddings.
@@ -2726,6 +2805,17 @@ class _PerItemEmbeddingProvider:
                 )
             )
         return results
+
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> ArticleRagEmbeddingInvocationResult:
+        # OBS-01B-C: typed surface for the per-item matrix fakes; no
+        # real provider call, so no usage event (attempted=False).
+        embeddings = await self.embed_texts(texts, model=model)
+        return _unattempted_invocation_result(embeddings, model=model)
 
 
 class _WrongCollectionVectorWriter:
@@ -2806,7 +2896,7 @@ async def _seed_multi_paragraph_environment(
 def _build_worker_with_collection(
     pool: asyncpg.Pool,
     *,
-    embedding_provider: ArticleRagEmbeddingProvider | None = None,
+    embedding_provider: ArticleRagIndexEmbeddingProvider | None = None,
     vector_writer: ArticleRagVectorWriter | None = None,
     default_vector_collection: str,
 ) -> ArticleRagIndexWorkerService:

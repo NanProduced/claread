@@ -466,8 +466,9 @@ describe("projectMarkdownOutlineView", () => {
     // Coverage: h1 covers [h1, paragraph-1] (last unit before h2); h2 covers [h2, paragraph-2] (last)
     expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p1" });
     expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p2" });
-    // Tick items are depth===1 only.
+    // Markdown ticks include every heading, even when they are all depth 1.
     expect(view.tickItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+    expect(view.tickItems.map((i) => i.depth)).toEqual([1, 1]);
     expect(view.orderedUnitIds).toEqual(["h1", "p1", "h2", "p2"]);
     expect(view.unitOrderById.get("p1")).toBe(2);
   });
@@ -492,8 +493,17 @@ describe("projectMarkdownOutlineView", () => {
     expect(view.panelItems[1]!.parentKey).toBe("md:h1");
     expect(view.panelItems[2]!.parentKey).toBe("md:h2");
     expect(view.panelItems[3]!.parentKey).toBe("md:h3");
-    // Tick items: only depth===1 (h1).
-    expect(view.tickItems.map((i) => i.key)).toEqual(["md:h1"]);
+    // Markdown ticks: every heading, same order as the panel, depths kept.
+    expect(view.tickItems.map((i) => i.key)).toEqual([
+      "md:h1",
+      "md:h2",
+      "md:h3",
+      "md:h4",
+    ]);
+    expect(view.tickItems.map((i) => i.depth)).toEqual([1, 2, 3, 3]);
+    expect(view.tickItems.map((i) => i.key)).toEqual(
+      view.panelItems.map((i) => i.key),
+    );
   });
 
   it("resolves coverage so a parent heading covers its children + trailing units", () => {

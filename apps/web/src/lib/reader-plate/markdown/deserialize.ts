@@ -18,11 +18,10 @@ import { createPlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { Descendant } from "platejs";
 
+import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
 import {
-  MARKDOWN_PLUGIN_OPTIONS,
-  MarkdownKit,
-} from "@/components/editor/plugins/markdown-kit";
-import { remarkPreserveUnsupported } from "./remark-preserve-unsupported";
+  INPUT_MARKDOWN_PLUGIN_OPTIONS,
+} from "@/components/editor/plugins/input-markdown-image-kit";
 
 let _deserializerEditor: ReturnType<typeof createPlateEditor> | null = null;
 let _inputDeserializerEditor: ReturnType<typeof createPlateEditor> | null = null;
@@ -37,24 +36,21 @@ function getDeserializerEditor() {
 }
 
 /**
- * 输入端 deserializer：在 MARKDOWN_PLUGIN_OPTIONS 上追加
- * remarkPreserveUnsupported（image→link、footnote→字面文本、task list→
- * 可见标记），保证 initialValue / setValue 加载路径与粘贴路径一致，
- * 不支持的结构可见保留、不静默丢失。仅输入端使用；projection 路径
- * 继续走基础 deserializer。
+ * 输入端 deserializer：使用 INPUT_MARKDOWN_PLUGIN_OPTIONS（与
+ * MarkdownTextInput 共用同一份输入端 options，不各自复制）：
+ * - allowedNodes 含 img + 输入端 img/p rules（typed image、inline 位置、
+ *   wrapper marks round-trip，见 input-markdown-image-kit）；
+ * - remarkPreserveUnsupported（footnote/task-list 可见降级）；
+ * 保证 initialValue / setValue 加载路径与粘贴路径一致。
+ * 仅输入端使用；projection 路径继续走基础 deserializer（默认 options
+ * 不含 img，行为不变）。
  */
 function getInputDeserializerEditor() {
   if (!_inputDeserializerEditor) {
     _inputDeserializerEditor = createPlateEditor({
       plugins: [
         MarkdownPlugin.configure({
-          options: {
-            ...MARKDOWN_PLUGIN_OPTIONS,
-            remarkPlugins: [
-              ...MARKDOWN_PLUGIN_OPTIONS.remarkPlugins,
-              remarkPreserveUnsupported,
-            ],
-          },
+          options: INPUT_MARKDOWN_PLUGIN_OPTIONS,
         }),
       ],
     });

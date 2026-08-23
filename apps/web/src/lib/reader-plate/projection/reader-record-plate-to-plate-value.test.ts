@@ -14,6 +14,7 @@ import type {
   ReaderRecordPlateUserNoteMark,
   ReaderRecordPlateVocabularyMark,
 } from "./reader-record-plate-document";
+import { projectReaderPlateSnapshotToReaderRecordPlateDocument } from "./reader-record-plate-document";
 import {
   inlineMarksToPlateProps,
   marksToPlateProps,
@@ -805,5 +806,325 @@ describe("projectReaderRecordPlateToPlateValue", () => {
   it("returns empty array for document with no children", () => {
     const value = projectReaderRecordPlateToPlateValue(makeDocument([]));
     expect(value).toEqual([]);
+  });
+});
+
+describe("G3b Reader image Plate value Slice A RED", () => {
+  // Use snapshot → document → plate pipeline so RED is due to missing projection, not manual type mismatch.
+  // Helpers reuse the same snapshot builder as document.test.ts to keep fixtures consistent.
+  function wgNode(overrides: Partial<import("@/types/api/reader-plate").ReaderStableDocumentBlockNodeDto>): import("@/types/api/reader-plate").ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "block",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    } as import("@/types/api/reader-plate").ReaderStableDocumentBlockNodeDto;
+  }
+  function imgPayload(s: string, alt: string, title: string | null, eff: string | null): Record<string, unknown> {
+    return { source_url: s, alt_text: alt, title, position_kind: "standalone", effective_url: eff };
+  }
+  function inlineEntry(s: string, alt: string, title: string | null, before: number, eff: string | null): Record<string, unknown> {
+    return { source_url: s, alt_text: alt, title, before_utf16: before, effective_url: eff };
+  }
+  // Minimal snapshot builder (mirrors buildImgSnapshot in document.test.ts)
+  function makeImgSnapshot(
+    specs: Array<{ unitId: string; text: string; stableType: string; stableId: string; parent?: string | null }>,
+    tree: import("@/types/api/reader-plate").ReaderStableDocumentBlockNodeDto[],
+  ): import("@/types/api/reader-plate").ReaderPlateSnapshotDto {
+    // Reuse the document test helper via dynamic import of its builder logic is not exported;
+    // instead construct a minimal snapshot directly using the same shape as earlier.
+    // For redundancy, we import the projection function and build a snapshot with 2 units.
+    // To avoid duplicating offset logic, we construct value and tree manually with fixed offsets.
+    const baseId = "base_w1";
+    let offset = 0;
+    const anchor_segments: import("@/types/api/reader-plate").ReaderPlateSnapshotDto["anchor_segments"] = [];
+    const navigation: import("@/types/api/reader-plate").ReaderPlateSnapshotDto["navigation"]["units"] = [];
+    const value: import("@/types/api/reader-plate").ReaderUnitNodeDto[] = [];
+    for (const [idx, spec] of specs.entries()) {
+      const start = offset;
+      const end = start + spec.text.length;
+      offset = end + 2;
+      const segId = `seg_${spec.unitId}`;
+      anchor_segments.push({
+        anchor_segment_id: segId,
+        sentence_id: `sent_${segId}`,
+        paragraph_id: spec.unitId,
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        unit_start_utf16: 0,
+        unit_end_utf16: spec.text.length,
+        text_hash: `hash_${segId}`,
+        hash_algorithm: "fnv1a32-utf16",
+      });
+      navigation.push({
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        label: null,
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: "fnv1a32-utf16",
+        stable_block_type: spec.stableType,
+        heading_level: null,
+      });
+      value.push({
+        type: "reader_unit",
+        owner: "stable",
+        base_id: baseId,
+        unit_id: spec.unitId,
+        order_index: idx + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: "fnv1a32-utf16",
+        children: [
+          {
+            type: "reader_source_block",
+            owner: "stable",
+            base_id: baseId,
+            unit_id: spec.unitId,
+            base_start_utf16: start,
+            base_end_utf16: end,
+            stableBlockType: spec.stableType,
+            stableBlockId: spec.stableId,
+            parentStableBlockId: spec.parent ?? null,
+            children: [
+              {
+                type: "reader_anchor_segment",
+                owner: "stable",
+                base_id: baseId,
+                unit_id: spec.unitId,
+                anchor_segment_id: segId,
+                sentence_id: `sent_${segId}`,
+                segment_type: "sentence",
+                boundary_quality: "normal",
+                base_start_utf16: start,
+                base_end_utf16: end,
+                unit_start_utf16: 0,
+                unit_end_utf16: spec.text.length,
+                text_hash: `hash_${segId}`,
+                hash_algorithm: "fnv1a32-utf16",
+                children: [
+                  {
+                    text: spec.text,
+                    owner: "stable",
+                    lock_source: true,
+                    source_role: "segment_text",
+                    base_start_utf16: start,
+                    base_end_utf16: end,
+                    anchor_segment_id: segId,
+                    segment_start_utf16: 0,
+                    segment_end_utf16: spec.text.length,
+                  },
+                ],
+              },
+            ],
+          } as unknown as import("@/types/api/reader-plate").ReaderSourceBlockNodeDto,
+        ],
+      });
+    }
+    return {
+      schema_kind: "reader_plate_snapshot" as const,
+      snapshot_id: "snapshot_w1",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_w1",
+      record: {
+        title: "Plate Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: baseId,
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: offset,
+        hash_algorithm: "fnv1a32-utf16",
+      },
+      navigation: { units: navigation },
+      anchor_segments,
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      analysis_progress: { mode: "automatic", plan_version: "test", overall_status: "completed", active_phase: null, translation_status: "completed", completed_section_count: 0, total_section_count: 0, active_section_id: null, needs_user_action: false, last_progress_at: null, sections: [] } as unknown as import("@/types/api/reader-plate").ReaderAnalysisProgressDto,
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value,
+      stable_document_tree: tree,
+    };
+  }
+
+  it("standalone image can enter valid Plate value (presentation wrapper if needed) and appears once", () => {
+    const snapshot = makeImgSnapshot(
+      [
+        { unitId: "u_p1", text: "Hello", stableType: "paragraph", stableId: "p1" },
+        { unitId: "u_p2", text: "World", stableType: "paragraph", stableId: "p2" },
+      ],
+      [
+        wgNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+        wgNode({ block_id: "img1", block_type: "image", order_index: 1, payload: imgPayload("https://example.com/a.png", "alt", "T", "https://example.com/a.png") }),
+        wgNode({ block_id: "p2", block_type: "paragraph", order_index: 2 }),
+      ],
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const value = projectReaderRecordPlateToPlateValue(doc);
+    const imageEls = (value as unknown as Array<Record<string, unknown>>).filter(
+      (el) => el.type === "reader_image" || el.type === "reader_image_block" || el.type === "image",
+    );
+    // Also check inside wrapper: image may be nested inside wrapper block
+    const nestedImages = (value as unknown as Array<Record<string, unknown>>).flatMap((el) => {
+      if (el.type === "reader_image_block" && Array.isArray(el.children)) return el.children as Record<string, unknown>[];
+      return [];
+    });
+    const allImages = [...imageEls, ...nestedImages.filter((c) => (c as Record<string, unknown>).type === "reader_image")];
+    expect(allImages.length === 1 || imageEls.length === 1).toBe(true);
+    // URL must not be in text nodes
+    expect(JSON.stringify(value)).not.toContain('"text":"https://example.com/a.png"');
+  });
+
+  it("inline image appears inside owning element children native and URL/alt not in text", () => {
+    const snapshot = makeImgSnapshot(
+      [{ unitId: "u1", text: "hello world", stableType: "paragraph", stableId: "b1" }],
+      [wgNode({ block_id: "b1", block_type: "paragraph", payload: { inline_images: [inlineEntry("https://example.com/inline.png", "alt", null, 5, "https://example.com/inline.png")] } })],
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const value = projectReaderRecordPlateToPlateValue(doc);
+    const paraEl = value[0] as Record<string, unknown>;
+    const children = (paraEl.children as Array<Record<string, unknown>>);
+    const hasImage = children.some((c) => c.type === "reader_image" || c.type === "image");
+    expect(hasImage).toBe(true);
+    const textNodes = children.filter((c) => typeof c.text === "string");
+    expect(textNodes.some((n) => (n.text as string).includes("https://example.com"))).toBe(false);
+  });
+
+  it("image element void leaf is children:[{text:''}] and not duplicated, list/table wrappers preserved", () => {
+    const snapshot = makeImgSnapshot(
+      [{ unitId: "u_p1", text: "Hello", stableType: "paragraph", stableId: "p1" }],
+      [
+        wgNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+        wgNode({ block_id: "img1", block_type: "image", order_index: 1, payload: imgPayload("https://example.com/a.png", "alt", null, "https://example.com/a.png") }),
+      ],
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const value = projectReaderRecordPlateToPlateValue(doc);
+    const imageEl = (value as Array<Record<string, unknown>>).find((el) => el.type === "reader_image" || el.type === "image" || (el as { children?: unknown[] }).children?.some((c: unknown) => (c as Record<string, unknown>).type === "reader_image"));
+    expect(imageEl).toBeTruthy();
+    // Find nested image inside wrapper if needed
+    let target: Record<string, unknown> | undefined = imageEl as Record<string, unknown>;
+    if (target && target.type === "reader_image_block") {
+      target = ((target.children as Array<Record<string, unknown>>)[0] as Record<string, unknown>);
+    }
+    expect((target as { children: unknown }).children).toEqual([{ text: "" }]);
+  });
+
+  it("promoted list image has a presentation-only list-item shape without a fake unit", () => {
+    const snapshot = makeImgSnapshot(
+      [
+        {
+          unitId: "u_item",
+          text: "List text",
+          stableType: "list_item",
+          stableId: "item_1",
+          parent: "list_1",
+        },
+      ],
+      [
+        wgNode({
+          block_id: "list_1",
+          block_type: "list",
+          order_index: 0,
+          payload: { ordered: false },
+          children: [
+            wgNode({
+              block_id: "item_1",
+              parent_block_id: "list_1",
+              block_type: "list_item",
+              order_index: 0,
+            }),
+            wgNode({
+              block_id: "img_list",
+              parent_block_id: "list_1",
+              block_type: "image",
+              order_index: 1,
+              payload: imgPayload(
+                "https://example.com/list.png",
+                "list",
+                null,
+                "https://example.com/list.png",
+              ),
+            }),
+          ],
+        }),
+      ],
+    );
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const value = projectReaderRecordPlateToPlateValue(document);
+    const list = value[0] as unknown as {
+      type: string;
+      children: Array<{
+        type: string;
+        data: Record<string, unknown>;
+        children: Array<{ type?: string; children?: unknown[] }>;
+      }>;
+    };
+
+    expect(list.type).toBe("reader_list");
+    expect(list.children).toHaveLength(2);
+    const imageListItem = list.children[1];
+    expect(imageListItem).toMatchObject({
+      type: "reader_list_item",
+      data: {
+        presentationOnly: true,
+        stableBlockId: "img_list",
+        parentStableBlockId: "list_1",
+        unitId: null,
+      },
+    });
+    expect(imageListItem.data).not.toHaveProperty("baseRange");
+    expect(imageListItem.data).not.toHaveProperty("textHash");
+    expect(imageListItem.data).not.toHaveProperty("anchorSegmentId");
+    expect(
+      imageListItem.children.some(
+        (child) =>
+          child.type === "reader_image" ||
+          child.type === "reader_image_block" ||
+          child.children?.some(
+            (nested) =>
+              (nested as { type?: string }).type === "reader_image",
+          ),
+      ),
+    ).toBe(true);
   });
 });

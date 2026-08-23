@@ -29,6 +29,10 @@ import asyncpg
 import pytest
 
 from app.database.connection import init_connection
+from app.llm.call_guard import pop_blocked_real_llm_attempts
+from app.services.reader_orchestration.article_rag_index_plan import (
+    ArticleRagIndexPlanService,
+)
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -42,6 +46,9 @@ from app.services.reader_orchestration.candidate_document_confirm_application_se
 )
 from app.services.reader_orchestration.candidate_document_creation_service import (
     CandidateDocumentCreationService,
+)
+from app.services.reader_orchestration.job_bootstrap import (
+    EnhancementJobBootstrapService,
 )
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationService,
@@ -78,9 +85,18 @@ NOTION_ASIDE = """
 safe informational content for every reader of the document.</aside>
 """
 
-# candidate 触发器：image 是合法 content_check 信号（media truth）。
+# G2a-A（O-1）：图片自 typed representation 起直接 stable freeze，不再
+# 触发 candidate。此处 fixture 保留给"含图直接 freeze"断言使用。
 IMAGE_BLOCK = """
 ![Architecture diagram](https://example.com/images/architecture.png)
+"""
+
+# candidate 触发器：footnote 是合法 content_check 信号（结构语义需要
+# 人工确认）。candidate 结构保真测试改用 footnote 触发。
+FOOTNOTE_BLOCK = """
+The committee also cited an archival footnote for extra context.[^1]
+
+[^1]: The archival note keeps the additional context attached.
 """
 
 
@@ -199,9 +215,9 @@ def _utf16_len(text: str) -> int:
 async def test_pasted_markdown_candidate_blocks_are_typed_in_db(
     db_env: asyncpg.Pool,
 ) -> None:
-    """pasted_text Markdown（image 触发 candidate）blocks_json 不再全 paragraph。"""
+    """pasted_text Markdown（footnote 触发 candidate）blocks_json 不再全 paragraph。"""
     user_id = await _insert_user(db_env)
-    result = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + IMAGE_BLOCK)
+    result = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + FOOTNOTE_BLOCK)
 
     assert result.suitability.outcome == "candidate_document_required"
     assert result.suitability.detected_format == "markdown"
@@ -308,7 +324,7 @@ async def test_confirm_preserves_block_types_hierarchy_canonical_and_snapshot(
 ) -> None:
     """Candidate → Stable：block type / 层级 / 顺序 / canonical / units 保真。"""
     user_id = await _insert_user(db_env)
-    created = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + IMAGE_BLOCK)
+    created = await _create_candidate(db_env, user_id, PASTED_MARKDOWN + FOOTNOTE_BLOCK)
     candidate_blocks = await _fetch_candidate_blocks(
         db_env, created.candidate_document_id
     )
@@ -453,3 +469,402 @@ async def test_long_pasted_markdown_30k_candidate_keeps_typed_blocks(
     by_id = {block["block_id"]: block for block in blocks}
     for item in (b for b in blocks if b["block_type"] == "list_item"):
         assert by_id[item["parent_block_id"]]["block_type"] == "list"
+
+
+# ---------------------------------------------------------------------------
+# 5. G2a-A：含图 Markdown 直接 stable freeze + typed image block
+# ---------------------------------------------------------------------------
+
+
+async def test_image_markdown_freezes_stable_with_typed_image_block(
+    db_env: asyncpg.Pool,
+) -> None:
+    """G2a-A（O-1）：图片不再触发 candidate；typed image block 直接 freeze。"""
+    user_id = await _insert_user(db_env)
+    service = StableReadyInputApplicationService(pool=db_env)
+    result = await service.freeze_stable_ready_input_and_load_snapshot(
+        user_id=user_id,
+        source_type="pasted_text",
+        text=PASTED_MARKDOWN + IMAGE_BLOCK,
+        language="en",
+    )
+
+    suitability = result.suitability
+    assert suitability.outcome == "stable_document_ready", (
+        f"outcome={suitability.outcome}, flags={suitability.flags}, "
+        f"reasons={suitability.reasons}"
+    )
+    assert "image_ocr_uncertain" not in suitability.flags
+    assert "markdown_complex_structure" not in suitability.flags
+
+    async with db_env.acquire() as conn:
+        stable_rows = await conn.fetch(
+            """
+            SELECT b.block_id, b.block_type, b.text_content, b.payload_json
+            FROM stable_reading_documents d
+            JOIN stable_document_blocks b
+              ON b.stable_document_id = d.id
+            WHERE d.reading_record_id = $1
+            ORDER BY b.order_index ASC
+            """,
+            result.reading_record_id,
+        )
+        base_row = await conn.fetchrow(
+            """
+            SELECT b.text
+            FROM reading_bases b
+            WHERE b.reading_record_id = $1 AND b.status = 'active'
+            """,
+            result.reading_record_id,
+        )
+
+    image_blocks = [r for r in stable_rows if str(r["block_type"]) == "image"]
+    assert len(image_blocks) == 1, (
+        f"expected exactly one typed image block, got "
+        f"{[str(r['block_type']) for r in stable_rows]}"
+    )
+    image_row = image_blocks[0]
+    assert image_row["text_content"] is None
+    payload = _json(image_row["payload_json"])
+    assert payload["source_url"] == "https://example.com/images/architecture.png"
+    assert payload["alt_text"] == "Architecture diagram"
+    assert payload["position_kind"] == "standalone"
+    assert "url_safe" not in payload
+    assert "effective_url" not in payload
+
+    # alt/url/title 永不进入 canonical text。
+    assert base_row is not None
+    canonical = str(base_row["text"])
+    assert "architecture.png" not in canonical
+    assert "Architecture diagram" not in canonical
+
+
+# ---------------------------------------------------------------------------
+# 6. G2c：typed image 的分析排除回归锁（units / job targets / RAG plan）
+# ---------------------------------------------------------------------------
+
+
+# G2c sentinel：每张图的 source_url / alt_text / title 各持一个唯一
+# sentinel；sentinel 只能存在于图片字段，绝不出现在正文。
+_IMG_SENTINELS = {
+    "standalone": (
+        "ZZIMGA9ALT",
+        "https://static.example.com/media/zzimga9url.png",
+        "ZZIMGA9TITLE",
+    ),
+    "inline_paragraph": (
+        "ZZIMGB9ALT",
+        "https://static.example.com/media/zzimgb9url.png",
+        "ZZIMGB9TITLE",
+    ),
+    "inline_heading": (
+        "ZZIMGC9ALT",
+        "https://static.example.com/media/zzimgc9url.png",
+        "ZZIMGC9TITLE",
+    ),
+    "image_only_cell": (
+        "ZZIMGD9ALT",
+        "https://static.example.com/media/zzimgd9url.png",
+        "ZZIMGD9TITLE",
+    ),
+}
+_ALL_IMAGE_SENTINELS = tuple(sentinel for group in _IMG_SENTINELS.values() for sentinel in group)
+
+
+def _img_md(group: str) -> str:
+    alt, url, title = _IMG_SENTINELS[group]
+    return f'![{alt}]({url} "{title}")'
+
+
+# 足够通过 suitability gate 的正常英文正文 + 四种图片位置形态：
+# standalone image、mixed paragraph inline image、mixed heading（非
+# paragraph owning block）、image-only table_cell。
+IMAGE_EXCLUSION_MARKDOWN = f"""## Field Review Notes
+
+The committee reviewed the regional pilots and recorded every measured
+outcome before drafting the summary for the public review session that
+will be held next month with community stakeholders and external
+reviewers attending the main hall.
+
+{_img_md("standalone")}
+
+The delegates compared the northern schedule with the southern route
+{_img_md("inline_paragraph")} and agreed to publish the combined
+timeline before the vote takes place.
+
+## Survey Overview {_img_md("inline_heading")}
+
+> The archive team confirmed the appendix remains available to every
+> participant before the vote takes place next month in the main hall.
+
+| Region | Attachment |
+| :--- | :--- |
+| Northern pilot | {_img_md("image_only_cell")} |
+| Southern pilot | The southern appendix stayed unchanged. |
+
+The closing paragraph explains how the committee weighed the combined
+evidence and why the final recommendation remains stable for ordinary
+prose learning units across every department that attended the session.
+"""
+
+
+def _sentinels_in(text: str | None) -> list[str]:
+    if not text:
+        return []
+    return [s for s in _ALL_IMAGE_SENTINELS if s in text]
+
+
+def _utf16_slice(text: str, start: int, end: int) -> str:
+    encoded = text.encode("utf-16-le")
+    return encoded[start * 2 : end * 2].decode("utf-16-le")
+
+
+def _inline_image_urls(payload: Any) -> list[str]:
+    entries = (payload or {}).get("inline_images") or []
+    return [entry.get("source_url") for entry in entries]
+
+
+_AUTO_LAYER_JOB_TYPES = {
+    "translate_article",
+    "build_vocabulary_layer_article",
+    "build_grammar_bundle",
+    "build_grammar_bundle_window",
+}
+
+
+async def test_image_metadata_is_excluded_from_units_jobs_and_rag_plan(
+    db_env: asyncpg.Pool,
+) -> None:
+    """G2c 回归锁：image source_url / alt_text / title 永不进入
+    canonical / units / T-V-G job targets / Article RAG plan。
+
+    冻结证据边界 = freeze 后的 stable blocks + reading_bases /
+    reading_units + bootstrap 后的 reader_jobs targets + RAG index
+    plan；不运行 worker，不构造真实 provider 请求。
+    """
+    user_id = await _insert_user(db_env)
+    service = StableReadyInputApplicationService(pool=db_env)
+    result = await service.freeze_stable_ready_input_and_load_snapshot(
+        user_id=user_id,
+        source_type="pasted_text",
+        text=IMAGE_EXCLUSION_MARKDOWN,
+        language="en",
+    )
+    suitability = result.suitability
+    assert suitability.outcome == "stable_document_ready", (
+        f"outcome={suitability.outcome}, flags={suitability.flags}, "
+        f"reasons={suitability.reasons}"
+    )
+    record_id = result.reading_record_id
+    base_id = result.base_id
+
+    # ------------------------------------------------------------------
+    # A. Stable / canonical / units
+    # ------------------------------------------------------------------
+    async with db_env.acquire() as conn:
+        stable_rows = await conn.fetch(
+            """
+            SELECT b.block_id, b.block_type, b.text_content, b.payload_json,
+                   b.interpretation_policy_json,
+                   b.canonical_text_start_utf16, b.canonical_text_end_utf16
+            FROM stable_reading_documents d
+            JOIN stable_document_blocks b
+              ON b.stable_document_id = d.id
+            WHERE d.reading_record_id = $1
+            ORDER BY b.order_index ASC
+            """,
+            record_id,
+        )
+        base_row = await conn.fetchrow(
+            """
+            SELECT b.text
+            FROM reading_bases b
+            WHERE b.reading_record_id = $1 AND b.status = 'active'
+            """,
+            record_id,
+        )
+        unit_rows = await conn.fetch(
+            """
+            SELECT u.unit_id, u.order_index, u.base_start_utf16, u.base_end_utf16
+            FROM reading_units u
+            WHERE u.reading_record_id = $1 AND u.base_id = $2
+            ORDER BY u.order_index ASC
+            """,
+            record_id,
+            base_id,
+        )
+
+    # 输入确实进入 Stable：typed image payload 原样保留 sentinel。
+    image_rows = [r for r in stable_rows if str(r["block_type"]) == "image"]
+    standalone_url = _IMG_SENTINELS["standalone"][1]
+    standalone_rows = [
+        r for r in image_rows if _json(r["payload_json"]).get("source_url") == standalone_url
+    ]
+    assert len(standalone_rows) == 1, f"block_types={[str(r['block_type']) for r in stable_rows]}"
+    standalone_block = standalone_rows[0]
+    standalone_payload = _json(standalone_block["payload_json"])
+    assert standalone_payload["source_url"] == _IMG_SENTINELS["standalone"][1]
+    assert standalone_payload["alt_text"] == _IMG_SENTINELS["standalone"][0]
+    assert standalone_payload["title"] == _IMG_SENTINELS["standalone"][2]
+    assert standalone_payload["position_kind"] == "standalone"
+
+    # standalone image：text_content=None，无 canonical 区间（不产 unit）。
+    assert standalone_block["text_content"] is None
+    assert standalone_block["canonical_text_start_utf16"] is None
+    assert standalone_block["canonical_text_end_utf16"] is None
+    assert _json(standalone_block["interpretation_policy_json"])["default_route"] == (
+        "metadata_only"
+    )
+
+    # mixed paragraph：正文去图，图片进 payload.inline_images。
+    paragraph_rows = [
+        r
+        for r in stable_rows
+        if str(r["block_type"]) == "paragraph"
+        and _IMG_SENTINELS["inline_paragraph"][1] in _inline_image_urls(_json(r["payload_json"]))
+    ]
+    assert len(paragraph_rows) == 1
+    assert _sentinels_in(paragraph_rows[0]["text_content"]) == []
+    assert "northern schedule" in str(paragraph_rows[0]["text_content"])
+
+    # mixed heading（非 paragraph owning block）：正文 unit 可存在，
+    # 文本只含去图后的正文。
+    heading_rows = [
+        r
+        for r in stable_rows
+        if str(r["block_type"]) == "heading"
+        and _IMG_SENTINELS["inline_heading"][1] in _inline_image_urls(_json(r["payload_json"]))
+    ]
+    assert len(heading_rows) == 1
+    assert _sentinels_in(heading_rows[0]["text_content"]) == []
+    assert "Survey Overview" in str(heading_rows[0]["text_content"])
+
+    # image-only table_cell：显式 metadata_only、text_content=None、
+    # 无 canonical 区间（不产 unit），inline_images 保留 sentinel。
+    cell_rows = [
+        r
+        for r in stable_rows
+        if str(r["block_type"]) == "table_cell"
+        and _IMG_SENTINELS["image_only_cell"][1] in _inline_image_urls(_json(r["payload_json"]))
+    ]
+    assert len(cell_rows) == 1
+    image_cell = cell_rows[0]
+    assert image_cell["text_content"] is None
+    assert image_cell["canonical_text_start_utf16"] is None
+    assert image_cell["canonical_text_end_utf16"] is None
+    cell_policy = _json(image_cell["interpretation_policy_json"])
+    assert cell_policy["default_route"] == "metadata_only"
+
+    # canonical text 与所有 reading_units 均不含任何 sentinel。
+    assert base_row is not None
+    canonical = str(base_row["text"])
+    assert _sentinels_in(canonical) == []
+    assert unit_rows, "reading_units must exist after freeze"
+    unit_ids: set[str] = set()
+    for unit in unit_rows:
+        unit_ids.add(str(unit["unit_id"]))
+        unit_text = _utf16_slice(
+            canonical,
+            int(unit["base_start_utf16"]),
+            int(unit["base_end_utf16"]),
+        )
+        assert _sentinels_in(unit_text) == [], f"unit {unit['unit_id']} text={unit_text!r}"
+
+    # ------------------------------------------------------------------
+    # B. T/V/G/S job targets（自动层；不运行 worker）
+    # ------------------------------------------------------------------
+    # Checkpoint 1：freeze 路径不得产生任何 blocked real LLM attempt；
+    # 显式断言，不做裸 drain（吞掉即假绿）。
+    assert pop_blocked_real_llm_attempts() == []
+    await EnhancementJobBootstrapService(pool=db_env).bootstrap_missing_jobs(
+        record_id=record_id,
+        user_id=user_id,
+    )
+
+    async with db_env.acquire() as conn:
+        job_rows = await conn.fetch(
+            """
+            SELECT job_type, input_json
+            FROM reader_jobs
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY created_at ASC, id ASC
+            """,
+            record_id,
+            base_id,
+        )
+
+    jobs = [(str(r["job_type"]), _json(r["input_json"])) for r in job_rows]
+    auto_jobs = [(t, payload) for (t, payload) in jobs if t in _AUTO_LAYER_JOB_TYPES]
+
+    # 预期的 translation / vocabulary / grammar 路径实际存在，避免空集合假绿。
+    assert any(t == "translate_article" for (t, _) in auto_jobs), f"jobs={jobs}"
+    assert any(t == "build_vocabulary_layer_article" for (t, _) in auto_jobs), f"jobs={jobs}"
+    grammar_jobs = [
+        (t, payload)
+        for (t, payload) in auto_jobs
+        if t in {"build_grammar_bundle", "build_grammar_bundle_window"}
+    ]
+    assert grammar_jobs, f"jobs={jobs}"
+
+    # grammar bundle 是 grammar note / sentence analysis 的共同输入边界；
+    # 不存在独立 sentence-analysis job。
+    for job_type, payload in grammar_jobs:
+        if job_type == "build_grammar_bundle":
+            assert payload["layer_types"] == ["grammar_note", "sentence_analysis"]
+    assert not any("sentence" in t for (t, _) in jobs), f"jobs={jobs}"
+
+    # 每个自动层任务的 target_unit_ids 均解析为当前 record/base 的真实
+    # reading_units；target union 不含 standalone image / image-only cell
+    # 的文本（二者无 unit），且所有 target unit 文本不含任何 sentinel。
+    target_union: set[str] = set()
+    for job_type, payload in auto_jobs:
+        targets = [str(unit_id) for unit_id in payload["target_unit_ids"]]
+        assert targets, f"{job_type} has empty target_unit_ids"
+        assert set(targets) <= unit_ids, (
+            f"{job_type} targets not resolvable: {set(targets) - unit_ids}"
+        )
+        target_union.update(targets)
+    unit_text_by_id = {
+        str(unit["unit_id"]): _utf16_slice(
+            canonical,
+            int(unit["base_start_utf16"]),
+            int(unit["base_end_utf16"]),
+        )
+        for unit in unit_rows
+    }
+    for unit_id in target_union:
+        assert _sentinels_in(unit_text_by_id[unit_id]) == [], unit_id
+
+    # Checkpoint 2：bootstrap 构造正式输入边界未触发真实 LLM 拦截。
+    assert pop_blocked_real_llm_attempts() == []
+
+    # ------------------------------------------------------------------
+    # C. Article RAG plan（默认 + include_rag_ask_only）
+    # ------------------------------------------------------------------
+    rag_service = ArticleRagIndexPlanService(pool=db_env)
+    plan_default = await rag_service.build_index_plan(
+        record_id=record_id,
+        user_id=user_id,
+        include_rag_ask_only=False,
+    )
+    plan_ask_only = await rag_service.build_index_plan(
+        record_id=record_id,
+        user_id=user_id,
+        include_rag_ask_only=True,
+    )
+
+    standalone_block_id = str(standalone_block["block_id"])
+    image_cell_block_id = str(image_cell["block_id"])
+    for plan in (plan_default, plan_ask_only):
+        # 至少保留正常正文 chunk，避免空计划假绿。
+        assert plan.chunks, f"empty RAG plan: {plan.warnings}"
+        assert any(chunk.source_scope == "main_reading_text" for chunk in plan.chunks)
+        for chunk in plan.chunks:
+            assert _sentinels_in(chunk.text) == [], chunk.chunk_id
+            metadata_blob = json.dumps(chunk.metadata_json, ensure_ascii=False)
+            assert _sentinels_in(metadata_blob) == [], chunk.chunk_id
+            assert standalone_block_id not in chunk.citation.block_ids
+            assert image_cell_block_id not in chunk.citation.block_ids
+
+    # Checkpoint 3：两种 RAG plan 构建同样不得产生 blocked real LLM attempt。
+    assert pop_blocked_real_llm_attempts() == []

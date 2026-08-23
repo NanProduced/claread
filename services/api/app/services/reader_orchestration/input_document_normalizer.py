@@ -29,7 +29,9 @@ from app.services.reader_orchestration.markdown_source_parser import (
 # documents are no longer produced by a hand-written regex path; the
 # parser identity triple (parser_name / parser_version / profile) is
 # written into each markdown-sourced block's ``quality_json``.
-NORMALIZER_VERSION = "d6_i3b_structured_source_v1"
+# G2a-A: v2 bumps for the typed image representation (standalone image
+# blocks + owning-block ``inline_images`` + explicit policy carrier).
+NORMALIZER_VERSION = "d6_i3b_structured_source_v2"
 
 _PARSER_IDENTITY: dict[str, str] = {
     "parser_name": PARSER_NAME,
@@ -81,6 +83,10 @@ class _BlockDraft:
     line_end: int
     links: list[dict[str, str]]
     parent_block_id: str | None = None
+    # G2a-A policy carrier: parser-explicit interpretation policy (e.g.
+    # image-only table_cell metadata_only); ``None`` keeps the
+    # StableDocumentBlock block-type default.
+    interpretation_policy: dict[str, Any] | None = None
 
 
 class InputDocumentNormalizer:
@@ -269,6 +275,11 @@ def _normalize_markdown_blocks(
                 line_end=block.source_range.line_end,
                 links=[],
                 parent_block_id=block.parent_block_id,
+                interpretation_policy=(
+                    dict(block.interpretation_policy)
+                    if block.interpretation_policy is not None
+                    else None
+                ),
             )
         )
 
@@ -310,5 +321,6 @@ def _draft_to_block(
         text_content=draft.text_content,
         payload_json=draft.payload_json,
         source_refs_json=source_refs_json,
+        interpretation_policy=draft.interpretation_policy,
         quality_json=quality_json,
     )

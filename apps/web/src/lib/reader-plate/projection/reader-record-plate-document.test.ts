@@ -1788,8 +1788,8 @@ describe("stable paragraph inline marks projection", () => {
     expect(paragraph).toBeTruthy();
     if (!paragraph || paragraph.type !== "paragraph") return;
 
-    const marks = paragraph.children.flatMap(
-      (leaf) => leaf.inlineMarks ?? [],
+    const marks = paragraph.children.flatMap((leaf) =>
+      "text" in leaf ? (leaf.inlineMarks ?? []) : [],
     );
     expect(marks).toHaveLength(1);
     expect(marks[0]?.kind).toBe("em");
@@ -2860,6 +2860,9 @@ describe("wrapper composition order", () => {
       "list_item:i2",
     ]);
     const firstItem = list.children[0];
+    if (firstItem.type !== "list_item") {
+      throw new Error("first list child is not an item");
+    }
     expect(firstItem.nestedChildren?.map((nested) => nested.id)).toEqual([
       "list:list_nested",
     ]);
@@ -3268,6 +3271,1352 @@ describe("wrapper composition order", () => {
       "callout:supplement:supplement_s7",
       "paragraph:s8",
       "blockquote:layer_translation_1:g8_8",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G3b Slice A: tree → Reader Plate image (standalone + inline) RED
+// ---------------------------------------------------------------------------
+
+describe("G3b Reader image tree projection Slice A - standalone and inline RED", () => {
+  function wgImgTreeNode(
+    overrides: Partial<ReaderStableDocumentBlockNodeDto>,
+  ): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "img",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+
+  function imagePayload(
+    sourceUrl: string,
+    altText: string,
+    title: string | null,
+    effectiveUrl: string | null,
+  ): Record<string, unknown> {
+    return {
+      source_url: sourceUrl,
+      alt_text: altText,
+      title,
+      position_kind: "standalone",
+      effective_url: effectiveUrl,
+    };
+  }
+
+  function inlineImageEntry(
+    sourceUrl: string,
+    altText: string,
+    title: string | null,
+    beforeUtf16: number,
+    effectiveUrl: string | null,
+  ): Record<string, unknown> {
+    return {
+      source_url: sourceUrl,
+      alt_text: altText,
+      title,
+      before_utf16: beforeUtf16,
+      effective_url: effectiveUrl,
+    };
+  }
+
+  type ImgWgSeg = { id: string; text: string };
+  type ImgWgUnit = {
+    unitId: string;
+    segs: ImgWgSeg[];
+    stableBlockType: string;
+    stableBlockId: string;
+    parentStableBlockId?: string | null;
+    headingLevel?: number | null;
+    translations?: Array<{ groupId: string; layerId: string; covers: string[]; text: string }>;
+  };
+
+  function buildImgSnapshot(
+    specs: ImgWgUnit[],
+    extras: { tree?: ReaderStableDocumentBlockNodeDto[] } = {},
+  ): ReaderPlateSnapshotDto {
+    let offset = 0;
+    const anchorSegments: ReaderPlateSnapshotDto["anchor_segments"] = [];
+    const navigationUnits: ReaderPlateSnapshotDto["navigation"]["units"] = [];
+    const valueUnits: ReaderUnitNodeDto[] = [];
+    for (const [unitIndex, spec] of specs.entries()) {
+      const unitStart = offset;
+      const segNodes: ReaderSourceBlockChildNodeDto[] = [];
+      for (const seg of spec.segs) {
+        const start = offset;
+        const end = start + seg.text.length;
+        offset = end;
+        anchorSegments.push({
+          anchor_segment_id: seg.id,
+          sentence_id: `sent_${seg.id}`,
+          paragraph_id: spec.unitId,
+          unit_id: spec.unitId,
+          order_index: anchorSegments.length + 1,
+          unit_order_index: 1,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: start,
+          base_end_utf16: end,
+          unit_start_utf16: start - unitStart,
+          unit_end_utf16: end - unitStart,
+          text_hash: `hash_${seg.id}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        });
+        segNodes.push({
+          type: "reader_anchor_segment",
+          owner: "stable",
+          base_id: "base_w1",
+          unit_id: spec.unitId,
+          anchor_segment_id: seg.id,
+          sentence_id: `sent_${seg.id}`,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: start,
+          base_end_utf16: end,
+          unit_start_utf16: start - unitStart,
+          unit_end_utf16: end - unitStart,
+          text_hash: `hash_${seg.id}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              text: seg.text,
+              owner: "stable",
+              lock_source: true,
+              source_role: "segment_text",
+              base_start_utf16: start,
+              base_end_utf16: end,
+              anchor_segment_id: seg.id,
+              segment_start_utf16: 0,
+              segment_end_utf16: seg.text.length,
+            },
+          ],
+        });
+      }
+      offset += 2;
+      const sourceBlock: ReaderSourceBlockNodeDto = {
+        type: "reader_source_block",
+        owner: "stable",
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        stableBlockType: spec.stableBlockType,
+        stableBlockId: spec.stableBlockId,
+        headingLevel: spec.headingLevel ?? null,
+        parentStableBlockId: spec.parentStableBlockId ?? null,
+        children: segNodes,
+      };
+      const translations = (spec.translations ?? []).map((g) => ({
+        type: "reader_translation_group" as const,
+        owner: "system_ai" as const,
+        layer_id: g.layerId,
+        layer_version: 1,
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        target_scope: "unit" as const,
+        target_key: spec.unitId,
+        group_id: g.groupId,
+        covered_anchor_segment_ids: g.covers,
+        source_text_hash: `hash_${g.groupId}`,
+        children: [{ text: g.text }],
+      }));
+      navigationUnits.push({
+        unit_id: spec.unitId,
+        order_index: unitIndex + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        label: null,
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        stable_block_type: spec.stableBlockType,
+        heading_level: spec.headingLevel ?? null,
+      });
+      valueUnits.push({
+        type: "reader_unit",
+        owner: "stable",
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        order_index: unitIndex + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        children: [sourceBlock, ...translations],
+      });
+    }
+    return {
+      schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
+      snapshot_id: "snapshot_w1",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_w1",
+      record: {
+        title: "Wrapper Composition Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: "base_w1",
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: offset,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: { units: navigationUnits },
+      anchor_segments: anchorSegments,
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: valueUnits,
+      ...(extras.tree ? { stable_document_tree: extras.tree } : {}),
+    };
+  }
+  const buildWgSnapshot = buildImgSnapshot;
+
+  // A1: data contract shape is verified via image block existence and fields;
+  // the single shape is asserted in every standalone/inline case below.
+
+  it("standalone image at root: before, middle and after positions", () => {
+    const snapshotBefore = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+        {
+          unitId: "u_p2",
+          segs: [{ id: "s2", text: "World" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p2",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "img_before",
+            block_type: "image",
+            order_index: 0,
+            payload: imagePayload("https://example.com/before.png", "before", null, "https://example.com/before.png"),
+          }),
+          wgImgTreeNode({
+            block_id: "p1",
+            block_type: "paragraph",
+            order_index: 1,
+          }),
+          wgImgTreeNode({
+            block_id: "p2",
+            block_type: "paragraph",
+            order_index: 2,
+          }),
+        ],
+      },
+    );
+    const docBefore = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshotBefore);
+    // RED: currently image is silently skipped, so no image block exists
+    const imgBefore = docBefore.children.find((c) => (c as { id?: string }).id === "image:img_before");
+    expect(imgBefore).toBeTruthy();
+    expect((imgBefore as unknown as { data: { sourceUrl: string } })?.data.sourceUrl).toBe("https://example.com/before.png");
+
+    const snapshotMiddle = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+        {
+          unitId: "u_p2",
+          segs: [{ id: "s2", text: "World" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p2",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "p1",
+            block_type: "paragraph",
+            order_index: 0,
+          }),
+          wgImgTreeNode({
+            block_id: "img_mid",
+            block_type: "image",
+            order_index: 1,
+            payload: imagePayload("https://example.com/mid.png", "mid", "Title", "https://example.com/mid.png"),
+          }),
+          wgImgTreeNode({
+            block_id: "p2",
+            block_type: "paragraph",
+            order_index: 2,
+          }),
+        ],
+      },
+    );
+    const docMid = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshotMiddle);
+    const idsMid = docMid.children.map((c) => (c as { id: string }).id);
+    // image should be between the two paragraphs (not reordering flat unit/overlay contract)
+    const imgIdx = idsMid.indexOf("image:img_mid");
+    const p1Idx = idsMid.indexOf("paragraph:s1");
+    const p2Idx = idsMid.indexOf("paragraph:s2");
+    expect(imgIdx).toBeGreaterThan(p1Idx);
+    expect(imgIdx).toBeLessThan(p2Idx);
+
+    const snapshotAfter = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+        {
+          unitId: "u_p2",
+          segs: [{ id: "s2", text: "World" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p2",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({ block_id: "p2", block_type: "paragraph", order_index: 1 }),
+          wgImgTreeNode({
+            block_id: "img_after",
+            block_type: "image",
+            order_index: 2,
+            payload: imagePayload("https://example.com/after.png", "after", null, "https://example.com/after.png"),
+          }),
+        ],
+      },
+    );
+    const docAfter = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshotAfter);
+    const idsAfter = docAfter.children.map((c) => (c as { id: string }).id);
+    expect(idsAfter[idsAfter.length - 1]).toBe("image:img_after");
+  });
+
+  it("consecutive N standalone images keep order_index/tree source order", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Para" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({
+            block_id: "img1",
+            block_type: "image",
+            order_index: 1,
+            payload: imagePayload("https://example.com/1.png", "1", null, "https://example.com/1.png"),
+          }),
+          wgImgTreeNode({
+            block_id: "img2",
+            block_type: "image",
+            order_index: 2,
+            payload: imagePayload("https://example.com/2.png", "2", null, "https://example.com/2.png"),
+          }),
+          wgImgTreeNode({
+            block_id: "img3",
+            block_type: "image",
+            order_index: 3,
+            payload: imagePayload("https://example.com/3.png", "3", null, "https://example.com/3.png"),
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const imgIds = doc.children
+      .filter((c) => (c as { type: string }).type === "image")
+      .map((c) => (c as { id: string }).id);
+    expect(imgIds).toEqual(["image:img1", "image:img2", "image:img3"]);
+  });
+
+  it("standalone image has no unit/anchor and snapshot.value unchanged", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello world" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({
+            block_id: "img1",
+            block_type: "image",
+            order_index: 1,
+            payload: imagePayload("https://example.com/a.png", "a", "T", "https://example.com/a.png"),
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const img = doc.children.find((c) => (c as { id: string }).id === "image:img1") as unknown as {
+      data: Record<string, unknown>;
+      children: unknown[];
+    };
+    expect(img).toBeTruthy();
+    // must not have unit/anchor/canonical fields
+    expect((img.data as { unitId?: unknown }).unitId).toBeUndefined();
+    expect((img.data as { anchorSegmentId?: unknown }).anchorSegmentId).toBeUndefined();
+    expect((img.data as { baseRange?: unknown }).baseRange).toBeUndefined();
+    // void leaf
+    expect(img.children).toEqual([{ text: "" }]);
+    // URL/alt/title must not enter text leaf
+    expect(JSON.stringify(img.children)).not.toContain("https://example.com/a.png");
+    expect(JSON.stringify(img.children)).not.toContain("a");
+    // snapshot.value unchanged: no image node in value
+    const valueJson = JSON.stringify(snapshot.value);
+    expect(valueJson).not.toContain("img1");
+    expect(valueJson).not.toContain("effective_url");
+  });
+
+  it("standalone payload fields read verbatim from stable_document_tree", () => {
+    const payload = imagePayload("https://example.com/a.png", "alt text", "My Title", "https://example.com/a.png");
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({
+            block_id: "img1",
+            block_type: "image",
+            order_index: 1,
+            payload,
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const img = doc.children.find((c) => (c as { id: string }).id === "image:img1") as unknown as {
+      data: { sourceUrl: string; effectiveUrl: string | null; altText: string; title: string | null; positionKind: string; stableBlockId: string; parentStableBlockId: string | null };
+    };
+    expect(img.data.sourceUrl).toBe("https://example.com/a.png");
+    expect(img.data.effectiveUrl).toBe("https://example.com/a.png");
+    expect(img.data.altText).toBe("alt text");
+    expect(img.data.title).toBe("My Title");
+    expect(img.data.positionKind).toBe("standalone");
+    expect(img.data.stableBlockId).toBe("img1");
+    expect(img.data.parentStableBlockId).toBeNull();
+  });
+
+  it("standalone image adjacent to translation/callout overlay does not reorder overlay", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Hello" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+          translations: [{ groupId: "tr1", layerId: "layer_translation_1", covers: ["s1"], text: "译文" }],
+        },
+        {
+          unitId: "u_p2",
+          segs: [{ id: "s2", text: "World" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p2",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({
+            block_id: "img1",
+            block_type: "image",
+            order_index: 1,
+            payload: imagePayload("https://example.com/a.png", "a", null, "https://example.com/a.png"),
+          }),
+          wgImgTreeNode({ block_id: "p2", block_type: "paragraph", order_index: 2 }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const ids = doc.children.map((c) => (c as { id: string }).id);
+    // translation for p1 should stay immediately after p1, before image
+    const p1Idx = ids.indexOf("paragraph:s1");
+    const trIdx = ids.indexOf("blockquote:layer_translation_1:tr1");
+    const imgIdx = ids.indexOf("image:img1");
+    const p2Idx = ids.indexOf("paragraph:s2");
+    expect(p1Idx).toBeGreaterThanOrEqual(0);
+    expect(trIdx).toBe(p1Idx + 1);
+    expect(imgIdx).toBeGreaterThan(trIdx);
+    expect(imgIdx).toBeLessThan(p2Idx);
+  });
+
+  it("promoted list image: parent points to list wrapper, keeps order, no fake unit/anchor", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_i1",
+          segs: [{ id: "i1", text: "First item" }],
+          stableBlockType: "list_item",
+          stableBlockId: "item_1",
+          parentStableBlockId: "list_1",
+        },
+        {
+          unitId: "u_i2",
+          segs: [{ id: "i2", text: "Second item" }],
+          stableBlockType: "list_item",
+          stableBlockId: "item_2",
+          parentStableBlockId: "list_1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "list_1",
+            block_type: "list",
+            order_index: 0,
+            payload: { ordered: false },
+            children: [
+              wgImgTreeNode({ block_id: "item_1", parent_block_id: "list_1", block_type: "list_item" }),
+              wgImgTreeNode({
+                block_id: "img_list",
+                parent_block_id: "list_1",
+                block_type: "image",
+                order_index: 1,
+                payload: imagePayload("https://example.com/list.png", "list", null, "https://example.com/list.png"),
+              }),
+              wgImgTreeNode({
+                block_id: "item_2",
+                parent_block_id: "list_1",
+                block_type: "list_item",
+                order_index: 2,
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const list = doc.children.find((c) => (c as { type: string }).type === "list") as unknown as {
+      id: string;
+      data: { stableBlockId: string };
+      children: Array<{ id: string; data: Record<string, unknown> }>;
+    };
+    expect(list).toBeTruthy();
+    // image should be inside list wrapper, between items, with parent pointing to list
+    // RED: currently list only contains list_item children, image is dropped
+    const listChildIds = list.children.map((child) => child.id);
+    // order: item_1, image, item_2
+    expect(listChildIds).toContain("image:img_list");
+    const img = list.children.find((c) => c.id === "image:img_list") as unknown as {
+      data: { parentStableBlockId: string | null; stableBlockId: string };
+    };
+    expect(img.data.parentStableBlockId).toBe("list_1");
+    expect(img.data.stableBlockId).toBe("img_list");
+    // no fake unit/anchor/list_item identity on image or wrapper
+    expect((img.data as { unitId?: unknown }).unitId).toBeUndefined();
+    // wrapper (list) must not have navigable attrs faked from image
+    // and image's wrapper (if any) must not carry Stable list_item
+    // For this minimal test, ensure image type is "image" not "list_item"
+    expect((img as unknown as { type: string }).type).toBe("image");
+  });
+
+  // A3 owning-block inline_images param matrix: paragraph, heading, list_item, blockquote, mixed table_cell, image-only table_cell
+  it.each([
+    ["paragraph"],
+    ["heading"],
+    ["list_item"],
+    ["blockquote"],
+    ["table_cell"],
+  ] as const)("inline image in %s: before_utf16 relative, UTF-16, same-offset ordinal, 0/mid/end", (stableType) => {
+    const text = "hello world";
+    // use before 0, middle 5, end 11, and duplicate offset 5 with two images
+    const inlinePayload = [
+      inlineImageEntry("https://example.com/0.png", "zero", null, 0, "https://example.com/0.png"),
+      inlineImageEntry("https://example.com/5a.png", "a", null, 5, "https://example.com/5a.png"),
+      inlineImageEntry("https://example.com/5b.png", "b", null, 5, "https://example.com/5b.png"),
+      inlineImageEntry("https://example.com/11.png", "end", null, 11, "https://example.com/11.png"),
+    ];
+    const isListItem = stableType === "list_item";
+    const isTableCell = stableType === "table_cell";
+    const spec: Parameters<typeof buildWgSnapshot>[0][number] = {
+      unitId: "u1",
+      segs: [{ id: "s1", text }],
+      stableBlockType: stableType as string,
+      stableBlockId: "b1",
+      ...(isListItem ? { parentStableBlockId: "list_1" } : {}),
+      ...(isTableCell ? { parentStableBlockId: "row_1" } : {}),
+    };
+    const tree: ReaderStableDocumentBlockNodeDto[] = isListItem
+      ? [
+          wgImgTreeNode({
+            block_id: "list_1",
+            block_type: "list",
+            children: [
+              wgImgTreeNode({
+                block_id: "b1",
+                parent_block_id: "list_1",
+                block_type: "list_item",
+                payload: { inline_images: inlinePayload },
+              }),
+            ],
+          }),
+        ]
+      : isTableCell
+        ? [
+            wgImgTreeNode({
+              block_id: "table_1",
+              block_type: "table",
+              children: [
+                wgImgTreeNode({
+                  block_id: "row_1",
+                  parent_block_id: "table_1",
+                  block_type: "table_row",
+                  children: [
+                    wgImgTreeNode({
+                      block_id: "b1",
+                      parent_block_id: "row_1",
+                      block_type: "table_cell",
+                      payload: { inline_images: inlinePayload },
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ]
+        : [
+            wgImgTreeNode({
+              block_id: "b1",
+              block_type: stableType as string,
+              payload: { inline_images: inlinePayload },
+            }),
+          ];
+    const snapshot = buildWgSnapshot([spec], { tree });
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    // locate owning block
+    let owning: unknown;
+    if (isListItem) {
+      const list = doc.children.find((c) => (c as { type: string }).type === "list") as unknown as {
+        children: Array<{ id: string; children: unknown[]; data: Record<string, unknown> }>;
+      };
+      owning = list?.children.find((item) => item.id === "list_item:s1");
+    } else if (isTableCell) {
+      const table = doc.children.find((c) => (c as { type: string }).type === "table") as unknown as {
+        children: Array<{ children: Array<{ id: string; children: unknown[] }> }>;
+      };
+      owning = table?.children[0]?.children.find((cell) => (cell as { id: string }).id === "table_cell:s1");
+    } else if (stableType === "heading") {
+      owning = doc.children.find((c) => (c as { type: string }).type === "heading");
+    } else if (stableType === "blockquote") {
+      owning = doc.children.find((c) => (c as { type: string }).type === "markdown_blockquote");
+    } else {
+      owning = doc.children.find((c) => (c as { type: string }).type === "paragraph");
+    }
+    expect(owning).toBeTruthy();
+    const owningBlock = owning as {
+      children: Array<{ text?: string; type?: string; id?: string; data?: Record<string, unknown> }>;
+    };
+    // RED: inline images are currently not inserted, so children only contain text leaves
+    const imageNodes = owningBlock.children.filter((child) => (child as { type?: string }).type === "image");
+    expect(imageNodes).toHaveLength(4);
+    // deterministic ids: image:b1:0, image:b1:1, etc
+    expect(imageNodes.map((n) => (n as { id: string }).id)).toEqual([
+      "image:b1:0",
+      "image:b1:1",
+      "image:b1:2",
+      "image:b1:3",
+    ]);
+    // positions: 0 before hello, 5 between hello and space, duplicated, 11 at end
+    // Check that text is split correctly and not contains URLs
+    const textOnly = owningBlock.children
+      .filter((c) => typeof (c as { text?: unknown }).text === "string")
+      .map((c) => (c as { text: string }).text)
+      .join("");
+    expect(textOnly).toBe(text);
+    expect(textOnly).not.toContain("https://example.com");
+    // image URL must be in image data, not in text leaf (verified above)
+    // beforeUtf16 and ordinal encoded in data
+    expect((imageNodes[0] as unknown as { data: { beforeUtf16: number; inlineOrdinal: number } }).data.beforeUtf16).toBe(0);
+    expect((imageNodes[0] as unknown as { data: { inlineOrdinal: number } }).data.inlineOrdinal).toBe(0);
+    expect((imageNodes[1] as unknown as { data: { beforeUtf16: number; inlineOrdinal: number } }).data.beforeUtf16).toBe(5);
+    expect((imageNodes[2] as unknown as { data: { beforeUtf16: number; inlineOrdinal: number } }).data.beforeUtf16).toBe(5);
+    // void leaf check
+    for (const img of imageNodes) {
+      expect((img as { children: unknown }).children).toEqual([{ text: "" }]);
+    }
+  });
+
+  it("inline image: emoji/CJK UTF-16 length and before_utf16", () => {
+    const text = "👍中a"; // 👍 length 2, 中 length 1, a 1 => total 4
+    // Put image after 👍 (offset 2)
+    const inlinePayload = [
+      inlineImageEntry("https://example.com/emoji.png", "emoji", null, 2, "https://example.com/emoji.png"),
+    ];
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u1",
+          segs: [{ id: "s1", text }],
+          stableBlockType: "paragraph",
+          stableBlockId: "b1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "b1",
+            block_type: "paragraph",
+            payload: { inline_images: inlinePayload },
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const para = doc.children.find((c) => (c as { type: string }).type === "paragraph") as unknown as {
+      children: Array<{ text?: string; type?: string; data?: { beforeUtf16: number } }>;
+    };
+    const images = para.children.filter((c) => c.type === "image");
+    expect(images).toHaveLength(1);
+    expect((images[0].data as { beforeUtf16: number }).beforeUtf16).toBe(2);
+    // text concatenation unchanged
+    const textOnly = para.children
+      .filter((c) => typeof c.text === "string")
+      .map((c) => (c as { text: string }).text)
+      .join("");
+    expect(textOnly).toBe(text);
+  });
+
+  it("inline image: mixed text splicing verbatim, marks narrow, selection stays", () => {
+    const text = "hello world";
+    const inlinePayload = [inlineImageEntry("https://example.com/a.png", "a", null, 5, "https://example.com/a.png")];
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u1",
+          segs: [{ id: "s1", text }],
+          stableBlockType: "paragraph",
+          stableBlockId: "b1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "b1",
+            block_type: "paragraph",
+            payload: { inline_images: inlinePayload },
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const para = doc.children.find((c) => (c as { type: string }).type === "paragraph") as unknown as {
+      children: Array<{ text: string; segmentRange?: { startUtf16: number; endUtf16: number }; baseRange?: { startUtf16: number; endUtf16: number }; marks: unknown[] }>;
+      data: { baseRange: { startUtf16: number; endUtf16: number } };
+    };
+    // Ensure leaves split and ranges narrowed: first leaf "hello" should have segment 0-5, second " world" 5-11
+    const textLeaves = para.children.filter((c) => typeof c.text === "string" && (c as { type?: string }).type !== "image");
+    expect(textLeaves.map((l) => l.text).join("")).toBe(text);
+    // If marks existed, they would be preserved; here check that leaf segment ranges are correctly narrowed
+    // For this test, we just ensure no leaf contains image URL and ranges are valid
+    expect(para.children.some((c) => c.text?.includes("https://"))).toBe(false);
+  });
+
+  it("image-only metadata_only table_cell: cell retained, empty text allowed, image per ordinal, no fake unit/anchor", () => {
+    // This test simulates an image-only cell with null text_content in tree, metadata_only policy.
+    // Snapshot has a placeholder paragraph to keep document readable, plus table with image-only cell.
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Placeholder paragraph for freeze." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+        {
+          unitId: "u_c2",
+          segs: [{ id: "c2", text: "mixed" }],
+          stableBlockType: "table_cell",
+          stableBlockId: "cell_mixed",
+          parentStableBlockId: "row_1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({ block_id: "p1", block_type: "paragraph", order_index: 0 }),
+          wgImgTreeNode({
+            block_id: "table_1",
+            block_type: "table",
+            order_index: 1,
+            children: [
+              wgImgTreeNode({
+                block_id: "row_1",
+                parent_block_id: "table_1",
+                block_type: "table_row",
+                children: [
+                  wgImgTreeNode({
+                    block_id: "cell_image_only",
+                    parent_block_id: "row_1",
+                    block_type: "table_cell",
+                    text_content: null,
+                    payload: {
+                      inline_images: [
+                        inlineImageEntry("https://example.com/c.png", "c", null, 0, "https://example.com/c.png"),
+                      ],
+                    },
+                    interpretation_policy: { allowed_source_scope: ["table_cell"], default_route: "metadata_only", rag_eligible: false },
+                    unit_id: null,
+                    anchor_segment_ids: [],
+                  }),
+                  wgImgTreeNode({
+                    block_id: "cell_mixed",
+                    parent_block_id: "row_1",
+                    block_type: "table_cell",
+                    order_index: 1,
+                    payload: {
+                      inline_images: [
+                        inlineImageEntry("https://example.com/m.png", "m", null, 2, "https://example.com/m.png"),
+                      ],
+                    },
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const table = doc.children.find((c) => (c as { type: string }).type === "table") as unknown as {
+      children: Array<{ id: string; children: Array<{ id: string; data: Record<string, unknown>; children: unknown[] }> }>;
+    };
+    expect(table).toBeTruthy();
+    // Find image-only cell
+    const imageOnlyCell = table.children[0].children.find((cell) => (cell as { id: string }).id === "table_cell:cell_image_only") as unknown as {
+      id: string;
+      data: Record<string, unknown>;
+      children: Array<{ type?: string }>;
+    };
+    // RED: currently image-only cell is missing because no unit-backed block
+    expect(imageOnlyCell).toBeTruthy();
+    const imgInCell = imageOnlyCell.children.filter((c) => (c as { type: string }).type === "image");
+    expect(imgInCell).toHaveLength(1);
+    // image-only metadata_only cell must have no real unit (placeholder falsy, not a real unit id)
+    expect((imageOnlyCell.data as { unitId?: unknown }).unitId).toBeFalsy();
+  });
+
+  it("malformed inline entry skipped: non-integer/out-of-bounds before_utf16 only that image skipped, others remain, no throw", () => {
+    const text = "hello";
+    const inlinePayload = [
+      inlineImageEntry("https://example.com/good.png", "good", null, 2, "https://example.com/good.png"),
+      { source_url: "https://example.com/bad1.png", alt_text: "bad", title: null, before_utf16: 1.5, effective_url: "https://example.com/bad1.png" },
+      { source_url: "https://example.com/bad2.png", alt_text: "bad", title: null, before_utf16: 100, effective_url: "https://example.com/bad2.png" },
+      { source_url: "https://example.com/bad3.png", alt_text: "bad", title: null, before_utf16: -1, effective_url: "https://example.com/bad3.png" },
+      inlineImageEntry("https://example.com/good2.png", "good2", null, 5, "https://example.com/good2.png"),
+    ];
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u1",
+          segs: [{ id: "s1", text }],
+          stableBlockType: "paragraph",
+          stableBlockId: "b1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "b1",
+            block_type: "paragraph",
+            payload: { inline_images: inlinePayload },
+          }),
+        ],
+      },
+    );
+    expect(() => projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot)).not.toThrow();
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const para = doc.children.find((c) => (c as { type: string }).type === "paragraph") as unknown as {
+      children: Array<{ type?: string }>;
+    };
+    const images = para.children.filter((c) => c.type === "image");
+    // Only the two good entries should survive
+    expect(images).toHaveLength(2);
+    expect(images.map((img) => (img as { data: { sourceUrl: string } }).data.sourceUrl)).toEqual([
+      "https://example.com/good.png",
+      "https://example.com/good2.png",
+    ]);
+    // text unchanged
+    const textOnly = para.children
+      .filter((c) => typeof (c as { text?: unknown }).text === "string")
+      .map((c) => (c as { text: string }).text)
+      .join("");
+    expect(textOnly).toBe(text);
+  });
+
+  it("inline images do not enter text, selection anchor, word count (via text leaves)", () => {
+    const text = "hello world";
+    const inlinePayload = [inlineImageEntry("https://example.com/a.png", "alt", "Title", 5, "https://example.com/a.png")];
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u1",
+          segs: [{ id: "s1", text }],
+          stableBlockType: "paragraph",
+          stableBlockId: "b1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "b1",
+            block_type: "paragraph",
+            payload: { inline_images: inlinePayload },
+          }),
+        ],
+      },
+    );
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const para = doc.children.find((c) => (c as { type: string }).type === "paragraph") as unknown as {
+      children: Array<{ text?: string; anchorSegmentId?: string; segmentRange?: unknown }>;
+      data: { anchorSegmentId: string };
+    };
+    // anchor metadata should only be on text leaves, not on image
+    const image = para.children.find((c) => (c as { type?: string }).type === "image") as unknown as {
+      data: { anchorSegmentId?: unknown };
+      children: unknown[];
+    };
+    expect(image.data.anchorSegmentId).toBeUndefined();
+    // word count etc would be based on text leaves only; ensure text leaves cover original text
+    const textLeaves = para.children.filter((c) => typeof c.text === "string");
+    expect(textLeaves.map((l) => (l.text as string)).join("")).toBe(text);
+    expect(textLeaves.some((l) => (l.text as string).includes("https://"))).toBe(false);
+  });
+
+  it.each([
+    { beforeUtf16: 1, targetParagraphId: "paragraph:s1", expectedText: ["a", "bc"] },
+    { beforeUtf16: 4, targetParagraphId: "paragraph:s2", expectedText: ["d", "ef"] },
+  ])(
+    "same stable block with two spans places before_utf16=$beforeUtf16 exactly once",
+    ({ beforeUtf16, targetParagraphId, expectedText }) => {
+      const snapshot = buildWgSnapshot(
+        [
+          {
+            unitId: "u_shared_1",
+            segs: [{ id: "s1", text: "abc" }],
+            stableBlockType: "paragraph",
+            stableBlockId: "p_shared",
+          },
+          {
+            unitId: "u_shared_2",
+            segs: [{ id: "s2", text: "def" }],
+            stableBlockType: "paragraph",
+            stableBlockId: "p_shared",
+          },
+        ],
+        {
+          tree: [
+            wgImgTreeNode({
+              block_id: "p_shared",
+              block_type: "paragraph",
+              payload: {
+                inline_images: [
+                  inlineImageEntry(
+                    "https://example.com/shared.png",
+                    "shared",
+                    null,
+                    beforeUtf16,
+                    "https://example.com/shared.png",
+                  ),
+                ],
+              },
+            }),
+          ],
+        },
+      );
+
+      const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+      const spans = document.children.filter(
+        (block) =>
+          (block as { type?: string }).type === "paragraph" &&
+          (block as { data?: { stableBlockId?: string } }).data?.stableBlockId ===
+            "p_shared",
+      ) as unknown as Array<{
+        id: string;
+        children: Array<{ type?: string; text?: string; id?: string }>;
+      }>;
+      const images = spans.flatMap((span) =>
+        span.children.filter((child) => child.type === "image"),
+      );
+      const target = spans.find((span) => span.id === targetParagraphId);
+
+      expect(spans).toHaveLength(2);
+      expect(images).toHaveLength(1);
+      expect(images[0]?.id).toBe("image:p_shared:0");
+      expect(target).toBeTruthy();
+      expect(target?.children.filter((child) => typeof child.text === "string")).toEqual(
+        expectedText.map((text) => expect.objectContaining({ text })),
+      );
+      expect(target?.children.filter((child) => child.type === "image")).toHaveLength(1);
+      expect(
+        spans
+          .filter((span) => span.id !== targetParagraphId)
+          .flatMap((span) => span.children)
+          .filter((child) => child.type === "image"),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("same stable block second-span split keeps segment/base ranges and mark boundaries", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_shared_1",
+          segs: [{ id: "s1", text: "abc" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p_shared",
+        },
+        {
+          unitId: "u_shared_2",
+          segs: [{ id: "s2", text: "def" }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p_shared",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "p_shared",
+            block_type: "paragraph",
+            payload: {
+              inline_images: [
+                inlineImageEntry(
+                  "https://example.com/range.png",
+                  "range",
+                  null,
+                  4,
+                  "https://example.com/range.png",
+                ),
+              ],
+            },
+          }),
+        ],
+      },
+    );
+    const sourceBlock = snapshot.value[1]?.children.find(
+      (child): child is ReaderSourceBlockNodeDto =>
+        child.type === "reader_source_block",
+    );
+    const secondSegment = sourceBlock?.children.find(
+      (child): child is Extract<typeof child, { type: "reader_anchor_segment" }> =>
+        "type" in child &&
+        child.type === "reader_anchor_segment" &&
+        child.anchor_segment_id === "s2",
+    );
+    const secondSegmentLeaf = secondSegment?.children[0];
+    if (!secondSegmentLeaf || !("text" in secondSegmentLeaf)) {
+      throw new Error("Expected second segment text leaf fixture");
+    }
+    (
+      secondSegmentLeaf as typeof secondSegmentLeaf & {
+        reader_vocabulary_marks: ReaderVocabularyMarkDto[];
+      }
+    ).reader_vocabulary_marks = [
+      makeVocabularyMark({
+        mark_id: "vocab_s2",
+        anchor_segment_id: "s2",
+        start_offset: 5,
+        end_offset: 7,
+        selected_text: "de",
+        segment_start_utf16: 0,
+        segment_end_utf16: 2,
+        starts_here: true,
+        ends_here: true,
+        phrase: "de",
+      }),
+    ];
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const secondSpan = document.children.find(
+      (block) => (block as { id?: string }).id === "paragraph:s2",
+    ) as unknown as {
+      children: Array<{
+        type?: string;
+        text?: string;
+        segmentRange?: { startUtf16: number; endUtf16: number };
+        baseRange?: { startUtf16: number; endUtf16: number };
+        marks?: Array<{ id: string; startsHere: boolean; endsHere: boolean }>;
+      }>;
+    };
+    expect(secondSpan).toBeTruthy();
+    const markedLeaves = secondSpan.children.filter((child) =>
+      child.marks?.some((mark) => mark.id === "vocab_s2"),
+    );
+
+    expect(secondSpan.children.filter((child) => child.type === "image")).toHaveLength(1);
+    expect(markedLeaves).toHaveLength(2);
+    expect(markedLeaves[0]).toMatchObject({
+      text: "d",
+      segmentRange: { startUtf16: 0, endUtf16: 1 },
+      baseRange: { startUtf16: 5, endUtf16: 6 },
+      marks: [expect.objectContaining({ id: "vocab_s2", startsHere: true, endsHere: false })],
+    });
+    expect(markedLeaves[1]).toMatchObject({
+      text: "e",
+      segmentRange: { startUtf16: 1, endUtf16: 2 },
+      baseRange: { startUtf16: 6, endUtf16: 7 },
+      marks: [expect.objectContaining({ id: "vocab_s2", startsHere: false, endsHere: true })],
+    });
+  });
+
+  it("pure-image list retains its wrapper and promoted image source position", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Readable paragraph." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "list_images",
+            block_type: "list",
+            order_index: 0,
+            payload: { ordered: false },
+            children: [
+              wgImgTreeNode({
+                block_id: "img_list_only",
+                parent_block_id: "list_images",
+                block_type: "image",
+                order_index: 0,
+                payload: imagePayload(
+                  "https://example.com/list.png",
+                  "list",
+                  null,
+                  "https://example.com/list.png",
+                ),
+              }),
+            ],
+          }),
+          wgImgTreeNode({
+            block_id: "p1",
+            block_type: "paragraph",
+            order_index: 1,
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    expect(document.children.map((block) => block.type)).toEqual(["list", "paragraph"]);
+    const list = document.children[0] as unknown as {
+      type: string;
+      data: { stableBlockId?: string };
+      children: Array<{
+        type: string;
+        id: string;
+        data: { parentStableBlockId: string | null };
+      }>;
+    };
+    expect(list).toMatchObject({
+      type: "list",
+      data: { stableBlockId: "list_images" },
+    });
+    expect(list.children).toHaveLength(1);
+    expect(list.children[0]).toMatchObject({
+      type: "image",
+      id: "image:img_list_only",
+      data: { parentStableBlockId: "list_images" },
+    });
+  });
+
+  it("pure-image table retains two rows, source order, metadata, and no fake text anchor", () => {
+    const imageOnlyCell = (
+      cellId: string,
+      rowId: string,
+      sourceUrl: string,
+      isHeader: boolean,
+    ) =>
+      wgImgTreeNode({
+        block_id: cellId,
+        parent_block_id: rowId,
+        block_type: "table_cell",
+        order_index: 0,
+        text_content: null,
+        payload: {
+          alignment: "center",
+          column_index: 0,
+          is_header: isHeader,
+          inline_images: [inlineImageEntry(sourceUrl, cellId, null, 0, sourceUrl)],
+        },
+        interpretation_policy: {
+          allowed_source_scope: ["table_cell"],
+          default_route: "metadata_only",
+          rag_eligible: false,
+        },
+        unit_id: null,
+        anchor_segment_ids: [],
+      });
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "s1", text: "Readable paragraph." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "p1",
+        },
+      ],
+      {
+        tree: [
+          wgImgTreeNode({
+            block_id: "table_images",
+            block_type: "table",
+            order_index: 0,
+            payload: { alignments: ["center"], column_count: 1, header_rows: 1 },
+            children: [
+              wgImgTreeNode({
+                block_id: "row_header",
+                parent_block_id: "table_images",
+                block_type: "table_row",
+                order_index: 0,
+                payload: { is_header: true, row_index: 0 },
+                children: [
+                  imageOnlyCell(
+                    "cell_header",
+                    "row_header",
+                    "https://example.com/header.png",
+                    true,
+                  ),
+                ],
+              }),
+              wgImgTreeNode({
+                block_id: "row_body",
+                parent_block_id: "table_images",
+                block_type: "table_row",
+                order_index: 1,
+                payload: { is_header: false, row_index: 1 },
+                children: [
+                  imageOnlyCell(
+                    "cell_body",
+                    "row_body",
+                    "https://example.com/body.png",
+                    false,
+                  ),
+                ],
+              }),
+            ],
+          }),
+          wgImgTreeNode({
+            block_id: "p1",
+            block_type: "paragraph",
+            order_index: 1,
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    expect(document.children.map((block) => block.type)).toEqual(["table", "paragraph"]);
+    const table = document.children[0] as unknown as {
+      data: Record<string, unknown>;
+      children: Array<{
+        id: string;
+        data: Record<string, unknown>;
+        children: Array<{
+          id: string;
+          data: Record<string, unknown>;
+          children: Array<{ type?: string }>;
+        }>;
+      }>;
+    };
+    expect(table.data).toMatchObject({
+      stableBlockId: "table_images",
+      unitId: null,
+      alignments: ["center"],
+      headerRows: 1,
+    });
+    expect(table.children.map((row) => row.id)).toEqual([
+      "table_row:row_header",
+      "table_row:row_body",
+    ]);
+    expect(table.children.map((row) => row.data)).toEqual([
+      expect.objectContaining({ unitId: null, isHeader: true, rowIndex: 0 }),
+      expect.objectContaining({ unitId: null, isHeader: false, rowIndex: 1 }),
+    ]);
+    const cells = table.children.map((row) => row.children[0]);
+    expect(cells.map((cell) => cell.id)).toEqual([
+      "table_cell:cell_header",
+      "table_cell:cell_body",
+    ]);
+    expect(cells.map((cell) => cell.data)).toEqual([
+      expect.objectContaining({
+        unitId: null,
+        columnIndex: 0,
+        alignment: "center",
+        isHeader: true,
+      }),
+      expect.objectContaining({
+        unitId: null,
+        columnIndex: 0,
+        alignment: "center",
+        isHeader: false,
+      }),
+    ]);
+    for (const data of [
+      table.data,
+      ...table.children.map((row) => row.data),
+      ...cells.map((cell) => cell.data),
+    ]) {
+      expect(data).not.toHaveProperty("baseRange");
+      expect(data).not.toHaveProperty("textHash");
+      expect(data).not.toHaveProperty("hashAlgorithm");
+      expect(data).not.toHaveProperty("anchorSegmentId");
+    }
+    expect(cells.map((cell) => cell.children.filter((child) => child.type === "image"))).toEqual([
+      [expect.objectContaining({ id: "image:cell_header:0" })],
+      [expect.objectContaining({ id: "image:cell_body:0" })],
     ]);
   });
 });

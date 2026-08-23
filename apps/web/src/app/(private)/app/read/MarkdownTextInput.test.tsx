@@ -30,12 +30,18 @@
  * 可观测调度合同（立即 fire + dedup + flush + unmount safety）。
  */
 
-import { act, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React, { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { createPlateEditor } from "platejs/react";
+import { MarkdownPlugin } from "@platejs/markdown";
+import type { Descendant } from "platejs";
+
+import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
 
 import {
   MarkdownTextInput,
+  markdownTextInputPlugins,
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
 
@@ -48,6 +54,7 @@ function renderEditor(props?: {
   onDegraded?: (result: unknown) => void;
   ariaLabelledBy?: string;
   ariaDescribedBy?: string;
+  initialValue?: string;
 }) {
   const ref = createRef<MarkdownTextInputHandle>();
   const onChange = (props?.onChange ?? vi.fn()) as Mock<(markdown: string) => void>;
@@ -56,7 +63,7 @@ function renderEditor(props?: {
     <MarkdownTextInput
       ref={ref}
       id="analysis-text"
-      initialValue=""
+      initialValue={props?.initialValue ?? ""}
       onChange={onChange}
       onSubmit={onSubmit}
       onLintResult={props?.onLintResult}
@@ -70,6 +77,9 @@ function renderEditor(props?: {
 }
 
 afterEach(() => {
+  // 本套件未启用 vitest globals，RTL 不会自动注册 cleanup；G1′ 用例
+  // 使用全局 screen 查询，必须显式清理，避免跨用例 DOM 污染。
+  cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -620,5 +630,438 @@ describe("reveal 定位", () => {
     expect(ref.current?.reveal("some text that does not exist anywhere")).toBe(
       false,
     );
+  });
+
+  it("reveal 命中 typed image：DOM selection 同步到图片 leaf（非仅返回 true，G1P-A-R2）", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![shaded avenue](https://example.com/a.png)");
+    });
+    let revealed = false;
+    await act(async () => {
+      revealed =
+        ref.current?.reveal("[shaded avenue](https://example.com/a.png)") ??
+        false;
+    });
+    expect(revealed).toBe(true);
+    // reveal 内部 60ms 后读取 window.getSelection() 做滚动定位——等待窗口
+    // 过期后断言选区真实落在图片 element 内（void leaf 已渲染）。
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    const selection = window.getSelection();
+    const wrapper = editorEl.querySelector("[data-image-input]");
+    expect(wrapper).not.toBeNull();
+    expect(selection?.rangeCount ?? 0).toBeGreaterThanOrEqual(1);
+    expect(wrapper?.contains(selection?.anchorNode ?? null)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// G1′-A：Markdown 图片 round-trip 与输入端图片合同
+//
+// 覆盖（冻结合同 g2a-image-representation-contract §3.2 / §5 / §11.1）：
+// - `![alt](url "title")` 进入 Plate 后仍是 typed image node，不降级
+//   generic link；编辑后 serialize 仍输出 image syntax。
+// - standalone / inline / consecutive / empty alt / wrapped 的位置与顺序
+//   语义不漂移（inline 图片不得被移动成独立段落或引入额外空段）。
+// - image-only 编辑器非空；getMarkdown/getSubmitText 返回 image syntax。
+// - Content Check 共用编辑器：initialValue 加载含图 Markdown，编辑相邻
+//   正文后提交文本仍含原 image syntax/title。
+// - 未编辑纯 Markdown 粘贴继续由 lastPastedTextRef byte-exact 返回原文。
+// - 赋 img.src 前执行 §10.1 八规则 fail-closed 判定：reject 项永不进入
+//   img.src；四态（loading/loaded/unsafe/load_failed）与 URL 编辑合同。
+// ===========================================================================
+
+describe("G1′ image round-trip（deserialize + serialize 语义保持）", () => {
+  const IMAGE_CASES: Array<{ name: string; md: string; expected: string[] }> = [
+    {
+      name: "standalone",
+      md: '![a](https://example.com/a.png "T")',
+      expected: ['![a](https://example.com/a.png "T")'],
+    },
+    {
+      name: "mixed inline",
+      md: 'before ![a](https://example.com/a.png "T") after',
+      expected: ['before ![a](https://example.com/a.png "T") after'],
+    },
+    {
+      name: "consecutive images",
+      md: "left ![a](u1)![b](u2) right",
+      expected: ["left ![a](u1)![b](u2) right"],
+    },
+    {
+      name: "empty alt",
+      md: "![](https://example.com/a.png)",
+      expected: ["![](https://example.com/a.png)"],
+    },
+    {
+      name: "strong wrapped",
+      md: '**![a](https://example.com/u.png "T")**',
+      expected: ['**![a](https://example.com/u.png "T")**'],
+    },
+    {
+      name: "em wrapped",
+      md: "*![a](u)*",
+      expected: ["*![a](u)*"],
+    },
+    {
+      name: "delete wrapped",
+      md: "~~![a](u)~~",
+      expected: ["~~![a](u)~~"],
+    },
+  ];
+
+  it.each(IMAGE_CASES)(
+    "$name：serialize 输出保留 image syntax / 字段 / 位置",
+    async ({ md, expected }) => {
+      const { ref } = renderEditor();
+      await act(async () => {
+        ref.current?.setValue(md);
+      });
+      const out = ref.current?.getMarkdown() ?? "";
+      for (const fragment of expected) {
+        expect(out).toContain(fragment);
+      }
+      // 不得降级为普通链接 `[a](url)`（lookbehind 排除 image 语法自身）
+      expect(out).not.toMatch(
+        /(?<!!)\[[^\]]*\]\(https:\/\/example\.com\/a\.png\)/,
+      );
+      expect(out).not.toMatch(/(?<!!)\[[^\]]*\]\(u1\)/);
+      expect(out).not.toMatch(/(?<!!)\[[^\]]*\]\(u2\)/);
+    },
+  );
+
+  it("inline 图片不被移动成独立段落（单段落保持，无额外空段）", async () => {
+    const { ref } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("before ![a](u1) after");
+    });
+    const out = ref.current?.getMarkdown() ?? "";
+    // 图片前后不得被拆成独立段落（空行分隔）
+    expect(out).not.toContain("before\n\n");
+    expect(out).not.toContain("\n\n![a](u1)");
+    expect(out).toContain("before ![a](u1) after");
+  });
+
+  it("image-only 编辑器：data-empty=false 且 getMarkdown/getSubmitText 返回 image syntax", async () => {
+    const { ref, editorEl, onChange } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue('![a](https://example.com/a.png "T")');
+    });
+    expect(editorEl.getAttribute("data-empty")).toBe("false");
+    const md = ref.current?.getMarkdown() ?? "";
+    expect(md).toContain('![a](https://example.com/a.png "T")');
+    expect(ref.current?.getSubmitText()).toContain(
+      '![a](https://example.com/a.png "T")',
+    );
+    await waitFor(() => {
+      expect(
+        String(onChange.mock.calls.at(-1)?.[0] ?? ""),
+      ).toContain("![a](https://example.com/a.png");
+    });
+  });
+
+  it("Content Check 语义：initialValue 加载含图 Markdown，编辑相邻正文后提交文本仍含原 image syntax/title", async () => {
+    const initial =
+      '# Title\n\n![alt](https://example.com/a.png "T")\n\nBody paragraph.';
+    const onDegraded = vi.fn();
+    const { ref, onChange } = renderEditor({
+      initialValue: initial,
+      onDegraded,
+    });
+    // initialValue 加载成功（onChange 仅在编辑后触发——组件既有合同，
+    // 此处断言 deserialize 成功无降级）。
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const initialStatus = onDegraded.mock.calls.at(-1)?.[0] as
+      | { status?: string }
+      | undefined;
+    expect(initialStatus?.status).toBe("success");
+    // dirty 编辑（改相邻正文）→ onChange 收到含 image syntax 的 serialize
+    await act(async () => {
+      ref.current?.setValue(
+        '# Title\n\n![alt](https://example.com/a.png "T")\n\nEdited body paragraph.',
+      );
+    });
+    expect(onChange).toHaveBeenCalled();
+    expect(String(onChange.mock.calls.at(-1)?.[0] ?? "")).toContain(
+      '![alt](https://example.com/a.png "T")',
+    );
+    // dirty 保存的提交文本保留 image syntax/title 与编辑后的正文
+    const submit = ref.current?.getSubmitText() ?? "";
+    expect(submit).toContain('![alt](https://example.com/a.png "T")');
+    expect(submit).toContain("Edited body paragraph.");
+    expect(submit).not.toMatch(
+      /(?<!!)\[alt\]\(https:\/\/example\.com\/a\.png\)/,
+    );
+  });
+
+  // 注：未编辑纯 Markdown 粘贴的 byte-exact 合同（lastPastedTextRef 原文
+  // 返回）不在 jsdom 覆盖——本套件头部已记录合成 paste 无法驱动 Slate
+  // DOM 管线（jsdom 限制）；该路径（beginPasteWindow/readSubmitMarkdown）
+  // 在 G1′ 中零改动，图片语法未编辑时不经任何转换，byte-exact 由既有
+  // 机制结构性保证，浏览器级由 Playwright 验收覆盖。
+});
+
+describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前 fail-closed）", () => {
+  it("safe URL：渲染真实 img（lazy/decoding/referrerPolicy），loading 占位保留", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue('![a](https://example.com/a.png "T")');
+    });
+    const img = editorEl.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("src")).toBe("https://example.com/a.png");
+    expect(img?.getAttribute("loading")).toBe("lazy");
+    expect(img?.getAttribute("decoding")).toBe("async");
+    expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(img?.getAttribute("alt")).toBe("a");
+  });
+
+  it("safe URL：onLoad 后显示图片（loading → loaded）", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![a](https://example.com/a.png)");
+    });
+    expect(
+      editorEl.querySelector("[data-image-state='loading']"),
+    ).not.toBeNull();
+    const img = editorEl.querySelector("img");
+    expect(img).not.toBeNull();
+    await act(async () => {
+      fireEvent(img as Element, new Event("load"));
+    });
+    expect(
+      editorEl.querySelector("[data-image-state='loaded']"),
+    ).not.toBeNull();
+    expect(
+      editorEl.querySelector("[data-image-state='loading']"),
+    ).toBeNull();
+  });
+
+  it("safe URL 加载失败：失败占位显示 alt，提供复制链接与修改链接", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![alt text](https://example.com/a.png)");
+    });
+    const img = editorEl.querySelector("img");
+    await act(async () => {
+      fireEvent(img as Element, new Event("error"));
+    });
+    expect(
+      editorEl.querySelector("[data-image-state='load_failed']"),
+    ).not.toBeNull();
+    expect(editorEl.textContent).toContain("alt text");
+    expect(screen.getByRole("button", { name: "复制链接" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+  });
+
+  it("safe URL 加载失败且空 alt：显示「图片加载失败」", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![](https://example.com/a.png)");
+    });
+    const img = editorEl.querySelector("img");
+    await act(async () => {
+      fireEvent(img as Element, new Event("error"));
+    });
+    expect(editorEl.textContent).toContain("图片加载失败");
+  });
+
+  it("unsafe URL：无 img[src]，显示链接不安全占位、原 URL 可见、提供修改链接", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![a](javascript:alert(1))");
+    });
+    expect(editorEl.querySelector("img[src]")).toBeNull();
+    expect(editorEl.textContent).toContain("链接不安全");
+    expect(editorEl.textContent).toContain("javascript:alert(1)");
+    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+  });
+
+  it("unsafe URL（相对路径）：同样 fail-closed，不回退相对地址", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue("![a](./local.png)");
+    });
+    expect(editorEl.querySelector("img[src]")).toBeNull();
+    expect(editorEl.textContent).toContain("链接不安全");
+  });
+
+  it("修改链接：保存只更新 URL（保留 alt/title），取消零变化", async () => {
+    const { ref } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue('![alt](https://example.com/a.png "T")');
+    });
+    // 进入编辑态
+    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    const input = screen.getByLabelText("图片链接") as HTMLInputElement;
+    expect(input.value).toBe("https://example.com/a.png");
+    fireEvent.change(input, { target: { value: "https://example.com/b.png" } });
+    // 取消 → 节点零变化
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    const afterCancel = ref.current?.getMarkdown() ?? "";
+    expect(afterCancel).toContain('![alt](https://example.com/a.png "T")');
+    expect(afterCancel).not.toContain("b.png");
+    // 再次编辑并保存 → 只更新 URL，alt/title 保留
+    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    fireEvent.change(screen.getByLabelText("图片链接"), {
+      target: { value: "https://example.com/b.png" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      const md = ref.current?.getMarkdown() ?? "";
+      expect(md).toContain('![alt](https://example.com/b.png "T")');
+      expect(md).not.toContain("a.png");
+    });
+  });
+
+  it("UI chrome（占位文案/按钮/编辑控件）不进入 getMarkdown", async () => {
+    const { ref, editorEl } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue('![alt](https://example.com/a.png "T")');
+    });
+    const img = editorEl.querySelector("img");
+    await act(async () => {
+      fireEvent(img as Element, new Event("error"));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    const md = ref.current?.getMarkdown() ?? "";
+    expect(md).toContain('![alt](https://example.com/a.png "T")');
+    expect(md).not.toContain("图片加载失败");
+    expect(md).not.toContain("复制链接");
+    expect(md).not.toContain("修改链接");
+    expect(md).not.toContain("图片链接");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1P-B-A · HTML code language fidelity（实际 mounted plugins 的 HTML
+// deserializer；不伪造 ClipboardEvent，仅经公开 deserialize/serialize seam）
+// ---------------------------------------------------------------------------
+
+describe("HTML code language fidelity（G1P-B-A，实际 mounted plugins）", () => {
+  function deserializeMountedHtml(html: string): Descendant[] {
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    return editor.api.html.deserialize({
+      element: prepareClipboardHtml(html),
+    }) as Descendant[];
+  }
+
+  function collectByType(
+    nodes: Descendant[],
+    type: string,
+  ): Array<Record<string, unknown>> {
+    const found: Array<Record<string, unknown>> = [];
+    const walk = (ns: Descendant[]) => {
+      for (const n of ns) {
+        const node = n as Record<string, unknown>;
+        if (node.type === type) found.push(node);
+        if (Array.isArray(node.children)) {
+          walk(node.children as Descendant[]);
+        }
+      }
+    };
+    walk(nodes);
+    return found;
+  }
+
+  function codeBlockText(node: Record<string, unknown>): string {
+    return (node.children as Array<{ children?: Array<{ text?: string }> }> | undefined)
+      ?.map((line) => line.children?.map((c) => c.text ?? "").join("") ?? "")
+      .join("\n") ?? "";
+  }
+
+  it('class="language-python" → code_block lang=python（正文/children 不变）', () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("python");
+    expect(codeBlockText(blocks[0])).toBe("x = 1");
+  });
+
+  it('data-language="typescript" → lang=typescript（fallback 通道）', () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code data-language="typescript">const a = 1;</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("typescript");
+  });
+
+  it("class 与 data-language 并存：标准 language-* class 优先", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-rust" data-language="go">fn main() {}</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lang).toBe("rust");
+  });
+
+  it("多 code blocks、多语言：各自保真、源序不漂移", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">a = 1</code></pre>` +
+        `<p>between</p>` +
+        `<pre><code data-language="sql">SELECT 1;</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].lang).toBe("python");
+    expect(blocks[1].lang).toBe("sql");
+    expect(codeBlockText(blocks[0])).toBe("a = 1");
+    expect(codeBlockText(blocks[1])).toBe("SELECT 1;");
+  });
+
+  it("code body 内部空行完整保留", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">line1\n\nline3</code></pre>`,
+    );
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(codeBlockText(blocks[0])).toBe("line1\n\nline3");
+    expect((blocks[0].children as unknown[]).length).toBe(3);
+  });
+
+  it("无 language 时不虚构（无 lang 字段）", () => {
+    const fragment = deserializeMountedHtml(`<pre><code>plain code</code></pre>`);
+    const blocks = collectByType(fragment, "code_block");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).not.toHaveProperty("lang");
+    expect(codeBlockText(blocks[0])).toBe("plain code");
+  });
+
+  it("prose 中的 language-python / 反引号不被识别成 code language", () => {
+    const fragment = deserializeMountedHtml(
+      `<p>Use <span class="language-python">language-python</span> and \`code\` in prose.</p>`,
+    );
+    expect(collectByType(fragment, "code_block")).toHaveLength(0);
+    expect(JSON.stringify(fragment)).not.toContain('"lang"');
+  });
+
+  it("language 只进入 code block metadata，不进入 code text leaf", () => {
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1</code></pre>`,
+    );
+    const json = JSON.stringify(fragment);
+    expect(json).toContain('"lang":"python"');
+    expect(json).not.toContain('"text":"python"');
+    expect(json).not.toContain("language-python");
+  });
+
+  it("serialize round-trip：lang 输出为 fence info（非回归）", () => {
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    const fragment = deserializeMountedHtml(
+      `<pre><code class="language-python">x = 1\n\ny = 2</code></pre>`,
+    );
+    editor.tf.setValue([{ type: "p", children: [{ text: "" }] }] as never[]);
+    editor.tf.insertFragment(fragment as never[]);
+    const md = editor.getApi(MarkdownPlugin).markdown.serialize();
+    expect(md).toContain("```python");
+    expect(md).toContain("x = 1");
+    expect(md).toContain("y = 2");
   });
 });

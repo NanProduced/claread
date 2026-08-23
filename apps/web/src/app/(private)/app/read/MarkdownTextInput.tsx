@@ -115,7 +115,10 @@ import {
 } from "platejs/react";
 import type { Descendant, Value } from "platejs";
 
-import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
+import {
+  INPUT_MARKDOWN_PLUGIN_OPTIONS,
+  InputMarkdownImagePlugin,
+} from "@/components/editor/plugins/input-markdown-image-kit";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { negotiateClipboardSource } from "@/lib/clipboard/clipboard-source-negotiation";
 import { deserializeHybridClipboardFragment } from "@/lib/clipboard/clipboard-source-fusion";
@@ -123,7 +126,6 @@ import {
   deserializeMarkdownToBlocksWithStatus,
   type DeserializeMarkdownResult,
 } from "@/lib/reader-plate/markdown/deserialize";
-import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
 import { normalizeCalloutDisplayIcons } from "@/lib/source-callout/source-callout-display-icon";
 import { cn } from "@/lib/cn";
 import {
@@ -314,34 +316,59 @@ function MarkdownStrikethroughLeaf({ children, attributes }: PlateLeafProps) {
 //   tr/td/th）；重复 key 的独立注册会合并（first-wins），用于给子插件
 //   挂 component。
 // - paragraph 无官方包，保留 core ParagraphPlugin + 薄壳 component。
-// - MarkdownKit 的 MarkdownPlugin 追加 remarkPreserveUnsupported：
-//   image/footnote/task list 在输入端降级为可见形态，不静默丢失
-//   （reader-plate projection 用的 MarkdownKit 不受影响）。
+// - 输入端 MarkdownPlugin（INPUT_MARKDOWN_PLUGIN_OPTIONS）追加
+//   remarkPreserveUnsupported：footnote/task list 在输入端降级为可见
+//   形态，不静默丢失；image 走 typed img element（G1′，见
+//   input-markdown-image-kit），reader-plate projection 用的
+//   MarkdownKit 不受影响。
 // ---------------------------------------------------------------------------
 
 // 注：不要通过 `MarkdownKit[0].configure({ options: ...MarkdownKit[0].options })`
 // 复制配置——Plate configure 的 options 解析会丢 remarkStringifyOptions
-// 等字段（已实测）。统一从 markdown-kit 导出的 MARKDOWN_PLUGIN_OPTIONS 展开。
+// 等字段（已实测）。输入端统一使用 INPUT_MARKDOWN_PLUGIN_OPTIONS（与
+// deserialize.ts 的 preserveUnsupported 路径共用同一份 options；含
+// remarkPreserveUnsupported、img typed 规则与 inline 位置合同，见
+// input-markdown-image-kit）。
 const InputMarkdownPlugin = MarkdownPlugin.configure({
-  options: {
-    ...MARKDOWN_PLUGIN_OPTIONS,
-    // 复用 MARKDOWN_PLUGIN_OPTIONS.remarkPlugins（含 remarkMergeAsideHtml
-    // 用于合并被空行拆分的 <aside> html 节点），并追加输入端专用
-    // remarkPreserveUnsupported。
-    remarkPlugins: [
-      ...MARKDOWN_PLUGIN_OPTIONS.remarkPlugins,
-      remarkPreserveUnsupported,
-    ],
-  },
+  options: INPUT_MARKDOWN_PLUGIN_OPTIONS,
 });
 
-const markdownTextInputPlugins = [
+// ---------------------------------------------------------------------------
+// G1P-B-A：HTML fenced code 语言保留（输入端窄 seam）
+//
+// 正文/children 行为继续由 stock PRE deserializer 负责（不复制完整 code
+// parser）；这里只从内层 `<code>` 读语言：标准 `language-*` class 优先，
+// `data-language` 仅作 fallback；无语言不虚构。language 只进 code_block 的
+// `lang` metadata（与 @platejs/markdown code_block 规则的 deserialize/serialize
+// 字段一致），不进 code text leaf；不接 reader-blocks-kit / projection /
+// 默认 MarkdownKit，不读 companion plain。
+const STOCK_CODE_BLOCK_HTML_DESERIALIZER =
+  BaseCodeBlockPlugin.parsers?.html?.deserializer;
+
+function htmlCodeBlockLanguage(pre: HTMLElement): string | undefined {
+  const code = pre.querySelector("code");
+  if (!code) return undefined;
+  for (const token of (code.getAttribute("class") ?? "").split(/\s+/)) {
+    if (token.startsWith("language-") && token.length > "language-".length) {
+      return token.slice("language-".length);
+    }
+  }
+  const dataLanguage = code.getAttribute("data-language");
+  return dataLanguage || undefined;
+}
+
+// 导出供测试以“实际 mounted plugins” seams 驱动 HTML deserializer
+// （G1P-B-A）；生产链路仅本组件消费。
+export const markdownTextInputPlugins = [
   InputMarkdownPlugin,
   // source_callout：Notion 风格 aside 提示框（剪贴板 HTML deserializer +
   // component 注册）。Markdown 路径的 mdast html → source_callout 转换由
   // InputMarkdownPlugin 的 rules.html 处理，但 element type 需要 plugin
   // 注册才能渲染。不注册会导致 aside 被识别后无 component 可渲染。
   SourceCalloutPlugin,
+  // 输入端图片（G1′）：inline void img element + 四态预览组件
+  // （loading/loaded/unsafe/load_failed + URL 编辑）。
+  InputMarkdownImagePlugin,
   // basic-nodes：标题/引用/分隔线
   BaseH1Plugin.configure({ node: { component: MarkdownHeading } }),
   BaseH2Plugin.configure({ node: { component: MarkdownHeading } }),
@@ -364,7 +391,21 @@ const markdownTextInputPlugins = [
   BaseListItemContentPlugin.configure({ node: { component: MarkdownListContent } }),
   // link / code-block / table
   BaseLinkPlugin.configure({ node: { component: MarkdownLink } }),
-  BaseCodeBlockPlugin.configure({ node: { component: MarkdownCodeBlock } }),
+  BaseCodeBlockPlugin.configure({
+    node: { component: MarkdownCodeBlock },
+    parsers: {
+      html: {
+        deserializer: {
+          ...STOCK_CODE_BLOCK_HTML_DESERIALIZER,
+          parse: (ctx) => {
+            const node = STOCK_CODE_BLOCK_HTML_DESERIALIZER?.parse?.(ctx) ?? {};
+            const language = htmlCodeBlockLanguage(ctx.element);
+            return language ? { ...node, lang: language } : node;
+          },
+        },
+      },
+    },
+  }),
   BaseCodeLinePlugin.configure({ node: { component: MarkdownCodeLine } }),
   BaseTablePlugin.configure({ node: { component: MarkdownTable } }),
   BaseTableRowPlugin.configure({ node: { component: MarkdownTableRow } }),
@@ -401,6 +442,13 @@ function hasTextContent(nodes: unknown[]): boolean {
     }
     if ("text" in node) {
       return typeof node.text === "string" && node.text.length > 0;
+    }
+    // 输入端图片（G1′）是 inline void element：图片本身即内容，
+    // image-only 编辑器必须判非空（data-empty=false、serialize 不短路）。
+    // URL/alt/title 是 element 字段而非 text leaf，不进入正文文本语义
+    // （word count / 后端 canonical text 不受影响）。
+    if ((node as { type?: unknown }).type === "img") {
+      return true;
     }
     if ("children" in node && Array.isArray(node.children)) {
       return hasTextContent(node.children);
@@ -809,22 +857,38 @@ export const MarkdownTextInput = forwardRef<
         if (!editor) return false;
         // 遍历文本叶子（Plate 节点树中 text 节点即 { text } 对象），
         // 避免引入 slate 运行时依赖。
+        // index === null 表示命中输入端 typed img（alt 在 caption 字段，
+        // 不是 text leaf）：选区落在整个 inline void 元素上。
         const findNeedle = (
           needle: string,
-        ): { path: number[]; index: number } | null => {
+        ): { path: number[]; index: number | null } | null => {
           const walk = (
             nodes: Descendant[],
             path: number[],
-          ): { path: number[]; index: number } | null => {
+          ): { path: number[]; index: number | null } | null => {
             for (let i = 0; i < nodes.length; i += 1) {
               const node = nodes[i] as {
                 text?: string;
+                type?: string;
+                caption?: Array<{ text?: string }>;
                 children?: Descendant[];
               };
               if (typeof node.text === "string") {
                 const index = node.text.indexOf(needle);
                 if (index >= 0) return { path: [...path, i], index };
                 continue;
+              }
+              if (
+                node.type === "img" &&
+                Array.isArray(node.caption) &&
+                needle.length > 0
+              ) {
+                const captionText = node.caption
+                  .map((c) => (typeof c?.text === "string" ? c.text : ""))
+                  .join("");
+                if (captionText.includes(needle)) {
+                  return { path: [...path, i], index: null };
+                }
               }
               if (Array.isArray(node.children)) {
                 const found = walk(node.children, [...path, i]);
@@ -847,10 +911,18 @@ export const MarkdownTextInput = forwardRef<
           const needle = candidate.slice(0, 80);
           const found = findNeedle(needle);
           if (!found) continue;
-          editor.tf.select({
-            anchor: { path: found.path, offset: found.index },
-            focus: { path: found.path, offset: found.index + needle.length },
-          });
+          if (found.index === null) {
+            // typed img：选中整个 inline void 元素。
+            editor.tf.select(found.path);
+          } else {
+            editor.tf.select({
+              anchor: { path: found.path, offset: found.index },
+              focus: {
+                path: found.path,
+                offset: found.index + needle.length,
+              },
+            });
+          }
           editor.tf.focus();
           // 等 Plate 把选区同步到 DOM 后滚动到可视位置。
           window.setTimeout(() => {
@@ -889,8 +961,8 @@ export const MarkdownTextInput = forwardRef<
         // 取消 pending debounce，避免 stale 内容覆盖新值。
         cancelPendingSerialize();
         // setValue 使用带状态 deserialize，失败时通知父组件。
-        // preserveUnsupported：与 initialValue / 粘贴路径一致，image 等
-        // 不支持结构降级为可见形态而非静默丢弃。
+        // preserveUnsupported：与 initialValue / 粘贴路径一致；image 走
+        // typed img element（G1′），footnote/task list 降级为可见形态。
         const result = deserializeMarkdownToBlocksWithStatus(markdown, {
           preserveUnsupported: true,
         });

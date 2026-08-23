@@ -4,6 +4,7 @@ import hashlib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -399,6 +400,67 @@ def _build_default_enhancement_progress(
     )
 
 
+def _image_loadable_url(url: object) -> str | None:
+    """§10.1 八规则 image URL loadability 判定（snapshot 私有 trust
+    boundary；服务链接安全的 ``is_safe_source_link`` 放行相对/mailto，
+    不能用于图片可加载裁决）。通过时返回原始字符串，不返回 parser
+    重写值；命中任一规则即拒绝（fail-closed 次序）。
+    """
+    if not isinstance(url, str):
+        return None
+    if url != url.strip():  # rule 1: trim 相等
+        return None
+    if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in url):  # rule 2
+        return None
+    if "\\" in url:  # rule 3: 原始反斜杠（%5C 不含 U+005C）
+        return None
+    lowered = url.lower()
+    if not (
+        lowered.startswith("http://") or lowered.startswith("https://")
+    ):  # rule 4: 词法前缀
+        return None
+    try:
+        parsed = urlsplit(url)  # rule 5
+    except ValueError:
+        return None
+    try:
+        # rule 6: 必须显式读 .port；urlsplit 对非数字/越界/负端口不抛错。
+        _ = parsed.port
+    except ValueError:
+        return None
+    if not parsed.hostname:  # rule 7
+        return None
+    if parsed.username or parsed.password:  # rule 8
+        return None
+    return url
+
+
+def _project_image_effective_urls(payload: dict[str, Any]) -> dict[str, Any]:
+    """§7.4 snapshot 投影：standalone image payload 与 owning block
+    ``inline_images`` 数组项各附加 ``effective_url``（loadability 派生）。
+
+    浅层 payload copy + inline item copy：绝不原地修改 Stable payload
+    对象；非图片 payload 无任何派生键。
+    """
+    projected = dict(payload)
+    inline_images = projected.get("inline_images")
+    if isinstance(inline_images, list):
+        projected_inline: list[dict[str, Any]] = []
+        for entry in inline_images:
+            item = dict(entry) if isinstance(entry, dict) else entry
+            if isinstance(item, dict):
+                item["effective_url"] = _image_loadable_url(
+                    item.get("source_url")
+                )
+            projected_inline.append(item)
+        projected["inline_images"] = projected_inline
+    if projected.get("position_kind") == "standalone":
+        projected["effective_url"] = _image_loadable_url(
+            projected.get("source_url")
+        )
+    return projected
+
+
 def _build_plate_value(
     build_result: ReadingBaseBuildResult,
     enhancement_layers: Sequence[ReaderSnapshotLayer],
@@ -489,7 +551,9 @@ def _build_stable_document_tree(
             if start is not None and end is not None
             else None
         )
-        payload = _stable_json_object(raw_block, "payload_json", "payload")
+        payload = _project_image_effective_urls(
+            _stable_json_object(raw_block, "payload_json", "payload")
+        )
         semantic = payload.get("semantic")
         semantic_mapping = semantic if isinstance(semantic, dict) else {}
         semantic_contract_version = semantic_mapping.get("contract_version")

@@ -66,14 +66,16 @@ from tests.test_reader_orchestration_schema_baseline import (
 # source_artifacts 已并入单一基线 0001_initial.sql，直接用 BASELINE_SQL。
 SCHEMA_SQL = BASELINE_SQL
 
-# candidate 触发器：image 是合法 content_check 信号（media truth）。
+# candidate 触发器：footnote 是合法 content_check 信号（结构语义需要人工
+# 确认）。G2a-A（O-1）后图片走 typed representation 直接 freeze，不再
+# 触发 candidate。
 _CANDIDATE_MD = """## Quarterly Review Notes
 
 The committee reviewed the regional pilot results and recorded every
 measured outcome before drafting the summary for the public review
-session scheduled next month in the main hall near the river.
+session scheduled next month in the main hall near the river.[^1]
 
-![Architecture diagram](https://example.com/images/architecture.png)
+[^1]: The archival note keeps the additional context attached.
 
 The closing paragraph explains how the committee weighed the evidence
 and why the combined record supports the final recommendation for all
@@ -84,9 +86,9 @@ _CANDIDATE_MD_EDITED = """## Quarterly Review Notes ( Revised )
 
 The committee reviewed the regional pilot results and recorded every
 measured outcome before drafting the summary for the public review
-session scheduled next month in the main hall near the river.
+session scheduled next month in the main hall near the river.[^1]
 
-![Architecture diagram](https://example.com/images/architecture.png)
+[^1]: The archival note keeps the additional context attached.
 
 The closing paragraph explains how the committee weighed the edited
 evidence and why the combined record supports the revised final
@@ -128,14 +130,17 @@ async def _make_pool(schema_name: str) -> asyncpg.Pool:
 @pytest.fixture
 async def db_env() -> AsyncIterator[asyncpg.Pool]:
     schema_name = f"test_conf_src_{uuid4().hex}"
-    admin_conn = await asyncpg.connect(DATABASE_URL)
+    admin_conn: asyncpg.Connection | None = None
     try:
+        admin_conn = await asyncpg.connect(DATABASE_URL)
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(SCHEMA_SQL)
     except (OSError, asyncpg.PostgresError) as exc:  # pragma: no cover
-        await admin_conn.close()
+        if admin_conn is not None:
+            await admin_conn.close()
         pytest.skip(f"PostgreSQL unavailable for L2 confirmed-source tests: {exc}")
+    assert admin_conn is not None
     pool = await _make_pool(schema_name)
     try:
         yield pool
@@ -681,7 +686,7 @@ async def test_get_confirmed_source_returns_quality_and_classification_split(
     db_env: asyncpg.Pool,
 ) -> None:
     """有 ready candidate 时：quality 超集 + adaptations 按 classification
-    拆分（image → content_check；安全 aside → adaptation_notice）。"""
+    拆分（footnote → content_check；安全 aside → adaptation_notice）。"""
     user_id = await _insert_user(db_env)
     text_with_aside = (
         _CANDIDATE_MD
@@ -706,7 +711,7 @@ async def test_get_confirmed_source_returns_quality_and_classification_split(
     notice_codes = {item["code"] for item in result.adaptation_notice}
     check_codes = {item["code"] for item in result.content_check}
     assert "raw_html_block" in notice_codes
-    assert "image_ocr_uncertain" in check_codes
+    assert "footnote_reference" in check_codes
     assert all(
         item["classification"] == "adaptation_notice"
         for item in result.adaptation_notice

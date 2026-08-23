@@ -34,13 +34,17 @@ import type { DictLookupTypeDto, WebDictResult } from "@/types/api/dict";
 import {
   projectReaderPlateSnapshotToReaderRecordPlateDocument,
   type ReaderRecordPlateBlock,
-  type ReaderRecordPlateParagraphBlock,
   type ReaderRecordPlateTextAnchor,
   type ReaderRecordPlateGrammarMark,
   type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateUserNoteMark,
   type ReaderRecordPlateVocabularyMark,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
+
+type ReaderRecordPlateProjectedParagraphBlock = Extract<
+  ReaderRecordPlateBlock,
+  { type: "paragraph" }
+>;
 import {
   type ReaderRecordSelectionAnchorBridgeResult,
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
@@ -693,6 +697,9 @@ function findDuplicateNoteMark(
       continue;
     }
     for (const leaf of block.children) {
+      if (!("text" in leaf)) {
+        continue;
+      }
       for (const mark of leaf.marks) {
         if (
           mark.kind === "user_note" &&
@@ -781,7 +788,7 @@ const READER_RECORD_COPY_EXCLUDE_SELECTOR =
 
 function normalizedClipboardTextFromElement(element: HTMLElement): string {
   return (element.textContent ?? "")
-    .replace(/\u200B/g, "")
+    .replace(/[\u200B\uFEFF]/g, "")
     .replace(/[ \t\r\f\v]+/g, " ")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
@@ -1394,7 +1401,7 @@ function sourceTextForAnchorSegment(
   anchorSegmentId: string,
 ): string {
   const paragraph = blocks.find(
-    (block): block is ReaderRecordPlateParagraphBlock =>
+    (block): block is ReaderRecordPlateProjectedParagraphBlock =>
       block.type === "paragraph" &&
       block.data.coveredAnchorSegmentIds.includes(anchorSegmentId),
   );
@@ -1404,8 +1411,11 @@ function sourceTextForAnchorSegment(
   }
 
   return paragraph.children
-    .filter((leaf) => leaf.anchorSegmentId === anchorSegmentId)
-    .map((leaf) => leaf.text)
+    .flatMap((leaf) =>
+      "text" in leaf && leaf.anchorSegmentId === anchorSegmentId
+        ? [leaf.text]
+        : [],
+    )
     .join("");
 }
 
@@ -1434,7 +1444,7 @@ function sentenceIdForAnchorSegment(
   anchorSegmentId: string,
 ): string {
   const paragraph = blocks.find(
-    (block): block is ReaderRecordPlateParagraphBlock =>
+    (block): block is ReaderRecordPlateProjectedParagraphBlock =>
       block.type === "paragraph" &&
       block.data.coveredAnchorSegmentIds.includes(anchorSegmentId),
   );
@@ -1562,14 +1572,18 @@ type ReaderLeafSpanAttributes = HTMLAttributes<HTMLSpanElement> & {
 };
 
 function immersiveParagraphBlock(
-  block: ReaderRecordPlateParagraphBlock,
-): ReaderRecordPlateParagraphBlock {
+  block: ReaderRecordPlateProjectedParagraphBlock,
+): ReaderRecordPlateProjectedParagraphBlock {
   return {
     ...block,
-    children: block.children.map((leaf) => ({
-      ...leaf,
-      marks: leaf.marks.filter((mark) => mark.kind !== "grammar_note"),
-    })),
+    children: block.children.map((leaf) =>
+      "text" in leaf
+        ? {
+            ...leaf,
+            marks: leaf.marks.filter((mark) => mark.kind !== "grammar_note"),
+          }
+        : leaf,
+    ),
   };
 }
 

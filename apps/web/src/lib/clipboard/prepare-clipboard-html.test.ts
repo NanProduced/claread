@@ -141,26 +141,63 @@ describe("adaptNotionCallouts", () => {
   });
 });
 
-describe("adaptImages", () => {
-  it("img 降级为可见链接，alt 与 src 不丢失", () => {
+describe("prepareClipboardHtml HTML native image（G1P-B-A）", () => {
+  it("safe IMG 保持原生 <img>：src/alt/title 原样，不再降级为 <a>", () => {
     const out = prepareClipboardHtml(
-      `<p>fig:</p><img src="https://example.com/d.png" alt="diagram">`,
+      `<p>fig:</p><img src="https://example.com/a.png" alt="a" title="T">`,
     );
-    expect(out).not.toContain("<img");
-    expect(out).toContain('href="https://example.com/d.png"');
-    expect(out).toContain(">diagram</a>");
+    expect(out).toContain("<img");
+    expect(out).toContain('src="https://example.com/a.png"');
+    expect(out).toContain('alt="a"');
+    expect(out).toContain('title="T"');
+    expect(out).toContain("<p>fig:</p>");
+    expect(out).not.toContain("<a");
   });
 
-  it("img 无 alt 时用 src 作为可见文本", () => {
+  it("无 alt/title 的 IMG 保持结构节点：不虚构可见文本、不降级", () => {
     const out = prepareClipboardHtml(`<img src="https://example.com/x.png">`);
-    expect(out).toContain(">https://example.com/x.png</a>");
+    expect(out).toContain("<img");
+    expect(out).toContain('src="https://example.com/x.png"');
+    expect(out).not.toContain("<a");
+    expect(out).not.toContain(">https://example.com/x.png<");
   });
 
-  it("危险 src 被 sanitize 摘除后，alt 仍以纯文本保留", () => {
-    const out = prepareClipboardHtml(`<img src="data:image/png;base64,AAAA" alt="kept-alt">`);
-    expect(out).not.toContain("<img");
+  it("危险 src 被 sanitizer 摘除：IMG 保留为无 src 结构节点，不从 alt/title 推断或恢复 src", () => {
+    const out = prepareClipboardHtml(
+      `<img src="data:image/png;base64,AAAA" alt="kept-alt" title="T">`,
+    );
+    expect(out).toContain("<img");
     expect(out).not.toContain("data:image");
-    expect(out).toContain("kept-alt");
+    expect(out).not.toContain("src=");
+    expect(out).toContain('alt="kept-alt"');
+    expect(out).toContain('title="T"');
+    expect(out).not.toContain("<a");
+  });
+
+  it("javascript: src 与 onerror 同样摘除，IMG 节点保留", () => {
+    const out = prepareClipboardHtml(
+      `<img src="javascript:alert(1)" alt="x" onerror="boom()">`,
+    );
+    expect(out).toContain("<img");
+    expect(out).not.toContain("javascript:");
+    expect(out).not.toContain("onerror");
+    expect(out).not.toContain("src=");
+  });
+
+  it("linked image v1：仅包裹图片的 <a> 解包，保留图片本身（移除 image link wrapper 合同）", () => {
+    const out = prepareClipboardHtml(
+      `<a href="https://example.com/page"><img src="https://example.com/a.png" alt="a"></a>`,
+    );
+    expect(out).toContain("<img");
+    expect(out).toContain('src="https://example.com/a.png"');
+    expect(out).toContain('alt="a"');
+    expect(out).not.toContain("<a");
+  });
+
+  it("普通链接（不含 img）行为不变", () => {
+    const out = prepareClipboardHtml(`<a href="https://example.com/ok">ok</a>`);
+    expect(out).toContain('href="https://example.com/ok"');
+    expect(out).toContain(">ok</a>");
   });
 });
 

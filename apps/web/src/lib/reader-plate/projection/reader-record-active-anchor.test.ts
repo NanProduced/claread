@@ -153,6 +153,9 @@ function firstVocabularyMark(
     throw new Error("expected paragraph block");
   }
   const leaf = paragraph.children[0];
+  if (!("text" in leaf)) {
+    throw new Error("expected text leaf");
+  }
   const mark = leaf.marks.find((m) => m.kind !== "grammar_note" && m.kind !== "user_highlight");
   if (!mark) {
     throw new Error("expected vocabulary mark");
@@ -169,6 +172,9 @@ function firstGrammarMark(
     throw new Error("expected paragraph block");
   }
   const leaf = paragraph.children[0];
+  if (!("text" in leaf)) {
+    throw new Error("expected text leaf");
+  }
   const mark = leaf.marks.find((m) => m.kind === "grammar_note");
   if (!mark) {
     throw new Error("expected grammar mark");

@@ -1,9 +1,13 @@
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
 import type {
+  ReaderRecordPlateBlock,
   ReaderRecordPlateDocument,
-  ReaderRecordPlateParagraphBlock,
-  ReaderRecordPlateTextLeaf,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
+
+type ProjectedParagraphBlock = Extract<
+  ReaderRecordPlateBlock,
+  { type: "paragraph" }
+>;
 
 /** L0 = full unit 段落导航；L1 = heading-only 扁平章节导航。 */
 export type ReaderRecordNavigationMode = "L0" | "L1";
@@ -42,13 +46,13 @@ const LABEL_MAX_LENGTH = 48;
 
 function isParagraphBlock(
   block: ReaderRecordPlateDocument["children"][number],
-): block is ReaderRecordPlateParagraphBlock {
+): block is ProjectedParagraphBlock {
   return block.type === "paragraph";
 }
 
-function extractParagraphText(block: ReaderRecordPlateParagraphBlock): string {
+function extractParagraphText(block: ProjectedParagraphBlock): string {
   return block.children
-    .map((leaf: ReaderRecordPlateTextLeaf) => leaf.text)
+    .flatMap((child) => ("text" in child ? [child.text] : []))
     .join("")
     .replace(/\s+/g, " ")
     .trim();
@@ -68,8 +72,8 @@ export function stripHeadingDisplayMarkers(text: string): string {
 
 function buildParagraphsByUnitId(
   plateDocument: ReaderRecordPlateDocument,
-): Map<string, ReaderRecordPlateParagraphBlock[]> {
-  const paragraphsByUnitId = new Map<string, ReaderRecordPlateParagraphBlock[]>();
+): Map<string, ProjectedParagraphBlock[]> {
+  const paragraphsByUnitId = new Map<string, ProjectedParagraphBlock[]>();
   for (const block of plateDocument.children) {
     if (!isParagraphBlock(block)) {
       continue;
@@ -83,7 +87,7 @@ function buildParagraphsByUnitId(
 
 function resolveUnitLabel(
   unit: { unit_id: string; label?: string | null },
-  paragraphsByUnitId: Map<string, ReaderRecordPlateParagraphBlock[]>,
+  paragraphsByUnitId: Map<string, ProjectedParagraphBlock[]>,
   fallbackIndex: number,
   emptyFallbackKind: "段" | "项",
   options?: { stripHeadingMarkers?: boolean },

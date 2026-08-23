@@ -23,6 +23,8 @@ type SnapshotUnitInput = {
   order_index: number;
   label?: string | null;
   unit_type?: ReaderUnitType;
+  heading_level?: number | null;
+  stable_block_type?: string | null;
 };
 
 function makeParagraph(
@@ -104,6 +106,8 @@ function makeSnapshot(
         order_index: u.order_index,
         label: u.label,
         unit_type: u.unit_type ?? "body",
+        heading_level: u.heading_level ?? null,
+        stable_block_type: u.stable_block_type ?? null,
         boundary_quality: "normal" as const,
         base_start_utf16: 0,
         base_end_utf16: 10,
@@ -1374,10 +1378,29 @@ describe("ReaderRecordNavigationRail", () => {
 
     const panel = await openPanel();
     void panel;
+    const d1 = screen.getByTestId("reader-record-outline-node-d1");
+    const d2 = screen.getByTestId("reader-record-outline-node-d2");
     const d3 = screen.getByTestId("reader-record-outline-node-d3");
     expect(d3.getAttribute("data-outline-depth")).toBe("3");
     expect(d3.getAttribute("aria-label")).toBe("三级，Grandchild");
     expect(d3.style.paddingLeft).toBe("32px");
+
+    // Typography tiers are distinct from indent: each depth has its own type tier.
+    expect(
+      d1.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("1");
+    expect(
+      d2.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("2");
+    expect(
+      d3.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("3");
 
     // Only the single depth-1 root produces a tick.
     const ticks = screen
@@ -2321,5 +2344,182 @@ describe("ReaderRecordNavigationRail", () => {
       .getAttribute("aria-label");
     expect(label).toContain("当前第 2 项");
     expect(label).not.toContain("当前第 3 项");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Markdown mini-rail ticks + outline typography
+  // ---------------------------------------------------------------------------
+
+  function markdownHeadingUnits(): SnapshotUnitInput[] {
+    return [
+      {
+        unit_id: "h1",
+        order_index: 1,
+        unit_type: "heading",
+        stable_block_type: "heading",
+        heading_level: 1,
+        label: "Title",
+      },
+      {
+        unit_id: "h2",
+        order_index: 2,
+        unit_type: "heading",
+        stable_block_type: "heading",
+        heading_level: 2,
+        label: "Section",
+      },
+      {
+        unit_id: "h3",
+        order_index: 3,
+        unit_type: "heading",
+        stable_block_type: "heading",
+        heading_level: 3,
+        label: "Nested",
+      },
+    ];
+  }
+
+  function markdownHeadingDoc(): ReaderRecordPlateDocument {
+    return makePlateDocument(
+      markdownHeadingUnits().map((u) =>
+        makeParagraph(u.unit_id, u.label ?? u.unit_id, true),
+      ),
+    );
+  }
+
+  it("renders one visual tick per Markdown heading with distinct depth lengths", async () => {
+    renderTargets(["h1", "h2", "h3"], [80, 240, 420]);
+    render(
+      <ReaderRecordNavigationRail
+        snapshot={makeSnapshot(markdownHeadingUnits())}
+        plateDocument={markdownHeadingDoc()}
+      />,
+    );
+
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    expect(rail.getAttribute("data-outline-source")).toBe("markdown");
+
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    expect(miniRail.getAttribute("aria-hidden")).toBe("true");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-tick-key]");
+    expect(ticks).toHaveLength(3);
+    expect(Array.from(ticks).map((t) => t.getAttribute("data-navigation-tick-key"))).toEqual([
+      "md:h1",
+      "md:h2",
+      "md:h3",
+    ]);
+    expect(ticks[0]?.getAttribute("data-outline-depth")).toBe("1");
+    expect(ticks[1]?.getAttribute("data-outline-depth")).toBe("2");
+    expect(ticks[2]?.getAttribute("data-outline-depth")).toBe("3");
+    expect(
+      ticks[0]?.querySelector("[data-tick-length]")?.getAttribute("data-tick-length"),
+    ).toBe("lg");
+    expect(
+      ticks[1]?.querySelector("[data-tick-length]")?.getAttribute("data-tick-length"),
+    ).toBe("md");
+    expect(
+      ticks[2]?.querySelector("[data-tick-length]")?.getAttribute("data-tick-length"),
+    ).toBe("sm");
+    expect(new Set(
+      Array.from(ticks).map(
+        (t) => t.querySelector("[data-tick-length]")?.getAttribute("data-tick-length"),
+      ),
+    ).size).toBe(3);
+
+    expect(miniRail.querySelectorAll("button")).toHaveLength(0);
+    const tabbableInRail = rail.querySelectorAll('button:not([tabindex="-1"])');
+    expect(tabbableInRail).toHaveLength(1);
+    expect(tabbableInRail[0]).toBe(
+      screen.getByTestId("reader-record-outline-trigger"),
+    );
+
+    const panel = await openPanel();
+    const title = screen.getByTestId("reader-record-outline-node-md:h1");
+    const section = screen.getByTestId("reader-record-outline-node-md:h2");
+    const nested = screen.getByTestId("reader-record-outline-node-md:h3");
+    expect(title.getAttribute("data-outline-role")).toBe("section");
+    expect(section.getAttribute("data-outline-role")).toBe("section");
+    expect(nested.getAttribute("data-outline-role")).toBe("section");
+    expect(
+      title.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("1");
+    expect(
+      section.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("2");
+    expect(
+      nested.querySelector("[data-outline-type-tier]")?.getAttribute(
+        "data-outline-type-tier",
+      ),
+    ).toBe("3");
+    expect(title.style.paddingLeft).toBe("8px");
+    expect(section.style.paddingLeft).toBe("20px");
+    expect(nested.style.paddingLeft).toBe("32px");
+    expect(panel.querySelectorAll("button")).toHaveLength(3);
+  });
+
+  it("highlights the nested Markdown heading tick itself without flattening its length", async () => {
+    renderTargets(["h1", "h2", "h3"], [80, 240, 420]);
+    render(
+      <ReaderRecordNavigationRail
+        snapshot={makeSnapshot(markdownHeadingUnits())}
+        plateDocument={markdownHeadingDoc()}
+      />,
+    );
+
+    await openPanel();
+    fireEvent.click(screen.getByTestId("reader-record-outline-node-md:h3"));
+
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const h1Tick = miniRail.querySelector('[data-navigation-tick-key="md:h1"]');
+    const h3Tick = miniRail.querySelector('[data-navigation-tick-key="md:h3"]');
+    expect(h3Tick?.getAttribute("data-tick-active")).toBe("true");
+    expect(h1Tick?.getAttribute("data-tick-active")).toBeNull();
+    expect(
+      h3Tick?.querySelector("[data-tick-length]")?.getAttribute("data-tick-length"),
+    ).toBe("sm");
+    expect(
+      screen.getByTestId("reader-record-outline-node-md:h3").getAttribute(
+        "aria-current",
+      ),
+    ).toBe("true");
+  });
+
+  it("keeps every heading tick in the DOM for a long Markdown outline", () => {
+    const units: SnapshotUnitInput[] = Array.from({ length: 12 }, (_, i) => ({
+      unit_id: `h${i + 1}`,
+      order_index: i + 1,
+      unit_type: "heading" as const,
+      stable_block_type: "heading",
+      heading_level: (i % 3) + 1,
+      label: `Heading ${i + 1}`,
+    }));
+    renderTargets(units.map((u) => u.unit_id));
+    render(
+      <ReaderRecordNavigationRail
+        snapshot={makeSnapshot(units)}
+        plateDocument={makePlateDocument(
+          units.map((u) => makeParagraph(u.unit_id, u.label ?? u.unit_id, true)),
+        )}
+      />,
+    );
+
+    const rail = screen.getByTestId("reader-record-navigation-rail");
+    expect(rail.getAttribute("data-outline-source")).toBe("markdown");
+    const miniRail = screen.getByTestId("reader-record-mini-rail");
+    const ticks = miniRail.querySelectorAll("span[data-navigation-tick-key]");
+    expect(ticks).toHaveLength(12);
+    expect(Array.from(ticks).map((t) => t.getAttribute("data-navigation-tick-key"))).toEqual(
+      units.map((u) => `md:${u.unit_id}`),
+    );
+    expect(miniRail.getAttribute("aria-hidden")).toBe("true");
+    const tabbableInRail = rail.querySelectorAll('button:not([tabindex="-1"])');
+    expect(tabbableInRail).toHaveLength(1);
+    expect(tabbableInRail[0]).toBe(
+      screen.getByTestId("reader-record-outline-trigger"),
+    );
   });
 });

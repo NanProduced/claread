@@ -1,5 +1,5 @@
 /**
- * Clipboard HTML 清洗与 Notion callout 适配（L1 client presentation sanitization）。
+ * Clipboard HTML 清洗与语义适配（L1 client presentation sanitization）。
  *
  * 粘贴入口安全合同：任何 text/html 在进入 Plate/DOM 之前先经过
  * `prepareClipboardHtml`：
@@ -24,7 +24,15 @@
  *      后端 `semantic_classifier` 通过 `source_semantic_hint:html_aside`
  *      识别为 `content_role: source_callout`（T-only 自动策略）。
  *
- * 两个步骤都是纯字符串 → 字符串变换，可用 jsdom 单测。
+ * 3. linked image 解包（G1P-B-A）：
+ *    - safe `<img>` 保持原生，不再降级为 anchor；由输入端
+ *      `InputMarkdownImagePlugin` 的 HTML deserializer 反序列化为唯一
+ *      typed `img` 节点；
+ *    - 仅包裹图片的 `<a>` 解包（后端 `image_link_wrapper_removed`
+ *      降级合同的输入端对应），保留图片本身；
+ *    - src 被 sanitize 摘除的 IMG 保留为无 src 结构节点，供安全占位使用。
+ *
+ * 三个步骤都是纯字符串 → 字符串变换，可用 jsdom 单测。
  */
 
 const BLOCKED_ELEMENTS = ["script", "iframe", "object", "embed"] as const;
@@ -177,36 +185,47 @@ export function adaptNotionCallouts(html: string): string {
 }
 
 /**
- * 把 `<img>` 降级为可见链接 `<a href="src">alt 或 src</a>`。
- * 输入端不做完整图片编辑支持，但不得静默丢失——图片以可见、可点击的
- * 链接形态进入 Plate。危险 scheme 的 src 已在 sanitize 阶段摘除，
- * 剩下的 http(s)/相对地址原样保留。
+ * 解包“仅包裹图片的 `<a>`”（linked image v1）。
+ *
+ * 与后端 frozen 合同一致（`image_link_wrapper_removed` 降级）：保留图片本身，
+ * 不发明 clickable-image 产品能力，不产生嵌套 link/image AST。仅当 anchor 的
+ * 全部可见内容是 `<img>`（文本仅空白、元素子节点全部为 IMG）时解包；含文本或
+ * 其他元素的普通链接不动。危险 scheme 的 href 已在 sanitize 阶段摘除，
+ * 此处不重新引入任何 URL。
  */
-export function adaptImages(html: string): string {
+function unwrapImageOnlyLinks(root: ParentNode): void {
+  for (const anchor of Array.from(root.querySelectorAll("a"))) {
+    if ((anchor.textContent ?? "").trim() !== "") {
+      continue;
+    }
+    const childElements = Array.from(anchor.querySelectorAll("*"));
+    if (
+      childElements.length === 0 ||
+      !childElements.every((el) => el.tagName === "IMG")
+    ) {
+      continue;
+    }
+    anchor.replaceWith(...Array.from(anchor.childNodes));
+  }
+}
+
+/**
+ * 把 linked image 解包应用到清洗后的 HTML 字符串。
+ */
+function unwrapImageLinks(html: string): string {
   if (!html || !html.trim()) {
     return "";
   }
   const template = parseIntoTemplate(html);
-  for (const img of Array.from(template.content.querySelectorAll("img"))) {
-    const src = img.getAttribute("src");
-    const alt = img.getAttribute("alt") ?? "";
-    if (!src) {
-      // 无 src 图片（或 src 已被 sanitize 摘除）：保留 alt 为纯文本，不消失
-      img.replaceWith(document.createTextNode(alt));
-      continue;
-    }
-    const anchor = document.createElement("a");
-    anchor.setAttribute("href", src);
-    anchor.textContent = alt || src;
-    img.replaceWith(anchor);
-  }
+  unwrapImageOnlyLinks(template.content);
   return template.innerHTML;
 }
 
 /**
- * 粘贴 HTML 预处理总入口：先 sanitize，再做语义适配
- * （Notion callout → blockquote；img → 可见链接）。
+ * 粘贴 HTML 预处理总入口：先 sanitize，再做语义适配（Notion callout → aside；
+ * linked image 解包）。safe `<img>` 保持原生，由 InputMarkdownImagePlugin 的
+ * HTML deserializer 直接反序列化为唯一 typed `img` 节点（G1P-B-A）。
  */
 export function prepareClipboardHtml(html: string): string {
-  return adaptImages(adaptNotionCallouts(sanitizeClipboardHtml(html)));
+  return unwrapImageLinks(adaptNotionCallouts(sanitizeClipboardHtml(html)));
 }

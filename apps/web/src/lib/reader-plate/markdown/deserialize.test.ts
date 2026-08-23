@@ -6,24 +6,107 @@ import {
   deserializeMarkdownInline,
 } from "./deserialize";
 
+/** 收集树中所有 type 匹配的节点（深度优先，保持文档序）。 */
+function collectNodesOfType(
+  nodes: unknown,
+  type: string,
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  const walk = (ns: unknown) => {
+    if (!Array.isArray(ns)) return;
+    for (const n of ns as Record<string, unknown>[]) {
+      if (n && typeof n === "object" && n.type === type) out.push(n);
+      if (n && typeof n === "object" && Array.isArray(n.children)) {
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
 describe("deserializeMarkdownToBlocksWithStatus preserveUnsupported", () => {
   const IMAGE_MD =
     "Before paragraph.\n\n![A shaded avenue](avenue.jpg)\n\nAfter paragraph.";
 
-  it("preserveUnsupported: image 降级为可见 link，不静默丢失", () => {
+  it("preserveUnsupported: image 保持 typed img 节点（唯一），url 与 alt 完整", () => {
     const result = deserializeMarkdownToBlocksWithStatus(IMAGE_MD, {
       preserveUnsupported: true,
     });
     expect(result.status).toBe("success");
-    const json = JSON.stringify(result.blocks);
-    expect(json).toContain("A shaded avenue");
-    expect(json).toContain("avenue.jpg");
+    const imgs = collectNodesOfType(result.blocks, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      url: "avenue.jpg",
+      caption: [{ text: "A shaded avenue" }],
+    });
+    // 不存在代表该图片的 generic link 节点（降级合同已删除）
+    const links = collectNodesOfType(result.blocks, "a");
+    expect(links).toHaveLength(0);
   });
 
-  it("默认路径（projection）保持原行为，不追加输入端降级", () => {
+  it("preserveUnsupported: title 完整保留在 img 节点上", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(
+      '![a](https://example.com/u.png "The Title")',
+      { preserveUnsupported: true },
+    );
+    const imgs = collectNodesOfType(result.blocks, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({
+      url: "https://example.com/u.png",
+      title: "The Title",
+      caption: [{ text: "a" }],
+    });
+  });
+
+  it("preserveUnsupported: empty alt 保留为空，不回退 URL 文本", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(
+      "![](https://example.com/a.png)",
+      { preserveUnsupported: true },
+    );
+    const imgs = collectNodesOfType(result.blocks, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].caption).toEqual([{ text: "" }]);
+  });
+
+  it("preserveUnsupported: inline 图片保持在段落内，不拆成独立段落", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(
+      "before ![a](u1) middle ![b](u2) after",
+      { preserveUnsupported: true },
+    );
+    expect(result.blocks).toHaveLength(1);
+    const paragraph = result.blocks[0] as {
+      type: string;
+      children: Array<{ type?: string }>;
+    };
+    expect(paragraph.type).toBe("p");
+    // inline 位置与源序精确断言：text/img/text/img/text，不引入额外空段
+    const childTypes = paragraph.children.map((c) => c.type ?? "text");
+    expect(childTypes).toEqual(["text", "img", "text", "img", "text"]);
+    const imgs = paragraph.children.filter((c) => c.type === "img");
+    expect(
+      (imgs[0] as { url?: string }).url,
+    ).toBe("u1");
+    expect(
+      (imgs[1] as { url?: string }).url,
+    ).toBe("u2");
+  });
+
+  it("preserveUnsupported: wrapped image（strong）产生 typed img，不丢图", () => {
+    const result = deserializeMarkdownToBlocksWithStatus(
+      "**![a](https://example.com/u.png)**",
+      { preserveUnsupported: true },
+    );
+    const imgs = collectNodesOfType(result.blocks, "img");
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatchObject({ url: "https://example.com/u.png" });
+  });
+
+  it("默认路径（projection）保持原行为：不产生 img 节点也不追加输入端降级", () => {
     const result = deserializeMarkdownToBlocksWithStatus(IMAGE_MD);
     expect(result.status).toBe("success");
     expect(JSON.stringify(result.blocks)).not.toContain("avenue.jpg");
+    expect(collectNodesOfType(result.blocks, "img")).toHaveLength(0);
   });
 });
 
@@ -276,6 +359,10 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
             },
           },
         }),
+        // deserialize.ts 经 input-markdown-image-kit 引入的运行时绑定
+        // （模块顶层 createPlatePlugin 调用）；degraded 路径不触达组件。
+        createPlatePlugin: () => ({ key: "img" }),
+        useEditorRef: () => ({}),
       }));
 
       const { deserializeMarkdownToBlocksWithStatus: degradedDeserialize } =
@@ -314,6 +401,9 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
           },
         },
       }),
+      // 同上：input-markdown-image-kit 的模块顶层运行时绑定。
+      createPlatePlugin: () => ({ key: "img" }),
+      useEditorRef: () => ({}),
     }));
 
     const { deserializeMarkdownToBlocksWithStatus: degradedDeserialize } =

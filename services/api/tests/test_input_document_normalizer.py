@@ -288,10 +288,9 @@ Readers cite **important evidence**, add *context*, reference `key terms`, and k
             f"{_english_paragraph()}\n\n| City | Cost |\n| --- | --- |\n| A | 10 | 99 |",
             "table_structure_uncertain",
         ),
-        (
-            f"{_english_paragraph()}\n\n![Map](https://example.com/map.png)",
-            "image_ocr_uncertain",
-        ),
+        # G2a-A（O-1）: 图片存在不再触发 candidate —— 含图输入在正文
+        # 合格时走 stable 路径（见 test_markdown_image_representation.py），
+        # 此处只保留其余真实 content_check 触发源。
         (
             f"{_english_paragraph()}\n\nA note remains attached to the source.[^1]\n\n[^1]: Footnote body.",
             "footnote_or_caption_merged",

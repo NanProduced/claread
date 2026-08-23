@@ -82,6 +82,7 @@ KEEP_WIRE_TOKENS = (
     "d5-v3-vocabulary-worker",
     "d5-v6-grammar-worker",
     "d6_i3b_structured_source_v1",
+    "d6_i3b_structured_source_v2",
     "full_snapshot_until_pux_r4",
     "r4-a3-dataset-v1",
     "r4-a4-2r2",

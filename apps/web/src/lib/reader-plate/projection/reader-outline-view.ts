@@ -86,7 +86,11 @@ export interface ReaderOutlineViewModel {
   identity: OutlineSourceIdentity;
   /** Preorder depth 1–3 rows for the expanded panel. */
   panelItems: OutlineItem[];
-  /** depth===1 roots only (mini-rail ticks). */
+  /**
+   * Mini-rail ticks.
+   * Semantic: depth-1 sections, or a single root's direct children.
+   * Markdown: every `role="section"` heading, in panel order.
+   */
   tickItems: OutlineItem[];
   /** Reading-order unit ids (for scroll-spy current-unit resolution). */
   orderedUnitIds: string[];
@@ -430,7 +434,7 @@ export function projectMarkdownOutlineView(
     }
   }
 
-  const tickItems = selectOutlineTickItems(panelItems);
+  const tickItems = panelItems.filter((item) => item.role === "section");
 
   return {
     available: true,

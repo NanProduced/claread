@@ -62,7 +62,6 @@ _MATHLIKE_CONTENT_PATTERN = re.compile(
     r"|[a-zA-Z]\s*[+\-*/=<>]\s*\d"  # 字母-运算符-数字（x+3 / E=mc2 的 c2 除外）
     r"|\d\s*[+\-*/=<>]\s*[a-zA-Z]"  # 数字-运算符-字母（2x）
 )
-_MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _SUSPICIOUS_OCR_CHAR_PATTERN = re.compile(r"[�¦§¤]|[|]{2,}|[_]{3,}|[\\/]{3,}")
 _HYPHENATED_LINE_BREAK_PATTERN = re.compile(r"[A-Za-z]-\n[A-Za-z]")
 
@@ -108,7 +107,6 @@ class _MarkdownComplexity:
     has_complex_structure: bool
     has_table: bool
     has_table_structure_uncertain: bool
-    has_image: bool
     has_footnote: bool
     has_raw_html: bool
     has_math: bool
@@ -236,12 +234,6 @@ class InputSuitabilityGate:
             candidate_reasons.append(
                 "Markdown table structure is uncertain; deterministic "
                 "normalization would drop or pad cells."
-            )
-        if markdown.has_image:
-            _add_flag(flags, "markdown_complex_structure")
-            _add_flag(flags, "image_ocr_uncertain")
-            candidate_reasons.append(
-                "Markdown image blocks require candidate review so media truth is not lost."
             )
         if markdown.has_footnote:
             _add_flag(flags, "markdown_complex_structure")
@@ -389,7 +381,7 @@ def _build_adaptations(
     """Assemble the L1 three-level adaptation records.
 
     Parser warnings keep their authoritative classification. Gate-only
-    detections (image / math / OCR / code dominance / length / source-type
+    detections (math / OCR / code dominance / length / source-type
     defaults) are always content_check because they require human review.
     """
     adaptations: list[AdaptationRecord] = []
@@ -410,12 +402,6 @@ def _build_adaptations(
     for warning in parse_result.warnings:
         _add(warning.code, warning.message, warning.classification)
 
-    if markdown.has_image:
-        _add(
-            "image_ocr_uncertain",
-            "Markdown image blocks require candidate review so media truth is not lost.",
-            "content_check",
-        )
     if markdown.has_math:
         _add(
             "document_block_degraded",
@@ -547,15 +533,15 @@ def _detect_markdown_complexity(
     )
     # Derive structural flags from the parser adapter instead of raw-text
     # regex. The parser is the single source of truth for block structure
-    # (tables, footnotes, raw HTML, unclosed fences); image and math are
-    # inline features the parser flattens without flagging, so they stay
-    # on lightweight regex probes.
+    # (tables, footnotes, raw HTML, unclosed fences); math stays on a
+    # lightweight regex probe. Images are typed representation since
+    # G2a-A and never count as structure risk（O-1：图片存在不路由
+    # candidate，纯图/零正文仍由正文资格规则拒绝）.
     block_types = {block.block_type for block in parse_result.blocks}
     warning_codes = {warning.code for warning in parse_result.warnings}
 
     has_table = "table" in block_types
     has_table_structure_uncertain = "table_structure_uncertain" in warning_codes
-    has_image = bool(_MARKDOWN_IMAGE_PATTERN.search(text))
     has_footnote = (
         "footnote_reference" in warning_codes
         or "footnote" in block_types
@@ -576,7 +562,6 @@ def _detect_markdown_complexity(
     has_complex_structure = any(
         (
             has_table_structure_uncertain,
-            has_image,
             has_footnote,
             has_raw_html,
             has_math,
@@ -587,7 +572,6 @@ def _detect_markdown_complexity(
         has_complex_structure=has_complex_structure,
         has_table=has_table,
         has_table_structure_uncertain=has_table_structure_uncertain,
-        has_image=has_image,
         has_footnote=has_footnote,
         has_raw_html=has_raw_html,
         has_math=has_math,

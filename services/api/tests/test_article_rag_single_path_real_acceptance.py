@@ -246,6 +246,19 @@ class _CountingEmbeddingProvider:
             texts, model=model
         )
 
+    async def embed_texts_with_usage(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+    ) -> Any:
+        # OBS-01B-C: the index worker now calls the typed surface, so the
+        # counting delegate must measure (and delegate) it explicitly.
+        self.call_count += 1
+        return await self._real.embed_texts_with_usage(  # type: ignore[attr-defined]
+            texts, model=model
+        )
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._real, name)
 

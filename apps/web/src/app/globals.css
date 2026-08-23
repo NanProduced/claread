@@ -2410,22 +2410,65 @@ select {
 }
 
 .reader-record-plate-markdown-heading {
-  margin-block: 0.65rem 0.25rem;
   font-weight: 650;
   line-height: 1.32;
   text-wrap: balance;
 }
 
-.reader-record-plate-markdown-heading--h1,
+.reader-record-plate-markdown-heading--h1 {
+  margin-block: 1.28em 0.36em;
+  font-size: calc(var(--reader-record-source-size, 1.07rem) * 1.32);
+  font-weight: 680;
+}
+
 .reader-record-plate-markdown-heading--h2 {
-  font-size: var(--reader-record-note-title-size);
+  margin-block: 1.05em 0.3em;
+  font-size: calc(var(--reader-record-source-size, 1.07rem) * 1.14);
+  font-weight: 640;
 }
 
 .reader-record-plate-markdown-heading--h3,
 .reader-record-plate-markdown-heading--h4,
 .reader-record-plate-markdown-heading--h5,
 .reader-record-plate-markdown-heading--h6 {
-  font-size: calc(var(--reader-record-note-body-size) * 1.02);
+  margin-block: 0.82em 0.24em;
+  font-size: calc(var(--reader-record-source-size, 1.07rem) * 1.02);
+  font-weight: 600;
+}
+
+.reader-record-mini-rail-tick[data-tick-length="lg"] {
+  width: 1.25rem;
+}
+
+.reader-record-mini-rail-tick[data-tick-length="md"] {
+  width: 0.85rem;
+}
+
+.reader-record-mini-rail-tick[data-tick-length="sm"] {
+  width: 0.45rem;
+}
+
+.reader-record-outline-row-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+
+.reader-record-outline-row-title[data-outline-type-tier="1"] {
+  font-size: 0.8125rem;
+  font-weight: 620;
+}
+
+.reader-record-outline-row-title[data-outline-type-tier="2"] {
+  font-size: 0.75rem;
+  font-weight: 550;
+}
+
+.reader-record-outline-row-title[data-outline-type-tier="3"] {
+  font-size: 0.6875rem;
+  font-weight: 500;
 }
 
 .reader-record-plate-markdown-blockquote {

@@ -74,30 +74,56 @@ export interface ReaderRecordPlateDocument {
   children: ReaderRecordPlateBlock[];
 }
 
+export interface ReaderRecordPlateImageData {
+  sourceUrl: string;
+  effectiveUrl: string | null;
+  altText: string;
+  title: string | null;
+  positionKind: "standalone" | "inline";
+  stableBlockId: string;
+  parentStableBlockId: string | null;
+  inlineOrdinal?: number;
+  beforeUtf16?: number;
+}
+
+export interface ReaderRecordPlateImageBlock {
+  type: "image";
+  id: string;
+  children: [{ text: "" }];
+  data: ReaderRecordPlateImageData;
+}
+
+export type ReaderRecordPlateInlineNode =
+  | ReaderRecordPlateTextLeaf
+  | ReaderRecordPlateImageBlock;
+
 export type ReaderRecordPlateBlock =
-  | ReaderRecordPlateParagraphBlock
+  | ReaderRecordPlateParagraphBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateBlockquoteBlock
   | ReaderRecordPlateCalloutBlock
   | ReaderRecordPlateSentenceAnalysisBlock
   // Markdown stable-block-derived types. Only emitted when backend
   // `reader_source_block` carries `stableBlockType` metadata; legacy
   // snapshots without `StableBlockAnnotation` fall through to paragraph.
-  | ReaderRecordPlateHeadingBlock
+  | ReaderRecordPlateHeadingBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateListBlock
-  | ReaderRecordPlateListItemBlock
+  | ReaderRecordPlateListItemBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateCodeBlockBlock
-  | ReaderRecordPlateMarkdownBlockquoteBlock
+  | ReaderRecordPlateMarkdownBlockquoteBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateTableBlock
   | ReaderRecordPlateTableRowBlock
-  | ReaderRecordPlateTableCellBlock
+  | ReaderRecordPlateTableCellBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateHrBlock
-  | ReaderRecordPlateSourceCalloutBlock;
+  | ReaderRecordPlateSourceCalloutBlock
+  | ReaderRecordPlateImageBlock;
 
 /** 原文段落块 — 一个 source span 对应一个 paragraph */
-export interface ReaderRecordPlateParagraphBlock {
+export interface ReaderRecordPlateParagraphBlock<
+  TChild = ReaderRecordPlateTextLeaf,
+> {
   type: "paragraph";
   id: string;
-  children: ReaderRecordPlateTextLeaf[];
+  children: TChild[];
   data: ReaderRecordPlateParagraphData;
 }
 
@@ -225,12 +251,12 @@ export interface ReaderRecordPlateSentenceAnalysisChunk
  * Markdown block types.
  */
 export interface ReaderRecordPlateStableBlockData {
-  unitId: string;
-  baseId: string;
-  baseRange: ReaderRecordPlateRange;
+  unitId: string | null;
+  baseId?: string;
+  baseRange?: ReaderRecordPlateRange;
   /** Primary anchor segment hash when this block covers anchor segments. */
-  textHash: string;
-  hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
+  textHash?: string;
+  hashAlgorithm?: ReaderUnitNodeDto["hash_algorithm"];
   /** Backend stable block type string (`heading`/`list`/`list_item`/`code_block`/...). */
   stableBlockType: string;
   /** Diagnostic stable block id from backend (not a render contract). */
@@ -249,15 +275,19 @@ export interface ReaderRecordPlateStableBlockData {
   isUnitStart?: boolean;
   /** Optional display-only emoji read from the Stable wrapper payload. */
   calloutIcon?: string | null;
+  /** Presentation-only list item used to keep promoted images inside valid list markup. */
+  presentationOnly?: boolean;
 }
 
 /** Markdown 标题块 — `stableBlockType === "heading"` */
-export interface ReaderRecordPlateHeadingBlock {
+export interface ReaderRecordPlateHeadingBlock<
+  TChild = ReaderRecordPlateTextLeaf,
+> {
   type: "heading";
   id: string;
   /** 1-based heading level (clamped to 1-6). */
   level: 1 | 2 | 3 | 4 | 5 | 6;
-  children: ReaderRecordPlateTextLeaf[];
+  children: TChild[];
   data: ReaderRecordPlateStableBlockData;
 }
 
@@ -267,15 +297,20 @@ export interface ReaderRecordPlateListBlock {
   id: string;
   /** True for ordered lists (`1.` / `2.`), false for bullet lists (`-` / `*` / `+`). */
   ordered: boolean;
-  children: ReaderRecordPlateListItemBlock[];
+  children: Array<
+    | ReaderRecordPlateListItemBlock<ReaderRecordPlateInlineNode>
+    | ReaderRecordPlateImageBlock
+  >;
   data: ReaderRecordPlateStableBlockData;
 }
 
 /** Markdown 列表项块 — `stableBlockType === "list_item"` */
-export interface ReaderRecordPlateListItemBlock {
+export interface ReaderRecordPlateListItemBlock<
+  TChild = ReaderRecordPlateTextLeaf,
+> {
   type: "list_item";
   id: string;
-  children: ReaderRecordPlateTextLeaf[];
+  children: TChild[];
   /** Nested lists are owned by the Stable Document tree, not inferred from adjacency. */
   nestedChildren?: ReaderRecordPlateListBlock[];
   data: ReaderRecordPlateStableBlockData;
@@ -300,10 +335,12 @@ export interface ReaderRecordPlateCodeBlockBlock {
  * element key is `blockquote` (shared with Markdown plugin), but the data
  * shape differs.
  */
-export interface ReaderRecordPlateMarkdownBlockquoteBlock {
+export interface ReaderRecordPlateMarkdownBlockquoteBlock<
+  TChild = ReaderRecordPlateTextLeaf,
+> {
   type: "markdown_blockquote";
   id: string;
-  children: ReaderRecordPlateTextLeaf[];
+  children: TChild[];
   data: ReaderRecordPlateStableBlockData;
 }
 
@@ -346,7 +383,7 @@ export interface ReaderRecordPlateTableBlock {
 export interface ReaderRecordPlateTableRowBlock {
   type: "table_row";
   id: string;
-  children: ReaderRecordPlateTableCellBlock[];
+  children: Array<ReaderRecordPlateTableCellBlock<ReaderRecordPlateInlineNode>>;
   data: ReaderRecordPlateStableBlockData & {
     isHeader?: boolean;
     rowIndex?: number;
@@ -354,10 +391,12 @@ export interface ReaderRecordPlateTableRowBlock {
 }
 
 /** Markdown 表格单元格块 — `stableBlockType === "table_cell"` */
-export interface ReaderRecordPlateTableCellBlock {
+export interface ReaderRecordPlateTableCellBlock<
+  TChild = ReaderRecordPlateTextLeaf,
+> {
   type: "table_cell";
   id: string;
-  children: ReaderRecordPlateTextLeaf[];
+  children: TChild[];
   data: ReaderRecordPlateStableBlockData & {
     columnIndex?: number;
     alignment?: "default" | "left" | "center" | "right";
@@ -2447,6 +2486,13 @@ function projectStableDocumentTree(
     }
   >();
   const quoteByLeafId = new Map<string, ReaderStableDocumentBlockNodeDto>();
+  const orderById = new Map<string, number>();
+
+  const indexOrder = (node: ReaderStableDocumentBlockNodeDto): void => {
+    orderById.set(node.block_id, node.order_index);
+    node.children.forEach(indexOrder);
+  };
+  nodes.forEach(indexOrder);
 
   const collectDescendantIds = (
     node: ReaderStableDocumentBlockNodeDto,
@@ -2519,14 +2565,42 @@ function projectStableDocumentTree(
     return spans;
   };
 
+  const stableNodeData = (
+    node: ReaderStableDocumentBlockNodeDto,
+    stableBlockType = node.block_type,
+  ): ReaderRecordPlateStableBlockData => ({
+    unitId: null,
+    stableBlockType,
+    stableBlockId: node.block_id,
+    parentStableBlockId: node.parent_block_id,
+    coveredAnchorSegmentIds: node.anchor_segment_ids,
+  });
   const composedListIds = new Set<string>();
+  const composedTableIds = new Set<string>();
+  const composedImageIds = new Set<string>();
+  const composedSourceCalloutIds = new Set<string>();
+
+  const composeImage = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateImageBlock | null => {
+    if (composedImageIds.has(node.block_id)) return null;
+    composedImageIds.add(node.block_id);
+    return makeStandaloneImageBlock(node);
+  };
 
   const composeList = (
     listNode: ReaderStableDocumentBlockNodeDto,
   ): ReaderRecordPlateListBlock | null => {
     if (composedListIds.has(listNode.block_id)) return null;
-    const items: ReaderRecordPlateListItemBlock[] = [];
+    const listChildren: Array<
+      ReaderRecordPlateListItemBlock | ReaderRecordPlateImageBlock
+    > = [];
     for (const child of listNode.children) {
+      if (child.block_type === "image") {
+        const image = composeImage(child);
+        if (image) listChildren.push(image);
+        continue;
+      }
       if (child.block_type !== "list_item") continue;
       const spans = takeSpans(child.block_id).filter(isListItemBlock);
       if (spans.length === 0) continue;
@@ -2548,20 +2622,20 @@ function projectStableDocumentTree(
         .filter((grandchild) => grandchild.block_type === "list")
         .map(composeList)
         .filter((list): list is ReaderRecordPlateListBlock => list !== null);
-      items.push(
+      listChildren.push(
         nestedChildren.length > 0 ? { ...merged, nestedChildren } : merged,
       );
     }
-    if (items.length === 0) return null;
+    if (listChildren.length === 0) return null;
     composedListIds.add(listNode.block_id);
-    const firstData = items[0].data;
+    const firstItem = listChildren.find(isListItemBlock);
     return {
       type: "list",
       id: `list:${listNode.block_id}`,
       ordered: listNode.payload["ordered"] === true,
-      children: items,
+      children: listChildren,
       data: {
-        ...firstData,
+        ...(firstItem?.data ?? stableNodeData(listNode, "list")),
         stableBlockType: "list",
         stableBlockId: listNode.block_id,
         parentStableBlockId: listNode.parent_block_id,
@@ -2572,18 +2646,69 @@ function projectStableDocumentTree(
   const composeTable = (
     tableNode: ReaderStableDocumentBlockNodeDto,
   ): ReaderRecordPlateTableBlock | null => {
+    if (composedTableIds.has(tableNode.block_id)) return null;
     const rows: ReaderRecordPlateTableRowBlock[] = [];
     for (const rowNode of tableNode.children.filter(
       (child) => child.block_type === "table_row",
     )) {
-      const cells = rowNode.children
-        .filter((child) => child.block_type === "table_cell")
-        .flatMap((cellNode) => takeSpans(cellNode.block_id))
-        .filter(isTableCellBlock)
-        .map((cell, columnIndex) => ({
-          ...cell,
-          data: { ...cell.data, columnIndex },
-        }));
+      const cells: Array<
+        ReaderRecordPlateTableCellBlock<ReaderRecordPlateInlineNode>
+      > = [];
+      for (const cellNode of rowNode.children.filter(
+        (child) => child.block_type === "table_cell",
+      )) {
+        const spans = takeSpans(cellNode.block_id).filter(isTableCellBlock);
+        const payload = cellNode.payload;
+        const alignment =
+          payload["alignment"] === "left" ||
+          payload["alignment"] === "center" ||
+          payload["alignment"] === "right" ||
+          payload["alignment"] === "default"
+            ? payload["alignment"]
+            : undefined;
+        const isHeader =
+          typeof payload["is_header"] === "boolean"
+            ? payload["is_header"]
+            : undefined;
+        if (spans.length > 0) {
+          const first = spans[0];
+          const merged: ReaderRecordPlateTableCellBlock =
+            spans.length === 1
+              ? first
+              : {
+                  ...first,
+                  children: spans.flatMap((cell) => cell.children),
+                  data: {
+                    ...first.data,
+                    coveredAnchorSegmentIds: spans.flatMap(
+                      (cell) => cell.data.coveredAnchorSegmentIds,
+                    ),
+                  },
+                };
+          cells.push({
+            ...merged,
+            data: {
+              ...merged.data,
+              columnIndex: cells.length,
+              alignment: alignment ?? merged.data.alignment,
+              isHeader: isHeader ?? merged.data.isHeader,
+            },
+          });
+          continue;
+        }
+
+        cells.push({
+          type: "table_cell",
+          id: `table_cell:${cellNode.block_id}`,
+          children: [],
+          data: {
+            ...stableNodeData(cellNode, "table_cell"),
+            columnIndex: cells.length,
+            alignment: alignment ?? "default",
+            isHeader: isHeader ?? false,
+          },
+        });
+      }
       if (cells.length === 0) continue;
       const firstCellData = cells[0].data;
       rows.push({
@@ -2595,12 +2720,19 @@ function projectStableDocumentTree(
           stableBlockType: "table_row",
           stableBlockId: rowNode.block_id,
           parentStableBlockId: tableNode.block_id,
-          isHeader: cells.every((cell) => cell.data.isHeader === true),
-          rowIndex: rows.length,
+          isHeader:
+            typeof rowNode.payload["is_header"] === "boolean"
+              ? rowNode.payload["is_header"]
+              : cells.every((cell) => cell.data.isHeader === true),
+          rowIndex:
+            typeof rowNode.payload["row_index"] === "number"
+              ? rowNode.payload["row_index"]
+              : rows.length,
         },
       });
     }
     if (rows.length === 0) return null;
+    composedTableIds.add(tableNode.block_id);
 
     const firstRow = rows[0];
     const payload = tableNode.payload;
@@ -2636,6 +2768,8 @@ function projectStableDocumentTree(
   const composeSourceCallout = (
     quoteNode: ReaderStableDocumentBlockNodeDto,
   ): ReaderRecordPlateBlock[] => {
+    if (composedSourceCalloutIds.has(quoteNode.block_id)) return [];
+    composedSourceCalloutIds.add(quoteNode.block_id);
     const childBlocks = quoteNode.children.flatMap(composeNodeContent);
     if (childBlocks.length === 0) {
       // The callout itself is one leaf unit (no structured children).
@@ -2672,6 +2806,10 @@ function projectStableDocumentTree(
   function composeNodeContent(
     node: ReaderStableDocumentBlockNodeDto,
   ): ReaderRecordPlateBlock[] {
+    if (node.block_type === "image") {
+      const image = composeImage(node);
+      return image ? [image] : [];
+    }
     if (node.block_type === "list") {
       const list = composeList(node);
       return list ? [list] : [];
@@ -2830,7 +2968,8 @@ function projectStableDocumentTree(
     index += 1;
   }
 
-  return result;
+  const remainingRootBlocks = nodes.flatMap(composeNodeContent);
+  return mergeRootBlocks(result, remainingRootBlocks, orderById);
 }
 
 function getStableBlockId(block: ReaderRecordPlateBlock): string | null {
@@ -2864,6 +3003,347 @@ function isTableCellBlock(
   return block.type === "table_cell";
 }
 
+function isTextLeaf(node: unknown): node is ReaderRecordPlateTextLeaf {
+  return (
+    !!node &&
+    typeof (node as { text?: unknown }).text === "string" &&
+    (node as { type?: unknown }).type !== "image"
+  );
+}
+
+function makeStandaloneImageBlock(
+  node: ReaderStableDocumentBlockNodeDto,
+): ReaderRecordPlateImageBlock {
+  const p = node.payload as Record<string, unknown>;
+  const sourceUrl = typeof p.source_url === "string" ? (p.source_url as string) : "";
+  const effectiveRaw = p.effective_url;
+  const effectiveUrl =
+    typeof effectiveRaw === "string" ? (effectiveRaw as string) : effectiveRaw === null ? null : null;
+  const altText = typeof p.alt_text === "string" ? (p.alt_text as string) : "";
+  const titleRaw = p.title;
+  const title = typeof titleRaw === "string" ? (titleRaw as string) : titleRaw === null ? null : null;
+  return {
+    type: "image",
+    id: `image:${node.block_id}`,
+    children: [{ text: "" }],
+    data: {
+      sourceUrl,
+      effectiveUrl: effectiveUrl as string | null,
+      altText,
+      title,
+      positionKind: "standalone",
+      stableBlockId: node.block_id,
+      parentStableBlockId: node.parent_block_id,
+    },
+  };
+}
+
+function makeInlineImageBlock(
+  entry: Record<string, unknown>,
+  owningId: string,
+  parentStableBlockId: string | null,
+  ordinal: number,
+): ReaderRecordPlateImageBlock | null {
+  const sourceUrl = entry.source_url;
+  const altText = entry.alt_text;
+  const before = entry.before_utf16;
+  if (typeof sourceUrl !== "string") return null;
+  if (typeof altText !== "string") return null;
+  // title may be string|null
+  const titleRaw = entry.title;
+  const title = typeof titleRaw === "string" ? titleRaw : titleRaw === null ? null : null;
+  const effectiveRaw = entry.effective_url;
+  const effectiveUrl = typeof effectiveRaw === "string" ? effectiveRaw : effectiveRaw === null ? null : null;
+  // before is validated outside (integer and bounds), but also guard here
+  if (typeof before !== "number" || !Number.isInteger(before)) return null;
+  return {
+    type: "image",
+    id: `image:${owningId}:${ordinal}`,
+    children: [{ text: "" }],
+    data: {
+      sourceUrl,
+      effectiveUrl: effectiveUrl as string | null,
+      altText,
+      title,
+      positionKind: "inline",
+      stableBlockId: owningId,
+      parentStableBlockId,
+      inlineOrdinal: ordinal,
+      beforeUtf16: before as number,
+    },
+  };
+}
+
+function sliceLeafForImage(
+  leaf: ReaderRecordPlateTextLeaf,
+  newText: string,
+  localStart: number,
+  localEnd: number,
+): ReaderRecordPlateTextLeaf {
+  const oldSegStart = leaf.segmentRange?.startUtf16 ?? 0;
+  const oldBaseStart = leaf.baseRange.startUtf16;
+  const newSegStart = oldSegStart + localStart;
+  const newSegEnd = oldSegStart + localEnd;
+  const newSegRange = leaf.segmentRange
+    ? { startUtf16: newSegStart, endUtf16: newSegEnd }
+    : undefined;
+  const newBaseRange = {
+    startUtf16: oldBaseStart + localStart,
+    endUtf16: oldBaseStart + localEnd,
+  };
+  return {
+    ...leaf,
+    text: newText,
+    baseRange: newBaseRange,
+    segmentRange: newSegRange,
+    marks: leaf.marks.map((m) => ({
+      ...m,
+      startsHere: m.anchor.segmentStartOffset === newSegStart,
+      endsHere: m.anchor.segmentEndOffset === newSegEnd,
+    })),
+  };
+}
+
+function splitLeavesAtOffsets(
+  leaves: ReaderRecordPlateTextLeaf[],
+  offsets: number[],
+): ReaderRecordPlateTextLeaf[] {
+  const uniq = [...new Set(offsets)].sort((a, b) => a - b);
+  if (uniq.length === 0) return leaves;
+  const out: ReaderRecordPlateTextLeaf[] = [];
+  let cum = 0;
+  for (const leaf of leaves) {
+    const len = leaf.text.length;
+    const start = cum;
+    const end = cum + len;
+    const inner = uniq.filter((o) => o > start && o < end).sort((a, b) => a - b);
+    if (inner.length === 0) {
+      out.push(leaf);
+    } else {
+      let lastPos = 0;
+      for (const off of inner) {
+        const pos = off - start;
+        const pieceText = leaf.text.slice(lastPos, pos);
+        out.push(sliceLeafForImage(leaf, pieceText, lastPos, pos));
+        lastPos = pos;
+      }
+      const finalText = leaf.text.slice(lastPos);
+      out.push(sliceLeafForImage(leaf, finalText, lastPos, len));
+    }
+    cum = end;
+  }
+  return out;
+}
+
+function enrichInlineImagesForBlock(
+  block: ReaderRecordPlateBlock,
+  placements: Array<{
+    entry: Record<string, unknown>;
+    ordinal: number;
+    localBefore: number;
+  }>,
+  owningId: string,
+  parentStableBlockId: string | null,
+): void {
+  if (
+    block.type !== "paragraph" &&
+    block.type !== "heading" &&
+    block.type !== "list_item" &&
+    block.type !== "markdown_blockquote" &&
+    block.type !== "table_cell"
+  ) {
+    return;
+  }
+  const textLeaves = block.children.filter(isTextLeaf);
+  const textLength = textLeaves.reduce((length, leaf) => length + leaf.text.length, 0);
+  const valid = placements
+    .filter(
+      ({ entry, localBefore }) =>
+        Number.isInteger(localBefore) &&
+        localBefore >= 0 &&
+        localBefore <= textLength &&
+        typeof entry.source_url === "string" &&
+        typeof entry.alt_text === "string",
+    )
+    .sort(
+      (a, b) => a.localBefore - b.localBefore || a.ordinal - b.ordinal,
+    );
+  if (valid.length === 0) return;
+  const offsets = valid.map(({ localBefore }) => localBefore);
+  const splitLeaves = splitLeavesAtOffsets(textLeaves, offsets);
+  const byOffset = new Map<number, ReaderRecordPlateImageBlock[]>();
+  for (const v of valid) {
+    const before = v.localBefore;
+    const img = makeInlineImageBlock(v.entry, owningId, parentStableBlockId, v.ordinal);
+    if (!img) continue;
+    const arr = byOffset.get(before) ?? [];
+    arr.push(img);
+    byOffset.set(before, arr);
+  }
+  const sortedOffsets = [...byOffset.keys()].sort((a, b) => a - b);
+  const leafOffsets: Array<{ leaf: ReaderRecordPlateTextLeaf; start: number; end: number }> = [];
+  let cum2 = 0;
+  for (const leaf of splitLeaves) {
+    const len = leaf.text.length;
+    leafOffsets.push({ leaf, start: cum2, end: cum2 + len });
+    cum2 += len;
+  }
+  const finalChildren: Array<ReaderRecordPlateTextLeaf | ReaderRecordPlateImageBlock> = [];
+  let leafIdx = 0;
+  for (const off of sortedOffsets) {
+    while (leafIdx < leafOffsets.length && leafOffsets[leafIdx].end <= off) {
+      finalChildren.push(leafOffsets[leafIdx].leaf);
+      leafIdx += 1;
+    }
+    const imgs = byOffset.get(off) ?? [];
+    finalChildren.push(...imgs);
+  }
+  while (leafIdx < leafOffsets.length) {
+    finalChildren.push(leafOffsets[leafIdx].leaf);
+    leafIdx += 1;
+  }
+  if (splitLeaves.length === 0 && valid.length > 0) {
+    block.children = sortedOffsets.flatMap((off) => byOffset.get(off) ?? []);
+    return;
+  }
+  block.children = finalChildren;
+}
+
+function findBlocksByStableId(
+  blocks: ReaderRecordPlateBlock[],
+  stableId: string,
+  out: ReaderRecordPlateBlock[],
+) {
+  for (const block of blocks) {
+    const sid = getStableBlockId(block);
+    if (sid === stableId) out.push(block);
+    if (block.type === "list") {
+      for (const child of block.children) {
+        findBlocksByStableId([child], stableId, out);
+        if (child.type === "list_item" && child.nestedChildren) {
+          findBlocksByStableId(child.nestedChildren, stableId, out);
+        }
+      }
+    } else if (block.type === "table") {
+      for (const row of block.children) {
+        for (const cell of row.children) findBlocksByStableId([cell], stableId, out);
+      }
+    } else if (block.type === "source_callout") {
+      findBlocksByStableId(block.children as ReaderRecordPlateBlock[], stableId, out);
+    }
+  }
+}
+
+function mergeRootBlocks(
+  rootChildren: ReaderRecordPlateBlock[],
+  insertedBlocks: ReaderRecordPlateBlock[],
+  orderById: Map<string, number>,
+): ReaderRecordPlateBlock[] {
+  type Group = { order: number; blocks: ReaderRecordPlateBlock[] };
+  const groups: Group[] = [];
+  let current: Group | null = null;
+  for (const block of rootChildren) {
+    const isOverlay = isWrapperOverlayBlock(block);
+    if (isOverlay && current) {
+      current.blocks.push(block);
+    } else {
+      const sid = getStableBlockId(block);
+      const order = sid ? (orderById.get(sid) ?? groups.length * 1000) : groups.length * 1000;
+      current = { order, blocks: [block] };
+      groups.push(current);
+    }
+  }
+  for (const block of insertedBlocks) {
+    const stableBlockId = getStableBlockId(block);
+    const order = stableBlockId ? (orderById.get(stableBlockId) ?? 1e9) : 1e9;
+    groups.push({ order, blocks: [block] });
+  }
+  groups.sort((a, b) => a.order - b.order);
+  return groups.flatMap((g) => g.blocks);
+}
+
+function injectImages(
+  children: ReaderRecordPlateBlock[],
+  tree: ReaderStableDocumentBlockNodeDto[],
+): ReaderRecordPlateBlock[] {
+  const inlineById = new Map<string, unknown[]>();
+  const nodeById = new Map<string, ReaderStableDocumentBlockNodeDto>();
+  const walkCollect = (list: ReaderStableDocumentBlockNodeDto[]) => {
+    for (const n of list) {
+      nodeById.set(n.block_id, n);
+      const inline = n.payload["inline_images"];
+      if (Array.isArray(inline)) inlineById.set(n.block_id, inline);
+      if (n.children?.length) walkCollect(n.children);
+    }
+  };
+  walkCollect(tree);
+
+  for (const [owningId, rawEntries] of inlineById.entries()) {
+    const targets: ReaderRecordPlateBlock[] = [];
+    findBlocksByStableId(children, owningId, targets);
+    const owningNode = nodeById.get(owningId);
+    const parentStableBlockId = owningNode?.parent_block_id ?? null;
+    const inlineTargets = targets.filter(
+      (target) =>
+        target.type === "paragraph" ||
+        target.type === "heading" ||
+        target.type === "list_item" ||
+        target.type === "markdown_blockquote" ||
+        target.type === "table_cell",
+    );
+    if (inlineTargets.length === 0) continue;
+
+    const lengths = inlineTargets.map((target) =>
+      target.children.filter(isTextLeaf).reduce((sum, leaf) => sum + leaf.text.length, 0),
+    );
+    const totalLength = lengths.reduce((sum, length) => sum + length, 0);
+    const placements = inlineTargets.map(() => [] as Array<{
+      entry: Record<string, unknown>;
+      ordinal: number;
+      localBefore: number;
+    }>);
+
+    rawEntries.forEach((raw, ordinal) => {
+      if (!raw || typeof raw !== "object") return;
+      const entry = raw as Record<string, unknown>;
+      const before = entry["before_utf16"];
+      if (
+        typeof before !== "number" ||
+        !Number.isInteger(before) ||
+        before < 0 ||
+        before > totalLength ||
+        typeof entry["source_url"] !== "string" ||
+        typeof entry["alt_text"] !== "string"
+      ) {
+        return;
+      }
+      let start = 0;
+      for (let index = 0; index < inlineTargets.length; index += 1) {
+        const end = start + lengths[index];
+        if (before < end || (index === inlineTargets.length - 1 && before <= end)) {
+          placements[index].push({
+            entry,
+            ordinal,
+            localBefore: before - start,
+          });
+          return;
+        }
+        start = end;
+      }
+    });
+
+    inlineTargets.forEach((target, index) => {
+      enrichInlineImagesForBlock(
+        target,
+        placements[index],
+        owningId,
+        parentStableBlockId,
+      );
+    });
+  }
+  return children;
+}
+
 export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordPlateDocument {
@@ -2886,9 +3366,12 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   // the server tree retain the compatibility grouping path; current
   // Markdown snapshots resolve wrappers and nesting from persisted parent
   // identities instead of adjacency or raw Markdown.
-  const children = snapshot.stable_document_tree?.length
+  const baseChildren = snapshot.stable_document_tree?.length
     ? projectStableDocumentTree(snapshot.stable_document_tree, flatChildren)
     : groupStableWrapperBlocks(flatChildren);
+  const children = snapshot.stable_document_tree?.length
+    ? injectImages(baseChildren, snapshot.stable_document_tree)
+    : baseChildren;
 
   return {
     type: "reader_record_plate_document",

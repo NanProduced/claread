@@ -344,7 +344,12 @@ def test_structure_uncertain_markdown_table_requires_candidate_document() -> Non
     assert adaptations["table_structure_uncertain"] == "content_check"
 
 
-def test_markdown_image_requires_candidate_document() -> None:
+def test_markdown_image_is_stable_document_ready() -> None:
+    """G2a-A（O-1）: 图片存在不再触发 Content Check / candidate 路由。
+
+    含图且无其他真实 reason、正文合格时直接 stable_document_ready；
+    ``image_ocr_uncertain`` 与 ``markdown_complex_structure`` 均不得出现。
+    """
     text = f"""
 {_english_paragraph()}
 
@@ -356,9 +361,25 @@ def test_markdown_image_requires_candidate_document() -> None:
         text=text,
     )
 
-    assert result.outcome == "candidate_document_required"
-    assert "markdown_complex_structure" in result.flags
-    assert "image_ocr_uncertain" in result.flags
+    assert result.outcome == "stable_document_ready"
+    assert "image_ocr_uncertain" not in result.flags
+    assert "markdown_complex_structure" not in result.flags
+    assert all(
+        record.code != "image_ocr_uncertain" for record in result.adaptations
+    )
+
+
+def test_image_only_document_rejected_by_text_eligibility() -> None:
+    """G2a-A（§6.5.3b）: 纯图片/零正文仍由既有正文资格规则拒绝。"""
+    result = _evaluate(
+        source_type="markdown_file",
+        filename="report.md",
+        text="![only image](https://example.com/a.png)",
+    )
+
+    assert result.outcome == "input_rejected_or_action_required"
+    assert "too_short_for_learning" in result.flags
+    assert "image_ocr_uncertain" not in result.flags
 
 
 def test_markdown_footnote_requires_candidate_document() -> None:
