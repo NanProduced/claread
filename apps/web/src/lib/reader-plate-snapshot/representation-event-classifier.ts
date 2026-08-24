@@ -29,12 +29,14 @@ export const ALLOWED_REPRESENTATION_SECTIONS: ReadonlySet<string> = new Set([
   "user_assets",
   "ask_supplements",
   "record_metadata",
+  "image_overrides",
 ]);
 
 export const ALLOWED_OPERATIONS_BY_SECTION: Readonly<Record<string, ReadonlySet<string>>> = {
   user_assets: new Set(["upsert", "delete", "merge"]),
   ask_supplements: new Set(["upsert", "delete", "reactivate"]),
   record_metadata: new Set(["status_changed"]),
+  image_overrides: new Set(["upsert", "delete"]),
 };
 
 export const ALLOWED_METADATA_FIELDS: ReadonlySet<string> = new Set([

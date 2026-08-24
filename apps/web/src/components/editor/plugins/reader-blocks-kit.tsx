@@ -315,6 +315,23 @@ const copyExcludeProps = {
   "data-reader-record-copy-exclude": "true",
 } as const;
 
+// G2D-B: frozen image URL override — minimal context, no media framework
+export interface ReaderFrozenImageOverrideLocator {
+  blockId: string;
+  inlineOrdinal: number | null;
+}
+export interface ReaderFrozenImageOverrideContextValue {
+  canEdit: boolean;
+  stableDocumentId: string | null;
+  upsert: (
+    locator: ReaderFrozenImageOverrideLocator,
+    rawUrl: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
+  remove: (locator: ReaderFrozenImageOverrideLocator) => Promise<{ ok: boolean; message?: string }>;
+}
+export const ReaderFrozenImageOverrideContext =
+  createContext<ReaderFrozenImageOverrideContextValue | null>(null);
+
 // ---------------------------------------------------------------------------
 // G3b Reader image (standalone + inline) — single image data shape, reuse
 // isLoadableImageUrl, native <img> + Clipboard API, no media framework.
@@ -335,19 +352,40 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     positionKind?: unknown;
     stableBlockId?: unknown;
     parentStableBlockId?: unknown;
+    overrideUrl?: unknown;
+    inlineOrdinal?: unknown;
+    beforeUtf16?: unknown;
   };
   const sourceUrl = typeof data.sourceUrl === "string" ? data.sourceUrl : "";
   const effectiveUrl = data.effectiveUrl;
   const altText = typeof data.altText === "string" ? data.altText : "";
   const title = typeof data.title === "string" ? data.title : undefined;
   const positionKind = data.positionKind === "inline" ? "inline" : data.positionKind === "standalone" ? "standalone" : "inline";
+  const overrideUrlRaw = data.overrideUrl;
+  const hasOverride = typeof overrideUrlRaw === "string";
+  const overrideUrl = hasOverride ? (overrideUrlRaw as string) : undefined;
+  const stableBlockId = typeof data.stableBlockId === "string" ? data.stableBlockId : "";
+  // standalone has no inlineOrdinal; inline has ordinal.
+  const locatorInlineOrdinal =
+    positionKind === "inline" && typeof data.inlineOrdinal === "number" && Number.isInteger(data.inlineOrdinal)
+      ? (data.inlineOrdinal as number)
+      : null;
+  const resolvedInlineOrdinal = positionKind === "inline" ? locatorInlineOrdinal : null;
+
   const safe = typeof effectiveUrl === "string" && isLoadableImageUrl(effectiveUrl);
+  const ctx = useContext(ReaderFrozenImageOverrideContext);
+  const canEdit = Boolean(ctx?.canEdit && stableBlockId && ctx?.stableDocumentId);
   const [loadState, setLoadState] = React.useState<"loading" | "loaded" | "failed">("loading");
   const [prevUrl, setPrevUrl] = React.useState<unknown>(effectiveUrl);
   if (prevUrl !== effectiveUrl) {
     setPrevUrl(effectiveUrl);
     setLoadState("loading");
   }
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
   const copyLink = React.useCallback(() => {
     if (!safe || typeof effectiveUrl !== "string") return;
     try {
@@ -355,7 +393,88 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     } catch {}
   }, [effectiveUrl, safe]);
 
-  // unsafe / null effectiveUrl
+  const handleEdit = React.useCallback(() => {
+    setDraft(hasOverride ? (overrideUrl as string) : "");
+    setError(null);
+    setSaving(false);
+    setIsEditing(true);
+  }, [hasOverride, overrideUrl]);
+
+  const handleCancel = React.useCallback(() => {
+    setIsEditing(false);
+    setError(null);
+    setSaving(false);
+  }, []);
+
+  const handleSave = React.useCallback(async () => {
+    if (!ctx || !stableBlockId) return;
+    setSaving(true);
+    setError(null);
+    const locator = { blockId: stableBlockId, inlineOrdinal: resolvedInlineOrdinal };
+    const result = await ctx.upsert(locator, draft);
+    setSaving(false);
+    if (result.ok) {
+      setIsEditing(false);
+      setError(null);
+    } else {
+      setError(result.message ?? "保存失败，请重试。");
+    }
+  }, [ctx, stableBlockId, resolvedInlineOrdinal, draft]);
+
+  const handleRestore = React.useCallback(async () => {
+    if (!ctx || !stableBlockId) return;
+    setSaving(true);
+    setError(null);
+    const locator = { blockId: stableBlockId, inlineOrdinal: resolvedInlineOrdinal };
+    const result = await ctx.remove(locator);
+    setSaving(false);
+    if (result.ok) {
+      setIsEditing(false);
+      setError(null);
+    } else {
+      setError(result.message ?? "恢复失败，请重试。");
+    }
+  }, [ctx, stableBlockId, resolvedInlineOrdinal]);
+
+  const editChrome = canEdit ? (
+    <span {...copyExcludeProps} className="mt-1 flex flex-wrap items-center gap-1">
+      <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
+        修改链接
+      </button>
+    </span>
+  ) : null;
+
+  const editingPanel = isEditing ? (
+    <span {...copyExcludeProps} className="mt-2 flex max-w-full flex-col gap-1.5 rounded border border-hairline bg-surface-raised/70 p-2 text-xs">
+      <span className="break-all">
+        <span className="font-medium">原始地址：</span>
+        <span className="font-mono text-xs">{sourceUrl}</span>
+      </span>
+      <input
+        aria-label="图片覆盖地址"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        className="w-full rounded border border-hairline bg-white px-2 py-1 text-xs font-mono"
+        placeholder="输入图片链接"
+      />
+      {error ? <span className="text-rose-600">{error}</span> : null}
+      <span className="flex flex-wrap gap-1">
+        <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleSave} disabled={saving}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+        <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleCancel} disabled={saving}>
+          取消
+        </button>
+        {hasOverride ? (
+          <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleRestore} disabled={saving}>
+            恢复原始地址
+          </button>
+        ) : null}
+      </span>
+    </span>
+  ) : null;
+
+  // unsafe / null effectiveUrl — still show edit entry
   if (!safe) {
     return (
       <span
@@ -369,12 +488,14 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           <span className="font-medium text-ink">链接不安全</span>
           <span className="break-all font-mono text-xs">{sourceUrl}</span>
         </span>
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
         {children}
       </span>
     );
   }
 
-  // safe: loading / loaded / load_failed
+  // safe: loading / loaded / load_failed — share same edit handling
   if (loadState === "failed") {
     return (
       <span
@@ -392,6 +513,8 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
             </button>
           </span>
         </span>
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
         {children}
       </span>
     );
@@ -425,10 +548,12 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
         />
         {loadState === "loaded" ? (
-          <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+          <button type="button" className={READER_IMAGE_BUTTON_CLASS} {...copyExcludeProps} onClick={copyLink}>
             复制链接
           </button>
         ) : null}
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
       </span>
       {children}
     </span>

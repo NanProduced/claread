@@ -29,6 +29,8 @@ import type {
   ReaderStableDocumentResponseDto,
   ReaderUnifiedInputSubmitRequestDto,
   ReaderUnifiedInputSubmitResponseDto,
+  ReaderImageSourceOverrideUpsertRequestDto,
+  ReaderImageSourceOverrideWriteResponseDto,
 } from "@/types/api/reader-plate";
 
 /**
@@ -319,4 +321,43 @@ export function submitUpstreamReaderAnalysisSectionRequest(
       body: JSON.stringify(payload),
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// G2D-B: Reader image source overrides
+// ---------------------------------------------------------------------------
+
+export function putUpstreamReaderImageSourceOverride(
+  recordId: string,
+  payload: ReaderImageSourceOverrideUpsertRequestDto,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderImageSourceOverrideWriteResponseDto>> {
+  return fastApiFetch<ReaderImageSourceOverrideWriteResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/image-source-overrides`,
+    {
+      method: "PUT",
+      sessionToken,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteUpstreamReaderImageSourceOverride(
+  recordId: string,
+  stableDocumentId: string,
+  blockId: string,
+  inlineOrdinal: number | null,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderImageSourceOverrideWriteResponseDto>> {
+  const encodedDoc = encodeURIComponent(stableDocumentId);
+  const encodedBlock = encodeURIComponent(blockId);
+  const base = `/reader/records/${encodeURIComponent(recordId)}/image-source-overrides/${encodedDoc}/${encodedBlock}`;
+  const query =
+    inlineOrdinal !== null && inlineOrdinal !== undefined
+      ? `?${new URLSearchParams({ inline_ordinal: String(inlineOrdinal) }).toString()}`
+      : "";
+  return fastApiFetch<ReaderImageSourceOverrideWriteResponseDto>(`${base}${query}`, {
+    method: "DELETE",
+    sessionToken,
+  });
 }

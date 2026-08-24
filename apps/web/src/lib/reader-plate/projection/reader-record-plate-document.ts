@@ -84,6 +84,7 @@ export interface ReaderRecordPlateImageData {
   parentStableBlockId: string | null;
   inlineOrdinal?: number;
   beforeUtf16?: number;
+  overrideUrl?: string;
 }
 
 export interface ReaderRecordPlateImageBlock {
@@ -3022,6 +3023,8 @@ function makeStandaloneImageBlock(
   const altText = typeof p.alt_text === "string" ? (p.alt_text as string) : "";
   const titleRaw = p.title;
   const title = typeof titleRaw === "string" ? (titleRaw as string) : titleRaw === null ? null : null;
+  const overrideRaw = p.override_url;
+  const overrideUrl = typeof overrideRaw === "string" ? (overrideRaw as string) : undefined;
   return {
     type: "image",
     id: `image:${node.block_id}`,
@@ -3034,6 +3037,7 @@ function makeStandaloneImageBlock(
       positionKind: "standalone",
       stableBlockId: node.block_id,
       parentStableBlockId: node.parent_block_id,
+      ...(overrideUrl !== undefined ? { overrideUrl } : {}),
     },
   };
 }
@@ -3056,6 +3060,8 @@ function makeInlineImageBlock(
   const effectiveUrl = typeof effectiveRaw === "string" ? effectiveRaw : effectiveRaw === null ? null : null;
   // before is validated outside (integer and bounds), but also guard here
   if (typeof before !== "number" || !Number.isInteger(before)) return null;
+  const overrideRaw = entry.override_url;
+  const overrideUrl = typeof overrideRaw === "string" ? (overrideRaw as string) : undefined;
   return {
     type: "image",
     id: `image:${owningId}:${ordinal}`,
@@ -3070,6 +3076,7 @@ function makeInlineImageBlock(
       parentStableBlockId,
       inlineOrdinal: ordinal,
       beforeUtf16: before as number,
+      ...(overrideUrl !== undefined ? { overrideUrl } : {}),
     },
   };
 }

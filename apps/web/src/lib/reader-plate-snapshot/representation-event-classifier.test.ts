@@ -861,16 +861,71 @@ describe("classifyReaderEvent — unknown event types fail-safe", () => {
 // Constants audit
 // ---------------------------------------------------------------------------
 
+describe("G2D-B image_overrides classifier", () => {
+  it("reloads on valid image_overrides upsert with matching fence", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "projection_ops",
+        payload: makeRepresentationPayload({
+          representation_section: "image_overrides",
+          operation: "upsert",
+          target_keys: ["doc:block:-"],
+        }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_snapshot",
+      reason: "representation:image_overrides:upsert",
+    });
+  });
+
+  it("reloads on valid image_overrides delete with matching fence", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "projection_ops",
+        payload: makeRepresentationPayload({
+          representation_section: "image_overrides",
+          operation: "delete",
+          target_keys: ["doc:block:0"],
+        }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result).toEqual({
+      kind: "reload_snapshot",
+      reason: "representation:image_overrides:delete",
+    });
+  });
+
+  it("returns reload_or_reset on image_overrides with unknown operation", () => {
+    const result = classifyReaderEvent(
+      makeEvent({
+        event_type: "projection_ops",
+        payload: makeRepresentationPayload({
+          representation_section: "image_overrides",
+          operation: "merge",
+          target_keys: ["doc:block:-"],
+        }),
+      }),
+      MATCHING_FENCE,
+    );
+    expect(result.kind).toBe("reload_or_reset");
+    expect(result.reason).toContain("representation_unknown_operation");
+  });
+});
+
 describe("classifier constants audit", () => {
   it("REPRESENTATION_PAYLOAD_SCHEMA_VERSION is 1", () => {
     expect(REPRESENTATION_PAYLOAD_SCHEMA_VERSION).toBe(1);
   });
 
   it("ALLOWED_REPRESENTATION_SECTIONS contains exactly G1/G2/G3 sections", () => {
-    expect(ALLOWED_REPRESENTATION_SECTIONS.size).toBe(3);
+    expect(ALLOWED_REPRESENTATION_SECTIONS.size).toBe(4);
     expect(ALLOWED_REPRESENTATION_SECTIONS.has("user_assets")).toBe(true);
     expect(ALLOWED_REPRESENTATION_SECTIONS.has("ask_supplements")).toBe(true);
     expect(ALLOWED_REPRESENTATION_SECTIONS.has("record_metadata")).toBe(true);
+    expect(ALLOWED_REPRESENTATION_SECTIONS.has("image_overrides")).toBe(true);
   });
 
   it("ALLOWED_OPERATIONS_BY_SECTION mirrors backend payload v1", () => {
@@ -882,6 +937,9 @@ describe("classifier constants audit", () => {
     );
     expect(ALLOWED_OPERATIONS_BY_SECTION.record_metadata).toEqual(
       new Set(["status_changed"]),
+    );
+    expect(ALLOWED_OPERATIONS_BY_SECTION.image_overrides).toEqual(
+      new Set(["upsert", "delete"]),
     );
   });
 

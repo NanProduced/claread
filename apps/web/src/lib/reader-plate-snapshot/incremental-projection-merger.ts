@@ -1154,6 +1154,14 @@ export function mergeIncrementalProjection(
     const section = payload.representation_section;
     const operation = payload.operation;
 
+    // ponytail: image_overrides → full snapshot reload, targeted image replacement if performance evidence shows full reload unacceptable
+    if (section === "image_overrides") {
+      return {
+        kind: "fallback_full_reload",
+        reason: "image_overrides_requires_full_reload",
+      };
+    }
+
     for (const targetKey of payload.target_keys) {
       affectedTargetKeys.push(targetKey);
 

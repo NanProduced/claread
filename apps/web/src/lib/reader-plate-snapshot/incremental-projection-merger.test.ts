@@ -2510,4 +2510,78 @@ describe("mergeIncrementalProjection", () => {
       expect(result.kind).toBe("targeted_apply");
     });
   });
+
+  describe("G2D-B image_overrides", () => {
+    it("image_overrides upsert must fallback_full_reload with image_overrides_requires_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeRepresentationEvent(
+        "projection_ops",
+        "image_overrides",
+        "upsert",
+        ["doc:block:-"],
+        { sequence: 2 },
+      );
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren: [makePlateNode("paragraph:seg_1", "hello")],
+        nextChildren: [makePlateNode("paragraph:seg_1", "hello updated")],
+        snapshotFence,
+      });
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("image_overrides_requires_full_reload");
+    });
+
+    it("image_overrides delete must fallback_full_reload", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeRepresentationEvent(
+        "projection_ops",
+        "image_overrides",
+        "delete",
+        ["doc:block:0"],
+        { sequence: 2 },
+      );
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren: [makePlateNode("paragraph:seg_1", "hello")],
+        nextChildren: [makePlateNode("paragraph:seg_1", "hello")],
+        snapshotFence,
+      });
+      expect(result.kind).toBe("fallback_full_reload");
+      if (result.kind !== "fallback_full_reload") return;
+      expect(result.reason).toBe("image_overrides_requires_full_reload");
+    });
+
+    it("image_overrides must not return empty targeted_apply", () => {
+      const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
+      const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
+      const event = makeRepresentationEvent(
+        "projection_ops",
+        "image_overrides",
+        "upsert",
+        ["doc:block:-"],
+        { sequence: 2 },
+      );
+      const result = mergeIncrementalProjection({
+        prevSnapshot,
+        nextSnapshot,
+        triggerEvents: [event],
+        prevChildren: [],
+        nextChildren: [],
+        snapshotFence,
+      });
+      // Ensure we don't get targeted_apply with empty operations
+      if (result.kind === "targeted_apply") {
+        expect(result.operations).not.toHaveLength(0);
+      } else {
+        expect(result.kind).toBe("fallback_full_reload");
+      }
+    });
+  });
 });

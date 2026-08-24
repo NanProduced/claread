@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
 
 import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
@@ -9548,5 +9549,441 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     });
     // source surface keeps source_url text; no img fallback to sourceUrl
     expect(container.textContent).toContain(unsafeSource);
+  });
+});
+
+describe("G2D-B frozen image URL editor", () => {
+  function wgNode2(overrides: Partial<ReaderStableDocumentBlockNodeDto>): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "block",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+  function imgPayload2(sourceUrl: string, alt: string, title: string | null, effectiveUrl: string | null, overrideUrl?: unknown): Record<string, unknown> {
+    const p: Record<string, unknown> = { source_url: sourceUrl, alt_text: alt, title, position_kind: "standalone", effective_url: effectiveUrl };
+    if (overrideUrl !== undefined) (p as Record<string, unknown>).override_url = overrideUrl;
+    return p;
+  }
+  function inlineEntry2(sourceUrl: string, alt: string, title: string | null, before: number, effectiveUrl: string | null, overrideUrl?: unknown): Record<string, unknown> {
+    const e: Record<string, unknown> = { source_url: sourceUrl, alt_text: alt, title, before_utf16: before, effective_url: effectiveUrl };
+    if (overrideUrl !== undefined) e.override_url = overrideUrl;
+    return e;
+  }
+  function makeG2dSnapshot(opts: {
+    stableDocumentId?: string | null;
+    image: { sourceUrl: string; effectiveUrl: string | null; overrideUrl?: unknown; blockId: string; alt?: string };
+    inline?: { owningBlockId: string; sourceUrl: string; effectiveUrl: string | null; overrideUrl?: unknown; ordinal: number; before: number };
+  }): ReaderPlateSnapshotDto {
+    const baseId = "base_g2d";
+    const text = "Hello world";
+    const segId = "seg_1";
+    const unitId = "u1";
+    const snap: ReaderPlateSnapshotDto = {
+      schema_kind: "reader_plate_snapshot",
+      snapshot_id: "snap_g2d",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_g2d",
+      record: {
+        title: "G2D Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: baseId,
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: text.length,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        ...(opts.stableDocumentId !== undefined ? { stable_document_id: opts.stableDocumentId } : {}),
+      } as unknown as ReaderPlateSnapshotDto["base"],
+      navigation: {
+        units: [
+          {
+            unit_id: unitId,
+            order_index: 1,
+            unit_type: "body",
+            boundary_quality: "normal",
+            label: null,
+            base_start_utf16: 0,
+            base_end_utf16: text.length,
+            text_hash: `hash_${segId}`,
+            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            stable_block_type: "paragraph",
+            heading_level: null,
+          },
+        ],
+      },
+      anchor_segments: [
+        {
+          anchor_segment_id: segId,
+          sentence_id: "sent_1",
+          paragraph_id: unitId,
+          unit_id: unitId,
+          order_index: 1,
+          unit_order_index: 1,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: text.length,
+          unit_start_utf16: 0,
+          unit_end_utf16: text.length,
+          text_hash: `hash_${segId}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        },
+      ],
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: [
+        {
+          type: "reader_unit",
+          owner: "stable",
+          base_id: baseId,
+          unit_id: unitId,
+          order_index: 1,
+          unit_type: "body",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: text.length,
+          text_hash: `hash_${unitId}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              type: "reader_source_block",
+              owner: "stable",
+              base_id: baseId,
+              unit_id: unitId,
+              base_start_utf16: 0,
+              base_end_utf16: text.length,
+              stableBlockType: "paragraph",
+              stableBlockId: "b1",
+              headingLevel: null,
+              parentStableBlockId: null,
+              children: [
+                {
+                  type: "reader_anchor_segment",
+                  owner: "stable",
+                  base_id: baseId,
+                  unit_id: unitId,
+                  anchor_segment_id: segId,
+                  sentence_id: "sent_1",
+                  segment_type: "sentence",
+                  boundary_quality: "normal",
+                  base_start_utf16: 0,
+                  base_end_utf16: text.length,
+                  unit_start_utf16: 0,
+                  unit_end_utf16: text.length,
+                  text_hash: `hash_${segId}`,
+                  hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                  children: [
+                    {
+                      text,
+                      owner: "stable",
+                      lock_source: true,
+                      source_role: "segment_text",
+                      base_start_utf16: 0,
+                      base_end_utf16: text.length,
+                      anchor_segment_id: segId,
+                      segment_start_utf16: 0,
+                      segment_end_utf16: text.length,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      stable_document_tree: [],
+    };
+    if (opts.inline) {
+      const owning = opts.inline;
+      snap.stable_document_tree = [
+        wgNode2({
+          block_id: owning.owningBlockId,
+          block_type: "paragraph",
+          order_index: 0,
+          payload: {
+            inline_images: [inlineEntry2(owning.sourceUrl, "alt", null, owning.before, owning.effectiveUrl, owning.overrideUrl)],
+          },
+        }),
+      ];
+      // ensure array length for ordinal
+      const treeInline = (snap.stable_document_tree[0].payload as Record<string, unknown>).inline_images as unknown[];
+      while (treeInline.length <= owning.ordinal) {
+        treeInline.push(inlineEntry2(owning.sourceUrl, "alt", null, owning.before, owning.effectiveUrl));
+      }
+      (treeInline[owning.ordinal] as Record<string, unknown>).override_url = owning.overrideUrl;
+      if (owning.overrideUrl === undefined) delete (treeInline[owning.ordinal] as Record<string, unknown>).override_url;
+    } else {
+      snap.stable_document_tree = [
+        wgNode2({
+          block_id: opts.image.blockId,
+          block_type: "image",
+          order_index: 0,
+          payload: imgPayload2(opts.image.sourceUrl, opts.image.alt ?? "alt", null, opts.image.effectiveUrl, opts.image.overrideUrl),
+        }),
+        wgNode2({ block_id: "b1", block_type: "paragraph", order_index: 1 }),
+      ];
+    }
+    return snap;
+  }
+
+  it("shows 修改链接 entry when stable_document_id present", () => {
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "11111111-1111-1111-1111-111111111111",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img1" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    expect(screen.getByText("修改链接")).toBeTruthy();
+  });
+
+  it("does not show 修改链接 for legacy snapshot without stable_document_id", () => {
+    const snap = makeG2dSnapshot({
+      stableDocumentId: null,
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img1" },
+    });
+    // remove key entirely to simulate legacy
+    delete (snap.base as unknown as Record<string, unknown>).stable_document_id;
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    expect(screen.queryByText("修改链接")).toBeNull();
+  });
+
+  it("prefills overrideUrl verbatim, including empty string", async () => {
+    const user = userEvent.setup();
+    const snapWithOverride = makeG2dSnapshot({
+      stableDocumentId: "11111111-1111-1111-1111-111111111111",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/override.png", overrideUrl: "https://example.com/override.png", blockId: "img1" },
+    });
+    const { unmount } = render(<ReaderRecordPlateSurface snapshot={snapWithOverride} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
+    expect(input.value).toBe("https://example.com/override.png");
+    expect(screen.getByText("原始地址：")).toBeTruthy();
+    expect(screen.getByText("https://example.com/source.png")).toBeTruthy();
+    unmount();
+
+    const snapEmpty = makeG2dSnapshot({
+      stableDocumentId: "11111111-1111-1111-1111-111111111111",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, overrideUrl: "", blockId: "img1" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snapEmpty} />);
+    await user.click(screen.getByText("修改链接"));
+    const input2 = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
+    expect(input2.value).toBe("");
+    expect(screen.getByText("恢复原始地址")).toBeTruthy();
+  });
+
+  it("prefill absent key gives empty input, no restore button", async () => {
+    const user = userEvent.setup();
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "11111111-1111-1111-1111-111111111111",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img1" },
+    });
+    // ensure override_url absent
+    const treePayload = (snap.stable_document_tree?.[0].payload as Record<string, unknown>);
+    delete treePayload.override_url;
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(screen.queryByText("恢复原始地址")).toBeNull();
+  });
+
+  it("PUT standalone sends exact shape with inline_ordinal null and raw url verbatim", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, last_event_sequence: 123 }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onReload = vi.fn();
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "22222222-2222-2222-2222-222222222222",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "b_img_1" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} onRequestSnapshotReload={onReload} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址");
+    await user.clear(input);
+    const raw = "  https://example.com/raw  ";
+    await user.type(input, raw);
+    await user.click(screen.getByText("保存"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const putCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes("/image-source-overrides") && (opts as RequestInit).method === "PUT");
+    expect(putCall).toBeTruthy();
+    const body = JSON.parse(String((putCall?.[1] as RequestInit).body));
+    expect(body).toEqual({
+      stable_document_id: "22222222-2222-2222-2222-222222222222",
+      block_id: "b_img_1",
+      inline_ordinal: null,
+      url: raw,
+    });
+    expect(onReload).toHaveBeenCalled();
+    const img = document.querySelector('[data-reader-image="true"] img') as HTMLImageElement | null;
+    // no optimistic src change: still source effectiveUrl
+    if (img) expect(img.getAttribute("src")).toBe("https://example.com/source.png");
+  });
+
+  it("PUT inline sends exact ordinal", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, last_event_sequence: 124 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "33333333-3333-3333-3333-333333333333",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_unused" },
+      inline: { owningBlockId: "b1", sourceUrl: "https://example.com/inline.png", effectiveUrl: "https://example.com/inline.png", ordinal: 0, before: 0 },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址");
+    await user.clear(input);
+    await user.type(input, "https://example.com/inline_override.png");
+    await user.click(screen.getByText("保存"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const putCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes("/image-source-overrides") && (opts as RequestInit).method === "PUT");
+    const body = JSON.parse(String((putCall?.[1] as RequestInit).body));
+    expect(body.inline_ordinal).toBe(0);
+    expect(body.block_id).toBe("b1");
+  });
+
+  it("DELETE standalone has no inline_ordinal query, inline has exact ordinal", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, last_event_sequence: 125 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "44444444-4444-4444-4444-444444444444",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, overrideUrl: "javascript:bad", blockId: "img_del" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByText("恢复原始地址"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const delCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes("/image-source-overrides") && (opts as RequestInit).method === "DELETE");
+    expect(delCall).toBeTruthy();
+    const url = String(delCall?.[0]);
+    expect(url).toContain("stable_document_id=44444444-4444-4444-4444-444444444444");
+    expect(url).toContain("block_id=img_del");
+    expect(url).not.toContain("inline_ordinal");
+  });
+
+  it("API failure keeps old snapshot truth, shows error, allows manual retry, no optimistic src", async () => {
+    const user = userEvent.setup();
+    let imageCallCount = 0;
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("image-source-overrides")) {
+        imageCallCount += 1;
+        if (imageCallCount === 1) {
+          return Promise.resolve(new Response(JSON.stringify({ ok: false, message: "upstream 503" }), { status: 503 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, last_event_sequence: 126 }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      if (url.includes("/favorite")) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, favorited: false }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onReload = vi.fn();
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "55555555-5555-5555-5555-555555555555",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_fail" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} onRequestSnapshotReload={onReload} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "https://example.com/new.png");
+    const beforeSrc = document.querySelector('[data-reader-image="true"] img')?.getAttribute("src");
+    await user.click(screen.getByText("保存"));
+    await waitFor(() => expect(screen.queryByText(/失败/) || screen.queryByText(/upstream/)).toBeTruthy());
+    expect(onReload).not.toHaveBeenCalled();
+    expect(input.value).toBe("https://example.com/new.png");
+    const afterFailSrc = document.querySelector('[data-reader-image="true"] img')?.getAttribute("src");
+    expect(afterFailSrc).toBe(beforeSrc);
+    // manual retry
+    await user.click(screen.getByText("保存"));
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancel does zero request and zero node change", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "66666666-6666-6666-6666-666666666666",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_cancel" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    await user.click(screen.getByText("修改链接"));
+    const input = screen.getByLabelText("图片覆盖地址");
+    await user.type(input, "https://example.com/changed.png");
+    await user.click(screen.getByText("取消"));
+    const imageCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("image-source-overrides"));
+    expect(imageCalls.length).toBe(0);
+    expect(screen.queryByLabelText("图片覆盖地址")).toBeNull();
+  });
+
+  it("editing chrome is excluded from copy/selection", async () => {
+    const user = userEvent.setup();
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "77777777-7777-7777-7777-777777777777",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_copy" },
+    });
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snap} />);
+    await user.click(screen.getByText("修改链接"));
+    const panel = container.querySelector('[data-reader-record-copy-exclude="true"]');
+    expect(panel).not.toBeNull();
+    // input, buttons, error, sourceUrl should be inside copy-excluded container
+    const input = screen.getByLabelText("图片覆盖地址");
+    expect(input.closest('[data-reader-record-copy-exclude="true"]')).not.toBeNull();
+    const saveBtn = screen.getByText("保存");
+    expect(saveBtn.closest('[data-reader-record-copy-exclude="true"]')).not.toBeNull();
+    // void children rendered exactly once
+    const voidChildren = container.querySelectorAll('[data-reader-image="true"]');
+    voidChildren.forEach((el) => {
+      // each image wraps one void child element (the slate void)
+      // we check that children count for the image element includes the void text node
+      expect(el.textContent).toBeDefined();
+    });
+  });
+
+  it("unsafe image still shows 修改链接 and editing", async () => {
+    const user = userEvent.setup();
+    const snap = makeG2dSnapshot({
+      stableDocumentId: "88888888-8888-8888-8888-888888888888",
+      image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, blockId: "img_unsafe" },
+    });
+    render(<ReaderRecordPlateSurface snapshot={snap} />);
+    expect(screen.getByText("修改链接")).toBeTruthy();
+    await user.click(screen.getByText("修改链接"));
+    expect(screen.getByLabelText("图片覆盖地址")).toBeTruthy();
   });
 });

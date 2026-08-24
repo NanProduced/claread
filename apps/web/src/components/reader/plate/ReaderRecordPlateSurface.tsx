@@ -152,6 +152,7 @@ import {
 import {
   READER_CALLOUT_GROUP_TYPE,
   ReaderCalloutActionContext,
+  ReaderFrozenImageOverrideContext,
   ReaderGrammarExpansionControlRef,
   ReaderGrammarExpansionProvider,
   ReaderGrammarInteractionContext,
@@ -2687,6 +2688,93 @@ export function ReaderRecordPlateSurface({
   // it into pendingRestoreRef for the rAF re-anchor validation.
   const generation = snapshot.record.generation;
   const baseId = snapshot.base.base_id;
+  // G2D-B: frozen image override locator (per-snapshot stable document)
+  const stableDocumentId =
+    typeof snapshot.base.stable_document_id === "string" &&
+    snapshot.base.stable_document_id.length > 0
+      ? snapshot.base.stable_document_id
+      : null;
+  const canEditFrozenImage = Boolean(stableDocumentId);
+  const handleFrozenImageUpsert = useCallback(
+    async (
+      locator: { blockId: string; inlineOrdinal: number | null },
+      rawUrl: string,
+    ): Promise<{ ok: boolean; message?: string }> => {
+      if (!stableDocumentId) {
+        return { ok: false, message: "当前快照不支持图片编辑。" };
+      }
+      try {
+        const response = await fetch(
+          `/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/image-source-overrides`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json", accept: "application/json" },
+            body: JSON.stringify({
+              stable_document_id: stableDocumentId,
+              block_id: locator.blockId,
+              inline_ordinal: locator.inlineOrdinal,
+              url: rawUrl,
+            }),
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; message?: string }
+          | null;
+        if (!response.ok || payload?.ok === false) {
+          return { ok: false, message: payload?.message ?? "保存失败，请重试。" };
+        }
+        if (payload && payload.ok) {
+          await onRequestSnapshotReload?.();
+          return { ok: true };
+        }
+        await onRequestSnapshotReload?.();
+        return { ok: true };
+      } catch {
+        return { ok: false, message: "保存失败，请重试。" };
+      }
+    },
+    [snapshot.record_id, stableDocumentId, onRequestSnapshotReload],
+  );
+  const handleFrozenImageRemove = useCallback(
+    async (locator: { blockId: string; inlineOrdinal: number | null }): Promise<{ ok: boolean; message?: string }> => {
+      if (!stableDocumentId) {
+        return { ok: false, message: "当前快照不支持图片编辑。" };
+      }
+      try {
+        const params = new URLSearchParams({
+          stable_document_id: stableDocumentId,
+          block_id: locator.blockId,
+        });
+        if (locator.inlineOrdinal !== null && locator.inlineOrdinal !== undefined) {
+          params.set("inline_ordinal", String(locator.inlineOrdinal));
+        }
+        const response = await fetch(
+          `/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/image-source-overrides?${params.toString()}`,
+          { method: "DELETE", headers: { accept: "application/json" } },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; message?: string }
+          | null;
+        if (!response.ok || payload?.ok === false) {
+          return { ok: false, message: payload?.message ?? "恢复失败，请重试。" };
+        }
+        await onRequestSnapshotReload?.();
+        return { ok: true };
+      } catch {
+        return { ok: false, message: "恢复失败，请重试。" };
+      }
+    },
+    [snapshot.record_id, stableDocumentId, onRequestSnapshotReload],
+  );
+  const frozenImageOverrideValue = useMemo(
+    () => ({
+      canEdit: canEditFrozenImage,
+      stableDocumentId,
+      upsert: handleFrozenImageUpsert,
+      remove: handleFrozenImageRemove,
+    }),
+    [canEditFrozenImage, stableDocumentId, handleFrozenImageUpsert, handleFrozenImageRemove],
+  );
   const quickPeekPositionKey =
     inspectState !== null
       ? `inspect:${inspectState.markId}:${inspectState.anchorOffsets?.startOffset ?? ""}:${inspectState.anchorOffsets?.endOffset ?? ""}`
@@ -6367,7 +6455,8 @@ export function ReaderRecordPlateSurface({
                   value={sentenceAnalysisInteraction}
                 >
                   <ReaderToolbarActionsProvider value={toolbarActions}>
-                    <Plate editor={editor} readOnly>
+                    <ReaderFrozenImageOverrideContext.Provider value={frozenImageOverrideValue}>
+                      <Plate editor={editor} readOnly>
                       <CommentPluginBridge
                         apiRef={commentApiRef}
                         onReadyChange={setCommentApiReady}
@@ -6409,6 +6498,7 @@ export function ReaderRecordPlateSurface({
                         floatingStyles={readerFloatingStyles(commentFloating)}
                       />
                     </Plate>
+                    </ReaderFrozenImageOverrideContext.Provider>
                     {showSelectionToolbar ? (
                       <ReaderFloatingSurface
                         floatingRef={selectionToolbarFloating.refs.setFloating}
