@@ -142,7 +142,7 @@ class _Probe:
         self.constructions = 0
         self.captures: list[dict[str, Any]] = []
 
-    def capture(self, info: Any) -> None:
+    def capture(self, info: Any, messages: list[Any] | None = None) -> None:
         params = info.model_request_parameters
         instructions = getattr(params, "prompted_output_instructions", None)
         self.captures.append(
@@ -154,6 +154,7 @@ class _Probe:
                 "has_prompted_instructions": bool(instructions),
                 "model_settings": dict(info.model_settings or {}),
                 "requests_so_far": self.requests + 1,
+                "prompt_text": "" if not messages else str(messages[-1]),
             }
         )
 
@@ -182,7 +183,7 @@ def _offline_transport_factory(queue: Any, probe: _Probe, *, select_queue=None):
             active = select_queue(messages) if select_queue is not None else queue
             item = active.next_item()
             probe.requests += 1
-            probe.capture(info)
+            probe.capture(info, messages)
             if isinstance(item, dict) and "__cancel__" in item:
                 import asyncio
 
@@ -1593,3 +1594,220 @@ def test_semantic_review_prompt_states_remaining_issues_contract(runner):
     assert "remaining_issues" in flat
     assert "empty remaining_issues list" in flat
     assert "after refinement" in flat
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# P-4F-R2: indexed refinement field paths (RED first on ebafc103)
+# ---------------------------------------------------------------------------
+
+
+def _review_fail_with_fields(fields: list[str]) -> dict[str, Any]:
+    payload = review_payload("FAIL", "checkpoint_subject_consistency")
+    payload["issues"] = [
+        {
+            "contract": "checkpoint_subject_consistency",
+            "field": field,
+            "problem": f"subject mismatch {index}",
+        }
+        for index, field in enumerate(fields)
+    ]
+    return payload
+
+
+def _refinement_recheck(contract: str, patch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "_usage": {"input_tokens": 18, "output_tokens": 22},
+        "refinement_patch": patch,
+        "rechecked_contract_results": [
+            {"contract": contract, "passed": True, "rationale": "Directed recheck ok."}
+        ],
+        "remaining_issues": [],
+    }
+
+
+def _run_indexed_refinement(
+    runner,
+    eval_settings,
+    tmp_path,
+    *,
+    issue_fields: list[str],
+    patch: dict[str, Any],
+    tag: str,
+):
+    settings, selection = eval_settings
+    contract = "checkpoint_subject_consistency"
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_with_fields(issue_fields),
+            _refinement_recheck(contract, patch),
+            {"forbidden": "sixth"},
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / tag,
+    )
+    call5_prompt = probe.captures[4]["prompt_text"] if len(probe.captures) >= 5 else None
+    return report, probe, queue, call5_prompt
+
+
+def test_indexed_checkpoint_field_reaches_refinement(runner, eval_settings, tmp_path):
+    report, probe, queue, call5_prompt = _run_indexed_refinement(
+        runner,
+        eval_settings,
+        tmp_path,
+        issue_fields=["comprehension_checkpoints[2].prompt_subject"],
+        patch={"comprehension_checkpoints": blueprint_payload()["comprehension_checkpoints"]},
+        tag="indexed-ok",
+    )
+    case = report["cases"][0]
+    assert case["outcome"] == "completed"
+    stages = [entry["stage"] for entry in case["stage_ledger"]]
+    assert stages == [
+        "blueprint",
+        "language_support",
+        "translation",
+        "semantic_review",
+        "refinement",
+    ]
+    assert probe.requests == 5
+    assert case["usage"]["aggregate"]["model_requests"] == 5
+    assert report["aggregate"]["model_requests"] == 5
+    assert case["refinement_replay_all_passed"] is True
+    assert case["artifact"]["run_meta"]["refinement_count"] == 1
+    assert queue.items == [{"forbidden": "sixth"}]
+    assert call5_prompt is not None
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert '"comprehension_checkpoints"' in fields_segment
+    assert '"comprehension_checkpoints[2]"' not in fields_segment
+    assert "comprehension_checkpoints[2].prompt_subject" in call5_prompt
+
+
+def test_package_indexed_field_maps_to_top_level_key(runner, eval_settings, tmp_path):
+    report, probe, _, call5_prompt = _run_indexed_refinement(
+        runner,
+        eval_settings,
+        tmp_path,
+        issue_fields=["language_targets[0].explanation"],
+        patch={"language_targets": language_support_payload()["language_targets"]},
+        tag="package-indexed",
+    )
+    case = report["cases"][0]
+    if case["outcome"].startswith("stopped"):
+        pytest.fail(f"stopped on field mapping: {case['stop_reason']}")
+    assert probe.requests == 5
+    assert call5_prompt is not None
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert '"language_targets"' in fields_segment
+    assert '"language_targets[0]"' not in fields_segment
+
+
+def test_dotted_transfer_task_path_keeps_existing_behavior(runner, eval_settings, tmp_path):
+    report, probe, _, call5_prompt = _run_indexed_refinement(
+        runner,
+        eval_settings,
+        tmp_path,
+        issue_fields=["transfer_task.task_kind"],
+        patch={"transfer_task": blueprint_payload()["transfer_task"]},
+        tag="dotted",
+    )
+    case = report["cases"][0]
+    assert case["outcome"] == "completed"
+    assert probe.requests == 5
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert '"transfer_task"' in fields_segment
+
+
+def test_multiple_issues_on_same_top_field_single_entry(runner, eval_settings, tmp_path):
+    report, probe, _, call5_prompt = _run_indexed_refinement(
+        runner,
+        eval_settings,
+        tmp_path,
+        issue_fields=[
+            "comprehension_checkpoints[0].prompt_subject",
+            "comprehension_checkpoints[2].reference_answer_subject",
+        ],
+        patch={"comprehension_checkpoints": blueprint_payload()["comprehension_checkpoints"]},
+        tag="multi-issue",
+    )
+    case = report["cases"][0]
+    assert case["outcome"] == "completed"
+    assert probe.requests == 5
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert fields_segment.count('"comprehension_checkpoints"') == 1
+
+
+def test_unknown_top_level_section_still_fails_closed(runner, eval_settings, tmp_path):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_with_fields(["unknown_section[0].value"]),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "unknown",
+    )
+    case = report["cases"][0]
+    assert report["status"] == "stopped_batch"
+    assert "refinement_field_unknown" in case["stop_reason"]
+    assert probe.requests == 4
+    assert report["cases"][1]["outcome"] == "skipped_by_stop"
+
+
+@pytest.mark.parametrize(
+    ("bad_field", "expected_requests", "expected_reason"),
+    [
+        ("", 7, "semantic_review"),
+        ("[0]", 4, "refinement_field_unknown"),
+        (".prompt_subject", 4, "refinement_field_unknown"),
+    ],
+)
+def test_empty_or_illegal_roots_still_fail_closed(
+    runner,
+    eval_settings,
+    tmp_path,
+    bad_field,
+    expected_requests,
+    expected_reason,
+):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_with_fields([bad_field]),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / f"bad{abs(hash(bad_field))}",
+    )
+    case = report["cases"][0]
+    assert case["outcome"].startswith("stopped")
+    last_entry = case["stage_ledger"][-1]
+    assert last_entry["stage"] == "semantic_review"
+    assert expected_reason in case["stop_reason"]
+    total = sum(e["usage"]["model_requests"] for e in case["stage_ledger"])
+    assert total == report["aggregate"]["model_requests"] == expected_requests
+    assert probe.requests == expected_requests

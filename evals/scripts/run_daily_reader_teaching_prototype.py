@@ -828,7 +828,11 @@ def run_case(
         refine_output: dict[str, Any] | None = None
         if review_evidence["verdict"] == "FAIL":
             for issue in review_evidence["issues"]:
-                top_field = str(issue.get("field", "")).split(".")[0]
+                # Top-level segment only: take the name before the first "." or
+                # "[" so indexed paths like comprehension_checkpoints[2].x map
+                # to their container key. The raw field path still reaches the
+                # refinement prompt verbatim; unknown roots stay fail-closed.
+                top_field = re.split(r"[.\[]", str(issue.get("field", "")), maxsplit=1)[0]
                 if top_field in package_obj:
                     fields_to_fix.setdefault(
                         top_field, json.loads(json.dumps(package_obj[top_field]))
