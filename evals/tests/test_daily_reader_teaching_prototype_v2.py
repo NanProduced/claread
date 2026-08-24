@@ -917,3 +917,89 @@ def test_failed_recheck_builds_final_fail_without_sixth_call() -> None:
         if contract == "transfer_mapping":
             continue
         assert after_by_contract[contract] == before_by_contract[contract]
+
+
+# ---------------------------------------------------------------------------
+# P-4G: canonical prompt/contract repair (RED first on f9dd54b1)
+# ---------------------------------------------------------------------------
+
+
+def _flat(prompt: str) -> str:
+    return " ".join(prompt.casefold().split())
+
+
+def test_translation_prompt_requires_simplified_chinese_output() -> None:
+    prompt = build_translation_prompt([UNITS[2]], [], "B2")
+    flat = _flat(prompt)
+    assert "simplified chinese" in flat
+    assert "contract violation" in flat
+    assert "source text unchanged" in flat
+
+
+def test_language_support_prompt_requires_minimum_semantic_fields() -> None:
+    prompt = build_language_support_prompt([UNITS[2]], "B2")
+    flat = _flat(prompt)
+    assert "meaning_zh" in flat
+    assert "usage_note" in flat
+    assert "reusable_pattern" in flat
+    assert "non-empty" in flat
+    assert "contract violation" in flat
+
+
+def test_semantic_review_prompt_calibrates_difficulty_and_neutrality() -> None:
+    prompt = build_semantic_review_prompt("body.", {}, {}, {})
+    flat = _flat(prompt)
+    assert "not automatically wrong" in flat
+    assert "concrete textual evidence" in flat
+    assert "prescribes which side" in flat
+
+
+def test_refinement_prompt_constrains_patch_values() -> None:
+    blueprint, package = _valid_contract()
+    prompt = build_refinement_prompt(
+        _directed_failed_review("transfer_mapping"),
+        {"transfer_task": package["transfer_task"]},
+        {"relevant_anchor": "u02"},
+    )
+    flat = _flat(prompt)
+    assert "reading_mission_stance stays exactly neutral" in flat
+    assert "never introduce empty strings" in flat
+    assert "simplified chinese" in flat
+    assert "date, number, and proper name" in flat
+    assert "source_fidelity" not in flat
+
+
+def test_translation_source_echo_reported_when_reading_units_given() -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {
+        "u02": UNITS[1]["text"],
+        "u03": "第二个实质单元的合格中文译文。",
+        "u04": "  ",
+    }
+    issues = validate_teaching_contract(
+        blueprint,
+        package,
+        reading_units=[
+            *UNITS[1:],
+            {"id": "u01", "text": "Pure source chrome."},
+        ],
+    )
+    echo_fields = [issue["field"] for issue in issues if issue["code"] == "translation_source_echo"]
+    assert echo_fields == ["translations_by_paragraph_id.u02"]
+
+    package["translations_by_paragraph_id"] = {
+        "u02": "合格的中文译文，不是源文复读。",
+        "u03": "另一条合格中文译文。",
+    }
+    assert not [
+        issue
+        for issue in validate_teaching_contract(blueprint, package, reading_units=UNITS[1:])
+        if issue["code"] == "translation_source_echo"
+    ]
+
+
+def test_translation_echo_check_stays_dormant_without_reading_units() -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {"u02": UNITS[1]["text"]}
+    codes = _issue_codes(blueprint, package)
+    assert "translation_source_echo" not in codes

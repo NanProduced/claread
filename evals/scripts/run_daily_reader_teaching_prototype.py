@@ -53,7 +53,7 @@ from app.llm.types import (  # noqa: E402
     RouteModelSelection,
     RunModelSettings,
 )
-from pydantic import BaseModel, ValidationError, model_validator  # noqa: E402
+from pydantic import BaseModel, Field, ValidationError, model_validator  # noqa: E402
 from pydantic_ai import Agent  # noqa: E402
 from pydantic_ai.models import Model  # noqa: E402
 from pydantic_ai.usage import RunUsage  # noqa: E402
@@ -243,9 +243,11 @@ class LanguageTargetDraft(BaseModel):
     paragraph_id: str
     target_kind: str
     teaching_purpose: str
-    meaning_zh: str = ""
-    usage_note: str = ""
-    reusable_pattern: str = ""
+    # P-1 §3.4 minimum semantic fields: omission or blank values are output-
+    # validation failures and burn an in-call output retry, never silent "".
+    meaning_zh: str = Field(pattern=r"\S")
+    usage_note: str = Field(pattern=r"\S")
+    reusable_pattern: str = Field(pattern=r"\S")
 
 
 class SentenceMapDraft(BaseModel):
@@ -803,7 +805,11 @@ def run_case(
                 item["paragraph_id"]: item["translation"] for item in translation["translations"]
             },
         }
-        deterministic_issues = validate_teaching_contract(blueprint_obj, package_obj)
+        deterministic_issues = validate_teaching_contract(
+            blueprint_obj,
+            package_obj,
+            reading_units=view["reading_units"],
+        )
 
         review_prompt = build_semantic_review_prompt(
             view["original_text"],
@@ -877,13 +883,45 @@ def run_case(
                     _apply_patch(blueprint_obj, {key: value})
                 else:
                     stop(f"refinement_patch_target_unknown:{key}")
+            # Patch values bypassed the transport DTOs at generation time, so
+            # the patched containers must re-pass the same DTO discipline
+            # before they can become the artifact. A violation is a structural
+            # refinement failure (same class as review_evidence_invalid), not a
+            # quality verdict: fail closed instead of shipping corrupt fields.
+            try:
+                BlueprintDraft.model_validate(blueprint_obj)
+            except ValidationError as exc:
+                stop(f"refinement_patch_schema_violation:blueprint:{exc.errors()[0]['type']}")
+            try:
+                LanguageSupportDraft.model_validate(
+                    {
+                        "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
+                        "language_targets": package_obj["language_targets"],
+                        "sentence_maps": package_obj["sentence_maps"],
+                    }
+                )
+            except ValidationError as exc:
+                stop(
+                    f"refinement_patch_schema_violation:learning_package:{exc.errors()[0]['type']}"
+                )
+            invalid_translations = sorted(
+                pid
+                for pid, value in package_obj["translations_by_paragraph_id"].items()
+                if not isinstance(value, str) or not value.strip()
+            )
+            if invalid_translations:
+                stop(f"refinement_patch_invalid_translation_values:{invalid_translations[:5]}")
             refinement_count = 1
 
         if refinement_count:
             # Non-gold deterministic replay only — gold hard gates never feed
             # build_refinement_evidence. The translation set is read from the
             # CURRENT patched package, never the pre-refinement response ids.
-            replay_issues = validate_teaching_contract(blueprint_obj, package_obj)
+            replay_issues = validate_teaching_contract(
+                blueprint_obj,
+                package_obj,
+                reading_units=view["reading_units"],
+            )
             try:
                 replay_targets = derive_translation_unit_ids(
                     blueprint_obj["effective_difficulty"],

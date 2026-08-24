@@ -2016,3 +2016,220 @@ def test_semantic_review_prompt_declares_field_address_formats(runner):
     assert "learning_package." in flat
     assert "blueprint." in flat
     assert "bare container name" in flat
+
+
+# ---------------------------------------------------------------------------
+# P-4G: refinement patch integrity + translation source-echo detection (RED first)
+# ---------------------------------------------------------------------------
+
+
+def _language_support_payload_without_usage() -> dict[str, Any]:
+    payload = language_support_payload()
+    payload.pop("_usage", None)
+    return payload
+
+
+def test_language_target_draft_requires_nonempty_semantic_fields(runner):
+    base = _language_support_payload_without_usage()
+
+    missing = json.loads(json.dumps(base))
+    del missing["language_targets"][0]["meaning_zh"]
+    with pytest.raises(runner.ValidationError):
+        runner.LanguageSupportDraft.model_validate(missing)
+
+    empty = json.loads(json.dumps(base))
+    empty["language_targets"][1]["reusable_pattern"] = ""
+    with pytest.raises(runner.ValidationError):
+        runner.LanguageSupportDraft.model_validate(empty)
+
+    blank = json.loads(json.dumps(base))
+    blank["language_targets"][2]["usage_note"] = "   "
+    with pytest.raises(runner.ValidationError):
+        runner.LanguageSupportDraft.model_validate(blank)
+
+    runner.LanguageSupportDraft.model_validate(json.loads(json.dumps(base)))
+
+
+def _review_fail_stance() -> dict[str, Any]:
+    payload = review_payload("FAIL", "reading_mission_neutrality")
+    payload["issues"] = [
+        {
+            "contract": "reading_mission_neutrality",
+            "field": "blueprint.reading_mission_stance",
+            "problem": "the mission prescribes a side",
+        }
+    ]
+    return payload
+
+
+def _refinement_recheck_single(contract: str, patch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "_usage": {"input_tokens": 18, "output_tokens": 22},
+        "refinement_patch": patch,
+        "rechecked_contract_results": [
+            {"contract": contract, "passed": True, "rationale": "Directed recheck ok."}
+        ],
+        "remaining_issues": [],
+    }
+
+
+def test_refinement_patch_with_illegal_stance_is_stopped_not_applied(
+    runner, eval_settings, tmp_path
+):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_stance(),
+            _refinement_recheck_single(
+                "reading_mission_neutrality", {"reading_mission_stance": "critical"}
+            ),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    assert report["status"] == "stopped_batch"
+    case = report["cases"][0]
+    assert case["outcome"].startswith("stopped")
+    assert "refinement_patch_schema_violation" in case["stop_reason"]
+    assert case["artifact"] is None
+    assert probe.requests == 5
+
+
+def test_refinement_patch_empty_translation_value_is_stopped(runner, eval_settings, tmp_path):
+    review_fail = review_payload("FAIL", "translation_selection")
+    review_fail["issues"] = [
+        {
+            "contract": "translation_selection",
+            "field": "learning_package.translations_by_paragraph_id.u03",
+            "problem": "translation quality is below the contract",
+        }
+    ]
+    patched_map = _full_translation_map()
+    patched_map["u03"] = ""
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_fail,
+            _refinement_recheck_single(
+                "translation_selection", {"translations_by_paragraph_id": patched_map}
+            ),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    assert report["status"] == "stopped_batch"
+    case = report["cases"][0]
+    assert case["outcome"].startswith("stopped")
+    assert "refinement_patch_invalid_translation_values" in case["stop_reason"]
+    assert case["artifact"] is None
+
+
+def _echo_translation_payload() -> dict[str, Any]:
+    return {
+        "_usage": {"input_tokens": 40, "output_tokens": 50},
+        "translations": [
+            {"paragraph_id": unit["id"], "translation": unit["text"]} for unit in UNITS
+        ],
+    }
+
+
+def test_translation_echo_reaches_review_checks_and_fails_replay(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    echo_map = {unit["id"]: unit["text"] for unit in UNITS}
+    review_fail = review_payload("FAIL", "translation_selection")
+    review_fail["issues"] = [
+        {
+            "contract": "translation_selection",
+            "field": "learning_package.translations_by_paragraph_id.u02",
+            "problem": "the translation mirrors the source instead of translating it",
+        }
+    ]
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            _echo_translation_payload(),
+            review_fail,
+            _refinement_recheck_single(
+                "translation_selection", {"translations_by_paragraph_id": echo_map}
+            ),
+        ]
+    )
+    probe = _Probe()
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    review_prompt = probe.captures[3]["prompt_text"]
+    assert "translation_source_echo" in review_prompt
+    case = report["cases"][0]
+    assert case["outcome"] == "quality_fail_continue"
+    assert case["refinement_replay_all_passed"] is False
+    evidence = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    assert evidence["refinement"]["hard_gate_replay"]["all_passed"] is False
+    after = evidence["refinement"]["review_after_refinement"]
+    assert after["verdict"] == "FAIL"
+
+
+def test_p4g_prompt_additions_keep_generation_lane_clean(runner):
+    article = {"title": "Synthetic", "source": "offline", "reading_units": UNITS[1:]}
+    before_review = runner.make_review_evidence(
+        verdict="FAIL",
+        issues=[
+            {
+                "contract": "transfer_mapping",
+                "field": "transfer_task.task_kind",
+                "problem": "direction does not fit the article type",
+            }
+        ],
+        remaining_issues=["transfer direction"],
+        contract_results=[
+            {
+                "contract": contract,
+                "passed": contract != "transfer_mapping",
+                "rationale": f"Substantive check for {contract}.",
+            }
+            for contract in runner.SEMANTIC_REVIEW_CONTRACTS
+        ],
+        reviewed_at_stage="before_refinement",
+        refinement_requested=True,
+    )
+    prompts = {
+        "blueprint": runner.build_blueprint_prompt(article),
+        "language_support": runner.build_language_support_prompt([UNITS[2]], "B2"),
+        "translation": runner.build_translation_prompt([UNITS[2]], [], "B2"),
+        "semantic_review": runner.build_semantic_review_prompt("Synthetic body.", {}, {}, {}),
+        "refinement": runner.build_refinement_prompt(
+            before_review,
+            {"transfer_task": {"task_kind": "retell"}},
+            {"relevant_anchor": "u02"},
+        ),
+    }
+    for _stage, prompt in prompts.items():
+        runner.assert_prompt_clean(prompt)

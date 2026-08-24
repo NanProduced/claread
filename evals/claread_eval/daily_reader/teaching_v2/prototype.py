@@ -91,7 +91,9 @@ def build_language_support_prompt(
 
 Return 3-5 transferable language targets. Prefer Tier II language, idioms, stance or tone,
 rhetoric, and discourse links; reject ordinary complete fact sentences. Each target includes
-target_kind and teaching_purpose. Return 1-2 sentence maps. For C1, every map must be either
+target_kind and teaching_purpose, and must fill meaning_zh, usage_note, and reusable_pattern
+with concrete non-empty values grounded in the unit's context; leaving any of them empty or
+placeholder is a contract violation. Return 1-2 sentence maps. For C1, every map must be either
 complex_syntax or argument_structure and must explain why. Return explicit
 high_difficulty_unit_ids. Do not add fields used by evaluation answers.
 
@@ -113,9 +115,11 @@ def build_translation_prompt(
     _assert_generation_safe(payload)
     return """Translate exactly the supplied target units and no others.
 
-Return one translation for each supplied unit id. Never invent or add a paragraph id. When a
-sentence map belongs to a target unit, reuse its single canonical translation verbatim inside
-the unit translation.
+Return one translation for each supplied unit id. Never invent or add a paragraph id. Write
+every translation as natural Simplified Chinese prose suited to the declared learner level;
+returning the source text unchanged or nearly unchanged is a contract violation, not a
+translation. When a sentence map belongs to a target unit, reuse its single canonical
+translation verbatim inside the unit translation.
 
 TARGET INPUT:
 """ + _stable_json(payload)
@@ -153,6 +157,11 @@ value, and mission neutrality. Return one contract_results item for every named 
         failed result and directed issues.
         Every FAIL issue must contain contract, field, and problem; every failed contract needs an
         issue and no issue may name a passed contract.
+        difficulty_fit judges fit in both directions: a lower declared level is not automatically
+        wrong, and any issue requesting a level change must cite concrete textual evidence that
+        the declared level misfits the article's actual vocabulary and syntax.
+        reading_mission_neutrality fails only when the mission text itself prescribes which side
+        the reader must take; contested subject matter alone is not a neutrality violation.
 checked_contracts, if emitted, is only the ordered list derived from contract_results; never
 replace the audit with a bare verdict or name list.
 
@@ -194,6 +203,11 @@ only refinement_patch, rechecked_contract_results, and remaining_issues. The rec
 must cover exactly failed_contracts, each with contract, strict boolean passed, and a substantive
 non-empty rationale. Each remaining issue must contain contract, field, and problem. Do not review
 unaffected contracts or return a complete after-review. No second refinement is permitted.
+Every value you return must obey the frozen metadata contracts: reading_mission_stance stays
+exactly neutral, and declared enums keep their allowed values. Never introduce empty strings,
+placeholder text, or English source text inside translations: translations stay complete natural
+Simplified Chinese renderings that preserve every date, number, and proper name exactly as the
+source states it. Never add a translation key outside the unit ids visible in fields_to_fix.
 
 DIRECTED INPUT:
 """ + _stable_json(payload)
@@ -564,10 +578,22 @@ def derive_translation_unit_ids(
     raise ValueError(f"unknown effective_difficulty: {effective_difficulty!r}")
 
 
+def _normalized_text(value: Any) -> str:
+    return " ".join(value.split()).casefold() if isinstance(value, str) else ""
+
+
 def validate_teaching_contract(
-    blueprint: Mapping[str, Any], learning_package: Mapping[str, Any]
+    blueprint: Mapping[str, Any],
+    learning_package: Mapping[str, Any],
+    *,
+    reading_units: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, str]]:
-    """Return deterministic teaching-contract issues; an empty list means pass."""
+    """Return deterministic teaching-contract issues; an empty list means pass.
+
+    When ``reading_units`` is supplied, a translation that merely repeats its
+    source unit verbatim is reported as ``translation_source_echo`` — the
+    deterministic counterpart of the translation target-language contract.
+    """
     issues: list[dict[str, str]] = []
     sections: dict[str, list[Any]] = {}
     for field, minimum, maximum, code in (
@@ -742,4 +768,25 @@ def validate_teaching_contract(
                         "detail": "same full sentence repeats the same teaching purpose",
                     }
                 )
+    if reading_units:
+        source_texts = {
+            unit.get("id"): _normalized_text(unit.get("text"))
+            for unit in reading_units
+            if isinstance(unit, Mapping)
+        }
+        translations = learning_package.get("translations_by_paragraph_id")
+        if isinstance(translations, Mapping):
+            for paragraph_id, text in translations.items():
+                normalized = _normalized_text(text)
+                if normalized and normalized == source_texts.get(paragraph_id):
+                    issues.append(
+                        {
+                            "code": "translation_source_echo",
+                            "field": f"translations_by_paragraph_id.{paragraph_id}",
+                            "detail": (
+                                "translation repeats the source unit verbatim instead of "
+                                "rendering it in the target language"
+                            ),
+                        }
+                    )
     return issues
