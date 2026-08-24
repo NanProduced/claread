@@ -53,7 +53,7 @@ from app.llm.types import (  # noqa: E402
     RouteModelSelection,
     RunModelSettings,
 )
-from pydantic import BaseModel, ValidationError  # noqa: E402
+from pydantic import BaseModel, ValidationError, model_validator  # noqa: E402
 from pydantic_ai import Agent  # noqa: E402
 from pydantic_ai.models import Model  # noqa: E402
 from pydantic_ai.usage import RunUsage  # noqa: E402
@@ -290,6 +290,17 @@ class SemanticReviewDraft(BaseModel):
     contract_results: list[ContractResultDraft]
     reviewed_at_stage: Literal["before_refinement"]
     refinement_requested: bool
+
+    @model_validator(mode="after")
+    def _canonical_review_contract(self) -> SemanticReviewDraft:
+        # Delegate the whole PASS/FAIL cross-field contract to the canonical
+        # authority so violations become output-validation failures and burn a
+        # PydanticAI output retry inside the same logical call.
+        try:
+            make_review_evidence(**self.model_dump())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"semantic review violates canonical contract: {exc}") from exc
+        return self
 
 
 class RefinementDraft(BaseModel):

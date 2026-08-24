@@ -141,11 +141,14 @@ def build_semantic_review_prompt(
 Check factual fidelity, checkpoint subject consistency, evidence anchors, difficulty fit,
 translation selection, transfer mapping and content, repeated teaching points, language-target
 value, and mission neutrality. Return one contract_results item for every named contract, each
-with contract, a strict boolean passed, and a substantive non-empty rationale. Return verdict,
-issues, remaining_issues, contract_results, reviewed_at_stage='before_refinement', and
-refinement_requested. PASS requires every result to pass and both issue lists to be empty. FAIL
-requires a failed result and directed issues. Every FAIL issue must contain contract, field, and
-problem; every failed contract needs an issue and no issue may name a passed contract.
+        with contract, a strict boolean passed, and a substantive non-empty rationale. Return
+        verdict, issues, remaining_issues, contract_results, reviewed_at_stage='before_refinement',
+        and refinement_requested. PASS requires every result to pass and both issue lists to be
+        empty. FAIL additionally requires at least one non-empty string in remaining_issues:
+        remaining_issues names what still needs fixing or verifying after refinement, and an empty
+        remaining_issues list on FAIL is invalid. FAIL requires a failed result and directed issues.
+        Every FAIL issue must contain contract, field, and problem; every failed contract needs an
+        issue and no issue may name a passed contract.
 checked_contracts, if emitted, is only the ordered list derived from contract_results; never
 replace the audit with a bare verdict or name list.
 

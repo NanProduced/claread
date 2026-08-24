@@ -1473,3 +1473,123 @@ def test_legitimate_refinement_keeps_exact_target_set_passing(runner, eval_setti
     assert case["refinement_replay_all_passed"] is True
     assert case["outcome"] == "completed"
     assert case["artifact"]["run_meta"]["refinement_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# P-4F-R: semantic review output contract alignment (RED first on 91068a70)
+# ---------------------------------------------------------------------------
+
+
+def _review_fail_empty_remaining() -> dict[str, Any]:
+    payload = review_payload("FAIL", "transfer_mapping")
+    payload["remaining_issues"] = []
+    return payload
+
+
+def test_semantic_review_dto_rejects_fail_with_empty_remaining_issues(runner):
+    from pydantic import ValidationError
+
+    draft_cls = runner.STAGE_OUTPUT_TYPES["semantic_review"]
+    payload = _review_fail_empty_remaining()
+    payload.pop("_usage", None)
+    with pytest.raises(ValidationError):
+        draft_cls.model_validate(payload)
+
+
+def test_pass_with_empty_remaining_issues_stays_legal(runner):
+    draft_cls = runner.STAGE_OUTPUT_TYPES["semantic_review"]
+    payload = review_payload("PASS")
+    payload.pop("_usage", None)
+    draft_cls.model_validate(payload)
+
+
+def test_fail_with_nonempty_remaining_issues_stays_legal(runner):
+    draft_cls = runner.STAGE_OUTPUT_TYPES["semantic_review"]
+    payload = review_payload("FAIL", "transfer_mapping")
+    payload.pop("_usage", None)
+    draft_cls.model_validate(payload)
+
+
+def test_invalid_then_valid_review_recovers_within_one_logical_call(
+    runner, eval_settings, tmp_path
+):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_empty_remaining(),
+            review_payload("PASS"),
+            {"forbidden": "sixth"},
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    case = report["cases"][0]
+    stages = [entry["stage"] for entry in case["stage_ledger"]]
+    assert stages == ["blueprint", "language_support", "translation", "semantic_review"]
+    review_entry = case["stage_ledger"][-1]
+    assert review_entry["outcome"] == "ok"
+    assert review_entry["usage"]["model_requests"] == 2
+    assert review_entry["usage"]["input_tokens"] >= 60 + 60
+    assert case["outcome"] == "completed"
+    assert case["artifact"]["run_meta"]["refinement_count"] == 0
+    assert probe.requests == 5
+    assert queue.items == [{"forbidden": "sixth"}]
+
+
+def test_persistently_invalid_review_exhausts_retries_and_stops_batch(
+    runner, eval_settings, tmp_path
+):
+    import json as jsonlib
+
+    settings, selection = eval_settings
+    invalid = _review_fail_empty_remaining()
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            invalid,
+            invalid,
+            invalid,
+            invalid,
+            {"forbidden": "fifth-review"},
+        ]
+    )
+    probe = _Probe()
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    assert report["status"] == "stopped_batch"
+    case = report["cases"][0]
+    review_entry = case["stage_ledger"][-1]
+    assert review_entry["stage"] == "semantic_review"
+    assert review_entry["usage"]["model_requests"] == 4
+    assert review_entry["usage"]["input_tokens"] >= 120
+    total_requests = sum(e["usage"]["model_requests"] for e in case["stage_ledger"])
+    assert total_requests == report["aggregate"]["model_requests"] == 7
+    assert report["cases"][1]["outcome"] == "skipped_by_stop"
+    assert probe.requests == 7
+    persisted = jsonlib.loads((out_dir / "batch-report.json").read_text(encoding="utf-8"))
+    assert runner._report_exit_code(persisted) == 5
+
+
+def test_semantic_review_prompt_states_remaining_issues_contract(runner):
+    prompt = runner.build_semantic_review_prompt("body.", {}, {}, {})
+    flat = " ".join(prompt.casefold().split())
+    assert "remaining_issues" in flat
+    assert "empty remaining_issues list" in flat
+    assert "after refinement" in flat
