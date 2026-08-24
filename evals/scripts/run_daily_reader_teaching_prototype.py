@@ -137,10 +137,6 @@ class StructuralCaseError(RuntimeError):
     """Infrastructure/identity drift that must stop the whole batch."""
 
 
-class BudgetBreached(RuntimeError):
-    """Raised after usage posting when a derived batch cap is exceeded."""
-
-
 class GenerationLeakError(ValueError):
     """Gold-shaped content detected on a Generation Lane boundary."""
 
@@ -660,7 +656,11 @@ def _selected_units_for_language_support(
 def _apply_patch(container: dict[str, Any], patch: Mapping[str, Any]) -> None:
     for key, value in patch.items():
         current = container.get(key)
-        if isinstance(current, dict) and isinstance(value, Mapping):
+        if key == "translations_by_paragraph_id" and isinstance(value, Mapping):
+            # The corrected translation map is a whole-field replacement so the
+            # model can also remove entries; every other field merges.
+            container[key] = dict(value)
+        elif isinstance(current, dict) and isinstance(value, Mapping):
             container[key] = {**current, **dict(value)}
         else:
             container[key] = value
@@ -713,7 +713,8 @@ def run_case(
                 totals["output_tokens"] > caps.get("output_tokens_max", float("inf"))
             ):
                 # Exact outcome string per contract; details live in the
-                # persisted batch report and the raised error.
+                # persisted batch report. Structured flag, not string parsing.
+                budget_state["breached"] = True
                 stop("budget_exceeded")
         return entry.get("output")
 
@@ -851,7 +852,8 @@ def run_case(
 
         if refinement_count:
             # Non-gold deterministic replay only — gold hard gates never feed
-            # build_refinement_evidence.
+            # build_refinement_evidence. The translation set is read from the
+            # CURRENT patched package, never the pre-refinement response ids.
             replay_issues = validate_teaching_contract(blueprint_obj, package_obj)
             try:
                 replay_targets = derive_translation_unit_ids(
@@ -873,14 +875,49 @@ def run_case(
                 )
             except (KeyError, ValueError) as exc:
                 stop(f"deterministic_replay_failed:{exc}")
-            replay_passed = not replay_issues and set(replay_targets) == set(returned_ids)
+            current_ids = set(package_obj["translations_by_paragraph_id"].keys())
+            non_string_keys = sorted(k for k in current_ids if not isinstance(k, str))
+            missing_ids = sorted(set(replay_targets) - current_ids)
+            extra_ids = sorted(current_ids - set(replay_targets))
+            replay_passed = (
+                not replay_issues and not non_string_keys and not missing_ids and not extra_ids
+            )
+            effective_rechecks = refine_output["rechecked_contract_results"]
+            effective_remaining = list(refine_output["remaining_issues"])
+            if not replay_passed:
+                # Host-owned deterministic evidence contradicts the directed
+                # rechecks; canonical PASS is impossible, so the rechecks are
+                # downgraded (fail-closed) and the after-review lands FAIL.
+                replay_detail = (
+                    f"missing={missing_ids[:5]},extra={extra_ids[:5]},"
+                    f"non_string={non_string_keys[:5]},issues={len(replay_issues)}"
+                )
+                effective_rechecks = [
+                    {
+                        **dict(result),
+                        "passed": False,
+                        "rationale": (
+                            "host deterministic replay failed "
+                            f"({replay_detail}); {result.get('rationale', '')}"
+                        ),
+                    }
+                    for result in effective_rechecks
+                ]
+                effective_remaining = [
+                    {
+                        "contract": result["contract"],
+                        "field": str(result["contract"]),
+                        "problem": f"host deterministic replay failed ({replay_detail})",
+                    }
+                    for result in effective_rechecks
+                ]
             try:
                 refinement_evidence = build_refinement_evidence(
                     review_before_refinement=review_evidence,
                     fields_to_fix=fields_to_fix,
                     refinement_patch=json.loads(json.dumps(patch)),
-                    rechecked_contract_results=refine_output["rechecked_contract_results"],
-                    remaining_issues=refine_output["remaining_issues"],
+                    rechecked_contract_results=effective_rechecks,
+                    remaining_issues=effective_remaining,
                     hard_gate_replay={"all_passed": replay_passed},
                     prior_refinement_count=0,
                 )
@@ -938,6 +975,7 @@ def run_case(
             "case_id": view["case_id"],
             "outcome": "quality_fail_continue" if quality_fail else "completed",
             "stop_reason": None,
+            "refinement_replay_all_passed": (replay_passed if refinement_count else None),
             "stage_ledger": ledger,
             "usage": {
                 "stages": {entry["stage"]: entry["usage"] for entry in ledger},
@@ -962,6 +1000,18 @@ def run_case(
         AttributeError,
     ) as exc:
         stop(f"unexpected:{type(exc).__name__}:{exc}")
+
+
+def _report_exit_code(report: Mapping[str, Any]) -> int:
+    """Map the structured batch report status to a CLI exit code."""
+    status = report.get("status")
+    if status == "completed":
+        return 0
+    if status == "stopped_batch":
+        return 5
+    if status == "stopped_budget":
+        return 4
+    raise ValueError(f"unknown or missing batch report status: {status!r}")
 
 
 def run_batch(
@@ -990,12 +1040,13 @@ def run_batch(
     totals = dict.fromkeys(USAGE_KEYS, 0)
     reports: list[dict[str, Any]] = []
     stop_reason: str | None = None
-    budget_stop: str | None = None
+    status = "completed"
     # Per-stage posting state shared with run_case; the breach fires as soon as
     # a stage's usage is posted, not when the case completes.
-    budget_state = {
+    budget_state: dict[str, Any] = {
         "caps": effective_budget,
         "totals": {"model_requests": 0, "output_tokens": 0},
+        "breached": False,
     }
     for case in cases:
         if stop_reason is not None:
@@ -1015,8 +1066,6 @@ def run_batch(
             )
         except BatchStopped as exc:
             stop_reason = str(exc)
-            if "budget_exceeded" in stop_reason:
-                budget_stop = stop_reason
             if exc.partial is not None:
                 report = exc.partial
             else:
@@ -1030,29 +1079,21 @@ def run_batch(
         reports.append(report)
         for key in USAGE_KEYS:
             totals[key] += report["usage"]["aggregate"].get(key, 0)
-    if budget_stop is not None:
-        persisted = {
-            "cases": reports,
-            "aggregate": totals,
-            "budget": dict(effective_budget),
-            "stop_reason": budget_stop,
-        }
-        _exclusive_write(
-            Path(out_dir) / "batch-report.json",
-            json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True),
-        )
-        raise BudgetBreached(
-            f"budget_exceeded:model_requests={totals['model_requests']}/"
-            f"{effective_budget.get('model_requests_max')}"
-            f" output_tokens={totals['output_tokens']}/{effective_budget.get('output_tokens_max')}"
-            f" report={Path(out_dir) / 'batch-report.json'}"
-        )
-    return {
+    if stop_reason is not None:
+        status = "stopped_budget" if budget_state["breached"] else "stopped_batch"
+    persisted = {
+        "status": status,
         "cases": reports,
         "aggregate": totals,
         "budget": dict(effective_budget),
+        "stop_reason": stop_reason,
         "out_dir": str(out_dir),
     }
+    _exclusive_write(
+        out_dir / "batch-report.json",
+        json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return persisted
 
 
 # ---------------------------------------------------------------------------
@@ -1112,17 +1153,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FileExistsError as exc:
         print(f"REFUSED: attempt/output already exists: {exc}", file=sys.stderr)
         return 3
-    except BudgetBreached as exc:
-        print(f"BUDGET STOPPED: {exc}", file=sys.stderr)
-        return 4
-    except BatchStopped as exc:
-        print(f"BATCH STOPPED: {exc}", file=sys.stderr)
-        return 5
     except StructuralCaseError as exc:
         print(f"CONFIG STOPPED: {exc}", file=sys.stderr)
         return 6
+    exit_code = _report_exit_code(report)
+    if exit_code != 0:
+        print(
+            f"BATCH {report['status'].upper()}: {report.get('stop_reason')}",
+            file=sys.stderr,
+        )
     print(json.dumps(report["aggregate"], sort_keys=True), "->", args.out_dir)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

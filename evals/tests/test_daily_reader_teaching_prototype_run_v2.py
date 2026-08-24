@@ -823,15 +823,17 @@ def test_budget_breach_stops_batch_after_usage_posting(runner, eval_settings, tm
     budget = runner.derive_budget(case_count=1)
     budget["output_tokens_max"] = 10
     probe = _Probe()
-    with pytest.raises(Exception, match="budget"):
-        runner.run_batch(
-            [mini_case()],
-            settings,
-            selection,
-            _offline_transport_factory(_Queue(pass_queue()), probe),
-            tmp_path / "out",
-            budget=budget,
-        )
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue(pass_queue()), probe),
+        tmp_path / "out",
+        budget=budget,
+    )
+    assert report["status"] == "stopped_budget"
+    assert report["aggregate"]["output_tokens"] > 10
+    assert report["cases"][0]["outcome"] == "stopped:budget_exceeded"
 
 
 # ---------------------------------------------------------------------------
@@ -1174,19 +1176,19 @@ def test_budget_stop_checks_each_stage_and_persists_report(runner, eval_settings
     budget["model_requests_max"] = 2
     out_dir = tmp_path / "out"
     probe = _Probe()
-    with pytest.raises(runner.BudgetBreached) as excinfo:
-        runner.run_batch(
-            [mini_case(), mini_case("syn-p4e-002")],
-            settings,
-            selection,
-            _offline_transport_factory(_Queue(pass_queue()), probe),
-            out_dir,
-            budget=budget,
-        )
-    assert "budget_exceeded" in str(excinfo.value)
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue(pass_queue()), probe),
+        out_dir,
+        budget=budget,
+    )
+    assert report["status"] == "stopped_budget"
     report_path = out_dir / "batch-report.json"
     assert report_path.is_file()
     persisted = jsonlib.loads(report_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "stopped_budget"
     first = persisted["cases"][0]
     second = persisted["cases"][1]
     assert first["outcome"] == "stopped:budget_exceeded"
@@ -1291,3 +1293,183 @@ def test_structural_errors_ignore_gold_identity_fields(runner, eval_settings, tm
     broken = json.loads(json.dumps(artifact))
     broken["learning_package"]["comprehension_checkpoints"][0]["skill"] = "vibes"
     assert runner.artifact_structural_errors(source_case, broken) != []
+
+
+# ---------------------------------------------------------------------------
+# P-4E-R2: batch exit unification + post-refinement deterministic replay
+# ---------------------------------------------------------------------------
+
+
+def _review_fail_translations() -> dict[str, Any]:
+    payload = review_payload("FAIL", "translation_selection")
+    payload["issues"] = [
+        {
+            "contract": "translation_selection",
+            "field": "translations_by_paragraph_id.u03",
+            "problem": "translation coverage is wrong for the derived targets",
+        }
+    ]
+    return payload
+
+
+def _refinement_patch_translations(value: dict[str, str]) -> dict[str, Any]:
+    return {
+        "_usage": {"input_tokens": 15, "output_tokens": 18},
+        "refinement_patch": {"translations_by_paragraph_id": value},
+        "rechecked_contract_results": [
+            {
+                "contract": "translation_selection",
+                "passed": True,
+                "rationale": "Directed recheck after patch.",
+            }
+        ],
+        "remaining_issues": [],
+    }
+
+
+def _full_translation_map() -> dict[str, str]:
+    return {
+        item["paragraph_id"]: item["translation"] for item in translation_payload()["translations"]
+    }
+
+
+def _run_translation_refinement(
+    runner,
+    eval_settings,
+    tmp_path,
+    *,
+    patched_map: dict[str, str],
+    tag: str,
+):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            _review_fail_translations(),
+            _refinement_patch_translations(patched_map),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / tag,
+    )
+    return report["cases"][0], probe
+
+
+def test_structural_stop_returns_stopped_batch_status_and_persists_report(
+    runner, eval_settings, tmp_path
+):
+    import json as jsonlib
+
+    settings, selection = eval_settings
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue([{}]), _Probe()),
+        out_dir,
+    )
+    assert report["status"] == "stopped_batch"
+    first = report["cases"][0]
+    assert first["outcome"].startswith("stopped")
+    assert sum(e["usage"]["model_requests"] for e in first["stage_ledger"]) > 0
+    assert report["aggregate"]["model_requests"] > 0
+    assert report["cases"][1]["outcome"] == "skipped_by_stop"
+    persisted = jsonlib.loads((out_dir / "batch-report.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "stopped_batch"
+    for key in ("status", "cases", "aggregate", "budget", "stop_reason"):
+        assert key in persisted
+    assert runner._report_exit_code(persisted) == 5
+
+
+def test_completed_batch_persists_report_and_exits_zero(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    settings, selection = eval_settings
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue(pass_queue()), _Probe()),
+        out_dir,
+    )
+    assert report["status"] == "completed"
+    assert report["stop_reason"] is None
+    persisted = jsonlib.loads((out_dir / "batch-report.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
+    assert runner._report_exit_code(persisted) == 0
+
+
+def test_budget_stop_returns_stopped_budget_status_and_exit_four(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    settings, selection = eval_settings
+    budget = runner.derive_budget(case_count=2)
+    budget["model_requests_max"] = 2
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue(pass_queue()), _Probe()),
+        out_dir,
+        budget=budget,
+    )
+    assert report["status"] == "stopped_budget"
+    assert report["cases"][0]["outcome"] == "stopped:budget_exceeded"
+    assert report["cases"][1]["outcome"] == "skipped_by_stop"
+    persisted = jsonlib.loads((out_dir / "batch-report.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "stopped_budget"
+    assert "budget_exceeded" in persisted["stop_reason"]
+    assert runner._report_exit_code(persisted) == 4
+
+
+def test_report_exit_code_mapping_is_status_based(runner):
+    assert runner._report_exit_code({"status": "completed"}) == 0
+    assert runner._report_exit_code({"status": "stopped_batch"}) == 5
+    assert runner._report_exit_code({"status": "stopped_budget"}) == 4
+    with pytest.raises(ValueError):
+        runner._report_exit_code({"status": "mystery"})
+    with pytest.raises(ValueError):
+        runner._report_exit_code({})
+
+
+def test_refinement_deleting_a_translation_fails_replay(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    shrunk = {k: v for k, v in _full_translation_map().items() if k != "u03"}
+    case, _ = _run_translation_refinement(
+        runner, eval_settings, tmp_path, patched_map=shrunk, tag="del"
+    )
+    assert case["refinement_replay_all_passed"] is False
+    evidence = jsonlib.loads(
+        (tmp_path / "del" / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    assert evidence["refinement"]["hard_gate_replay"]["all_passed"] is False
+
+
+def test_refinement_adding_an_extra_translation_fails_replay(runner, eval_settings, tmp_path):
+    bloated = dict(_full_translation_map())
+    bloated["u09"] = "多余译文。"
+    case, _ = _run_translation_refinement(
+        runner, eval_settings, tmp_path, patched_map=bloated, tag="extra"
+    )
+    assert case["refinement_replay_all_passed"] is False
+
+
+def test_legitimate_refinement_keeps_exact_target_set_passing(runner, eval_settings, tmp_path):
+    identical = _full_translation_map()
+    case, _ = _run_translation_refinement(
+        runner, eval_settings, tmp_path, patched_map=identical, tag="ok"
+    )
+    assert case["refinement_replay_all_passed"] is True
+    assert case["outcome"] == "completed"
+    assert case["artifact"]["run_meta"]["refinement_count"] == 1
