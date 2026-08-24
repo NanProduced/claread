@@ -641,3 +641,177 @@ async def test_image_tree_survives_fresh_and_reloaded_snapshots(
         assert "effective_url" not in payload
         for entry in payload.get("inline_images") or []:
             assert "effective_url" not in entry
+
+
+# ---------------------------------------------------------------------------
+# F. G2d-A · image_source_overrides 纯内存投影 tracer（O-D1-A §8.2.2）
+#
+# seam：build_reader_plate_snapshot(image_source_overrides=...) 的
+# standalone key = (block_id, None)，inline key = (block_id, ordinal)。
+# override 存在性用 `key in overrides` 判定（空串也是存在的 override）。
+# ---------------------------------------------------------------------------
+
+_G2D_STANDALONE_PAYLOAD: dict[str, Any] = {
+    "source_url": "https://example.com/a.png",
+    "alt_text": "a",
+    "title": None,
+    "position_kind": "standalone",
+}
+
+
+def _snapshot_with_overrides(
+    blocks: list[dict[str, Any]],
+    overrides: dict[tuple[str, int | None], str],
+):
+    return build_reader_plate_snapshot(
+        _build_result(blocks),
+        snapshot_taken_at=datetime(2026, 8, 23, 12, 0, tzinfo=UTC),
+        last_event_sequence=1,
+        analysis_progress=fixture_analysis_progress(),
+        image_source_overrides=overrides,
+    )
+
+
+def _g2d_standalone_node(overrides: dict[tuple[str, int | None], str]):
+    blocks = [
+        _make_block(
+            "img-1",
+            0,
+            "image",
+            copy.deepcopy(_G2D_STANDALONE_PAYLOAD),
+            text_content=None,
+        )
+    ]
+    snapshot = _snapshot_with_overrides(blocks, overrides)
+    images = [n for n in snapshot.stable_document_tree if n.block_type == "image"]
+    assert len(images) == 1
+    return images[0]
+
+
+def test_g2d_standalone_safe_override_projects_raw_and_effective() -> None:
+    override = "https://cdn.example.com/replaced.png"
+    node = _g2d_standalone_node({("img-1", None): override})
+    assert node.payload["source_url"] == "https://example.com/a.png"
+    assert node.payload["override_url"] == override
+    assert node.payload["effective_url"] == override
+
+
+def test_g2d_standalone_invalid_override_keeps_raw_and_never_falls_back() -> None:
+    override = "javascript:alert(1)"
+    node = _g2d_standalone_node({("img-1", None): override})
+    # source_url 本身 safe，但 override 存在时绝不回退。
+    assert node.payload["source_url"] == "https://example.com/a.png"
+    assert node.payload["override_url"] == override
+    assert node.payload["effective_url"] is None
+
+
+def test_g2d_no_override_row_omits_key_and_derives_from_source() -> None:
+    # override 行指向其他 block：本节点键缺失、effective 从 source 派生。
+    node = _g2d_standalone_node({("other-block", None): "https://cdn.example.com/x.png"})
+    assert "override_url" not in node.payload
+    assert node.payload["effective_url"] == "https://example.com/a.png"
+
+
+def test_g2d_empty_string_override_is_present_with_null_effective() -> None:
+    node = _g2d_standalone_node({("img-1", None): ""})
+    assert "override_url" in node.payload
+    assert node.payload["override_url"] == ""
+    assert node.payload["effective_url"] is None
+
+
+def test_g2d_inline_ordinal_hits_only_targeted_item() -> None:
+    entries = [
+        {
+            "source_url": "https://example.com/i0.png",
+            "alt_text": "i0",
+            "title": None,
+            "before_utf16": 0,
+        },
+        {
+            "source_url": "https://example.com/i1.png",
+            "alt_text": "i1",
+            "title": None,
+            "before_utf16": 3,
+        },
+    ]
+    payload = {"inline_images": copy.deepcopy(entries)}
+    blocks = [
+        _make_block(
+            "block-1",
+            0,
+            "paragraph",
+            payload,
+            text_content="Text with two inline images here.",
+            start=0,
+            end=len("Text with two inline images here."),
+        )
+    ]
+    override = "https://cdn.example.com/only-1.png"
+    snapshot = _snapshot_with_overrides(blocks, {("block-1", 1): override})
+    node = snapshot.stable_document_tree[0]
+    projected = node.payload["inline_images"]
+    assert "override_url" not in projected[0]
+    assert projected[0]["effective_url"] == "https://example.com/i0.png"
+    assert projected[0]["source_url"] == "https://example.com/i0.png"
+    assert projected[1]["override_url"] == override
+    assert projected[1]["effective_url"] == override
+    assert projected[1]["source_url"] == "https://example.com/i1.png"
+
+
+def test_g2d_override_projection_does_not_mutate_input_payloads() -> None:
+    standalone_payload = copy.deepcopy(_G2D_STANDALONE_PAYLOAD)
+    standalone_original = copy.deepcopy(standalone_payload)
+    inline_payload = {
+        "inline_images": [
+            {
+                "source_url": "https://example.com/i.png",
+                "alt_text": "i",
+                "title": None,
+                "before_utf16": 0,
+            }
+        ]
+    }
+    inline_original = copy.deepcopy(inline_payload)
+    blocks = [
+        _make_block("img-1", 0, "image", standalone_payload, text_content=None),
+        _make_block(
+            "cell-1",
+            1,
+            "table_cell",
+            inline_payload,
+            text_content=None,
+        ),
+    ]
+    _snapshot_with_overrides(
+        blocks,
+        {("img-1", None): "https://cdn.example.com/s.png", ("cell-1", 0): ""},
+    )
+    assert standalone_payload == standalone_original
+    assert inline_payload == inline_original
+
+
+def test_g2d_snapshot_value_stays_free_of_override_and_image_nodes() -> None:
+    blocks = [
+        _make_block(
+            "para-1",
+            0,
+            "paragraph",
+            {},
+            text_content="Hello world.",
+            start=0,
+            end=12,
+        ),
+        _make_block(
+            "img-1",
+            1,
+            "image",
+            copy.deepcopy(_G2D_STANDALONE_PAYLOAD),
+            text_content=None,
+        ),
+    ]
+    snapshot = _snapshot_with_overrides(blocks, {("img-1", None): "https://cdn.example.com/s.png"})
+    assert not _value_has_image_node(snapshot.value)
+    value_json = json.dumps(snapshot.value)
+    assert "override_url" not in value_json
+    assert "inline_images" not in value_json
+    assert "effective_url" not in value_json

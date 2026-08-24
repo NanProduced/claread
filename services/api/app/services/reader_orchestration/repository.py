@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -123,6 +123,14 @@ class LoadedReaderSnapshotFacts:
     annotation_diagnostics_readback: AnnotationDiagnosticsReadback
     user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
     ask_supplements: tuple[ReaderSnapshotAskSupplement, ...] = ()
+    # G2d-A：active Stable Document id（无 Stable Document 的 legacy/
+    # synthetic record 为 None）与该文档的 frozen image source URL
+    # override overlay（locator = (block_id, inline_ordinal|None) → raw
+    # 原串；不 trim、不解析、不调用 validator，投影时才派生 effective_url）。
+    stable_document_id: str | None = None
+    image_source_overrides: Mapping[tuple[str, int | None], str] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1249,7 +1257,8 @@ class ReaderOrchestrationRepository:
                    b.text_content, b.payload_json, b.source_refs_json,
                    b.quality_json, b.interpretation_policy_json,
                    b.canonical_text_start_utf16 AS block_start_utf16,
-                   b.canonical_text_end_utf16 AS block_end_utf16
+                   b.canonical_text_end_utf16 AS block_end_utf16,
+                   d.id AS stable_document_id
             FROM stable_reading_documents d
             JOIN stable_document_blocks b
               ON b.stable_document_id = d.id
@@ -1261,6 +1270,35 @@ class ReaderOrchestrationRepository:
             record_id,
             record_generation,
         )
+        # G2d-A：active document 唯一 id（全部行同一 d.id）+ 同事务
+        # readonly override overlay。按 stable_document_id 绑定 →
+        # superseded 旧文档的行天然不进入新 active 文档快照。
+        stable_document_id_value: str | None = (
+            str(stable_block_rows[0]["stable_document_id"])
+            if stable_block_rows
+            else None
+        )
+        image_source_overrides: dict[tuple[str, int | None], str] = {}
+        if stable_document_id_value is not None:
+            override_rows = await conn.fetch(
+                """
+                SELECT block_id, inline_ordinal, override_url
+                FROM stable_image_source_overrides
+                WHERE stable_document_id = $1
+                """,
+                UUID(stable_document_id_value),
+            )
+            image_source_overrides = {
+                (
+                    str(override_row["block_id"]),
+                    (
+                        int(override_row["inline_ordinal"])
+                        if override_row["inline_ordinal"] is not None
+                        else None
+                    ),
+                ): str(override_row["override_url"])
+                for override_row in override_rows
+            }
         # Persisted block rows re-enter the single
         # analyzer (no silent range skipping anywhere). Accepted
         # annotations carry analyzer-validated inline marks, so reload
@@ -1702,6 +1740,8 @@ class ReaderOrchestrationRepository:
             ),
             user_assets=user_assets,
             ask_supplements=ask_supplements,
+            stable_document_id=stable_document_id_value,
+            image_source_overrides=image_source_overrides,
         )
 
     async def _load_user_assets_for_snapshot(

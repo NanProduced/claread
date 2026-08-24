@@ -534,6 +534,38 @@ class TestRepresentationPayloadValidator:
             }
 
 
+    # ------------------------------------------------------------------
+    # G2d-A: image_overrides section allowlist contract
+    # ------------------------------------------------------------------
+    @pytest.mark.parametrize("operation", ["upsert", "delete"])
+    def test_build_valid_image_overrides_operations(self, operation: str) -> None:
+        target_key = f"{uuid4()}:b12:{'-' if operation == 'upsert' else '0'}"
+        payload = build_representation_payload(
+            representation_section="image_overrides",
+            operation=operation,
+            generation=1,
+            base_id=str(uuid4()),
+            target_keys=[target_key],
+        )
+        assert payload["representation_section"] == "image_overrides"
+        assert payload["operation"] == operation
+        assert payload["target_keys"] == [target_key]
+    @pytest.mark.parametrize(
+        "operation", ["merge", "reactivate", "status_changed", "restore"]
+    )
+    def test_image_overrides_rejects_operations_outside_allowlist(
+        self, operation: str
+    ) -> None:
+        with pytest.raises(RepresentationPayloadError, match="not allowed for section"):
+            build_representation_payload(
+                representation_section="image_overrides",
+                operation=operation,
+                generation=1,
+                base_id=str(uuid4()),
+                target_keys=[f"{uuid4()}:b1:-"],
+            )
+
+
 # ---------------------------------------------------------------------------#
 # Section 2: G3 — Display title representation events (DB integration)
 # ---------------------------------------------------------------------------#

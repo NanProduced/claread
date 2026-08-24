@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -59,6 +59,8 @@ def build_reader_plate_snapshot(
     enhancement_progress: ReaderEnhancementProgress | None = None,
     analysis_progress: ReaderAnalysisProgress,
     snapshot_id: str | None = None,
+    image_source_overrides: Mapping[tuple[str, int | None], str] | None = None,
+    stable_document_id: str | None = None,
 ) -> ReaderPlateSnapshot:
     _validate_snapshot_inputs(
         build_result,
@@ -109,6 +111,10 @@ def build_reader_plate_snapshot(
             builder_version=build_result.base.builder_version,
             segmenter_version=build_result.base.segmenter_version,
             text_length_utf16=build_result.base.content_utf16_length,
+            # G2d-A：真实 persisted path 必传 active Stable Document id；
+            # synthetic/profiler path 保持 None 兼容（登记为
+            # TECHNICAL_COMPATIBILITY_ADAPTATION）。
+            stable_document_id=stable_document_id,
         ),
         navigation=ReaderSnapshotNavigation(
             units=[
@@ -152,7 +158,10 @@ def build_reader_plate_snapshot(
         user_assets=list(assets),
         parsed_decisions=list(decisions),
         value=_build_plate_value(build_result, layers),
-        stable_document_tree=_build_stable_document_tree(build_result),
+        stable_document_tree=_build_stable_document_tree(
+            build_result,
+            image_source_overrides=image_source_overrides or {},
+        ),
         semantic_outline=semantic_outline,
         analysis_progress=analysis_progress,
     )
@@ -435,9 +444,18 @@ def _image_loadable_url(url: object) -> str | None:
     return url
 
 
-def _project_image_effective_urls(payload: dict[str, Any]) -> dict[str, Any]:
+def _project_image_effective_urls(
+    payload: dict[str, Any],
+    block_id: str,
+    overrides: Mapping[tuple[str, int | None], str],
+) -> dict[str, Any]:
     """§7.4 snapshot 投影：standalone image payload 与 owning block
     ``inline_images`` 数组项各附加 ``effective_url``（loadability 派生）。
+
+    G2d-A（O-D1-A）：override 行存在时（``key in overrides``，空串也算存在）
+    ``effective_url`` 改从 raw override 原文派生且附加 ``override_url`` 原串；
+    非法 override 不回退 ``source_url``。standalone key = ``(block_id, None)``，
+    inline key = ``(block_id, list index)``。
 
     浅层 payload copy + inline item copy：绝不原地修改 Stable payload
     对象；非图片 payload 无任何派生键。
@@ -446,18 +464,30 @@ def _project_image_effective_urls(payload: dict[str, Any]) -> dict[str, Any]:
     inline_images = projected.get("inline_images")
     if isinstance(inline_images, list):
         projected_inline: list[dict[str, Any]] = []
-        for entry in inline_images:
+        for index, entry in enumerate(inline_images):
             item = dict(entry) if isinstance(entry, dict) else entry
             if isinstance(item, dict):
-                item["effective_url"] = _image_loadable_url(
-                    item.get("source_url")
-                )
+                key = (block_id, index)
+                if key in overrides:
+                    override_url = overrides[key]
+                    item["override_url"] = override_url
+                    item["effective_url"] = _image_loadable_url(override_url)
+                else:
+                    item["effective_url"] = _image_loadable_url(
+                        item.get("source_url")
+                    )
             projected_inline.append(item)
         projected["inline_images"] = projected_inline
     if projected.get("position_kind") == "standalone":
-        projected["effective_url"] = _image_loadable_url(
-            projected.get("source_url")
-        )
+        key = (block_id, None)
+        if key in overrides:
+            override_url = overrides[key]
+            projected["override_url"] = override_url
+            projected["effective_url"] = _image_loadable_url(override_url)
+        else:
+            projected["effective_url"] = _image_loadable_url(
+                projected.get("source_url")
+            )
     return projected
 
 
@@ -519,6 +549,8 @@ def _build_plate_value(
 
 def _build_stable_document_tree(
     build_result: ReadingBaseBuildResult,
+    *,
+    image_source_overrides: Mapping[tuple[str, int | None], str] | None = None,
 ) -> list[ReaderStableDocumentBlockNode]:
     """Project the complete Stable Document row set into an ordered tree.
 
@@ -531,6 +563,8 @@ def _build_stable_document_tree(
     """
     if not build_result.stable_document_blocks:
         return []
+
+    overrides = image_source_overrides or {}
 
     units_by_range = {
         (unit.base_start_utf16, unit.base_end_utf16): unit
@@ -551,8 +585,11 @@ def _build_stable_document_tree(
             if start is not None and end is not None
             else None
         )
+        block_id = str(_stable_block_value(raw_block, "block_id", ""))
         payload = _project_image_effective_urls(
-            _stable_json_object(raw_block, "payload_json", "payload")
+            _stable_json_object(raw_block, "payload_json", "payload"),
+            block_id,
+            overrides,
         )
         semantic = payload.get("semantic")
         semantic_mapping = semantic if isinstance(semantic, dict) else {}
@@ -582,7 +619,7 @@ def _build_stable_document_tree(
             else []
         )
         node = ReaderStableDocumentBlockNode(
-            block_id=str(_stable_block_value(raw_block, "block_id", "")),
+            block_id=block_id,
             parent_block_id=_stable_block_value(raw_block, "parent_block_id"),
             order_index=int(_stable_block_value(raw_block, "order_index", 0)),
             block_type=str(_stable_block_value(raw_block, "block_type", "unknown")),

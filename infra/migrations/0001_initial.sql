@@ -1508,6 +1508,17 @@ CREATE TABLE stable_document_blocks (
     CONSTRAINT stable_document_blocks_source_refs_json_check CHECK ((jsonb_typeof(source_refs_json) = 'object'::text))
 );
 
+CREATE TABLE stable_image_source_overrides (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    stable_document_id uuid NOT NULL,
+    block_id text NOT NULL,
+    inline_ordinal integer,
+    override_url text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_stable_image_override_ordinal CHECK (((inline_ordinal IS NULL) OR (inline_ordinal >= 0)))
+);
+
 CREATE TABLE stable_reading_documents (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     reading_record_id uuid NOT NULL,
@@ -2044,6 +2055,9 @@ ALTER TABLE ONLY source_artifacts
 ALTER TABLE ONLY stable_document_blocks
     ADD CONSTRAINT stable_document_blocks_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY stable_image_source_overrides
+    ADD CONSTRAINT stable_image_source_overrides_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY stable_reading_documents
     ADD CONSTRAINT stable_reading_documents_pkey PRIMARY KEY (id);
 
@@ -2427,6 +2441,10 @@ CREATE UNIQUE INDEX uq_source_artifacts_active_object ON source_artifacts USING 
 
 CREATE UNIQUE INDEX uq_stable_reading_documents_active_per_record ON stable_reading_documents USING btree (reading_record_id) WHERE (status = 'active'::text);
 
+CREATE UNIQUE INDEX uq_stable_image_override_inline ON stable_image_source_overrides USING btree (stable_document_id, block_id, inline_ordinal) WHERE (inline_ordinal IS NOT NULL);
+
+CREATE UNIQUE INDEX uq_stable_image_override_standalone ON stable_image_source_overrides USING btree (stable_document_id, block_id) WHERE (inline_ordinal IS NULL);
+
 CREATE UNIQUE INDEX uq_user_annotations_reading_record_anchor ON user_annotations USING btree (user_id, reading_record_id, base_id, anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash) WHERE ((reading_record_id IS NOT NULL) AND (deleted_at IS NULL));
 
 CREATE UNIQUE INDEX uq_vocabulary_book_user_lemma_lower ON vocabulary_book USING btree (user_id, lower(lemma));
@@ -2757,6 +2775,9 @@ ALTER TABLE ONLY source_artifacts
 
 ALTER TABLE ONLY stable_document_blocks
     ADD CONSTRAINT stable_document_blocks_stable_document_id_fkey FOREIGN KEY (stable_document_id) REFERENCES stable_reading_documents(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY stable_image_source_overrides
+    ADD CONSTRAINT fk_stable_image_source_overrides_block FOREIGN KEY (stable_document_id, block_id) REFERENCES stable_document_blocks(stable_document_id, block_id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY stable_reading_documents
     ADD CONSTRAINT stable_reading_documents_reading_record_id_fkey FOREIGN KEY (reading_record_id) REFERENCES reading_records(id) ON DELETE CASCADE;

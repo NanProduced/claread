@@ -40,13 +40,14 @@ MAX_KEY_LENGTH = 128
 # ---------------------------------------------------------------------------
 
 ALLOWED_SECTIONS: frozenset[str] = frozenset(
-    {"user_assets", "ask_supplements", "record_metadata"}
+    {"user_assets", "ask_supplements", "record_metadata", "image_overrides"}
 )
 
 ALLOWED_OPERATIONS_BY_SECTION: dict[str, frozenset[str]] = {
     "user_assets": frozenset({"upsert", "delete", "merge"}),
     "ask_supplements": frozenset({"upsert", "delete", "reactivate"}),
     "record_metadata": frozenset({"status_changed"}),
+    "image_overrides": frozenset({"upsert", "delete"}),
 }
 
 ALLOWED_METADATA_FIELDS: frozenset[str] = frozenset(
