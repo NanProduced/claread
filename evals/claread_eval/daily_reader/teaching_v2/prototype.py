@@ -11,16 +11,14 @@ TRANSFER_TASK_KIND_BY_ARTICLE_TYPE = {
     "narrative_profile": "rewrite",
 }
 
-TRANSFER_CONTENT_REQUIREMENTS = {
-    "news_report": {"fact_chain"},
-    "opinion_commentary": {"original_stance"},
-    "explainer": {"mechanism_or_causality"},
-    "narrative_profile": {
-        "character_motivation",
-        "scene_contrast",
-        "quotation_characterization",
-        "narrative_viewpoint",
-    },
+TRANSFER_CONTENT_REQUIREMENT_VALUES = {
+    "fact_chain",
+    "original_stance",
+    "mechanism_or_causality",
+    "character_motivation",
+    "scene_contrast",
+    "quotation_characterization",
+    "narrative_viewpoint",
 }
 
 _FORBIDDEN_GENERATION_KEYS = {
@@ -135,16 +133,19 @@ def build_semantic_review_prompt(
         "deterministic_checks": deterministic_checks,
         "learning_package": learning_package,
         "original_text": original_text,
+        "semantic_review_contracts": SEMANTIC_REVIEW_CONTRACTS,
     }
     _assert_generation_safe(payload)
     return """Audit the lesson and persist substantive review evidence.
 
 Check factual fidelity, checkpoint subject consistency, evidence anchors, difficulty fit,
 translation selection, transfer mapping and content, repeated teaching points, language-target
-value, and mission neutrality. Even for PASS, checked_contracts must list every checked contract;
-never replace the audit with a bare verdict. Return verdict, issues, remaining_issues,
-checked_contracts, reviewed_at_stage='before_refinement', and refinement_requested. FAIL must
-include directed issues.
+value, and mission neutrality. Return one contract_results item for every named contract, each
+with contract, a strict boolean passed, and a substantive non-empty rationale. Return verdict,
+issues, remaining_issues, contract_results, reviewed_at_stage='before_refinement', and
+refinement_requested. PASS requires every result to pass and both issue lists to be empty. FAIL
+requires a failed result and directed issues. checked_contracts, if emitted, is only the ordered
+list derived from contract_results; never replace the audit with a bare verdict or name list.
 
 REVIEW INPUT:
 """ + _stable_json(payload)
@@ -154,17 +155,123 @@ def build_refinement_prompt(
     issues: Sequence[Mapping[str, Any]], fields_to_fix: Mapping[str, Any]
 ) -> str:
     """Build the sole directed-refinement prompt without unrelated content."""
-    payload = {"fields_to_fix": fields_to_fix, "issues": issues}
+    payload = {
+        "fields_to_fix": fields_to_fix,
+        "issues": issues,
+        "semantic_review_contracts": SEMANTIC_REVIEW_CONTRACTS,
+    }
     _assert_generation_safe(payload)
     return """Perform the one permitted directed refinement.
 
 Modify only fields_to_fix in response to issues; do not rewrite unrelated fields. Return a
 refinement_patch plus a complete review_after_refinement containing verdict, issues,
-remaining_issues, checked_contracts, reviewed_at_stage='after_refinement', and
-refinement_requested=false. No second refinement is permitted.
+remaining_issues, one substantive contract_results item per semantic contract,
+reviewed_at_stage='after_refinement', and refinement_requested=false. No second refinement is
+permitted.
 
 DIRECTED INPUT:
 """ + _stable_json(payload)
+
+
+def _validate_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(evidence, Mapping):
+        raise ValueError("review evidence must be an object")
+    verdict = evidence.get("verdict")
+    if verdict not in {"PASS", "FAIL"}:
+        raise ValueError("review verdict must be PASS or FAIL")
+    reviewed_at_stage = evidence.get("reviewed_at_stage")
+    if reviewed_at_stage not in {"before_refinement", "after_refinement"}:
+        raise ValueError("invalid review stage")
+    refinement_requested = evidence.get("refinement_requested")
+    if type(refinement_requested) is not bool:
+        raise ValueError("refinement_requested must be a strict bool")
+
+    contract_results = evidence.get("contract_results")
+    if not isinstance(contract_results, list):
+        raise ValueError("contract_results must contain each semantic contract exactly once")
+    normalized_results: list[dict[str, Any]] = []
+    for result in contract_results:
+        if not isinstance(result, Mapping):
+            raise ValueError("each contract result requires passed bool and non-empty rationale")
+        contract = result.get("contract")
+        passed = result.get("passed")
+        rationale = result.get("rationale")
+        if (
+            not isinstance(contract, str)
+            or type(passed) is not bool
+            or not isinstance(rationale, str)
+            or not rationale.strip()
+        ):
+            raise ValueError("each contract result requires passed bool and non-empty rationale")
+        normalized_results.append(
+            {"contract": contract, "passed": passed, "rationale": rationale.strip()}
+        )
+    result_by_contract = {result["contract"]: result for result in normalized_results}
+    if len(result_by_contract) != len(normalized_results) or set(result_by_contract) != set(
+        SEMANTIC_REVIEW_CONTRACTS
+    ):
+        raise ValueError("contract_results must contain each semantic contract exactly once")
+    checked_contracts = list(SEMANTIC_REVIEW_CONTRACTS)
+    normalized_results = [result_by_contract[contract] for contract in checked_contracts]
+    supplied_checked = evidence.get("checked_contracts")
+    if supplied_checked is not None and supplied_checked != checked_contracts:
+        raise ValueError("checked_contracts must be derived from contract_results")
+
+    issues = evidence.get("issues")
+    remaining_issues = evidence.get("remaining_issues")
+    if not isinstance(issues, list) or not isinstance(remaining_issues, list):
+        raise ValueError("review issue fields must be lists")
+    normalized_issues: list[dict[str, Any]] = []
+    for issue in issues:
+        if not isinstance(issue, Mapping):
+            raise ValueError("review issues must be directed objects")
+        field = issue.get("field")
+        problem = issue.get("problem")
+        if (
+            not isinstance(field, str)
+            or not field.strip()
+            or not isinstance(problem, str)
+            or not problem.strip()
+        ):
+            raise ValueError("review issues must be directed objects")
+        normalized_issues.append(dict(issue))
+    if any(not isinstance(issue, str) or not issue.strip() for issue in remaining_issues):
+        raise ValueError("remaining_issues must contain non-empty strings")
+
+    failed = [result for result in normalized_results if not result["passed"]]
+    if verdict == "PASS":
+        if issues:
+            raise ValueError("PASS review requires empty issues")
+        if remaining_issues:
+            raise ValueError("PASS review requires empty remaining_issues")
+        if failed:
+            raise ValueError("PASS review requires every contract result to pass")
+    else:
+        if not failed:
+            raise ValueError("FAIL review requires a failed contract result")
+        if not issues:
+            raise ValueError("FAIL review requires directed issues")
+        if not remaining_issues:
+            raise ValueError("FAIL review requires remaining_issues")
+    if reviewed_at_stage == "before_refinement" and refinement_requested != (verdict == "FAIL"):
+        raise ValueError("before-refinement request must match verdict")
+    if reviewed_at_stage == "after_refinement" and refinement_requested:
+        raise ValueError("a second refinement is not permitted")
+
+    normalized = {
+        "verdict": verdict,
+        "issues": normalized_issues,
+        "remaining_issues": list(remaining_issues),
+        "contract_results": normalized_results,
+        "checked_contracts": checked_contracts,
+        "reviewed_at_stage": reviewed_at_stage,
+        "refinement_requested": refinement_requested,
+    }
+    try:
+        json.dumps(normalized)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("review evidence must be JSON serializable") from exc
+    return normalized
 
 
 def make_review_evidence(
@@ -172,38 +279,23 @@ def make_review_evidence(
     verdict: str,
     issues: Sequence[Mapping[str, Any]],
     remaining_issues: Sequence[str],
-    checked_contracts: Sequence[str],
+    contract_results: Sequence[Mapping[str, Any]],
     reviewed_at_stage: str,
     refinement_requested: bool,
+    checked_contracts: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Validate and return the complete persisted semantic-review evidence."""
-    if verdict not in {"PASS", "FAIL"}:
-        raise ValueError("review verdict must be PASS or FAIL")
-    if reviewed_at_stage not in {"before_refinement", "after_refinement"}:
-        raise ValueError("invalid review stage")
-    if set(checked_contracts) != set(SEMANTIC_REVIEW_CONTRACTS) or len(checked_contracts) != len(
-        SEMANTIC_REVIEW_CONTRACTS
-    ):
-        raise ValueError("checked_contracts must contain the complete contract exactly once")
-    if verdict == "FAIL" and not issues:
-        raise ValueError("FAIL review requires directed issues")
-    if reviewed_at_stage == "before_refinement" and refinement_requested != (verdict == "FAIL"):
-        raise ValueError("before-refinement request must match verdict")
-    if reviewed_at_stage == "after_refinement" and refinement_requested:
-        raise ValueError("a second refinement is not permitted")
     evidence = {
         "verdict": verdict,
-        "issues": [dict(issue) for issue in issues],
+        "issues": list(issues),
         "remaining_issues": list(remaining_issues),
-        "checked_contracts": list(checked_contracts),
+        "contract_results": list(contract_results),
         "reviewed_at_stage": reviewed_at_stage,
         "refinement_requested": refinement_requested,
     }
-    try:
-        json.dumps(evidence)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("review evidence must be JSON serializable") from exc
-    return evidence
+    if checked_contracts is not None:
+        evidence["checked_contracts"] = list(checked_contracts)
+    return _validate_review_evidence(evidence)
 
 
 def build_refinement_evidence(
@@ -221,25 +313,24 @@ def build_refinement_evidence(
         or prior_refinement_count != 0
     ):
         raise RuntimeError("second refinement is not permitted")
-    if (
-        review_before_refinement.get("reviewed_at_stage") != "before_refinement"
-        or review_before_refinement.get("verdict") != "FAIL"
-        or review_before_refinement.get("refinement_requested") is not True
-    ):
+    before = _validate_review_evidence(review_before_refinement)
+    after = _validate_review_evidence(review_after_refinement)
+    if before["reviewed_at_stage"] != "before_refinement" or before["verdict"] != "FAIL":
         raise ValueError("refinement requires a complete failing before-review")
-    if (
-        review_after_refinement.get("reviewed_at_stage") != "after_refinement"
-        or review_after_refinement.get("refinement_requested") is not False
-    ):
+    if after["reviewed_at_stage"] != "after_refinement":
         raise ValueError("after-review must close refinement")
-    if not refinement_patch:
+    if not isinstance(refinement_patch, Mapping) or not refinement_patch:
         raise ValueError("refinement_patch must name directed fields")
-    if not isinstance(hard_gate_replay.get("all_passed"), bool):
+    if not isinstance(hard_gate_replay, Mapping) or not isinstance(
+        hard_gate_replay.get("all_passed"), bool
+    ):
         raise ValueError("hard-gate replay must record all_passed")
+    if after["verdict"] == "PASS" and hard_gate_replay["all_passed"] is not True:
+        raise ValueError("PASS after-review requires hard gates to pass")
     evidence = {
-        "review_before_refinement": dict(review_before_refinement),
+        "review_before_refinement": before,
         "refinement_patch": dict(refinement_patch),
-        "review_after_refinement": dict(review_after_refinement),
+        "review_after_refinement": after,
         "hard_gate_replay": dict(hard_gate_replay),
         "refinement_count": 1,
     }
@@ -263,6 +354,18 @@ def run_prototype_dry_run(
         response = invoke(stage, prompt)
         if not isinstance(response, Mapping):
             raise ValueError(f"{stage} response must be an object")
+        if stage == "blueprint" and (
+            response.get("article_type") not in TRANSFER_TASK_KIND_BY_ARTICLE_TYPE
+            or response.get("effective_difficulty") not in {"B1", "B2", "C1"}
+        ):
+            raise ValueError("blueprint response lacks required prototype fields")
+        if stage == "language_support" and any(
+            not isinstance(response.get(field), list)
+            for field in ("language_targets", "sentence_maps", "high_difficulty_unit_ids")
+        ):
+            raise ValueError("language_support response lacks required prototype fields")
+        if stage == "translation" and not isinstance(response.get("translations"), list):
+            raise ValueError("translation response lacks required prototype fields")
         calls.append({"stage": stage, "prompt_chars": len(prompt)})
         responses[stage] = dict(response)
 
@@ -359,6 +462,7 @@ def validate_teaching_contract(
 ) -> list[dict[str, str]]:
     """Return deterministic teaching-contract issues; an empty list means pass."""
     issues: list[dict[str, str]] = []
+    sections: dict[str, list[Any]] = {}
     for field, minimum, maximum, code in (
         ("language_targets", 3, 5, "language_target_count"),
         ("sentence_maps", 1, 2, "sentence_map_count"),
@@ -366,6 +470,7 @@ def validate_teaching_contract(
     ):
         value = learning_package.get(field)
         count = len(value) if isinstance(value, list) else -1
+        sections[field] = value if isinstance(value, list) else []
         if not minimum <= count <= maximum:
             issues.append(
                 {
@@ -413,33 +518,38 @@ def validate_teaching_contract(
                 "detail": f"{article_type!r} requires {expected_kind!r}, got {actual_kind!r}",
             }
         )
-    expected_content = TRANSFER_CONTENT_REQUIREMENTS.get(article_type, set())
     actual_content = task.get("content_requirement") if isinstance(task, Mapping) else None
-    if actual_content not in expected_content:
+    if actual_content not in TRANSFER_CONTENT_REQUIREMENT_VALUES:
         issues.append(
             {
-                "code": "transfer_content_mismatch",
+                "code": "transfer_content_metadata_invalid",
                 "field": "transfer_task.content_requirement",
-                "detail": f"{article_type!r} requires one of {sorted(expected_content)!r}",
+                "detail": (
+                    "content_requirement must use a declared enum; semantic review checks fit"
+                ),
             }
         )
     if blueprint.get("reading_mission_stance") != "neutral":
         issues.append(
             {
-                "code": "reading_mission_not_neutral",
-                "field": "reading_mission",
-                "detail": "reading mission must not prescribe support for one side",
+                "code": "reading_mission_stance_metadata_invalid",
+                "field": "reading_mission_stance",
+                "detail": "neutral must be declared; semantic review checks the mission text",
             }
         )
     expressions = {
         target.get("expression")
-        for target in learning_package.get("language_targets", [])
+        for target in sections["language_targets"]
         if isinstance(target, Mapping) and isinstance(target.get("expression"), str)
     }
     required = (
         task.get("required_language_target_expressions", []) if isinstance(task, Mapping) else []
     )
-    if not isinstance(required, list) or not expressions.intersection(required):
+    if (
+        not isinstance(required, list)
+        or any(not isinstance(expression, str) or not expression for expression in required)
+        or not expressions.intersection(required)
+    ):
         issues.append(
             {
                 "code": "transfer_expression_not_taught",
@@ -447,52 +557,69 @@ def validate_teaching_contract(
                 "detail": "transfer task must require at least one taught language target",
             }
         )
-    for index, checkpoint in enumerate(learning_package.get("comprehension_checkpoints", [])):
+    for index, checkpoint in enumerate(sections["comprehension_checkpoints"]):
         if not isinstance(checkpoint, Mapping):
+            issues.append(
+                {
+                    "code": "checkpoint_subject_metadata_invalid",
+                    "field": f"comprehension_checkpoints[{index}]",
+                    "detail": "checkpoint subject metadata must be an object",
+                }
+            )
             continue
         prompt_subject = checkpoint.get("prompt_subject")
         answer_subject = checkpoint.get("reference_answer_subject")
-        if (
+        if not (
             isinstance(prompt_subject, str)
+            and prompt_subject.strip()
             and isinstance(answer_subject, str)
-            and prompt_subject.strip().casefold() != answer_subject.strip().casefold()
+            and answer_subject.strip()
         ):
             issues.append(
                 {
-                    "code": "checkpoint_subject_conflict",
+                    "code": "checkpoint_subject_metadata_invalid",
                     "field": f"comprehension_checkpoints[{index}]",
                     "detail": (
-                        f"prompt subject {prompt_subject!r} conflicts with answer subject "
-                        f"{answer_subject!r}"
+                        "both declared subjects are required; semantic review checks consistency"
                     ),
                 }
             )
     if blueprint.get("effective_difficulty") == "C1":
-        for index, sentence_map in enumerate(learning_package.get("sentence_maps", [])):
+        for index, sentence_map in enumerate(sections["sentence_maps"]):
             complexity = (
                 sentence_map.get("complexity_kind") if isinstance(sentence_map, Mapping) else None
             )
             if complexity not in {"complex_syntax", "argument_structure"}:
                 issues.append(
                     {
-                        "code": "c1_sentence_map_not_complex",
+                        "code": "c1_sentence_map_complexity_metadata_invalid",
                         "field": f"sentence_maps[{index}].complexity_kind",
-                        "detail": "C1 sentence maps require complex syntax or argument structure",
+                        "detail": (
+                            "C1 requires a complexity enum; semantic review checks "
+                            "actual complexity"
+                        ),
                     }
                 )
-    for target_index, target in enumerate(learning_package.get("language_targets", [])):
+    for target_index, target in enumerate(sections["language_targets"]):
         if not isinstance(target, Mapping) or not isinstance(target.get("expression"), str):
-            continue
-        if target.get("target_kind") == "fact_sentence":
             issues.append(
                 {
-                    "code": "low_value_language_target",
+                    "code": "language_target_metadata_invalid",
                     "field": f"language_targets[{target_index}]",
-                    "detail": "an ordinary complete fact sentence is not a transferable expression",
+                    "detail": "language target must declare an expression and metadata",
+                }
+            )
+            continue
+        if not isinstance(target.get("target_kind"), str) or not target["target_kind"].strip():
+            issues.append(
+                {
+                    "code": "language_target_metadata_invalid",
+                    "field": f"language_targets[{target_index}].target_kind",
+                    "detail": "target_kind is required; semantic review checks transfer value",
                 }
             )
         expression = " ".join(target["expression"].split()).casefold()
-        for map_index, sentence_map in enumerate(learning_package.get("sentence_maps", [])):
+        for map_index, sentence_map in enumerate(sections["sentence_maps"]):
             if not isinstance(sentence_map, Mapping) or not isinstance(
                 sentence_map.get("sentence"), str
             ):

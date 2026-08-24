@@ -178,18 +178,18 @@ def test_wrong_transfer_mapping_is_rejected(article_type: str, wrong_kind: str) 
     assert "transfer_task_kind_mismatch" in _issue_codes(blueprint, package)
 
 
-def test_checkpoint_prompt_and_answer_subject_conflict_is_reported() -> None:
+def test_checkpoint_subject_meaning_is_deferred_to_semantic_review() -> None:
     blueprint, package = _valid_contract()
     package["comprehension_checkpoints"][0]["prompt_subject"] = "Trump family"
     package["comprehension_checkpoints"][0]["reference_answer_subject"] = "Sun"
-    assert "checkpoint_subject_conflict" in _issue_codes(blueprint, package)
+    assert "checkpoint_subject_metadata_invalid" not in _issue_codes(blueprint, package)
 
 
-def test_c1_simple_sentence_map_is_rejected() -> None:
+def test_c1_sentence_map_requires_declared_complexity_metadata() -> None:
     blueprint, package = _valid_contract()
     blueprint["effective_difficulty"] = "C1"
     package["sentence_maps"][0]["complexity_kind"] = "simple_sentence"
-    assert "c1_sentence_map_not_complex" in _issue_codes(blueprint, package)
+    assert "c1_sentence_map_complexity_metadata_invalid" in _issue_codes(blueprint, package)
 
 
 def test_full_sentence_language_target_duplicate_of_sentence_map_is_reported() -> None:
@@ -202,17 +202,19 @@ def test_full_sentence_language_target_duplicate_of_sentence_map_is_reported() -
     assert "duplicate_language_target_sentence_map" in _issue_codes(blueprint, package)
 
 
-def test_one_sided_reading_mission_is_reported() -> None:
+def test_reading_mission_text_is_not_classified_by_deterministic_validator() -> None:
     blueprint, package = _valid_contract()
     blueprint["reading_mission"] = "Find evidence to support the author's position."
+    assert "reading_mission_stance_metadata_invalid" not in _issue_codes(blueprint, package)
+
     blueprint["reading_mission_stance"] = "support_author"
-    assert "reading_mission_not_neutral" in _issue_codes(blueprint, package)
+    assert "reading_mission_stance_metadata_invalid" in _issue_codes(blueprint, package)
 
 
-def test_plain_fact_sentence_is_not_a_language_target() -> None:
+def test_language_target_value_is_deferred_to_semantic_review() -> None:
     blueprint, package = _valid_contract()
     package["language_targets"][0]["target_kind"] = "fact_sentence"
-    assert "low_value_language_target" in _issue_codes(blueprint, package)
+    assert "language_target_metadata_invalid" not in _issue_codes(blueprint, package)
 
 
 def test_teaching_point_counts_and_single_transfer_task_are_enforced() -> None:
@@ -229,6 +231,16 @@ def test_teaching_point_counts_and_single_transfer_task_are_enforced() -> None:
     } <= _issue_codes(blueprint, package)
 
 
+def test_deterministic_validator_fails_closed_on_wrong_collection_types() -> None:
+    blueprint, package = _valid_contract()
+    package["language_targets"] = {"not": "a list"}
+    package["sentence_maps"] = "not a list"
+    package["comprehension_checkpoints"] = None
+    assert {"language_target_count", "sentence_map_count", "checkpoint_count"} <= _issue_codes(
+        blueprint, package
+    )
+
+
 def test_dense_per_paragraph_or_whole_article_fields_are_rejected() -> None:
     blueprint, package = _valid_contract()
     package.update(
@@ -240,25 +252,17 @@ def test_dense_per_paragraph_or_whole_article_fields_are_rejected() -> None:
     assert [issue["code"] for issue in issues].count("dense_teaching_field") == 3
 
 
-@pytest.mark.parametrize(
-    ("article_type", "task_kind", "wrong_content"),
-    [
-        ("news_report", "retell", "social_post"),
-        ("opinion_commentary", "counter", "fact_chain"),
-        ("explainer", "explain", "original_stance"),
-        ("narrative_profile", "rewrite", "conclusion_only"),
-    ],
-)
-def test_transfer_content_must_fit_article_type(
-    article_type: str, task_kind: str, wrong_content: str
-) -> None:
+def test_transfer_content_fit_is_deferred_to_semantic_review() -> None:
     blueprint, package = _valid_contract()
-    blueprint["article_type"] = article_type
+    blueprint["article_type"] = "opinion_commentary"
     package["transfer_task"].update(
-        task_kind=task_kind,
-        content_requirement=wrong_content,
+        task_kind="counter",
+        content_requirement="fact_chain",
     )
-    assert "transfer_content_mismatch" in _issue_codes(blueprint, package)
+    assert "transfer_content_metadata_invalid" not in _issue_codes(blueprint, package)
+
+    package["transfer_task"]["content_requirement"] = "social_post"
+    assert "transfer_content_metadata_invalid" in _issue_codes(blueprint, package)
 
 
 def _generation_prompts() -> dict[str, str]:
@@ -290,6 +294,8 @@ def test_generation_prompts_have_no_evaluation_answer_keys() -> None:
     combined = "\n".join(prompts.values()).casefold()
     assert not forbidden.intersection(combined.split())
     assert all(value not in combined for value in forbidden)
+    assert all(contract in prompts["semantic_review"] for contract in SEMANTIC_REVIEW_CONTRACTS)
+    assert all(contract in prompts["refinement"] for contract in SEMANTIC_REVIEW_CONTRACTS)
     with pytest.raises(ValueError, match="forbidden generation key"):
         build_blueprint_prompt(
             {
@@ -312,7 +318,7 @@ def test_semantic_review_evidence_is_complete_and_json_serializable() -> None:
         verdict="FAIL",
         issues=[{"field": "transfer_task", "problem": "wrong direction"}],
         remaining_issues=["transfer direction"],
-        checked_contracts=list(SEMANTIC_REVIEW_CONTRACTS),
+        contract_results=_contract_results(failing_contract="transfer_mapping"),
         reviewed_at_stage="before_refinement",
         refinement_requested=True,
     )
@@ -320,10 +326,15 @@ def test_semantic_review_evidence_is_complete_and_json_serializable() -> None:
         "verdict",
         "issues",
         "remaining_issues",
+        "contract_results",
         "checked_contracts",
         "reviewed_at_stage",
         "refinement_requested",
     }
+    assert evidence["checked_contracts"] == list(SEMANTIC_REVIEW_CONTRACTS)
+    assert [result["contract"] for result in evidence["contract_results"]] == list(
+        SEMANTIC_REVIEW_CONTRACTS
+    )
     assert json.loads(json.dumps(evidence)) == evidence
 
 
@@ -332,7 +343,7 @@ def _before_and_after_review() -> tuple[dict, dict]:
         verdict="FAIL",
         issues=[{"field": "transfer_task", "problem": "wrong direction"}],
         remaining_issues=["transfer direction"],
-        checked_contracts=list(SEMANTIC_REVIEW_CONTRACTS),
+        contract_results=_contract_results(failing_contract="transfer_mapping"),
         reviewed_at_stage="before_refinement",
         refinement_requested=True,
     )
@@ -340,7 +351,7 @@ def _before_and_after_review() -> tuple[dict, dict]:
         verdict="PASS",
         issues=[],
         remaining_issues=[],
-        checked_contracts=list(SEMANTIC_REVIEW_CONTRACTS),
+        contract_results=_contract_results(),
         reviewed_at_stage="after_refinement",
         refinement_requested=False,
     )
@@ -410,12 +421,12 @@ def _topology_responses(review_verdict: str) -> list[dict]:
             verdict="PASS",
             issues=[],
             remaining_issues=[],
-            checked_contracts=list(SEMANTIC_REVIEW_CONTRACTS),
+            contract_results=_contract_results(),
             reviewed_at_stage="before_refinement",
             refinement_requested=False,
         )
     )
-    responses = [{}, {}, {}, review]
+    responses = _minimal_stage_responses() + [review]
     if review_verdict == "FAIL":
         responses.append(
             {
@@ -455,3 +466,167 @@ def test_sixth_function_model_call_is_unreachable() -> None:
     assert result["logical_call_count"] == 5
     assert len(model_calls) == 5
     assert queued == [{"forbidden": "sixth call"}]
+
+
+def _contract_results(*, failing_contract: str | None = None) -> list[dict[str, Any]]:
+    return [
+        {
+            "contract": contract,
+            "passed": contract != failing_contract,
+            "rationale": f"Substantive check for {contract}.",
+        }
+        for contract in SEMANTIC_REVIEW_CONTRACTS
+    ]
+
+
+def _review_payload(verdict: str, stage: str) -> dict[str, Any]:
+    failing_contract = SEMANTIC_REVIEW_CONTRACTS[0] if verdict == "FAIL" else None
+    return {
+        "verdict": verdict,
+        "issues": (
+            [] if verdict == "PASS" else [{"field": "transfer_task", "problem": "wrong direction"}]
+        ),
+        "remaining_issues": [] if verdict == "PASS" else ["transfer direction"],
+        "contract_results": _contract_results(failing_contract=failing_contract),
+        "reviewed_at_stage": stage,
+        "refinement_requested": verdict == "FAIL" and stage == "before_refinement",
+    }
+
+
+def test_pass_review_rejects_nonempty_issues() -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    payload["issues"] = [{"field": "transfer_task", "problem": "contradiction"}]
+    with pytest.raises(ValueError, match="PASS review requires empty issues"):
+        make_review_evidence(**payload)
+
+
+def test_pass_review_rejects_nonempty_remaining_issues() -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    payload["remaining_issues"] = ["unresolved contradiction"]
+    with pytest.raises(ValueError, match="PASS review requires empty remaining_issues"):
+        make_review_evidence(**payload)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate", "extra"])
+def test_review_rejects_inexact_semantic_contract_results(mutation: str) -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    results = payload["contract_results"]
+    if mutation == "missing":
+        results.pop()
+    elif mutation == "duplicate":
+        results[-1] = dict(results[0])
+    else:
+        results.append({"contract": "invented_contract", "passed": True, "rationale": "Invented."})
+    with pytest.raises(ValueError, match="each semantic contract exactly once"):
+        make_review_evidence(**payload)
+
+
+@pytest.mark.parametrize(
+    "broken_result",
+    [
+        {"contract": SEMANTIC_REVIEW_CONTRACTS[0], "rationale": "Checked."},
+        {"contract": SEMANTIC_REVIEW_CONTRACTS[0], "passed": 1, "rationale": "Checked."},
+        {"contract": SEMANTIC_REVIEW_CONTRACTS[0], "passed": True, "rationale": "   "},
+    ],
+)
+def test_contract_result_requires_strict_bool_and_nonempty_rationale(
+    broken_result: dict[str, Any],
+) -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    payload["contract_results"][0] = broken_result
+    with pytest.raises(ValueError, match="passed bool and non-empty rationale"):
+        make_review_evidence(**payload)
+
+
+def test_fail_review_requires_at_least_one_failed_contract_result() -> None:
+    payload = _review_payload("FAIL", "before_refinement")
+    payload["contract_results"] = _contract_results()
+    with pytest.raises(ValueError, match="FAIL review requires a failed contract result"):
+        make_review_evidence(**payload)
+
+
+def test_pass_review_requires_every_contract_result_to_pass() -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    payload["contract_results"] = _contract_results(failing_contract="source_fidelity")
+    with pytest.raises(ValueError, match="every contract result to pass"):
+        make_review_evidence(**payload)
+
+
+def test_fail_review_requires_remaining_issues() -> None:
+    payload = _review_payload("FAIL", "before_refinement")
+    payload["remaining_issues"] = []
+    with pytest.raises(ValueError, match="FAIL review requires remaining_issues"):
+        make_review_evidence(**payload)
+
+
+def test_checked_contracts_cannot_override_contract_results() -> None:
+    payload = _review_payload("PASS", "before_refinement")
+    payload["checked_contracts"] = list(reversed(SEMANTIC_REVIEW_CONTRACTS))
+    with pytest.raises(ValueError, match="derived from contract_results"):
+        make_review_evidence(**payload)
+
+
+def test_refinement_rejects_after_review_without_complete_contract_evidence() -> None:
+    before = _review_payload("FAIL", "before_refinement")
+    after = _review_payload("PASS", "after_refinement")
+    after.pop("contract_results")
+    with pytest.raises(ValueError, match="contract_results"):
+        build_refinement_evidence(
+            review_before_refinement=before,
+            refinement_patch={"transfer_task": {"task_kind": "retell"}},
+            review_after_refinement=after,
+            hard_gate_replay={"all_passed": True},
+            prior_refinement_count=0,
+        )
+
+
+def test_refinement_rejects_pass_after_review_when_hard_gates_fail() -> None:
+    with pytest.raises(ValueError, match="PASS after-review requires hard gates to pass"):
+        build_refinement_evidence(
+            review_before_refinement=_review_payload("FAIL", "before_refinement"),
+            refinement_patch={"transfer_task": {"task_kind": "retell"}},
+            review_after_refinement=_review_payload("PASS", "after_refinement"),
+            hard_gate_replay={"all_passed": False},
+            prior_refinement_count=0,
+        )
+
+
+@pytest.mark.parametrize("not_bool", [1, 0, "true"])
+def test_refinement_requires_strict_bool_hard_gate_result(not_bool: Any) -> None:
+    with pytest.raises(ValueError, match="hard-gate replay must record all_passed"):
+        build_refinement_evidence(
+            review_before_refinement=_review_payload("FAIL", "before_refinement"),
+            refinement_patch={"transfer_task": {"task_kind": "retell"}},
+            review_after_refinement=_review_payload("PASS", "after_refinement"),
+            hard_gate_replay={"all_passed": not_bool},
+            prior_refinement_count=0,
+        )
+
+
+def _minimal_stage_responses() -> list[dict[str, Any]]:
+    return [
+        {
+            "article_type": "news_report",
+            "effective_difficulty": "B1",
+            "reading_mission": "Trace the reported evidence.",
+        },
+        {
+            "language_targets": [{"expression": "by contrast", "paragraph_id": "u02"}],
+            "sentence_maps": [{"paragraph_id": "u03", "complexity_kind": "complex_syntax"}],
+            "high_difficulty_unit_ids": ["u03"],
+        },
+        {"translations": [{"paragraph_id": "u03", "translation": "合成译文。"}]},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("empty_stage", "empty_index"),
+    [("blueprint", 0), ("language_support", 1), ("translation", 2)],
+)
+def test_dry_run_rejects_empty_generation_stage_objects(empty_stage: str, empty_index: int) -> None:
+    responses = _minimal_stage_responses()
+    responses[empty_index] = {}
+    responses.append(_review_payload("PASS", "before_refinement"))
+    invoke, _, _ = _function_model_invoker(responses)
+    with pytest.raises(ValueError, match=rf"{empty_stage} response"):
+        run_prototype_dry_run(invoke, _generation_prompts())
