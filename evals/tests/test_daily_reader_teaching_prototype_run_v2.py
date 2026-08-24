@@ -40,6 +40,7 @@ UNITS = [
 ]
 SENTENCE = "early negotiations collapsed although demand stayed strong"
 SENTENCE_ZH = "尽管需求强劲，早期谈判仍告破裂"
+BOILER_FRAGMENT = "INTERNAL REVIEW NOTE REMOVE BEFORE PUBLISH"
 
 
 def _load_runner():
@@ -182,7 +183,14 @@ def _offline_transport_factory(queue: Any, probe: _Probe, *, select_queue=None):
             item = active.next_item()
             probe.requests += 1
             probe.capture(info)
+            if isinstance(item, dict) and "__cancel__" in item:
+                import asyncio
+
+                raise asyncio.CancelledError()
             if isinstance(item, dict) and "__raise__" in item:
+                import time
+
+                time.sleep(0.02)
                 raise RuntimeError(item["__raise__"])
             if isinstance(item, dict) and "__raw__" in item:
                 payload = item["__raw__"]
@@ -994,3 +1002,292 @@ def test_dummy_credentials_only_reach_the_model_chain(runner, eval_settings):
     assert config.api_key == DUMMY_KEY
     assert config.base_url.startswith("https://")
     assert FORBIDDEN_HOST not in config.base_url
+
+
+# ---------------------------------------------------------------------------
+# P-4E-R: budget, usage, and evaluation-lane closure (RED first on b0335f0c)
+# ---------------------------------------------------------------------------
+
+
+def test_production_client_default_sdk_retries_are_two(runner, eval_settings):
+    settings, selection = eval_settings
+    config = runner.resolve_model_config(settings, "daily_annotation", selection)
+    model = runner.build_model_instance(config)
+    client = getattr(model, "client", None)
+    assert client is not None and hasattr(client, "max_retries")
+    assert client.max_retries == 2
+
+
+def test_production_transport_forces_zero_sdk_retries(runner, eval_settings):
+    settings, selection = eval_settings
+    runtime = runner.resolve_stage_runtime(settings, selection, runner.STAGE_TOPOLOGY[1])
+    model = runner.production_transport(runtime.config)
+    assert model.client.max_retries == 0
+
+
+def test_derived_budget_binds_http_attempts_to_requests(runner):
+    budget = runner.derive_budget(case_count=4)
+    assert budget["sdk_retries"] == 0
+    assert budget["http_attempts_max"] == 80
+    assert budget["http_attempts_max"] == budget["model_requests_max"]
+
+
+def test_failed_case_usage_enters_batch_aggregate(runner, eval_settings, tmp_path):
+    settings, selection = eval_settings
+    probe = _Probe()
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            {"__raw__": "{not json"},
+        ]
+    )
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    first = report["cases"][0]
+    second = report["cases"][1]
+    # 1+1+1 completed stages plus the semantic_review entry that exhausted
+    # its 4 requests (1 initial + 3 output retries)
+    case_requests = sum(e["usage"]["model_requests"] for e in first["stage_ledger"])
+    assert case_requests == 7
+    assert first["usage"]["aggregate"]["model_requests"] == 7
+    assert report["aggregate"]["model_requests"] == 7
+    assert second["outcome"] == "skipped_by_stop"
+    assert second["usage"]["aggregate"] == {}
+    assert probe.requests == 7  # no double counting
+
+
+def _boilerplate_case() -> dict[str, Any]:
+    case = mini_case()
+    case["gold"]["dirty_fragments"] = [BOILER_FRAGMENT]
+    return case
+
+
+def _blueprint_with_boilerplate() -> dict[str, Any]:
+    payload = blueprint_payload()
+    payload["transfer_task"]["prompt"] = f"Retell the sequence. {BOILER_FRAGMENT}"
+    return payload
+
+
+def test_gold_gate_fail_after_pass_review_is_quality_fail_continue(
+    runner, eval_settings, tmp_path, monkeypatch
+):
+    settings, selection = eval_settings
+    replays: list[dict[str, Any]] = []
+    real_merge = runner.build_refinement_evidence
+
+    def merge_spy(**kwargs):
+        replays.append(kwargs["hard_gate_replay"])
+        return real_merge(**kwargs)
+
+    monkeypatch.setattr(runner, "build_refinement_evidence", merge_spy)
+    queue = _Queue(
+        [
+            _blueprint_with_boilerplate(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("FAIL", "transfer_mapping"),
+            refinement_payload(passed=True),
+        ]
+    )
+    qb = _Queue(pass_queue())
+    probe = _Probe()
+    inner_a = _offline_transport_factory(queue, probe)
+    inner_b = _offline_transport_factory(qb, probe)
+    state = {"n": 0}
+
+    def transport(config):
+        inner = inner_a if state["n"] < 5 else inner_b
+        state["n"] += 1
+        return inner(config)
+
+    report = runner.run_batch(
+        [_boilerplate_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        transport,
+        tmp_path / "out",
+    )
+    outcomes = [case["outcome"] for case in report["cases"]]
+    assert outcomes[0] == "quality_fail_continue"
+    assert outcomes[1] == "completed"
+    gold_gates = runner.run_hard_gates(_boilerplate_case(), report["cases"][0]["artifact"])
+    assert gold_gates["all_passed"] is False
+    assert replays and replays[0]["all_passed"] is True
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason_part"),
+    [
+        ("missing", "missing"),
+        ("extra", "extra"),
+        ("duplicate", "duplicate"),
+    ],
+)
+def test_translation_target_set_mismatch_is_structural(
+    runner, eval_settings, tmp_path, mutation, reason_part
+):
+    settings, selection = eval_settings
+    translation = translation_payload()
+    if mutation == "missing":
+        translation["translations"] = translation["translations"][:-1]
+    elif mutation == "extra":
+        translation["translations"].append({"paragraph_id": "u09", "translation": "多余译文。"})
+    else:
+        translation["translations"].append(dict(translation["translations"][1]))
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation,
+            review_payload("PASS"),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    case = report["cases"][0]
+    stages = [entry["stage"] for entry in case["stage_ledger"]]
+    assert case["outcome"].startswith("stopped")
+    assert reason_part in case["stop_reason"]
+    assert stages[-1] == "translation"
+    assert "semantic_review" not in stages
+    assert probe.requests == 3
+
+
+def test_budget_stop_checks_each_stage_and_persists_report(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    settings, selection = eval_settings
+    budget = runner.derive_budget(case_count=2)
+    budget["model_requests_max"] = 2
+    out_dir = tmp_path / "out"
+    probe = _Probe()
+    with pytest.raises(runner.BudgetBreached) as excinfo:
+        runner.run_batch(
+            [mini_case(), mini_case("syn-p4e-002")],
+            settings,
+            selection,
+            _offline_transport_factory(_Queue(pass_queue()), probe),
+            out_dir,
+            budget=budget,
+        )
+    assert "budget_exceeded" in str(excinfo.value)
+    report_path = out_dir / "batch-report.json"
+    assert report_path.is_file()
+    persisted = jsonlib.loads(report_path.read_text(encoding="utf-8"))
+    first = persisted["cases"][0]
+    second = persisted["cases"][1]
+    assert first["outcome"] == "stopped:budget_exceeded"
+    # posting happens before the check, so the breaching stage is retained
+    assert [entry["stage"] for entry in first["stage_ledger"]] == [
+        "blueprint",
+        "language_support",
+        "translation",
+    ]
+    assert first["stage_ledger"][-1]["usage"]["model_requests"] == 1
+    assert first["usage"]["aggregate"]["model_requests"] == 3
+    assert persisted["aggregate"]["model_requests"] == 3
+    assert persisted["aggregate"]["model_requests"] > budget["model_requests_max"]
+    assert second["outcome"] == "skipped_by_stop"
+    assert persisted["budget"]["model_requests_max"] == 2
+    assert "budget_exceeded" in persisted["stop_reason"]
+    assert probe.constructions == 3
+    with pytest.raises(FileExistsError):
+        runner.run_batch(
+            [mini_case()],
+            settings,
+            selection,
+            _offline_transport_factory(_Queue([]), _Probe()),
+            out_dir,
+            budget=budget,
+        )
+
+
+def test_cancelled_error_propagates_unwrapped(runner, eval_settings, tmp_path):
+    import asyncio
+
+    settings, selection = eval_settings
+    probe = _Probe()
+    with pytest.raises(asyncio.CancelledError):
+        runner.run_batch(
+            [mini_case()],
+            settings,
+            selection,
+            _offline_transport_factory(_Queue([{"__cancel__": True}]), probe),
+            tmp_path / "out",
+        )
+    assert probe.requests == 1
+
+
+def test_provider_failure_latency_is_measured(runner, eval_settings, tmp_path):
+    settings, selection = eval_settings
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue([{"__raise__": "connection dead"}]), probe),
+        tmp_path / "out",
+    )
+    entry = report["cases"][0]["stage_ledger"][0]
+    assert entry["outcome"].startswith("error:")
+    assert isinstance(entry["latency_ms"], int)
+    assert entry["latency_ms"] >= 10
+
+
+def test_gold_identity_mismatch_is_a_direct_comparison(runner):
+    case = mini_case()
+    artifact = {
+        "lesson_blueprint": {
+            "article_type": "opinion_commentary",
+            "effective_difficulty": "B1",
+        }
+    }
+    assert runner.gold_identity_mismatch(case, artifact) is True
+    artifact["lesson_blueprint"]["effective_difficulty"] = "C1"
+    assert runner.gold_identity_mismatch(case, artifact) is True
+    artifact["lesson_blueprint"].update(article_type="news_report", effective_difficulty="B1")
+    assert runner.gold_identity_mismatch(case, artifact) is False
+
+
+def test_structural_errors_ignore_gold_identity_fields(runner, eval_settings, tmp_path):
+    settings, selection = eval_settings
+    source_case = mini_case()
+    mismatched = [blueprint_payload("opinion_commentary")]
+    mismatched[0]["transfer_task"]["task_kind"] = "counter"
+    mismatched[0]["transfer_task"]["content_requirement"] = "original_stance"
+    queue = _Queue(
+        mismatched
+        + [
+            language_support_payload(),
+            translation_payload(),
+            review_payload("PASS"),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [source_case],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    case = report["cases"][0]
+    artifact = case["artifact"]
+    assert runner.gold_identity_mismatch(source_case, artifact) is True
+    assert runner.artifact_structural_errors(source_case, artifact) == []
+    broken = json.loads(json.dumps(artifact))
+    broken["learning_package"]["comprehension_checkpoints"][0]["skill"] = "vibes"
+    assert runner.artifact_structural_errors(source_case, broken) != []

@@ -61,7 +61,7 @@ from pydantic_graph import End  # noqa: E402
 
 from claread_eval.daily_reader.teaching_v2.gates import run_hard_gates  # noqa: E402
 from claread_eval.daily_reader.teaching_v2.prototype import (  # noqa: E402
-    SEMANTIC_REVIEW_CONTRACTS,
+    SEMANTIC_REVIEW_CONTRACTS,  # noqa: F401  (re-exported canonical authority)
     TRANSFER_CONTENT_REQUIREMENT_VALUES,
     TRANSFER_TASK_KIND_BY_ARTICLE_TYPE,
     build_blueprint_prompt,
@@ -132,43 +132,6 @@ FORBIDDEN_HOST_MARKER = "api.deepseek.com"
 
 USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens", "model_requests", "tool_calls")
 
-__all__ = [
-    "BatchStopped",
-    "BudgetBreached",
-    "FROZEN_CASE_IDS",
-    "FORBIDDEN_HOST_MARKER",
-    "GenerationLeakError",
-    "OUTPUT_RETRIES",
-    "PRESET_NAME",
-    "SEMANTIC_REVIEW_CONTRACTS",
-    "STAGE_TOPOLOGY",
-    "StageFailure",
-    "StageRuntime",
-    "StageSpec",
-    "StructuralCaseError",
-    "TEMPERATURE",
-    "TIER_PROFILE_NAMES",
-    "TIMEOUT_SECONDS",
-    "assert_generation_safe_payload",
-    "assert_prompt_clean",
-    "assert_route_contract",
-    "build_arg_parser",
-    "build_eval_selection",
-    "build_model_instance",
-    "derive_budget",
-    "generation_view",
-    "main",
-    "production_transport",
-    "resolve_stage_runtime",
-    "run_batch",
-    "run_case",
-    "run_stage",
-    "sha256_hex",
-    "usage_metadata",
-    "validate_artifact",
-    "validate_topology",
-]
-
 
 class StructuralCaseError(RuntimeError):
     """Infrastructure/identity drift that must stop the whole batch."""
@@ -185,9 +148,10 @@ class GenerationLeakError(ValueError):
 class StageFailure(RuntimeError):
     """One stage failed after Agent dispatch; carries confirmed usage."""
 
-    def __init__(self, stage: str, cause: BaseException, usage: RunUsage) -> None:
+    def __init__(self, stage: str, cause: BaseException, usage: RunUsage, elapsed_ms: int) -> None:
         self.stage = stage
         self.usage = usage
+        self.elapsed_ms = elapsed_ms
         super().__init__(f"{stage} failed: {type(cause).__name__}")
         self.__cause__ = cause
 
@@ -504,7 +468,44 @@ def production_transport(config: ResolvedModelConfig) -> Model:
     model = build_model_instance(config)
     if model is None or isinstance(model, str):
         raise StructuralCaseError(f"model_build_failed:{config.model_name}")
+    client = getattr(model, "client", None)
+    if client is None or not hasattr(client, "max_retries"):
+        raise StructuralCaseError("BLOCKED_PROVIDER_CLIENT_API")
+    # Contract: zero SDK-level retries; outer retries stay 0 too.
+    client.max_retries = 0
+    if client.max_retries != 0:
+        raise StructuralCaseError("sdk_retries_reset_failed")
     return model
+
+
+def gold_identity_mismatch(case: Mapping[str, Any], artifact: Mapping[str, Any]) -> bool:
+    """Direct comparison of generated identity fields vs Gold — no error text matching."""
+    gold = case.get("gold") or {}
+    blueprint = (artifact.get("lesson_blueprint") or {}) if isinstance(artifact, Mapping) else {}
+    return blueprint.get("article_type") != gold.get("article_type") or blueprint.get(
+        "effective_difficulty"
+    ) != gold.get("expected_difficulty")
+
+
+def artifact_structural_errors(case: Mapping[str, Any], artifact: Mapping[str, Any]) -> list[str]:
+    """validate_artifact with the two gold-identity fields shadowed to gold.
+
+    The transport DTOs already guarantee legal enums and presence for these
+    fields, so any residual difference vs gold is a quality mismatch, not a
+    structural defect. Everything else validate_artifact reports here is
+    structural.
+    """
+    import copy
+
+    gold = case.get("gold") or {}
+    shadow = copy.deepcopy(dict(artifact))
+    blueprint = shadow.get("lesson_blueprint")
+    if isinstance(blueprint, dict):
+        if "article_type" in gold:
+            blueprint["article_type"] = gold["article_type"]
+        if "expected_difficulty" in gold:
+            blueprint["effective_difficulty"] = gold["expected_difficulty"]
+    return validate_artifact(dict(case), shadow)
 
 
 # ---------------------------------------------------------------------------
@@ -540,14 +541,15 @@ async def _drive_agent(
         usage = agent_run.usage
         elapsed_ms = int(round((time.perf_counter() - started) * 1000))
         return result, usage, elapsed_ms
-    except BaseException as exc:
+    except Exception as exc:
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
         confirmed = RunUsage()
         try:
             if agent_run is not None:
                 confirmed = agent_run.usage
         except Exception:
             confirmed = RunUsage()
-        raise StageFailure("stage", exc, confirmed) from exc
+        raise StageFailure("stage", exc, confirmed, elapsed_ms) from exc
 
 
 def run_stage(runtime: StageRuntime, prompt: str, transport: Any) -> dict[str, Any]:
@@ -571,7 +573,7 @@ def run_stage(runtime: StageRuntime, prompt: str, transport: Any) -> dict[str, A
             "profile": runtime.profile_name,
             "model_name": runtime.config.model_name,
             "outcome": f"error:{type(failure.__cause__).__name__}",
-            "latency_ms": 0,
+            "latency_ms": failure.elapsed_ms,
             "prompt_sha256": sha256_hex(prompt),
             "usage": usage_metadata(failure.usage),
         }
@@ -606,6 +608,7 @@ def derive_budget(
         "workflow_runs_max": case_count,
         "logical_calls_max": logical_calls_max,
         "model_requests_max": logical_calls_max * requests_per_call,
+        "http_attempts_max": logical_calls_max * requests_per_call,
         "output_tokens_max": case_count * requests_per_call * sum(s.max_tokens for s in topology),
         "outer_retries": 0,
         "sdk_retries": 0,
@@ -669,6 +672,7 @@ def run_case(
     selection: ModelSelection,
     transport: Any,
     out_dir: Path,
+    budget_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     view = generation_view(case)
     case_dir = Path(out_dir) / view["case_id"]
@@ -698,7 +702,19 @@ def run_case(
         )
 
     def post_stage(entry: dict[str, Any]) -> dict[str, Any] | None:
-        ledger.append({key: value for key, value in entry.items() if key != "output"})
+        compact = {key: value for key, value in entry.items() if key != "output"}
+        ledger.append(compact)
+        if budget_state is not None:
+            caps = budget_state["caps"]
+            totals = budget_state["totals"]
+            for key in ("model_requests", "output_tokens"):
+                totals[key] += int(compact["usage"].get(key, 0) or 0)
+            if totals["model_requests"] > caps.get("model_requests_max", float("inf")) or (
+                totals["output_tokens"] > caps.get("output_tokens_max", float("inf"))
+            ):
+                # Exact outcome string per contract; details live in the
+                # persisted batch report and the raised error.
+                stop("budget_exceeded")
         return entry.get("output")
 
     def dispatch(spec: StageSpec, prompt: str) -> dict[str, Any] | None:
@@ -755,11 +771,14 @@ def run_case(
         )
         translation = dispatch(tr_spec, tr_prompt)
         assert translation is not None
-        unknown_targets = sorted(
-            {item["paragraph_id"] for item in translation["translations"]} - set(derived_targets)
-        )
-        if unknown_targets:
-            stop(f"translation_anchor_unknown:{unknown_targets[:5]}")
+        returned_ids = [item["paragraph_id"] for item in translation["translations"]]
+        duplicate_ids = sorted({pid for pid in returned_ids if returned_ids.count(pid) > 1})
+        if duplicate_ids:
+            stop(f"translation_duplicate_targets:{duplicate_ids[:5]}")
+        missing_ids = sorted(set(derived_targets) - set(returned_ids))
+        extra_ids = sorted(set(returned_ids) - set(derived_targets))
+        if missing_ids or extra_ids:
+            stop(f"translation_target_set_mismatch:missing={missing_ids[:5]},extra={extra_ids[:5]}")
 
         blueprint_obj = blueprint
         package_obj: dict[str, Any] = {
@@ -830,6 +849,44 @@ def run_case(
                     stop(f"refinement_patch_target_unknown:{key}")
             refinement_count = 1
 
+        if refinement_count:
+            # Non-gold deterministic replay only — gold hard gates never feed
+            # build_refinement_evidence.
+            replay_issues = validate_teaching_contract(blueprint_obj, package_obj)
+            try:
+                replay_targets = derive_translation_unit_ids(
+                    blueprint_obj["effective_difficulty"],
+                    view["reading_units"],
+                    substantive_unit_ids=view["substantive_unit_ids"],
+                    checkpoint_evidence_ids=[
+                        pid
+                        for checkpoint in blueprint_obj["comprehension_checkpoints"]
+                        for pid in checkpoint["evidence_paragraph_ids"]
+                    ],
+                    language_target_paragraph_ids=[
+                        target["paragraph_id"] for target in package_obj["language_targets"]
+                    ],
+                    sentence_map_paragraph_ids=[
+                        sm["paragraph_id"] for sm in package_obj["sentence_maps"]
+                    ],
+                    high_difficulty_unit_ids=list(package_obj["high_difficulty_unit_ids"]),
+                )
+            except (KeyError, ValueError) as exc:
+                stop(f"deterministic_replay_failed:{exc}")
+            replay_passed = not replay_issues and set(replay_targets) == set(returned_ids)
+            try:
+                refinement_evidence = build_refinement_evidence(
+                    review_before_refinement=review_evidence,
+                    fields_to_fix=fields_to_fix,
+                    refinement_patch=json.loads(json.dumps(patch)),
+                    rechecked_contract_results=refine_output["rechecked_contract_results"],
+                    remaining_issues=refine_output["remaining_issues"],
+                    hard_gate_replay={"all_passed": replay_passed},
+                    prior_refinement_count=0,
+                )
+            except (TypeError, ValueError) as exc:
+                stop(f"refinement_evidence_invalid:{exc}")
+
         artifact: dict[str, Any] = {
             "case_id": view["case_id"],
             "lesson_blueprint": blueprint_obj,
@@ -845,30 +902,15 @@ def run_case(
         artifact["run_meta"]["usage"] = aggregate
 
         schema_errors = validate_artifact(dict(case), artifact)
-        gold_mismatches = [error for error in schema_errors if "must equal gold." in error]
-        hard_errors = [error for error in schema_errors if error not in gold_mismatches]
-        if hard_errors:
-            stop(f"artifact_schema_violation:{hard_errors[:3]}")
+        identity_mismatch = gold_identity_mismatch(case, artifact)
+        structural_errors = artifact_structural_errors(case, artifact)
+        if structural_errors:
+            stop(f"artifact_schema_violation:{structural_errors[:3]}")
 
+        # Evaluation Lane: gold hard gates run exactly once, on the final artifact,
+        # and their results are recorded here — never fed back into model prompts.
         gates = run_hard_gates(dict(case), artifact)
 
-        if refinement_count and refine_output is not None:
-            try:
-                refinement_evidence = build_refinement_evidence(
-                    review_before_refinement=review_evidence,
-                    fields_to_fix=fields_to_fix,
-                    refinement_patch=json.loads(json.dumps(patch)),
-                    rechecked_contract_results=refine_output["rechecked_contract_results"],
-                    remaining_issues=refine_output["remaining_issues"],
-                    hard_gate_replay={
-                        "all_passed": gates["all_passed"],
-                        "passed_count": gates["passed_count"],
-                        "scored_count": gates["scored_count"],
-                    },
-                    prior_refinement_count=0,
-                )
-            except (TypeError, ValueError) as exc:
-                stop(f"refinement_evidence_invalid:{exc}")
         _exclusive_write(
             case_dir / "review-evidence.json",
             json.dumps(
@@ -891,7 +933,7 @@ def run_case(
             refinement_evidence is not None
             and refinement_evidence["review_after_refinement"]["verdict"] == "FAIL"
         )
-        quality_fail = bool(gold_mismatches) or not gates["all_passed"] or after_fail
+        quality_fail = identity_mismatch or not gates["all_passed"] or after_fail
         return {
             "case_id": view["case_id"],
             "outcome": "quality_fail_continue" if quality_fail else "completed",
@@ -948,6 +990,13 @@ def run_batch(
     totals = dict.fromkeys(USAGE_KEYS, 0)
     reports: list[dict[str, Any]] = []
     stop_reason: str | None = None
+    budget_stop: str | None = None
+    # Per-stage posting state shared with run_case; the breach fires as soon as
+    # a stage's usage is posted, not when the case completes.
+    budget_state = {
+        "caps": effective_budget,
+        "totals": {"model_requests": 0, "output_tokens": 0},
+    }
     for case in cases:
         if stop_reason is not None:
             reports.append(
@@ -961,34 +1010,43 @@ def run_batch(
             )
             continue
         try:
-            report = run_case(case, settings, selection, transport, out_dir)
+            report = run_case(
+                case, settings, selection, transport, out_dir, budget_state=budget_state
+            )
         except BatchStopped as exc:
             stop_reason = str(exc)
+            if "budget_exceeded" in stop_reason:
+                budget_stop = stop_reason
             if exc.partial is not None:
-                reports.append(exc.partial)
+                report = exc.partial
             else:
-                reports.append(
-                    {
-                        "case_id": case.get("case_id"),
-                        "outcome": f"stopped:{exc}",
-                        "stop_reason": str(exc),
-                        "stage_ledger": [],
-                        "usage": {"stages": {}, "aggregate": {}},
-                    }
-                )
-            continue
+                report = {
+                    "case_id": case.get("case_id"),
+                    "outcome": f"stopped:{exc}",
+                    "stop_reason": str(exc),
+                    "stage_ledger": [],
+                    "usage": {"stages": {}, "aggregate": {}},
+                }
+        reports.append(report)
         for key in USAGE_KEYS:
             totals[key] += report["usage"]["aggregate"].get(key, 0)
-        if (
-            totals["model_requests"] > effective_budget["model_requests_max"]
-            or totals["output_tokens"] > effective_budget["output_tokens_max"]
-        ):
-            raise BudgetBreached(
-                f"budget_exceeded:model_requests={totals['model_requests']}/"
-                f"{effective_budget['model_requests_max']}"
-                f" output_tokens={totals['output_tokens']}/{effective_budget['output_tokens_max']}"
-            )
-        reports.append(report)
+    if budget_stop is not None:
+        persisted = {
+            "cases": reports,
+            "aggregate": totals,
+            "budget": dict(effective_budget),
+            "stop_reason": budget_stop,
+        }
+        _exclusive_write(
+            Path(out_dir) / "batch-report.json",
+            json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+        raise BudgetBreached(
+            f"budget_exceeded:model_requests={totals['model_requests']}/"
+            f"{effective_budget.get('model_requests_max')}"
+            f" output_tokens={totals['output_tokens']}/{effective_budget.get('output_tokens_max')}"
+            f" report={Path(out_dir) / 'batch-report.json'}"
+        )
     return {
         "cases": reports,
         "aggregate": totals,
