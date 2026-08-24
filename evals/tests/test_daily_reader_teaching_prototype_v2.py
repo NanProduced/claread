@@ -276,8 +276,9 @@ def _generation_prompts() -> dict[str, str]:
             "Synthetic article body.", blueprint, package, {"all_passed": True}
         ),
         "refinement": build_refinement_prompt(
-            [{"field": "transfer_task", "problem": "wrong direction"}],
+            _directed_failed_review("transfer_mapping"),
             {"transfer_task": package["transfer_task"]},
+            {"relevant_anchor": "u02"},
         ),
     }
 
@@ -295,7 +296,8 @@ def test_generation_prompts_have_no_evaluation_answer_keys() -> None:
     assert not forbidden.intersection(combined.split())
     assert all(value not in combined for value in forbidden)
     assert all(contract in prompts["semantic_review"] for contract in SEMANTIC_REVIEW_CONTRACTS)
-    assert all(contract in prompts["refinement"] for contract in SEMANTIC_REVIEW_CONTRACTS)
+    assert "transfer_mapping" in prompts["refinement"]
+    assert "source_fidelity" not in prompts["refinement"]
     with pytest.raises(ValueError, match="forbidden generation key"):
         build_blueprint_prompt(
             {
@@ -316,7 +318,13 @@ def test_flash_and_refinement_prompts_do_not_receive_unrelated_full_text() -> No
 def test_semantic_review_evidence_is_complete_and_json_serializable() -> None:
     evidence = make_review_evidence(
         verdict="FAIL",
-        issues=[{"field": "transfer_task", "problem": "wrong direction"}],
+        issues=[
+            {
+                "contract": "transfer_mapping",
+                "field": "transfer_task",
+                "problem": "wrong direction",
+            }
+        ],
         remaining_issues=["transfer direction"],
         contract_results=_contract_results(failing_contract="transfer_mapping"),
         reviewed_at_stage="before_refinement",
@@ -341,7 +349,13 @@ def test_semantic_review_evidence_is_complete_and_json_serializable() -> None:
 def _before_and_after_review() -> tuple[dict, dict]:
     before = make_review_evidence(
         verdict="FAIL",
-        issues=[{"field": "transfer_task", "problem": "wrong direction"}],
+        issues=[
+            {
+                "contract": "transfer_mapping",
+                "field": "transfer_task",
+                "problem": "wrong direction",
+            }
+        ],
         remaining_issues=["transfer direction"],
         contract_results=_contract_results(failing_contract="transfer_mapping"),
         reviewed_at_stage="before_refinement",
@@ -362,13 +376,29 @@ def test_refinement_preserves_before_patch_after_and_hard_gate_replay() -> None:
     before, after = _before_and_after_review()
     evidence = build_refinement_evidence(
         review_before_refinement=before,
+        fields_to_fix={"transfer_task": {"task_kind": "retell"}},
         refinement_patch={"transfer_task": {"task_kind": "retell"}},
-        review_after_refinement=after,
+        rechecked_contract_results=[
+            next(
+                result
+                for result in after["contract_results"]
+                if result["contract"] == "transfer_mapping"
+            )
+        ],
+        remaining_issues=[],
         hard_gate_replay={"all_passed": True, "issues": []},
         prior_refinement_count=0,
     )
     assert evidence["review_before_refinement"] == before
+    assert evidence["fields_to_fix"] == {"transfer_task": {"task_kind": "retell"}}
     assert evidence["refinement_patch"] == {"transfer_task": {"task_kind": "retell"}}
+    assert evidence["rechecked_contract_results"] == [
+        next(
+            result
+            for result in after["contract_results"]
+            if result["contract"] == "transfer_mapping"
+        )
+    ]
     assert evidence["review_after_refinement"] == after
     assert evidence["hard_gate_replay"]["all_passed"] is True
     assert evidence["refinement_count"] == 1
@@ -376,12 +406,20 @@ def test_refinement_preserves_before_patch_after_and_hard_gate_replay() -> None:
 
 
 def test_second_refinement_attempt_fails_closed() -> None:
-    before, after = _before_and_after_review()
+    before, _ = _before_and_after_review()
     with pytest.raises(RuntimeError, match="second refinement"):
         build_refinement_evidence(
             review_before_refinement=before,
+            fields_to_fix={"transfer_task": {}},
             refinement_patch={"transfer_task": {"task_kind": "retell"}},
-            review_after_refinement=after,
+            rechecked_contract_results=[
+                {
+                    "contract": "transfer_mapping",
+                    "passed": True,
+                    "rationale": "Directed recheck passed.",
+                }
+            ],
+            remaining_issues=[],
             hard_gate_replay={"all_passed": True},
             prior_refinement_count=1,
         )
@@ -389,7 +427,7 @@ def test_second_refinement_attempt_fails_closed() -> None:
 
 def _function_model_invoker(
     responses: list[dict[str, Any]],
-) -> tuple[Callable[[str, str], dict[str, Any]], list[str], list[dict[str, Any]]]:
+) -> tuple[Callable[[str, str], dict[str, Any]], list[dict[str, str]], list[dict[str, Any]]]:
     pydantic_ai = pytest.importorskip("pydantic_ai")
     messages_module = pytest.importorskip("pydantic_ai.messages")
     function_module = pytest.importorskip("pydantic_ai.models.function")
@@ -398,22 +436,22 @@ def _function_model_invoker(
     text_part_type = messages_module.TextPart
     function_model_type = function_module.FunctionModel
     queued = list(responses)
-    model_calls: list[str] = []
+    model_calls: list[dict[str, str]] = []
 
     def handler(messages: list[Any], info: Any) -> Any:
-        model_calls.append("request")
         return model_response_type(parts=[text_part_type(json.dumps(queued.pop(0)))])
 
     agent = agent_type(function_model_type(handler))
 
     def invoke(stage: str, prompt: str) -> dict[str, Any]:
+        model_calls.append({"stage": stage, "prompt": prompt})
         return json.loads(agent.run_sync(f"{stage}\n{prompt}").output)
 
     return invoke, model_calls, queued
 
 
 def _topology_responses(review_verdict: str) -> list[dict]:
-    before, after = _before_and_after_review()
+    before, _ = _before_and_after_review()
     review = (
         before
         if review_verdict == "FAIL"
@@ -431,8 +469,14 @@ def _topology_responses(review_verdict: str) -> list[dict]:
         responses.append(
             {
                 "refinement_patch": {"transfer_task": {"task_kind": "retell"}},
-                "review_after_refinement": after,
-                "hard_gate_replay": {"all_passed": True, "issues": []},
+                "rechecked_contract_results": [
+                    {
+                        "contract": "transfer_mapping",
+                        "passed": True,
+                        "rationale": "Directed recheck passed.",
+                    }
+                ],
+                "remaining_issues": [],
             }
         )
     return responses
@@ -453,7 +497,13 @@ def test_function_model_normal_dry_run_has_exactly_four_logical_calls() -> None:
 def test_function_model_failed_review_dry_run_has_exactly_five_logical_calls() -> None:
     prompts = _generation_prompts()
     invoke, model_calls, _ = _function_model_invoker(_topology_responses("FAIL"))
-    result = run_prototype_dry_run(invoke, prompts)
+    result = run_prototype_dry_run(
+        invoke,
+        prompts,
+        refinement_fields_to_fix={"transfer_task": {"task_kind": "retell"}},
+        refinement_evidence_context={"relevant_anchor": "u02"},
+        hard_gate_replay={"all_passed": True, "issues": []},
+    )
     assert result["logical_call_count"] == 5
     assert len(model_calls) == 5
     assert result["calls"][-1]["stage"] == "refinement"
@@ -462,10 +512,31 @@ def test_function_model_failed_review_dry_run_has_exactly_five_logical_calls() -
 def test_sixth_function_model_call_is_unreachable() -> None:
     responses = _topology_responses("FAIL") + [{"forbidden": "sixth call"}]
     invoke, model_calls, queued = _function_model_invoker(responses)
-    result = run_prototype_dry_run(invoke, _generation_prompts())
+    result = run_prototype_dry_run(
+        invoke,
+        _generation_prompts(),
+        refinement_fields_to_fix={"transfer_task": {"task_kind": "retell"}},
+        refinement_evidence_context={"relevant_anchor": "u02"},
+        hard_gate_replay={"all_passed": True, "issues": []},
+    )
     assert result["logical_call_count"] == 5
     assert len(model_calls) == 5
     assert queued == [{"forbidden": "sixth call"}]
+
+
+def test_function_model_cannot_forge_complete_after_review() -> None:
+    responses = _topology_responses("FAIL")
+    responses[-1]["review_after_refinement"] = _before_and_after_review()[1]
+    invoke, model_calls, _ = _function_model_invoker(responses)
+    with pytest.raises(ValueError, match="unexpected fields"):
+        run_prototype_dry_run(
+            invoke,
+            _generation_prompts(),
+            refinement_fields_to_fix={"transfer_task": {"task_kind": "retell"}},
+            refinement_evidence_context={"relevant_anchor": "u02"},
+            hard_gate_replay={"all_passed": True, "issues": []},
+        )
+    assert len(model_calls) == 5
 
 
 def _contract_results(*, failing_contract: str | None = None) -> list[dict[str, Any]]:
@@ -484,7 +555,15 @@ def _review_payload(verdict: str, stage: str) -> dict[str, Any]:
     return {
         "verdict": verdict,
         "issues": (
-            [] if verdict == "PASS" else [{"field": "transfer_task", "problem": "wrong direction"}]
+            []
+            if verdict == "PASS"
+            else [
+                {
+                    "contract": failing_contract,
+                    "field": "transfer_task",
+                    "problem": "wrong direction",
+                }
+            ]
         ),
         "remaining_issues": [] if verdict == "PASS" else ["transfer direction"],
         "contract_results": _contract_results(failing_contract=failing_contract),
@@ -495,7 +574,13 @@ def _review_payload(verdict: str, stage: str) -> dict[str, Any]:
 
 def test_pass_review_rejects_nonempty_issues() -> None:
     payload = _review_payload("PASS", "before_refinement")
-    payload["issues"] = [{"field": "transfer_task", "problem": "contradiction"}]
+    payload["issues"] = [
+        {
+            "contract": "transfer_mapping",
+            "field": "transfer_task",
+            "problem": "contradiction",
+        }
+    ]
     with pytest.raises(ValueError, match="PASS review requires empty issues"):
         make_review_evidence(**payload)
 
@@ -566,15 +651,16 @@ def test_checked_contracts_cannot_override_contract_results() -> None:
         make_review_evidence(**payload)
 
 
-def test_refinement_rejects_after_review_without_complete_contract_evidence() -> None:
-    before = _review_payload("FAIL", "before_refinement")
-    after = _review_payload("PASS", "after_refinement")
-    after.pop("contract_results")
-    with pytest.raises(ValueError, match="contract_results"):
+def test_refinement_rejects_incomplete_rechecked_contract_evidence() -> None:
+    with pytest.raises(ValueError, match="passed bool and non-empty rationale"):
         build_refinement_evidence(
-            review_before_refinement=before,
+            review_before_refinement=_review_payload("FAIL", "before_refinement"),
+            fields_to_fix={"transfer_task": {}},
             refinement_patch={"transfer_task": {"task_kind": "retell"}},
-            review_after_refinement=after,
+            rechecked_contract_results=[
+                {"contract": "source_fidelity", "passed": True, "rationale": ""}
+            ],
+            remaining_issues=[],
             hard_gate_replay={"all_passed": True},
             prior_refinement_count=0,
         )
@@ -584,8 +670,16 @@ def test_refinement_rejects_pass_after_review_when_hard_gates_fail() -> None:
     with pytest.raises(ValueError, match="PASS after-review requires hard gates to pass"):
         build_refinement_evidence(
             review_before_refinement=_review_payload("FAIL", "before_refinement"),
+            fields_to_fix={"transfer_task": {}},
             refinement_patch={"transfer_task": {"task_kind": "retell"}},
-            review_after_refinement=_review_payload("PASS", "after_refinement"),
+            rechecked_contract_results=[
+                {
+                    "contract": "source_fidelity",
+                    "passed": True,
+                    "rationale": "Directed recheck passed.",
+                }
+            ],
+            remaining_issues=[],
             hard_gate_replay={"all_passed": False},
             prior_refinement_count=0,
         )
@@ -596,8 +690,16 @@ def test_refinement_requires_strict_bool_hard_gate_result(not_bool: Any) -> None
     with pytest.raises(ValueError, match="hard-gate replay must record all_passed"):
         build_refinement_evidence(
             review_before_refinement=_review_payload("FAIL", "before_refinement"),
+            fields_to_fix={"transfer_task": {}},
             refinement_patch={"transfer_task": {"task_kind": "retell"}},
-            review_after_refinement=_review_payload("PASS", "after_refinement"),
+            rechecked_contract_results=[
+                {
+                    "contract": "source_fidelity",
+                    "passed": True,
+                    "rationale": "Directed recheck passed.",
+                }
+            ],
+            remaining_issues=[],
             hard_gate_replay={"all_passed": not_bool},
             prior_refinement_count=0,
         )
@@ -630,3 +732,188 @@ def test_dry_run_rejects_empty_generation_stage_objects(empty_stage: str, empty_
     invoke, _, _ = _function_model_invoker(responses)
     with pytest.raises(ValueError, match=rf"{empty_stage} response"):
         run_prototype_dry_run(invoke, _generation_prompts())
+
+
+def _directed_failed_review(*failed_contracts: str) -> dict[str, Any]:
+    failed = set(failed_contracts)
+    return make_review_evidence(
+        verdict="FAIL",
+        issues=[
+            {"contract": contract, "field": f"field.{contract}", "problem": "needs repair"}
+            for contract in failed_contracts
+        ],
+        remaining_issues=[f"{contract} needs repair" for contract in failed_contracts],
+        contract_results=[
+            {
+                "contract": contract,
+                "passed": contract not in failed,
+                "rationale": f"Substantive check for {contract}.",
+            }
+            for contract in SEMANTIC_REVIEW_CONTRACTS
+        ],
+        reviewed_at_stage="before_refinement",
+        refinement_requested=True,
+    )
+
+
+def _rechecked_result(contract: str, *, passed: bool) -> dict[str, Any]:
+    return {
+        "contract": contract,
+        "passed": passed,
+        "rationale": f"Directed recheck for {contract}.",
+    }
+
+
+def _build_directed_refinement(
+    *,
+    before: dict[str, Any],
+    fields_to_fix: dict[str, Any] | None = None,
+    patch: dict[str, Any] | None = None,
+    rechecked: list[dict[str, Any]] | None = None,
+    remaining_issues: list[dict[str, str]] | None = None,
+    hard_gates_passed: bool = True,
+) -> dict[str, Any]:
+    return build_refinement_evidence(
+        review_before_refinement=before,
+        fields_to_fix=(
+            {"transfer_task": {"task_kind": "retell"}} if fields_to_fix is None else fields_to_fix
+        ),
+        refinement_patch=({"transfer_task": {"task_kind": "retell"}} if patch is None else patch),
+        rechecked_contract_results=(
+            [_rechecked_result("transfer_mapping", passed=True)] if rechecked is None else rechecked
+        ),
+        remaining_issues=[] if remaining_issues is None else remaining_issues,
+        hard_gate_replay={"all_passed": hard_gates_passed, "issues": []},
+        prior_refinement_count=0,
+    )
+
+
+def test_refinement_patch_rejects_fields_outside_allowlist() -> None:
+    with pytest.raises(ValueError, match="outside fields_to_fix"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping"),
+            patch={"reading_mission": "unrelated rewrite"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("fields_to_fix", "patch"),
+    [({}, {"transfer_task": {"task_kind": "retell"}}), ({"transfer_task": {}}, {})],
+)
+def test_refinement_requires_nonempty_allowed_fields_and_patch(
+    fields_to_fix: dict[str, Any], patch: dict[str, Any]
+) -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping"),
+            fields_to_fix=fields_to_fix,
+            patch=patch,
+        )
+
+
+def test_fail_review_issue_requires_contract() -> None:
+    payload = _review_payload("FAIL", "before_refinement")
+    payload["issues"][0].pop("contract")
+    with pytest.raises(ValueError, match="issue contract"):
+        make_review_evidence(**payload)
+
+
+def test_every_failed_contract_requires_a_directed_issue() -> None:
+    payload = _directed_failed_review("source_fidelity", "difficulty_fit")
+    payload["issues"] = [payload["issues"][0]]
+    with pytest.raises(ValueError, match="every failed contract"):
+        make_review_evidence(**payload)
+
+
+def test_issue_cannot_point_to_passed_contract() -> None:
+    payload = _directed_failed_review("source_fidelity")
+    payload["issues"] = [
+        {"contract": "difficulty_fit", "field": "difficulty", "problem": "wrong level"}
+    ]
+    with pytest.raises(ValueError, match="passed contract"):
+        make_review_evidence(**payload)
+
+
+def test_refinement_recheck_cannot_omit_a_failed_contract() -> None:
+    with pytest.raises(ValueError, match="exactly cover failed contracts"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping", "difficulty_fit"),
+            rechecked=[_rechecked_result("transfer_mapping", passed=True)],
+        )
+
+
+def test_refinement_cannot_recheck_a_passed_contract() -> None:
+    with pytest.raises(ValueError, match="exactly cover failed contracts"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping"),
+            rechecked=[_rechecked_result("difficulty_fit", passed=True)],
+        )
+
+
+def test_refinement_cannot_rewrite_an_unaffected_contract_result() -> None:
+    with pytest.raises(ValueError, match="exactly cover failed contracts"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping"),
+            rechecked=[
+                _rechecked_result("transfer_mapping", passed=True),
+                {
+                    "contract": "difficulty_fit",
+                    "passed": True,
+                    "rationale": "Call 5 tried to replace an inherited rationale.",
+                },
+            ],
+        )
+
+
+def test_directed_after_pass_still_requires_hard_gates() -> None:
+    with pytest.raises(ValueError, match="PASS after-review requires hard gates to pass"):
+        _build_directed_refinement(
+            before=_directed_failed_review("transfer_mapping"),
+            hard_gates_passed=False,
+        )
+
+
+def test_failed_recheck_builds_final_fail_without_sixth_call() -> None:
+    unrelated_full_text = "UNRELATED FULL ARTICLE MUST NOT REACH CALL FIVE"
+    before = _directed_failed_review("transfer_mapping")
+    responses = _minimal_stage_responses() + [
+        before,
+        {
+            "refinement_patch": {"transfer_task": {"task_kind": "retell"}},
+            "rechecked_contract_results": [_rechecked_result("transfer_mapping", passed=False)],
+            "remaining_issues": [
+                {
+                    "contract": "transfer_mapping",
+                    "field": "transfer_task.task_kind",
+                    "problem": "still wrong",
+                }
+            ],
+        },
+        {"forbidden": "sixth call"},
+    ]
+    prompts = _generation_prompts()
+    prompts["refinement"] = unrelated_full_text
+    invoke, model_calls, queued = _function_model_invoker(responses)
+    result = run_prototype_dry_run(
+        invoke,
+        prompts,
+        refinement_fields_to_fix={"transfer_task": {"task_kind": "retell"}},
+        refinement_evidence_context={"relevant_anchor": "u02"},
+        hard_gate_replay={"all_passed": True, "issues": []},
+    )
+    after = result["refinement_evidence"]["review_after_refinement"]
+    before_by_contract = {item["contract"]: item for item in before["contract_results"]}
+    after_by_contract = {item["contract"]: item for item in after["contract_results"]}
+    assert result["logical_call_count"] == 5
+    assert len(model_calls) == 5
+    assert after["verdict"] == "FAIL"
+    assert after["refinement_requested"] is False
+    assert queued == [{"forbidden": "sixth call"}]
+    assert unrelated_full_text not in model_calls[-1]["prompt"]
+    assert "transfer_mapping" in model_calls[-1]["prompt"]
+    assert "difficulty_fit" not in model_calls[-1]["prompt"]
+    assert "u02" in model_calls[-1]["prompt"]
+    for contract in SEMANTIC_REVIEW_CONTRACTS:
+        if contract == "transfer_mapping":
+            continue
+        assert after_by_contract[contract] == before_by_contract[contract]

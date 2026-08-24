@@ -144,33 +144,73 @@ value, and mission neutrality. Return one contract_results item for every named 
 with contract, a strict boolean passed, and a substantive non-empty rationale. Return verdict,
 issues, remaining_issues, contract_results, reviewed_at_stage='before_refinement', and
 refinement_requested. PASS requires every result to pass and both issue lists to be empty. FAIL
-requires a failed result and directed issues. checked_contracts, if emitted, is only the ordered
-list derived from contract_results; never replace the audit with a bare verdict or name list.
+requires a failed result and directed issues. Every FAIL issue must contain contract, field, and
+problem; every failed contract needs an issue and no issue may name a passed contract.
+checked_contracts, if emitted, is only the ordered list derived from contract_results; never
+replace the audit with a bare verdict or name list.
 
 REVIEW INPUT:
 """ + _stable_json(payload)
 
 
 def build_refinement_prompt(
-    issues: Sequence[Mapping[str, Any]], fields_to_fix: Mapping[str, Any]
+    review_before_refinement: Mapping[str, Any],
+    fields_to_fix: Mapping[str, Any],
+    evidence_context: Mapping[str, Any],
 ) -> str:
     """Build the sole directed-refinement prompt without unrelated content."""
+    before = _validate_review_evidence(review_before_refinement)
+    if before["reviewed_at_stage"] != "before_refinement" or before["verdict"] != "FAIL":
+        raise ValueError("refinement prompt requires a failing before-review")
+    if (
+        not isinstance(fields_to_fix, Mapping)
+        or not fields_to_fix
+        or any(not isinstance(field, str) or not field.strip() for field in fields_to_fix)
+    ):
+        raise ValueError("fields_to_fix must be a non-empty object")
+    if not isinstance(evidence_context, Mapping):
+        raise ValueError("evidence_context must be an object")
+    failed_contracts = [
+        result["contract"] for result in before["contract_results"] if not result["passed"]
+    ]
     payload = {
         "fields_to_fix": fields_to_fix,
-        "issues": issues,
-        "semantic_review_contracts": SEMANTIC_REVIEW_CONTRACTS,
+        "failed_contracts": failed_contracts,
+        "issues": before["issues"],
+        "evidence_context": evidence_context,
     }
     _assert_generation_safe(payload)
     return """Perform the one permitted directed refinement.
 
-Modify only fields_to_fix in response to issues; do not rewrite unrelated fields. Return a
-refinement_patch plus a complete review_after_refinement containing verdict, issues,
-remaining_issues, one substantive contract_results item per semantic contract,
-reviewed_at_stage='after_refinement', and refinement_requested=false. No second refinement is
-permitted.
+Modify only fields_to_fix in response to the directed issues and minimal evidence_context. Return
+only refinement_patch, rechecked_contract_results, and remaining_issues. The rechecked results
+must cover exactly failed_contracts, each with contract, strict boolean passed, and a substantive
+non-empty rationale. Each remaining issue must contain contract, field, and problem. Do not review
+unaffected contracts or return a complete after-review. No second refinement is permitted.
 
 DIRECTED INPUT:
 """ + _stable_json(payload)
+
+
+def _normalize_contract_results(contract_results: Any) -> list[dict[str, Any]]:
+    if not isinstance(contract_results, list):
+        raise ValueError("contract results must be a list")
+    normalized: list[dict[str, Any]] = []
+    for result in contract_results:
+        if not isinstance(result, Mapping):
+            raise ValueError("each contract result requires passed bool and non-empty rationale")
+        contract = result.get("contract")
+        passed = result.get("passed")
+        rationale = result.get("rationale")
+        if (
+            not isinstance(contract, str)
+            or type(passed) is not bool
+            or not isinstance(rationale, str)
+            or not rationale.strip()
+        ):
+            raise ValueError("each contract result requires passed bool and non-empty rationale")
+        normalized.append({"contract": contract, "passed": passed, "rationale": rationale.strip()})
+    return normalized
 
 
 def _validate_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
@@ -189,23 +229,7 @@ def _validate_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
     contract_results = evidence.get("contract_results")
     if not isinstance(contract_results, list):
         raise ValueError("contract_results must contain each semantic contract exactly once")
-    normalized_results: list[dict[str, Any]] = []
-    for result in contract_results:
-        if not isinstance(result, Mapping):
-            raise ValueError("each contract result requires passed bool and non-empty rationale")
-        contract = result.get("contract")
-        passed = result.get("passed")
-        rationale = result.get("rationale")
-        if (
-            not isinstance(contract, str)
-            or type(passed) is not bool
-            or not isinstance(rationale, str)
-            or not rationale.strip()
-        ):
-            raise ValueError("each contract result requires passed bool and non-empty rationale")
-        normalized_results.append(
-            {"contract": contract, "passed": passed, "rationale": rationale.strip()}
-        )
+    normalized_results = _normalize_contract_results(contract_results)
     result_by_contract = {result["contract"]: result for result in normalized_results}
     if len(result_by_contract) != len(normalized_results) or set(result_by_contract) != set(
         SEMANTIC_REVIEW_CONTRACTS
@@ -225,20 +249,24 @@ def _validate_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
     for issue in issues:
         if not isinstance(issue, Mapping):
             raise ValueError("review issues must be directed objects")
+        contract = issue.get("contract")
         field = issue.get("field")
         problem = issue.get("problem")
         if (
-            not isinstance(field, str)
+            contract not in SEMANTIC_REVIEW_CONTRACTS
+            or not isinstance(field, str)
             or not field.strip()
             or not isinstance(problem, str)
             or not problem.strip()
         ):
-            raise ValueError("review issues must be directed objects")
+            raise ValueError("each review issue contract, field, and problem must be directed")
         normalized_issues.append(dict(issue))
     if any(not isinstance(issue, str) or not issue.strip() for issue in remaining_issues):
         raise ValueError("remaining_issues must contain non-empty strings")
 
     failed = [result for result in normalized_results if not result["passed"]]
+    failed_contracts = {result["contract"] for result in failed}
+    issue_contracts = {issue["contract"] for issue in normalized_issues}
     if verdict == "PASS":
         if issues:
             raise ValueError("PASS review requires empty issues")
@@ -249,6 +277,10 @@ def _validate_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
     else:
         if not failed:
             raise ValueError("FAIL review requires a failed contract result")
+        if issue_contracts - failed_contracts:
+            raise ValueError("review issue cannot point to a passed contract")
+        if failed_contracts - issue_contracts:
+            raise ValueError("every failed contract requires a directed issue")
         if not issues:
             raise ValueError("FAIL review requires directed issues")
         if not remaining_issues:
@@ -301,12 +333,14 @@ def make_review_evidence(
 def build_refinement_evidence(
     *,
     review_before_refinement: Mapping[str, Any],
+    fields_to_fix: Mapping[str, Any],
     refinement_patch: Mapping[str, Any],
-    review_after_refinement: Mapping[str, Any],
+    rechecked_contract_results: Sequence[Mapping[str, Any]],
+    remaining_issues: Sequence[Mapping[str, Any]],
     hard_gate_replay: Mapping[str, Any],
     prior_refinement_count: int,
 ) -> dict[str, Any]:
-    """Persist the sole refinement and its before/after audit evidence."""
+    """Merge the sole directed recheck with inherited before-review evidence."""
     if (
         not isinstance(prior_refinement_count, int)
         or isinstance(prior_refinement_count, bool)
@@ -314,13 +348,55 @@ def build_refinement_evidence(
     ):
         raise RuntimeError("second refinement is not permitted")
     before = _validate_review_evidence(review_before_refinement)
-    after = _validate_review_evidence(review_after_refinement)
     if before["reviewed_at_stage"] != "before_refinement" or before["verdict"] != "FAIL":
         raise ValueError("refinement requires a complete failing before-review")
-    if after["reviewed_at_stage"] != "after_refinement":
-        raise ValueError("after-review must close refinement")
+    if (
+        not isinstance(fields_to_fix, Mapping)
+        or not fields_to_fix
+        or any(not isinstance(field, str) or not field.strip() for field in fields_to_fix)
+    ):
+        raise ValueError("fields_to_fix must be a non-empty object")
     if not isinstance(refinement_patch, Mapping) or not refinement_patch:
-        raise ValueError("refinement_patch must name directed fields")
+        raise ValueError("refinement_patch must be a non-empty object")
+    if not set(refinement_patch) <= set(fields_to_fix):
+        raise ValueError("refinement_patch contains fields outside fields_to_fix")
+
+    failed_contracts = {
+        result["contract"] for result in before["contract_results"] if not result["passed"]
+    }
+    normalized_rechecks = _normalize_contract_results(list(rechecked_contract_results))
+    recheck_by_contract = {result["contract"]: result for result in normalized_rechecks}
+    if (
+        len(recheck_by_contract) != len(normalized_rechecks)
+        or set(recheck_by_contract) != failed_contracts
+    ):
+        raise ValueError("rechecked_contract_results must exactly cover failed contracts")
+
+    if not isinstance(remaining_issues, Sequence) or isinstance(remaining_issues, str | bytes):
+        raise ValueError("remaining_issues must be directed issue objects")
+    if any(not isinstance(issue, Mapping) for issue in remaining_issues):
+        raise ValueError("remaining_issues must be directed issue objects")
+    directed_remaining = [dict(issue) for issue in remaining_issues]
+    merged_results = [
+        (
+            recheck_by_contract[result["contract"]]
+            if result["contract"] in recheck_by_contract
+            else result
+        )
+        for result in before["contract_results"]
+    ]
+    still_failed = any(not result["passed"] for result in merged_results)
+    after = make_review_evidence(
+        verdict="FAIL" if still_failed else "PASS",
+        issues=directed_remaining,
+        remaining_issues=[
+            issue.get("problem", "") if isinstance(issue, Mapping) else ""
+            for issue in directed_remaining
+        ],
+        contract_results=merged_results,
+        reviewed_at_stage="after_refinement",
+        refinement_requested=False,
+    )
     if not isinstance(hard_gate_replay, Mapping) or not isinstance(
         hard_gate_replay.get("all_passed"), bool
     ):
@@ -329,7 +405,9 @@ def build_refinement_evidence(
         raise ValueError("PASS after-review requires hard gates to pass")
     evidence = {
         "review_before_refinement": before,
+        "fields_to_fix": dict(fields_to_fix),
         "refinement_patch": dict(refinement_patch),
+        "rechecked_contract_results": normalized_rechecks,
         "review_after_refinement": after,
         "hard_gate_replay": dict(hard_gate_replay),
         "refinement_count": 1,
@@ -342,7 +420,12 @@ def build_refinement_evidence(
 
 
 def run_prototype_dry_run(
-    invoke: Callable[[str, str], Mapping[str, Any]], prompts: Mapping[str, str]
+    invoke: Callable[[str, str], Mapping[str, Any]],
+    prompts: Mapping[str, str],
+    *,
+    refinement_fields_to_fix: Mapping[str, Any] | None = None,
+    refinement_evidence_context: Mapping[str, Any] | None = None,
+    hard_gate_replay: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Exercise the fixed four-call path and optional sole refinement offline."""
     calls: list[dict[str, Any]] = []
@@ -377,19 +460,36 @@ def run_prototype_dry_run(
 
     refinement_evidence = None
     if review["verdict"] == "FAIL":
-        prompt = prompts.get("refinement")
-        if not isinstance(prompt, str):
-            raise ValueError("missing prompt for refinement")
+        if not isinstance(refinement_fields_to_fix, Mapping):
+            raise ValueError("missing refinement_fields_to_fix")
+        if not isinstance(refinement_evidence_context, Mapping):
+            raise ValueError("missing refinement_evidence_context")
+        prompt = build_refinement_prompt(
+            review,
+            refinement_fields_to_fix,
+            refinement_evidence_context,
+        )
         refinement = invoke("refinement", prompt)
         if not isinstance(refinement, Mapping):
             raise ValueError("refinement response must be an object")
+        expected_keys = {
+            "refinement_patch",
+            "rechecked_contract_results",
+            "remaining_issues",
+        }
+        if set(refinement) != expected_keys:
+            raise ValueError("refinement response contains unexpected fields")
         calls.append({"stage": "refinement", "prompt_chars": len(prompt)})
+        if not isinstance(hard_gate_replay, Mapping):
+            raise ValueError("missing hard_gate_replay")
         try:
             refinement_evidence = build_refinement_evidence(
                 review_before_refinement=review,
+                fields_to_fix=refinement_fields_to_fix,
                 refinement_patch=refinement["refinement_patch"],
-                review_after_refinement=refinement["review_after_refinement"],
-                hard_gate_replay=refinement["hard_gate_replay"],
+                rechecked_contract_results=refinement["rechecked_contract_results"],
+                remaining_issues=refinement["remaining_issues"],
+                hard_gate_replay=hard_gate_replay,
                 prior_refinement_count=0,
             )
         except (KeyError, TypeError, ValueError) as exc:
