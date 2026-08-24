@@ -1811,3 +1811,208 @@ def test_empty_or_illegal_roots_still_fail_closed(
     total = sum(e["usage"]["model_requests"] for e in case["stage_ledger"])
     assert total == report["aggregate"]["model_requests"] == expected_requests
     assert probe.requests == expected_requests
+
+
+# ---------------------------------------------------------------------------
+# P-4F-R3: container-prefixed refinement field addressing (RED first)
+# ---------------------------------------------------------------------------
+
+
+def _run_refinement_addressing(
+    runner,
+    eval_settings,
+    tmp_path,
+    *,
+    issues: list[dict[str, str]],
+    patch: dict[str, Any],
+    tag: str,
+):
+    settings, selection = eval_settings
+    failed = {i["contract"] for i in issues}
+    results = [
+        {
+            "contract": contract,
+            "passed": contract not in failed,
+            "rationale": f"Substantive check for {contract}.",
+        }
+        for contract in runner.SEMANTIC_REVIEW_CONTRACTS
+    ]
+    rechecks = [
+        {
+            "contract": contract,
+            "passed": True,
+            "rationale": "Directed recheck ok.",
+        }
+        for contract in sorted(failed)
+    ]
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("FAIL", sorted(failed)[0]),
+            _refinement_recheck(sorted(failed)[0], patch),
+            {"forbidden": "sixth"},
+        ]
+    )
+    # splice the custom issues and a matching failed-contract result set
+    queue.items[3]["issues"] = issues
+    queue.items[3]["contract_results"] = results
+    queue.items[4]["rechecked_contract_results"] = rechecks
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / tag,
+    )
+    call5_prompt = probe.captures[4]["prompt_text"] if len(probe.captures) >= 5 else None
+    return report["cases"][0], probe, queue, call5_prompt
+
+
+def _issue(contract: str, field: str) -> dict[str, str]:
+    return {"contract": contract, "field": field, "problem": "needs directed fix"}
+
+
+def test_learning_package_prefixed_field_reaches_refinement(runner, eval_settings, tmp_path):
+    case, probe, queue, call5_prompt = _run_refinement_addressing(
+        runner,
+        eval_settings,
+        tmp_path,
+        issues=[_issue("transfer_language_use", "learning_package.transfer_task.prompt")],
+        patch={"transfer_task": blueprint_payload()["transfer_task"]},
+        tag="pkg-prefix",
+    )
+    if case["outcome"].startswith("stopped"):
+        pytest.fail(f"stopped on addressing: {case['stop_reason']}")
+    assert case["outcome"] == "completed"
+    assert probe.requests == 5
+    assert case["usage"]["aggregate"]["model_requests"] == 5
+    assert report_aggregate_matches(case, probe)
+    assert queue.items == [{"forbidden": "sixth"}]
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert '"transfer_task"' in fields_segment
+    assert '"learning_package"' not in fields_segment
+    assert "learning_package.transfer_task.prompt" in call5_prompt
+
+
+def report_aggregate_matches(case, probe) -> bool:
+    return (
+        case["usage"]["aggregate"]["model_requests"]
+        == sum(e["usage"]["model_requests"] for e in case["stage_ledger"])
+        and probe.requests == case["usage"]["aggregate"]["model_requests"]
+    )
+
+
+def test_blueprint_prefixed_fields_reach_refinement(runner, eval_settings, tmp_path):
+    for prefix in ("blueprint", "lesson_blueprint"):
+        case, probe, _, call5_prompt = _run_refinement_addressing(
+            runner,
+            eval_settings,
+            tmp_path,
+            issues=[
+                _issue("reading_mission_neutrality", f"{prefix}.reading_mission"),
+                _issue("difficulty_fit", f"{prefix}.selected_paragraph_ids"),
+            ],
+            patch={
+                "reading_mission": blueprint_payload()["reading_mission"],
+                "selected_paragraph_ids": blueprint_payload()["selected_paragraph_ids"],
+            },
+            tag=f"bp-{prefix}",
+        )
+        if case["outcome"].startswith("stopped"):
+            pytest.fail(f"{prefix}: stopped on addressing: {case['stop_reason']}")
+        assert case["outcome"] == "completed"
+        assert probe.requests == 5
+        fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+        assert '"reading_mission"' in fields_segment
+        assert '"selected_paragraph_ids"' in fields_segment
+
+
+def test_no_prefix_dotted_and_indexed_paths_still_work(runner, eval_settings, tmp_path):
+    case, probe, _, call5_prompt = _run_refinement_addressing(
+        runner,
+        eval_settings,
+        tmp_path,
+        issues=[
+            _issue("checkpoint_subject_consistency", "comprehension_checkpoints[1].prompt_subject"),
+            _issue("language_target_value", "sentence_maps[0].teaching_purpose"),
+        ],
+        patch={
+            "comprehension_checkpoints": blueprint_payload()["comprehension_checkpoints"],
+            "sentence_maps": language_support_payload()["sentence_maps"],
+        },
+        tag="no-prefix",
+    )
+    if case["outcome"].startswith("stopped"):
+        pytest.fail(f"stopped on addressing: {case['stop_reason']}")
+    assert probe.requests == 5
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert '"comprehension_checkpoints"' in fields_segment
+    assert '"sentence_maps"' in fields_segment
+
+
+def test_same_top_field_multi_issue_single_entry(runner, eval_settings, tmp_path):
+    case, probe, _, call5_prompt = _run_refinement_addressing(
+        runner,
+        eval_settings,
+        tmp_path,
+        issues=[
+            _issue("transfer_language_use", "learning_package.transfer_task.prompt"),
+            _issue("transfer_mapping", "learning_package.transfer_task.reference_points"),
+        ],
+        patch={"transfer_task": blueprint_payload()["transfer_task"]},
+        tag="dedup",
+    )
+    assert case["outcome"] == "completed"
+    assert probe.requests == 5
+    fields_segment = call5_prompt.split("fields_to_fix", 1)[1]
+    assert fields_segment.count('"transfer_task"') == 1
+
+
+@pytest.mark.parametrize(
+    ("field",),
+    [
+        ("learning_package",),
+        ("blueprint",),
+        ("lesson_blueprint",),
+        ("learning_package.does_not_exist",),
+        ("blueprint.translations_by_paragraph_id",),
+    ],
+)
+def test_wrapper_only_unknown_and_cross_container_fail_closed(
+    runner, eval_settings, tmp_path, field
+):
+    settings, selection = eval_settings
+    contract = "checkpoint_subject_consistency"
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("FAIL", contract),
+            _refinement_recheck(contract, {"transfer_task": blueprint_payload()["transfer_task"]}),
+        ]
+    )
+    queue.items[3]["issues"] = [_issue(contract, field)]
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / f"bad{abs(hash(field))}",
+    )
+    case = report["cases"][0]
+    assert case["outcome"].startswith("stopped")
+    assert "refinement_field_unknown" in case["stop_reason"]
+    assert probe.requests == 4
+
+
+def test_semantic_review_prompt_declares_field_address_formats(runner):
+    prompt = runner.build_semantic_review_prompt("body.", {}, {}, {})
+    flat = " ".join(prompt.casefold().split())
+    assert "learning_package." in flat
+    assert "blueprint." in flat
+    assert "bare container name" in flat

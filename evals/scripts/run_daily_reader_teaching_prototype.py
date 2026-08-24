@@ -828,21 +828,35 @@ def run_case(
         refine_output: dict[str, Any] | None = None
         if review_evidence["verdict"] == "FAIL":
             for issue in review_evidence["issues"]:
-                # Top-level segment only: take the name before the first "." or
-                # "[" so indexed paths like comprehension_checkpoints[2].x map
-                # to their container key. The raw field path still reaches the
-                # refinement prompt verbatim; unknown roots stay fail-closed.
-                top_field = re.split(r"[.\[]", str(issue.get("field", "")), maxsplit=1)[0]
-                if top_field in package_obj:
-                    fields_to_fix.setdefault(
-                        top_field, json.loads(json.dumps(package_obj[top_field]))
-                    )
-                elif top_field in blueprint_obj:
-                    fields_to_fix.setdefault(
-                        top_field, json.loads(json.dumps(blueprint_obj[top_field]))
-                    )
+                # Finite field-addressing rule: an explicit container prefix
+                # selects its object exclusively; unprefixed paths fall back to
+                # package-then-blueprint. The root is the name before the first
+                # "." or "[". The raw path still reaches the refinement prompt
+                # verbatim; anything unaddressable stays fail-closed at zero
+                # provider cost.
+                raw_field = str(issue.get("field", ""))
+                prefix, dot, rest = raw_field.partition(".")
+
+                def root_of(text: str) -> str:
+                    return re.split(r"[.\[]", text, maxsplit=1)[0]
+
+                if dot and prefix == "learning_package":
+                    container, top_field = package_obj, root_of(rest)
+                elif dot and prefix in ("blueprint", "lesson_blueprint"):
+                    container, top_field = blueprint_obj, root_of(rest)
                 else:
-                    stop(f"refinement_field_unknown:{top_field}")
+                    top_field = root_of(raw_field)
+                    if top_field in package_obj:
+                        container = package_obj
+                    elif top_field in blueprint_obj:
+                        container = blueprint_obj
+                    else:
+                        container = None
+                if container is None or top_field not in container:
+                    stop(f"refinement_field_unknown:{raw_field}")
+                if top_field in fields_to_fix:
+                    continue
+                fields_to_fix[top_field] = json.loads(json.dumps(container[top_field]))
             evidence_context = {
                 "failed_contracts": [
                     result["contract"]

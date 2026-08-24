@@ -146,7 +146,11 @@ value, and mission neutrality. Return one contract_results item for every named 
         and refinement_requested. PASS requires every result to pass and both issue lists to be
         empty. FAIL additionally requires at least one non-empty string in remaining_issues:
         remaining_issues names what still needs fixing or verifying after refinement, and an empty
-        remaining_issues list on FAIL is invalid. FAIL requires a failed result and directed issues.
+        remaining_issues list on FAIL is invalid. Every issue field must address exactly one
+        location: use 'learning_package.<field>...' for teaching-package items,
+        'blueprint.<field>...' or 'lesson_blueprint.<field>...' for lesson-blueprint items, or a
+        direct path inside one of them; never return a bare container name alone. FAIL requires a
+        failed result and directed issues.
         Every FAIL issue must contain contract, field, and problem; every failed contract needs an
         issue and no issue may name a passed contract.
 checked_contracts, if emitted, is only the ordered list derived from contract_results; never
