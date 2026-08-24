@@ -47,6 +47,7 @@ from markdown_it.common.utils import normalizeReference
 from markdown_it.rules_block.reference import reference as stock_reference
 from markdown_it.rules_inline.image import image as stock_image
 from markdown_it.token import Token
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.footnote import footnote_plugin
 
 from app.contracts.annotation import utf16_code_unit_length
@@ -595,6 +596,10 @@ def _extract_inline_text(token: Token) -> str:
             "del_open", "del_close",
             "footnote_ref",
             "image",
+            # Math-A：公式源码不进任何容器 flatten 文本（typed payload 承载）。
+            "math_inline",
+            "math_inline_double",
+            "math_block",
         ):
             continue
         elif child.type == "html_inline":
@@ -629,6 +634,106 @@ _IMAGE_ONLY_TABLE_CELL_POLICY: dict[str, Any] = {
     "default_route": "metadata_only",
     "rag_eligible": False,
 }
+
+# Math-A（math-markdown-representation-diagnosis.md §5，Owner M-1/M-2 已拍板）：
+# 纯公式容器的显式 metadata_only policy——LaTeX 源不进 canonical text、
+# reading units、T/V/G/S job targets 或 RAG plan（freeze plan 只聚合
+# main_reading 块），位点与源码由 payload ``inline_math`` / ``math_blocks``
+# 保存。镜像 _IMAGE_ONLY_TABLE_CELL_POLICY 的 parser-explicit carrier 形态。
+_MATH_ONLY_PARAGRAPH_POLICY: dict[str, Any] = {
+    "allowed_source_scope": ["main_reading_text"],
+    "default_route": "metadata_only",
+    "rag_eligible": False,
+}
+
+
+def _math_inline_entry(token: Token, before_utf16: int) -> dict[str, Any]:
+    """One ``inline_math`` array entry（Math-A）。
+
+    ``latex`` 是定界符之间的内层源码**逐字**——dollarmath token 化之后
+    内容不再参与 emphasis / escape 解析，因此 ``$a*b*c$`` 与 ``\\|A-B\\|``
+    全字符保真（诊断文档 RED #4/#5）。``display`` 取自 markup（``$$`` →
+    True）；``before_utf16`` 相对所属 block 最终投影文本，语义与
+    ``inline_images.before_utf16`` 完全一致。
+    """
+    return {
+        "latex": token.content,
+        "display": token.markup == "$$",
+        "before_utf16": before_utf16,
+    }
+
+
+def _math_only_container_override(
+    entries: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """纯公式容器的 Math-A 归一：返回 ``(text_content, payload_addition,
+    interpretation_policy)``。
+
+    容器保留原 block_type（paragraph/heading/list_item/blockquote/
+    table_cell），text_content 退化为 LaTeX 源回退展示（调用方保证
+    ``entries`` 非空，故返回恒为非 None ``str``）；payload 以
+    ``math_blocks`` 承载逐字源码；显式 metadata_only policy 使其退出
+    canonical / units / jobs / RAG。
+    """
+    latex = " ".join(entry["latex"] for entry in entries)
+    return (
+        latex.strip(),
+        {
+            "math_blocks": [
+                {"latex": entry["latex"], "display": entry["display"]}
+                for entry in entries
+            ],
+        },
+        dict(_MATH_ONLY_PARAGRAPH_POLICY),
+    )
+
+
+# Math-A 窄返修（F4）：blockquote 内多行 ``$$..$$`` 的 math_block content
+# 是 dollarmath 对 state.src 的切片，中间行带入 blockquote 的 ``> `` 前缀。
+# 逐行去掉开头可选空白后的 ``> `` / ``>``；单行形态 content 本就干净，
+# 本替换对其幂等。仅对位于 blockquote 内的 token 调用（顶层 content 无
+# 污染，list_item 内行首 ``>`` 可能是合法 LaTeX 内容，均不得走此路径）。
+_BLOCKQUOTE_QUOTE_PREFIX_RE = re.compile(r"(?m)^[ \t]*>[ \t]?")
+
+
+def _dequote_blockquote_math_latex(content: str) -> str:
+    """blockquote 内 math_block latex 的确定性 de-quote（F4）。"""
+    return _BLOCKQUOTE_QUOTE_PREFIX_RE.sub("", content)
+
+
+def _dedent_nested_math_latex(content: str) -> str:
+    """缩进容器（list_item）内 math_block latex 的确定性去续行缩进。
+
+    去掉所有非空行的公共前导空白 margin；whitespace-only 行随切片截断。
+    仅对嵌套 token（``token.level > 0``）调用——顶层 content 无污染，
+    逐字保真，不得触碰。
+    """
+    lines = content.split("\n")
+    margin: int | None = None
+    for line in lines:
+        stripped = line.lstrip(" \t")
+        if stripped:
+            indent = len(line) - len(stripped)
+            margin = indent if margin is None else min(margin, indent)
+    if not margin:
+        return content
+    return "\n".join(line[margin:] for line in lines)
+
+
+def parse_result_has_typed_math(result: MarkdownParseResult) -> bool:
+    """True 当任一 parsed block 携带 typed math payload（Math-A）。
+
+    gate 用作 parser-aware 数学信号：fenced code 与 inline code span 被
+    tokenizer 天然排除（M-2a/M-2b），真实 math（含货币 ``$5..$10`` 的
+    dollarmath 命中）保持 True（M-1/M-2c 维持现行 Candidate 路由）。
+    """
+    for block in result.blocks:
+        payload = block.payload_json
+        for key in ("inline_math", "math_blocks"):
+            entries = payload.get(key)
+            if isinstance(entries, list) and entries:
+                return True
+    return False
 
 
 def _image_alt_text(token: Token) -> str:
@@ -913,6 +1018,7 @@ def _process_paragraph_inline(
     token: Token,
     *,
     inline_images: list[dict[str, Any]] | None = None,
+    inline_math: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -947,6 +1053,7 @@ def _process_paragraph_inline(
         token,
         unsafe_link_spans=unsafe_link_spans,
         inline_images=inline_images,
+        inline_math=inline_math,
     )
     # Normalize meaningless trailing whitespace (e.g. the real space
     # decoded from a trailing ``&#x20;`` HTML entity) at the single
@@ -974,6 +1081,7 @@ def _process_paragraph_inline(
                 unsafe_links=unsafe_links,
                 unsafe_link_spans=unsafe_link_spans,
                 inline_images=inline_images,
+                inline_math=inline_math,
             )
         )
     return (
@@ -994,6 +1102,7 @@ def _clamp_inline_marks_to_trimmed_tail(
     unsafe_links: list[dict[str, str]],
     unsafe_link_spans: list[tuple[int, int]],
     inline_images: list[dict[str, Any]] | None = None,
+    inline_math: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -1018,6 +1127,10 @@ def _clamp_inline_marks_to_trimmed_tail(
     limit = utf16_code_unit_length(trimmed)
     if inline_images is not None:
         for entry in inline_images:
+            if entry["before_utf16"] > limit:
+                entry["before_utf16"] = limit
+    if inline_math is not None:
+        for entry in inline_math:
             if entry["before_utf16"] > limit:
                 entry["before_utf16"] = limit
     kept_marks: list[dict[str, Any]] = []
@@ -1070,6 +1183,7 @@ def _process_inline_with_marks(
     *,
     unsafe_link_spans: list[tuple[int, int]] | None = None,
     inline_images: list[dict[str, Any]] | None = None,
+    inline_math: list[dict[str, Any]] | None = None,
 ) -> tuple[
     str,
     list[dict[str, Any]],
@@ -1328,6 +1442,16 @@ def _process_inline_with_marks(
                     _image_inline_entry(child, current_utf16)
                 )
             pending_image_separator = True
+        elif ctype in ("math_inline", "math_inline_double"):
+            # Math-A：公式 token 不贡献文本、不参与 emphasis / escape；
+            # 记录 typed entry 并沿用 image 的 U+0020 分隔判例。
+            # ``math_inline_double`` = 行内 ``$$..$$``（display 语义）。
+            if inline_math is not None:
+                inline_math.append(_math_inline_entry(child, current_utf16))
+            pending_image_separator = True
+        elif ctype == "math_block":
+            # 行内上下文中出现的块级 math token（罕见）：同样不贡献文本。
+            continue
         elif ctype == "footnote_ref":
             continue
         else:
@@ -2022,6 +2146,16 @@ class MarkdownSourceParser:
             .enable("table")
             .enable("strikethrough")
             .use(footnote_plugin)
+            # Math-A（math-markdown-representation-diagnosis.md §5）：dollarmath
+            # 让 ``$..$`` / 行内与独立 ``$$..$$`` 成为 ``math_inline`` /
+            # ``math_inline_double`` / ``math_block`` token——内容为定界符
+            # 之间的内层源码逐字（不参与 emphasis / escape 解析），fenced
+            # code 与 inline code span 被 tokenizer 天然排除。
+            # ``double_inline=True``：行内 ``$$..$$`` 由官方规则配对为
+            # ``math_inline_double``（默认关闭时按单 ``$`` 错误拆分）。
+            # 默认 ``allow_digits=True`` 使货币 ``$5..$10`` 仍被识别为
+            # math（gate 维持现行 Candidate 结果）。
+            .use(dollarmath_plugin, double_inline=True)
         )
         _install_image_provenance_seam(self._md)
 
@@ -2743,14 +2877,34 @@ class MarkdownSourceParser:
                 # Flat path: ordinary blockquote — aggregate inline content
                 # into a single block (no regression for quotations).
                 bq_inlines: list[Token] = []
+                # Math-A 窄返修（F1）：dollarmath 把 blockquote 内 standalone
+                # ``$$..$$`` 产出为 blockquote 的直接子 ``math_block`` token
+                # （不经 paragraph_open/inline），latex 逐字（content）入
+                # payload ``math_blocks``，按源序。
+                bq_block_math: list[dict[str, Any]] = []
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "blockquote_close":
                     if tokens[j].type == "inline":
                         bq_inlines.append(tokens[j])
+                    elif tokens[j].type == "math_block":
+                        # F4：blockquote 内多行 $$ 的 content 经确定性
+                        # de-quote 去除中间行 "> " 前缀。
+                        bq_block_math.append(
+                            {
+                                "latex": _dequote_blockquote_math_latex(
+                                    tokens[j].content
+                                ),
+                                "display": True,
+                            }
+                        )
                     j += 1
 
                 bq_walks = [_walk_inline_images(t.children) for t in bq_inlines]
-                if bq_walks and all(w.is_image_only for w in bq_walks):
+                if (
+                    bq_walks
+                    and all(w.is_image_only for w in bq_walks)
+                    and not bq_block_math
+                ):
                     # §6.5.2（已批准方案 B）: image-only blockquote promotes
                     # all images in token order; no empty container block.
                     promoted: list[Token] = []
@@ -2777,8 +2931,10 @@ class MarkdownSourceParser:
                 bq_safe_links: list[dict[str, str]] = []
                 bq_unsafe_links: list[dict[str, str]] = []
                 bq_inline_images: list[dict[str, Any]] = []
+                bq_inline_math: list[dict[str, Any]] = []
                 for bq_inline, bq_walk in zip(bq_inlines, bq_walks, strict=True):
                     per_inline_images: list[dict[str, Any]] = []
+                    per_inline_math: list[dict[str, Any]] = []
                     (
                         inline_text,
                         inline_marks,
@@ -2787,7 +2943,9 @@ class MarkdownSourceParser:
                         _bq_has_html,
                         _bq_starts_html,
                     ) = _process_inline_with_marks(
-                        bq_inline, inline_images=per_inline_images
+                        bq_inline,
+                        inline_images=per_inline_images,
+                        inline_math=per_inline_math,
                     )
                     mark_offset = utf16_code_unit_length(bq_text)
                     if bq_text:
@@ -2805,6 +2963,9 @@ class MarkdownSourceParser:
                     for image_entry in per_inline_images:
                         image_entry["before_utf16"] += mark_offset
                         bq_inline_images.append(image_entry)
+                    for math_entry in per_inline_math:
+                        math_entry["before_utf16"] += mark_offset
+                        bq_inline_math.append(math_entry)
                     bq_safe_links.extend(safe_links)
                     bq_unsafe_links.extend(unsafe_links)
                     if unsafe_links:
@@ -2819,6 +2980,23 @@ class MarkdownSourceParser:
                     flat_bq_payload["inline_marks"] = bq_marks
                 if bq_inline_images:
                     flat_bq_payload["inline_images"] = bq_inline_images
+                # Math-A：公式 entry 进 owning-block payload；纯公式容器
+                # （无可见文本）退化为 metadata_only 容器。
+                if bq_inline_math:
+                    flat_bq_payload["inline_math"] = bq_inline_math
+                bq_math_policy: dict[str, Any] | None = None
+                # F1：无可见文本且仅有 math（inline 或块级）→ 既有
+                # _math_only_container_override 归一；混排保持 main_reading
+                # 默认、仅记录 math_blocks。
+                if not bq_text.strip() and (bq_inline_math or bq_block_math):
+                    (
+                        bq_text,
+                        _bq_math_addition,
+                        bq_math_policy,
+                    ) = _math_only_container_override(bq_inline_math + bq_block_math)
+                    flat_bq_payload.update(_bq_math_addition)
+                elif bq_block_math:
+                    flat_bq_payload["math_blocks"] = bq_block_math
                 blocks.append(
                     ParsedBlock(
                         block_id=bq_id,
@@ -2828,6 +3006,7 @@ class MarkdownSourceParser:
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
+                        interpretation_policy=bq_math_policy,
                     )
                 )
                 order_index += 1
@@ -2925,6 +3104,7 @@ class MarkdownSourceParser:
                 cell_marks: list[dict[str, Any]] = []
                 cell_policy: dict[str, Any] | None = None
                 cell_inline_images: list[dict[str, Any]] = []
+                cell_inline_math: list[dict[str, Any]] = []
                 j = i + 1
                 while (
                     j < len(tokens)
@@ -2952,7 +3132,9 @@ class MarkdownSourceParser:
                                 _cell_has_html,
                                 _cell_starts_html,
                             ) = _process_inline_with_marks(
-                                tokens[j], inline_images=cell_inline_images
+                                tokens[j],
+                                inline_images=cell_inline_images,
+                                inline_math=cell_inline_math,
                             )
                             if _cell_unsafe_links:
                                 flags.has_unsafe_link = True
@@ -2971,6 +3153,17 @@ class MarkdownSourceParser:
                     cell_payload["inline_marks"] = cell_marks
                 if cell_inline_images:
                     cell_payload["inline_images"] = cell_inline_images
+                # Math-A：cell 内公式 entry；纯公式 cell（无可见文本且非
+                # image-only）退化为 metadata_only 容器。
+                if cell_inline_math:
+                    cell_payload["inline_math"] = cell_inline_math
+                    if not (cell_text or "").strip() and cell_policy is None:
+                        (
+                            cell_text,
+                            _cell_math_addition,
+                            cell_policy,
+                        ) = _math_only_container_override(cell_inline_math)
+                        cell_payload.update(_cell_math_addition)
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
@@ -2995,6 +3188,8 @@ class MarkdownSourceParser:
                 heading_text = ""
                 heading_marks: list[dict[str, Any]] = []
                 heading_inline_images: list[dict[str, Any]] = []
+                heading_inline_math: list[dict[str, Any]] = []
+                heading_math_policy: dict[str, Any] | None = None
                 heading_inline: Token | None = None
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "heading_close":
@@ -3029,7 +3224,9 @@ class MarkdownSourceParser:
                         _heading_has_html,
                         _heading_starts_html,
                     ) = _process_inline_with_marks(
-                        heading_inline, inline_images=heading_inline_images
+                        heading_inline,
+                        inline_images=heading_inline_images,
+                        inline_math=heading_inline_math,
                     )
                     if _heading_unsafe_links:
                         flags.has_unsafe_link = True
@@ -3039,6 +3236,16 @@ class MarkdownSourceParser:
                     heading_payload["inline_marks"] = heading_marks
                 if heading_inline_images:
                     heading_payload["inline_images"] = heading_inline_images
+                # Math-A：公式 entry；纯公式标题退化为 metadata_only 容器。
+                if heading_inline_math:
+                    heading_payload["inline_math"] = heading_inline_math
+                    if not heading_text.strip():
+                        (
+                            heading_text,
+                            _heading_math_addition,
+                            heading_math_policy,
+                        ) = _math_only_container_override(heading_inline_math)
+                        heading_payload.update(_heading_math_addition)
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
@@ -3046,12 +3253,50 @@ class MarkdownSourceParser:
                         text_content=heading_text,
                         payload_json=heading_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
+                        interpretation_policy=heading_math_policy,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
                 i = j + 1
+                continue
+
+            # --- Math-A: standalone $$..$$ display block ---
+            # dollarmath 把独立成段的 ``$$..$$`` 产出为块级 ``math_block``
+            # token（content 为定界符之间源码逐字）。保留 paragraph 容器 +
+            # 显式 metadata_only policy：LaTeX 不进 canonical/units/jobs/
+            # RAG；text_content 为回退展示源。
+            if token_type == "math_block":
+                math_latex = token.content
+                if token.level > 0:
+                    # Math-A 窄返修：list_item 等缩进容器内的 math_block
+                    # 不被容器 walker 消费、落到本 handler，content 带入
+                    # 续行缩进；确定性去公共 margin。顶层 token
+                    # （level == 0）content 无污染，逐字保真不触碰。
+                    math_latex = _dedent_nested_math_latex(math_latex)
+                collapsed = " ".join(math_latex.split())
+                src_range = _map_to_1based(token.map) if token.map else None
+                blocks.append(
+                    ParsedBlock(
+                        block_id=f"b{order_index + 1}",
+                        block_type="paragraph",
+                        text_content=collapsed or None,
+                        payload_json={
+                            "math_blocks": [
+                                {"latex": math_latex, "display": True}
+                            ]
+                        },
+                        parent_block_id=(
+                            parent_stack[-1] if parent_stack else None
+                        ),
+                        order_index=order_index,
+                        source_range=_resolve_range(src_range, flags),
+                        interpretation_policy=dict(_MATH_ONLY_PARAGRAPH_POLICY),
+                    )
+                )
+                order_index += 1
+                i += 1
                 continue
 
             # --- Paragraph (M-3, M-6) ---
@@ -3082,6 +3327,8 @@ class MarkdownSourceParser:
                         i = j + 1
                         continue
                     para_inline_images: list[dict[str, Any]] = []
+                    para_inline_math: list[dict[str, Any]] = []
+                    para_math_policy: dict[str, Any] | None = None
                     (
                         para_text,
                         inline_marks,
@@ -3090,8 +3337,36 @@ class MarkdownSourceParser:
                         has_inline_html,
                         starts_with_html_inline,
                     ) = _process_paragraph_inline(
-                        inline_token, inline_images=para_inline_images
+                        inline_token,
+                        inline_images=para_inline_images,
+                        inline_math=para_inline_math,
                     )
+                    # Math-A：纯公式段落 → metadata_only 容器（text_content
+                    # 为 LaTeX 源回退展示；freeze plan 不聚合 metadata_only，
+                    # 公式不进 canonical/units/jobs/RAG）。
+                    if not para_text.strip() and para_inline_math:
+                        (
+                            math_only_text,
+                            math_only_payload,
+                            para_math_policy,
+                        ) = _math_only_container_override(para_inline_math)
+                        blocks.append(
+                            ParsedBlock(
+                                block_id=f"b{order_index + 1}",
+                                block_type="paragraph",
+                                text_content=math_only_text,
+                                payload_json=math_only_payload,
+                                parent_block_id=(
+                                    parent_stack[-1] if parent_stack else None
+                                ),
+                                order_index=order_index,
+                                source_range=_resolve_range(src_range, flags),
+                                interpretation_policy=para_math_policy,
+                            )
+                        )
+                        order_index += 1
+                        i = j + 1
+                        continue
                     # html_inline tokens never contribute raw tag text to
                     # para_text (they are either stripped or, for non-HTML
                     # placeholders like vector<T>, preserved verbatim as
@@ -3114,6 +3389,8 @@ class MarkdownSourceParser:
                         payload["inline_marks"] = inline_marks
                     if para_inline_images:
                         payload["inline_images"] = para_inline_images
+                    if para_inline_math:
+                        payload["inline_math"] = para_inline_math
                     # M-6: paragraph starting with html_inline
                     if starts_with_html_inline:
                         payload["extracted_from"] = "html_inline"
@@ -3131,6 +3408,7 @@ class MarkdownSourceParser:
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
+                        interpretation_policy=para_math_policy,
                     )
                 )
                 order_index += 1
@@ -3298,6 +3576,8 @@ class MarkdownSourceParser:
                     continue
 
                 li_inline_images: list[dict[str, Any]] = []
+                li_inline_math: list[dict[str, Any]] = []
+                li_math_policy: dict[str, Any] | None = None
                 if li_inline_token is not None:
                     (
                         li_text,
@@ -3307,7 +3587,9 @@ class MarkdownSourceParser:
                         _li_has_html,
                         _li_starts_html,
                     ) = _process_inline_with_marks(
-                        li_inline_token, inline_images=li_inline_images
+                        li_inline_token,
+                        inline_images=li_inline_images,
+                        inline_math=li_inline_math,
                     )
                     if _li_unsafe_links:
                         flags.has_unsafe_link = True
@@ -3347,6 +3629,16 @@ class MarkdownSourceParser:
                     li_payload["inline_marks"] = li_marks
                 if li_inline_images:
                     li_payload["inline_images"] = li_inline_images
+                # Math-A：公式 entry；纯公式 item 退化为 metadata_only 容器。
+                if li_inline_math:
+                    li_payload["inline_math"] = li_inline_math
+                    if not li_text.strip():
+                        (
+                            li_text,
+                            _li_math_addition,
+                            li_math_policy,
+                        ) = _math_only_container_override(li_inline_math)
+                        li_payload.update(_li_math_addition)
                 blocks.append(
                     ParsedBlock(
                         block_id=li_id,
@@ -3356,6 +3648,7 @@ class MarkdownSourceParser:
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
+                        interpretation_policy=li_math_policy,
                     )
                 )
                 order_index += 1
@@ -3375,6 +3668,12 @@ class MarkdownSourceParser:
                 # Find paragraph inside footnote for source_range and text
                 fn_src_range: SourceRange | None = None
                 fn_text = ""
+                # Math-A 窄返修（F3）：dollarmath 把 footnote 定义内
+                # standalone ``$$..$$`` 产出为 footnote 块直接子
+                # ``math_block`` token（不经 paragraph），latex 逐字入
+                # payload ``math_blocks``，按源序；纯公式 footnote 退化
+                # metadata_only，混排保持默认 policy 仅记录 math_blocks。
+                fn_block_math: list[dict[str, Any]] = []
                 j = i + 1
                 while (
                     j < len(tokens)
@@ -3390,18 +3689,39 @@ class MarkdownSourceParser:
                             k += 1
                         j = k + 1
                         continue
+                    if tokens[j].type == "math_block":
+                        if fn_src_range is None:
+                            # 纯公式 footnote 无 paragraph，math_block 的
+                            # map 兜底 source_range（避免误报
+                            # missing_source_range）。
+                            fn_src_range = _map_to_1based(tokens[j].map)
+                        fn_block_math.append(
+                            {"latex": tokens[j].content, "display": True}
+                        )
                     j += 1
                 footnote_id = str(footnote_counter)
                 footnote_counter += 1
+                fn_payload: dict[str, Any] = {"footnote_id": footnote_id}
+                fn_math_policy: dict[str, Any] | None = None
+                if not fn_text.strip() and fn_block_math:
+                    (
+                        fn_text,
+                        _fn_math_addition,
+                        fn_math_policy,
+                    ) = _math_only_container_override(fn_block_math)
+                    fn_payload.update(_fn_math_addition)
+                elif fn_block_math:
+                    fn_payload["math_blocks"] = fn_block_math
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
                         block_type="footnote",
                         text_content=fn_text,
-                        payload_json={"footnote_id": footnote_id},
+                        payload_json=fn_payload,
                         parent_block_id=None,
                         order_index=order_index,
                         source_range=_resolve_range(fn_src_range, flags),
+                        interpretation_policy=fn_math_policy,
                     )
                 )
                 order_index += 1

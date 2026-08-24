@@ -19,6 +19,7 @@ from app.services.reader_orchestration.input_format import (
 from app.services.reader_orchestration.markdown_source_parser import (
     MarkdownParseResult,
     MarkdownSourceParser,
+    parse_result_has_typed_math,
 )
 
 _MARKDOWN_PARSER = MarkdownSourceParser()
@@ -48,12 +49,15 @@ _LINK_ONLY_LINE_PATTERN = re.compile(
 # so legal citations like ``(2019);`` cannot match.
 _SHEBANG_PATTERN = re.compile(r"^#!\s*/")
 _MODELINE_PATTERN = re.compile(r"#\s*vim:\s*set|#\s*-\*-\s*coding|//\s*-\*-")
-_INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$[^$\n]+\$(?!\$)")
-_BLOCK_MATH_PATTERN = re.compile(r"\$\$[\s\S]+?\$\$")
 # L2 — math 误判修复：``\[`` / ``\(`` 单独出现（如 ``\[Video]`` 转义
 # 方括号、普通 prose 中的 ``\(2019)``）不再识别为数学公式。数学判定
 # 要求**成对边界**（``\[`` 与 ``\]``、``\(`` 与 ``\)`` 配对）且内容
 # 像公式（含 LaTeX 命令、``=``/``^``/``{``/``}`` 或数字-运算符-数字）。
+# Math-A（M-2 拍板）：``$..$`` / ``$$..$$`` 检测切换为 parser-aware——
+# dollarmath token 化天然排除 fenced code 与 inline code span；货币
+# ``$5..$10`` 仍被 dollarmath 命中（行为保持现状）。raw ``$`` 正则删除；
+# escaped 成对形态无 parser 插件，维持 raw 扫描（已知边界：fence 内的
+# 成对转义形态仍会命中——维持已登记限制，不迁移不猜测恢复）。
 _ESCAPED_MATH_PAIR_PATTERN = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]")
 _MATHLIKE_CONTENT_PATTERN = re.compile(
     r"\\[a-zA-Z]+"  # LaTeX 命令（\frac / \sum ...）
@@ -502,16 +506,18 @@ def _measure_text(text: str) -> _TextMetrics:
     )
 
 
-def _has_math_syntax(text: str) -> bool:
-    """L2 — 数学公式判定：成对边界 + 内容像公式，或 parser 级别信号。
+def _has_math_syntax(text: str, *, parse_result: MarkdownParseResult) -> bool:
+    """数学公式判定（Math-A parser-aware + L2 escaped 成对启发式）。
 
-    - ``$...$`` / ``$$...$$``：本身即要求成对，直接采信。
-    - ``\\(...\\)`` / ``\\[...\\]``：必须成对出现，且内部内容像公式
-      （LaTeX 命令、``=``/``^``/``{``/``}``、数字与运算符组合）。
-      单独的 ``\\[Video]`` 转义方括号、``\\(2019)`` 引用、未成对的
-      ``\\(`` 不再误判为数学公式。
+    - ``$...$`` / ``$$...$$``：由 parser 的 typed math payload 判定
+      （dollarmath token 化）。fenced code 与 inline code span 被
+      tokenizer 天然排除（M-2a/M-2b 拍板）；货币 ``$5..$10`` 仍被命中
+      （M-2c 维持现行 Candidate 结果）。
+    - ``\\(...\\)`` / ``\\[...\\]``：无 parser 插件，维持 L2 规则——必须
+      成对出现且内部内容像公式。单独的 ``\\[Video]`` 转义方括号、
+      ``\\(2019)`` 引用、未成对的 ``\\(`` 不误判。
     """
-    if _INLINE_MATH_PATTERN.search(text) or _BLOCK_MATH_PATTERN.search(text):
+    if parse_result_has_typed_math(parse_result):
         return True
     for match in _ESCAPED_MATH_PAIR_PATTERN.finditer(text):
         inner = match.group(1) if match.group(1) is not None else match.group(2)
@@ -533,10 +539,11 @@ def _detect_markdown_complexity(
     )
     # Derive structural flags from the parser adapter instead of raw-text
     # regex. The parser is the single source of truth for block structure
-    # (tables, footnotes, raw HTML, unclosed fences); math stays on a
-    # lightweight regex probe. Images are typed representation since
-    # G2a-A and never count as structure risk（O-1：图片存在不路由
-    # candidate，纯图/零正文仍由正文资格规则拒绝）.
+    # (tables, footnotes, raw HTML, unclosed fences); math detection is
+    # parser-aware since Math-A（typed payload 信号 + escaped 成对启发式，
+    # fenced code 与 inline code span 不再误判）. Images are typed
+    # representation since G2a-A and never count as structure risk（O-1：
+    # 图片存在不路由 candidate，纯图/零正文仍由正文资格规则拒绝）.
     block_types = {block.block_type for block in parse_result.blocks}
     warning_codes = {warning.code for warning in parse_result.warnings}
 
@@ -550,7 +557,7 @@ def _detect_markdown_complexity(
         "raw_html_block" in warning_codes
         or "inline_html" in warning_codes
     )
-    has_math = _has_math_syntax(text)
+    has_math = _has_math_syntax(text, parse_result=parse_result)
     has_unclosed_fence = "has_unclosed_fence" in warning_codes
     has_simple_markdown = is_markdown_source and bool(
         block_types & {"heading", "list", "list_item", "blockquote"}
