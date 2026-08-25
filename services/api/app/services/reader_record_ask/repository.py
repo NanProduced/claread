@@ -205,6 +205,32 @@ FROM reader_ask_messages m
 LEFT JOIN reader_ask_turn_runs tr ON tr.id = m.current_turn_run_id
 """
 
+_MESSAGE_HISTORY_ORDER_JOIN = """
+LEFT JOIN LATERAL (
+    SELECT s.client_submission_id, s.created_at,
+           s.user_message_id, s.assistant_message_id
+    FROM reader_ask_client_submissions s
+    WHERE s.thread_id = m.thread_id
+      AND (s.user_message_id = m.id OR s.assistant_message_id = m.id)
+    ORDER BY s.created_at ASC, s.client_submission_id ASC
+    LIMIT 1
+) submission ON true
+"""
+
+_MESSAGE_HISTORY_ORDER_BY = """
+ORDER BY
+    COALESCE(submission.created_at, m.created_at) ASC,
+    COALESCE(submission.client_submission_id::text, m.id::text) ASC,
+    CASE
+        WHEN submission.user_message_id = m.id THEN 0
+        WHEN submission.assistant_message_id = m.id THEN 1
+        WHEN m.role = 'user' THEN 0
+        ELSE 1
+    END ASC,
+    m.created_at ASC,
+    m.id ASC
+"""
+
 
 class ReaderRecordAskRepository:
     """DB access for agentic message / turn-run rows."""
@@ -479,13 +505,19 @@ class ReaderRecordAskRepository:
         async with pool.acquire() as conn:
             if limit is None:
                 rows = await conn.fetch(
-                    _MESSAGE_HISTORY_SELECT + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC",
+                    _MESSAGE_HISTORY_SELECT
+                    + _MESSAGE_HISTORY_ORDER_JOIN
+                    + " WHERE m.thread_id = $1 "
+                    + _MESSAGE_HISTORY_ORDER_BY,
                     thread_id,
                 )
             else:
                 rows = await conn.fetch(
                     _MESSAGE_HISTORY_SELECT
-                    + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC LIMIT $2",
+                    + _MESSAGE_HISTORY_ORDER_JOIN
+                    + " WHERE m.thread_id = $1 "
+                    + _MESSAGE_HISTORY_ORDER_BY
+                    + " LIMIT $2",
                     thread_id,
                     limit,
                 )
