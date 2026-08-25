@@ -6,6 +6,34 @@ import { describe, expect, it, vi } from "vitest";
 import { AskComposer } from "./AskComposer";
 
 describe("AskComposer web search toggle", () => {
+  it("renders one quiet compact composer surface", () => {
+    const { container, unmount } = render(
+      <AskComposer
+        contextStrip={<span>当前文章</span>}
+        onSubmit={vi.fn()}
+        onWebSearchModeChange={vi.fn()}
+        placeholder="继续问这篇文章…"
+        sending={false}
+        webSearchMode="disabled"
+      />,
+    );
+
+    const surface = container.querySelector('[data-slot="input-group"]');
+    expect(surface?.className).toContain("rounded-2xl");
+    expect(surface?.className).toContain("border-0");
+    expect(surface?.className).toContain("bg-surface");
+    expect(surface?.className).toContain("shadow-sm");
+    expect(container.querySelector("form")?.className).not.toContain("bg-muted/30");
+    expect(container.querySelector("[data-ask-context-strip]")?.className).not.toContain(
+      "border-b",
+    );
+    expect(container.querySelector("[data-ask-composer-textarea]")?.className).toContain(
+      "min-h-14",
+    );
+    expect(screen.getByRole("button", { name: "联网搜索已关闭" }).textContent).toBe("");
+    unmount();
+  });
+
   it("shows an explicit off state and requests allowed when clicked", () => {
     const onWebSearchModeChange = vi.fn();
 
@@ -21,7 +49,7 @@ describe("AskComposer web search toggle", () => {
 
     const toggle = screen.getByRole("button", { name: "联网搜索已关闭" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(toggle.textContent).toContain("联网 · 关");
+    expect(toggle.textContent).toBe("");
 
     fireEvent.click(toggle);
     expect(onWebSearchModeChange).toHaveBeenCalledWith("allowed");
@@ -40,7 +68,7 @@ describe("AskComposer web search toggle", () => {
 
     const toggle = screen.getByRole("button", { name: "联网搜索已开启" });
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    expect(toggle.textContent).toContain("联网 · 开");
+    expect(toggle.textContent).toBe("");
   });
 
   it("uses the stop affordance and compact native model select while sending", () => {
@@ -67,7 +95,7 @@ describe("AskComposer web search toggle", () => {
     expect(modelTrigger.className).toContain("max-w-[9rem]");
     expect(modelTrigger.className).not.toContain("opacity-0");
     expect(container.querySelector("[data-ask-composer-textarea]")?.className).toContain(
-      "text-[14px]",
+      "text-sm",
     );
   });
 });

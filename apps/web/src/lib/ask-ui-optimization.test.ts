@@ -19,6 +19,7 @@ describe("Ask Claread frozen UI cleanup", () => {
     expect(panel).not.toContain(legacyProvenanceRef);
     expect(suggestions).not.toContain(legacyContextPreview);
     expect(suggestions).not.toContain("suggestion.badgeClassName");
+    expect(suggestions).not.toContain("suggestion.icon");
     expect(stories).not.toContain(legacyCitationName);
     expect(
       existsSync(resolve(ROOT, `src/components/reader/ask-chat/${legacyCitationName}.tsx`)),
@@ -36,5 +37,13 @@ describe("Ask Claread frozen UI cleanup", () => {
     expect(composer).toContain('status={sending ? "streaming" : "ready"}');
     expect(panel).toContain("ASK_ANSWER_MARKDOWN_CLASSNAME");
     expect(panel.match(/ASK_ANSWER_MARKDOWN_CLASSNAME/g)).toHaveLength(3);
+  });
+
+  it("keeps the docked Ask column narrower than the reading stage", () => {
+    const styles = read("src/app/globals.css");
+
+    expect(styles).toMatch(
+      /var\(--reader-ask-column-width,\s*clamp\(24rem,\s*25\.5vw,\s*32rem\)\)/,
+    );
   });
 });

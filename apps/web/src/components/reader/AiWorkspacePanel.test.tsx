@@ -395,6 +395,7 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
+    expect(screen.getByRole("heading", { name: "Test Reader" })).not.toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
     expect(screen.queryByText("当前对话")).toBeNull();
     expect(screen.queryByText("当前讲解方式")).toBeNull();
@@ -859,7 +860,6 @@ describe("AiWorkspacePanel", () => {
     // The current article is fixed v2 context. It is represented by the
     // non-removable chip, while provenance remains reserved for explicit
     // selections and attachments.
-    expect(screen.getByText("Test Reader")).not.toBeNull();
     expect(screen.getByLabelText("当前文章：Test Reader")).not.toBeNull();
     expect(screen.queryByText(/基于：/)).toBeNull();
 
@@ -1746,7 +1746,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("This anchor card should stay hidden.")).toBeNull();
   });
 
-  it("shows the v2 Answer Process disclosure for streaming answers without the ellipsis fallback", async () => {
+  it("keeps cold streaming history visible while its status is synchronizing", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "streaming",
@@ -1757,27 +1757,43 @@ describe("AiWorkspacePanel", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("回答过程")).not.toBeNull();
+      expect(screen.getByTestId("ask-assistant-message")).not.toBeNull();
     });
 
-    expect(screen.queryByText("思考中")).toBeNull();
-    expect(screen.queryByText("…")).toBeNull();
+    // Cold history can still be marked streaming before backend reconciliation.
+    // Keep that state visible without reviving an empty process shell.
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+    expect(screen.getByText("回答状态同步中…")).not.toBeNull();
+    expect(document.body.textContent).not.toContain("回答过程");
   });
 
-  it("keeps the v2 Answer Process disclosure visible alongside partial markdown content", async () => {
+  it("keeps the single process disclosure visible while a partial answer streams alongside reasoning", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "streaming",
         content_md: "已生成第一句。",
+        reasoning_md: "已生成的思考片段。",
+        reasoning_status: "streaming",
       }),
     ]);
 
     renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("回答过程")).not.toBeNull();
       expect(screen.getByText("已生成第一句。")).not.toBeNull();
     });
+    // The restored turn renders its persisted reasoning as the settled,
+    // collapsed single disclosure — cold history never keeps a live lane.
+    const trigger = document.querySelector(
+      '[data-slot="chain-of-thought-trigger"]',
+    );
+    expect(trigger).not.toBeNull();
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger?.textContent).toContain("思考完毕");
+    // Exactly one process trigger serves the whole assistant turn.
+    expect(
+      document.querySelectorAll('[data-slot="chain-of-thought-trigger"]'),
+    ).toHaveLength(1);
   });
 
   it("removes the streaming loader once the assistant message is completed", async () => {
@@ -1795,9 +1811,10 @@ describe("AiWorkspacePanel", () => {
     });
 
     expect(screen.queryByText("回答过程")).toBeNull();
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
   });
 
-  it("renders the streaming reasoning shimmer shell before any reasoning content arrives", async () => {
+  it("auto-expands the process disclosure when provider reasoning starts", async () => {
     let releaseStream!: () => void;
     const streamGate = new Promise<void>((resolve) => {
       releaseStream = resolve;
@@ -1837,22 +1854,17 @@ describe("AiWorkspacePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(screen.getByText("思考中")).not.toBeNull();
+      expect(screen.getByText("正在思考…")).not.toBeNull();
     });
 
-    // Default collapsed while streaming — no auto-open, no fabricated
-    // placeholder content.
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    const content = container.querySelector('[data-slot="reasoning-content"]');
-    expect(content?.getAttribute("data-state")).toBe("closed");
-    expect(content?.textContent?.trim() ?? "").toBe("");
-
-    // The user can expand the empty streaming shell.
-    fireEvent.click(screen.getByText("思考中"));
-    await waitFor(() => {
-      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-    });
+    // The reasoning start auto-expands without user action and without
+    // stealing focus; an empty stream renders no fabricated placeholder body.
+    const trigger = container.querySelector('[data-slot="chain-of-thought-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      container.querySelector('[data-testid="ask-turn-process-reasoning"]'),
+    ).toBeNull();
+    expect(document.activeElement).toBe(document.body);
 
     releaseStream();
   });
@@ -2124,7 +2136,7 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
-  it("reveals live-streamed provider reasoning when expanded during streaming", async () => {
+  it("streams provider reasoning into the already-expanded disclosure", async () => {
     let releaseStream!: () => void;
     const streamGate = new Promise<void>((resolve) => {
       releaseStream = resolve;
@@ -2167,7 +2179,7 @@ describe("AiWorkspacePanel", () => {
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
 
-    const { container } = renderPanel();
+    renderPanel();
 
     fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
       target: { value: "解释这句话的语法结构" },
@@ -2175,16 +2187,10 @@ describe("AiWorkspacePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(screen.getByText("思考中")).not.toBeNull();
+      expect(screen.getByText("正在思考…")).not.toBeNull();
     });
 
-    // Collapsed while streaming: the projected text is not forced open.
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("先判断句子主干。")).toBeNull();
-
-    // Expanding reveals the live content before the answer completes.
-    fireEvent.click(screen.getByText("思考中"));
+    // The live delta is visible without any manual expansion.
     await waitFor(() => {
       expect(screen.getByText("先判断句子主干。")).not.toBeNull();
     });
@@ -2192,14 +2198,15 @@ describe("AiWorkspacePanel", () => {
     releaseStream();
   });
 
-  it("restores reloaded provider reasoning as a completed surface without issuing retry/stream", async () => {
+  it("restores reloaded provider reasoning as a completed collapsed surface without issuing retry/stream", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);
     mockThreadMessages([
       createAssistantMessage({
-        status: "streaming",
+        status: "completed",
         content_md: "刷新后仍可见的正文片段。",
         reasoning_md: "刷新后仍可见的 thinking 片段。",
+        reasoning_status: "completed",
       }),
     ]);
 
@@ -2209,13 +2216,12 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("刷新后仍可见的正文片段。")).not.toBeNull();
     });
 
-    // Cold history never keeps a live streaming reasoning lane: the
-    // reloaded turn renders its persisted reasoning as a completed,
-    // collapsed surface.
-    expect(screen.queryByText("思考中")).toBeNull();
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    // Cold history never keeps a live lane: persisted reasoning renders as a
+    // completed, collapsed disclosure.
+    expect(screen.queryByText("正在思考…")).toBeNull();
+    const trigger = container.querySelector('[data-slot="chain-of-thought-trigger"]');
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(screen.getByText("思考过程"));
+    fireEvent.click(trigger!);
     await waitFor(() => {
       expect(screen.getByText("刷新后仍可见的 thinking 片段。")).not.toBeNull();
     });
@@ -2240,16 +2246,16 @@ describe("AiWorkspacePanel", () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(screen.getByText("思考过程")).not.toBeNull();
+      expect(screen.getByText("思考完毕")).not.toBeNull();
       expect(screen.getByText("这里是答案正文。")).not.toBeNull();
     });
 
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
-    const content = container.querySelector('[data-slot="reasoning-content"]');
+    const trigger = container.querySelector('[data-slot="chain-of-thought-trigger"]');
+    const content = container.querySelector('[data-slot="chain-of-thought-content"]');
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(content?.getAttribute("data-state")).toBe("closed");
 
-    fireEvent.click(screen.getByText("思考过程"));
+    fireEvent.click(screen.getByText("思考完毕"));
 
     await waitFor(() => {
       expect(trigger?.getAttribute("aria-expanded")).toBe("true");
@@ -2269,17 +2275,17 @@ describe("AiWorkspacePanel", () => {
       }),
     ]);
 
-    const { container } = renderPanel();
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText("这是直接回答。")).not.toBeNull();
     });
 
     // No fabricated "model returned no reasoning" placeholder — the whole
-    // reasoning element is absent.
-    expect(screen.queryByText("思考过程")).toBeNull();
+    // process disclosure is absent for a reasoning-free turn.
+    expect(screen.queryByText("思考完毕")).toBeNull();
     expect(screen.queryByText("本轮模型未返回可展示的思考内容。")).toBeNull();
-    expect(container.querySelector('[data-slot="reasoning"]')).toBeNull();
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
   });
 
   it("shows the user-facing insufficient credits message from stream errors", async () => {
@@ -5899,6 +5905,8 @@ describe("AiWorkspacePanel – turn-scoped error notices", () => {
 
     const banner = await screen.findByTestId("ask-panel-notice");
     expect(banner.textContent).toContain("网络连接失败，请检查网络后重试。");
+    expect(banner.className).not.toContain("border-b");
+    expect(banner.querySelector("svg")).toBeNull();
     // The panel banner is a sibling of the header, not inside a turn bubble.
     expect(screen.queryByTestId("ask-turn-notice")).toBeNull();
   });
@@ -6562,10 +6570,11 @@ describe("AiWorkspacePanel – panel-level notice wiring", () => {
 // Chain of Thought convergence
 //
 // v2 turns converge reasoning + activity into one turn-scoped disclosure:
-// - live: TurnProcessDisclosure driven by the live activity state;
+// - one owner: TurnProcessDisclosure renders provider reasoning and steps;
+// - live: automatic expand on reasoning start, collapse at the first answer
+//   delta, with a per-attempt manual override;
 // - settled (same session): frozen snapshot persisted before the idle reset;
 // - cold history: reasoning-only (snapshots never persist);
-// - legacy lanes keep ReasoningPanel + ToolTrace untouched;
 // - warnings/errors stay the SystemMessage turn notice's sole property.
 // ---------------------------------------------------------------------------
 
@@ -6677,11 +6686,11 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
     // The settled CoT persists after the live activity reset to idle.
     const cot = await screen.findByTestId("ask-turn-process");
     expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
-    expect(cot.textContent).toContain("回答过程");
-    expect(cot.textContent).toContain("已完成");
+    expect(cot.textContent).toContain("思考完毕");
+    expect(cot.textContent).not.toContain("回答过程");
     // The live activity row is gone (replaced by the settled disclosure).
     expect(screen.queryByTestId("ask-agentic-activity")).toBeNull();
-    // The legacy reasoning disclosure is not rendered for v2 turns.
+    // The legacy reasoning slot is gone from v2 turns entirely.
     expect(cot.closest("[data-message-role='assistant']")?.querySelector("[data-slot='reasoning']"))
       .toBeNull();
 
@@ -6811,7 +6820,7 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
     renderPanel();
     await sendTurn();
     await waitFor(() => {
-      expect(screen.getByTestId("ask-turn-process").textContent).toContain("已完成");
+      expect(screen.getByTestId("ask-turn-process").textContent).toContain("思考完毕");
     });
 
     // Retry wipes the old attempt's frozen process immediately. (The retry
@@ -6907,23 +6916,31 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
 
     renderPanel();
 
-    // Cold history restores persisted reasoning but does not fabricate a
-    // same-session Answer Process snapshot.
+    // Cold history restores persisted reasoning as the single process
+    // disclosure — no fabricated same-session step snapshot on top of it.
     await waitFor(() => {
       expect(screen.getByText("冷答案。")).not.toBeNull();
     });
-    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
     const bubble = screen
       .getByText("冷答案。")
       .closest("[data-message-role='assistant']");
-    expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
-    fireEvent.click(screen.getByText("思考过程"));
+    expect(bubble?.querySelector("[data-testid='ask-turn-process']")).not.toBeNull();
+    expect(
+      bubble?.querySelectorAll('[data-slot="chain-of-thought-trigger"]'),
+    ).toHaveLength(1);
+    const trigger = bubble?.querySelector('[data-slot="chain-of-thought-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByText("思考完毕"));
     await waitFor(() => {
       expect(screen.getByText("冷推理文本。")).not.toBeNull();
     });
   });
 
-  it("v2 renders provider reasoning events in the single reasoning panel", async () => {
+  it("v2 renders provider reasoning events inside the single process disclosure", async () => {
+    let releaseStream: () => void = () => {};
+    const streamReleased = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "agentic.run_started", data: runStartedPayload() });
@@ -6949,6 +6966,9 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
           delta: "provider thinking",
         },
       });
+      // Hold so the streaming state commits before the turn settles — the
+      // automatic lifecycle reads rendered transitions, not batched history.
+      await streamReleased;
       onEvent({
         event: "agentic.reasoning.completed",
         data: {
@@ -6969,18 +6989,151 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
 
     renderPanel();
     await sendTurn();
+
+    const bubble = () =>
+      screen
+        .getByTestId("ask-assistant-message")
+        .closest("[data-message-role='assistant']");
+    const trigger = () =>
+      document.querySelector('[data-slot="chain-of-thought-trigger"]');
+
+    // The reasoning start auto-expands and the live delta is visible without
+    // any manual interaction.
+    await waitFor(() => {
+      expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByText("provider thinking")).not.toBeNull();
+    });
+
+    releaseStream();
     await waitFor(() => {
       expect(screen.getByText("已完成回答。")).not.toBeNull();
     });
 
-    const bubble = screen
-      .getByText("已完成回答。")
-      .closest("[data-message-role='assistant']");
-    expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
-    fireEvent.click(screen.getByText("思考过程"));
-    await waitFor(() => {
-      expect(screen.getByText("provider thinking")).not.toBeNull();
+    // One process disclosure serves the whole turn; completion never
+    // re-collapses an already-open disclosure when no answer delta arrived.
+    expect(
+      bubble()?.querySelectorAll('[data-slot="chain-of-thought-trigger"]'),
+    ).toHaveLength(1);
+    expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger()?.textContent).toContain("思考完毕");
+    expect(document.body.textContent).not.toContain("回答过程");
+  });
+
+  it("auto-collapses at the first answer delta and keeps a manual re-expansion", async () => {
+    let releaseAfterReasoning!: () => void;
+    const heldAfterReasoning = new Promise<void>((resolve) => {
+      releaseAfterReasoning = resolve;
     });
+    let releaseAfterFirstDelta!: () => void;
+    const heldAfterFirstDelta = new Promise<void>((resolve) => {
+      releaseAfterFirstDelta = resolve;
+    });
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      onEvent({ event: "agentic.run_started", data: runStartedPayload() });
+      onEvent({
+        event: "agentic.reasoning.started",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 0,
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
+      onEvent({
+        event: "agentic.reasoning.delta",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 1,
+          delta: "先拆解问题。",
+        },
+      });
+      await heldAfterReasoning;
+      onEvent({
+        event: "agentic.reasoning.completed",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          seq: 2,
+          has_content: true,
+          truncated: false,
+          visibility_status: "complete",
+          projection_policy_version: "provider_reasoning_v1",
+        },
+      });
+      // The first formal answer delta of this attempt.
+      onEvent({
+        event: "message.delta",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          generation_id: 0,
+          delta: "这是回答的开头。",
+        },
+      });
+      await heldAfterFirstDelta;
+      onEvent({
+        event: "message.delta",
+        data: {
+          execution_version: VERSION,
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          generation_id: 0,
+          delta: "后续内容继续追加。",
+        },
+      });
+      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+    await sendTurn();
+
+    const bubble = () =>
+      screen
+        .getByTestId("ask-assistant-message")
+        .closest("[data-message-role='assistant']");
+    const trigger = () =>
+      document.querySelector('[data-slot="chain-of-thought-trigger"]');
+
+    // The disclosure auto-expanded for reasoning…
+    await waitFor(() => {
+      expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByText("先拆解问题。")).not.toBeNull();
+    });
+    releaseAfterReasoning();
+
+    // …then collapsed itself once the first formal answer delta lands.
+    await waitFor(() => {
+      expect(trigger()?.getAttribute("aria-expanded")).toBe("false");
+    });
+    // The answer is the visual protagonist; the process header stays quiet.
+    expect(trigger()?.textContent).toContain("思考完毕");
+
+    // A manual re-expansion owns the rest of this attempt.
+    fireEvent.click(trigger()!);
+    await waitFor(() => {
+      expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+    });
+    releaseAfterFirstDelta();
+    await waitFor(() => {
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
+    });
+    expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      bubble()?.querySelectorAll('[data-slot="chain-of-thought-trigger"]'),
+    ).toHaveLength(1);
+    expect(document.body.textContent).not.toContain("回答过程");
   });
 
   // -------------------------------------------------------------------------
@@ -6991,66 +7144,33 @@ describe("AiWorkspacePanel – chain of thought convergence", () => {
   // takes over.
   // -------------------------------------------------------------------------
 
-  it("agentic-capable panel renders TurnProcessDisclosure before run_started (no old status card)", async () => {
+  it("renders no process disclosure before the first reasoning or step event arrives", async () => {
     // Stall the SSE stream after message.started so the optimistic
-    // assistant message stays in the initial state: streaming, idle activity,
-    // no execution_version, no snapshot. This is the exact window where
-    // the old code flashed AssistantStreamingIndicator before
-    // agentic.run_started switched to TurnProcessDisclosure.
+    // assistant message stays in its initial state: streaming, no reasoning,
+    // no typed step. An empty working state must not fabricate a container.
     let releaseStream: () => void = () => {};
     const streamReleased = new Promise<void>((resolve) => {
       releaseStream = resolve;
     });
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
-      // Stall — never fire agentic.run_started. The optimistic message
-      // stays in the initial state.
+      // Stall — never fire agentic.run_started.
       await streamReleased;
       onEvent({ event: "message.completed", data: agenticCompletedPayload() });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
 
-    // Scope is no longer a panel input; every Reader turn is v2.
     renderPanel();
     await sendTurn();
-
-    // Initial state: TurnProcessDisclosure is already rendered with neutral work copy;
-    // no future analysis step is fabricated before a typed wire phase.
-    const cot = await screen.findByTestId("ask-turn-process");
-    expect(cot.getAttribute("data-turn-process-state")).toBe("running");
-    expect(cot.textContent).toContain("Ask Claread 正在工作");
-    expect(cot.textContent).not.toContain("正在理解问题");
-
-    // The old two-line status card copy must NOT appear before run_started.
-    expect(screen.queryByText("正在整理问题")).toBeNull();
-
-    // Release the stalled stream so the test can complete cleanly.
-    releaseStream();
     await waitFor(() => {
-      expect(screen.getByText("已完成回答。")).not.toBeNull();
-    });
-  });
-
-  it("v2 keeps TurnProcessDisclosure before run_started without a fabricated phase", async () => {
-    // A stalled v2 turn must not synthesize an analysis step before a typed
-    // progress event proves that phase.
-    let releaseStream: () => void = () => {};
-    const streamReleased = new Promise<void>((resolve) => {
-      releaseStream = resolve;
-    });
-    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
-      await streamReleased;
-      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
-      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+      expect(screen.getByTestId("ask-assistant-message")).not.toBeNull();
     });
 
-    renderPanel();
-    await sendTurn();
-
-    const cot = await screen.findByTestId("ask-turn-process");
-    expect(cot.getAttribute("data-turn-process-state")).toBe("running");
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+    // No synthesized analysis step or old status-card copy appears either.
+    expect(screen.queryByText("分析问题")).toBeNull();
     expect(screen.queryByText("正在整理问题")).toBeNull();
+    expect(document.body.textContent).not.toContain("回答过程");
 
     releaseStream();
     await waitFor(() => {

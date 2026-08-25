@@ -1,6 +1,5 @@
 "use client";
 
-import type { LucideIcon } from "lucide-react";
 import {
   ConversationEmptyState,
 } from "@/components/ai-elements/conversation";
@@ -12,7 +11,6 @@ import type { WebSearchModeDto } from "@/types/api/reader-ask";
 type PromptSuggestionItem = {
   prompt: string;
   entryAction: ReaderAskEntryActionDto;
-  icon: LucideIcon;
   /**
    * When present, the host should enable web search for this single
    * send (used by the "查询相关资料" suggestion). Absent on article-only
@@ -41,28 +39,29 @@ export function PromptSuggestions({
   return (
     <ConversationEmptyState className="h-full overflow-y-auto items-stretch justify-end px-4 pb-5 pt-8 sm:px-5">
       <div className="mx-auto flex w-full max-w-[31rem] flex-col items-start text-left">
-        <div className="flex items-start gap-3">
+        <div className="flex items-start gap-2.5">
           <ClareadAiMark
             size="sm"
-            className="mt-0.5 shrink-0 shadow-none"
-            badgeClassName="shadow-none"
+            showBadge={false}
+            className="mt-0.5 !size-5 shrink-0 border-0 bg-transparent shadow-none"
+            markClassName="!size-4"
           />
-          <div className="min-w-0 space-y-1.5">
-            <h3 className="text-[1.125rem] font-semibold leading-6 tracking-[-0.015em] text-ink">
+          <div className="min-w-0 space-y-1">
+            <h3 className="text-base font-medium leading-6 tracking-[-0.01em] text-ink">
               {title}
             </h3>
-            <p className="max-w-[30rem] text-[13px] leading-5 text-muted-foreground">
+            <p className="max-w-[30rem] text-sm leading-5 text-muted-foreground">
               {description}
             </p>
           </div>
         </div>
 
-        <Suggestions className="mt-5 w-full flex-col gap-1">
+        <Suggestions className="mt-4 w-full flex-col gap-0.5">
           {suggestions.map((suggestion) => (
             <Suggestion
               key={suggestion.prompt}
               suggestion={suggestion.prompt}
-              className="h-auto w-full justify-start whitespace-normal rounded-md border border-transparent bg-transparent px-2 py-2.5 text-left text-[13px] leading-5 text-ink-soft transition-colors hover:bg-muted/50 hover:text-ink focus-visible:bg-muted/50 focus-visible:text-ink"
+              className="h-auto w-full justify-start whitespace-normal rounded-md border-0 bg-transparent px-1.5 py-2 text-left text-sm font-normal leading-5 text-muted-foreground shadow-none transition-colors hover:bg-muted/40 hover:text-ink focus-visible:bg-muted/40 focus-visible:text-ink"
               onClick={() =>
                 onPickPrompt(
                   suggestion.prompt,
@@ -71,12 +70,7 @@ export function PromptSuggestions({
                 )
               }
             >
-              <span className="inline-flex items-start gap-2">
-                <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground">
-                  <suggestion.icon className="size-3.5" aria-hidden="true" />
-                </span>
-                <span>{suggestion.prompt}</span>
-              </span>
+              {suggestion.prompt}
             </Suggestion>
           ))}
         </Suggestions>

@@ -9,7 +9,10 @@ import {
 import { cn } from "@/lib/cn";
 
 type AssistantMessageProps = {
-  reasoning?: React.ReactNode;
+  /**
+   * The turn's single process disclosure — one owner for provider reasoning
+   * and agentic steps. There is deliberately no second disclosure slot.
+   */
   process?: React.ReactNode;
   answer?: React.ReactNode;
   footer?: React.ReactNode;
@@ -18,22 +21,16 @@ type AssistantMessageProps = {
 };
 
 export function AssistantMessage({
-  reasoning,
   process,
   answer,
   footer,
   children,
   className,
 }: AssistantMessageProps) {
-  // Vertical rhythm: 4/8 spacing between process → answer → sources →
-  // actions. The content column stays narrow for readability; the assistant
-  // surface is frameless (no border, no bg), letting the answer text own
-  // the visual weight.
   const contentColumnClassName = "w-full max-w-[38rem]";
 
   return (
     <Message from="assistant" className={cn("max-w-full gap-2", className)}>
-      {reasoning}
       {process}
       {answer ? <MessageContent className={contentColumnClassName}>{answer}</MessageContent> : null}
       {children ? (

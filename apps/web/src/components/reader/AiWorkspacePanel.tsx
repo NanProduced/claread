@@ -4,16 +4,10 @@ import {
   Check,
   Copy,
   FileText,
-  GitBranch,
-  Globe,
-  MessageSquare,
-  PencilLine,
   Quote,
   PanelRightOpen,
   PictureInPicture2,
   RotateCcw,
-  Search,
-  Sparkles,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -70,7 +64,6 @@ import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
 import { AssistantMessage } from "@/components/reader/ask-chat/AssistantMessage";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
 import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestions";
-import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
 import { TurnProcessDisclosure } from "@/components/reader/ask-chat/turn-process";
 import {
   readerCommandControl,
@@ -205,18 +198,18 @@ function isAbortError(error: unknown): boolean {
 
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
 const ASK_ANSWER_MARKDOWN_CLASSNAME = cn(
-  "ask-message-response border-0 bg-transparent p-0 text-[13.5px] leading-[1.75] text-reader-reading-ink shadow-none",
+  "ask-message-response border-0 bg-transparent p-0 text-[15px] leading-6 text-reader-reading-ink shadow-none",
   "[&_a]:text-lens-blue [&_a]:underline [&_a]:decoration-lens-blue/40 [&_a]:underline-offset-2",
-  "[&_blockquote]:my-2 [&_blockquote]:border-hairline [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted",
-  "[&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px]",
-  "[&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0",
-  "[&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0",
+  "[&_blockquote]:my-2 [&_blockquote]:border-hairline [&_blockquote]:text-[15px] [&_blockquote]:leading-6 [&_blockquote]:text-reader-reading-muted",
+  "[&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs",
+  "[&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0",
+  "[&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0",
   "[&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2",
-  "[&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[13.5px] [&_ol]:leading-[1.75] [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted",
-  "[&_p]:my-0 [&_p]:text-[13.5px] [&_p]:leading-[1.75] [&_p]:text-reader-reading-ink [&_p+p]:mt-3",
+  "[&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[15px] [&_ol]:leading-6 [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted",
+  "[&_p]:my-0 [&_p]:text-[15px] [&_p]:leading-6 [&_p]:text-reader-reading-ink [&_p+p]:mt-3",
   "[&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-hairline [&_pre]:bg-muted/40 [&_pre]:p-3",
   "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-hairline [&_td]:p-2 [&_th]:border [&_th]:border-hairline [&_th]:bg-muted/40 [&_th]:p-2 [&_th]:text-left",
-  "[&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[13.5px] [&_ul]:leading-[1.75] [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted",
+  "[&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[15px] [&_ul]:leading-6 [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted",
 );
 const workspaceLauncherClassName = cn(
   readerCommandControl,
@@ -449,7 +442,7 @@ function CurrentArticleChip({ title }: { title: string }) {
           title,
           "application/vnd.claread.record",
         )}
-        className="max-w-full cursor-default"
+        className="max-w-full cursor-default !h-7 !border-border/60 !font-normal"
         data-ask-current-article-chip="true"
         title={`当前文章：${title}`}
         aria-label={`当前文章：${title}`}
@@ -494,7 +487,7 @@ function SelectionContextChip({
       <Attachment
         data={sourceDocumentPart(attachmentKey, displayLabel)}
         onRemove={onRemove ? () => onRemove(attachmentKey) : undefined}
-        className="max-w-full"
+        className="max-w-full !h-7 !border-border/60 !font-normal"
         data-ask-selection-slot={slot}
         onPointerDown={(event) => {
           event.preventDefault();
@@ -609,7 +602,7 @@ function LocateCitationButton({
       aria-label="定位原文"
       disabled={disabled}
       onClick={() => onLocate(citationId)}
-      className="mt-2 inline-flex items-center rounded-md border border-border/60 px-2 py-1 text-[12px] leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
+      className="mt-2 inline-flex items-center rounded-md border border-border/60 px-2 py-1 text-xs leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
       {pending ? "定位中…" : "定位原文"}
     </button>
@@ -772,20 +765,8 @@ function AskPanelLoadingState({
 }) {
   return (
     <div className="flex h-full items-center justify-center px-5">
-      <div className="w-full max-w-[22rem] rounded-lg border bg-card px-4 py-4 shadow-sm">
-        <div className="flex items-start gap-3">
-          <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border bg-background text-lens-blue">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <Loader variant="text-shimmer" size="md" text={title} />
-            <p className="mt-1.5 text-[13px] leading-6 text-muted-foreground">{detail}</p>
-            <div className="mt-2.5">
-              <Loader variant="loading-dots" size="sm" text="请稍候" />
-            </div>
-          </div>
-        </div>
-      </div>
+      <Loader variant="text-shimmer" size="sm" text={title} />
+      <p className="sr-only">{detail}</p>
     </div>
   );
 }
@@ -839,6 +820,12 @@ function MessageBubble({
     : message.content_md;
   const hasAnswerContent = Boolean(displayAnswerContent?.trim());
   const hasAgenticAnswerBlocks = (message.agentic_answer_blocks ?? []).length > 0;
+  const isColdStreamingStatus =
+    isStreamingAssistant &&
+    agenticActivity == null &&
+    turnNotice == null &&
+    !hasAnswerContent &&
+    !hasAgenticAnswerBlocks;
   // Project citations once for both InlineCitation (article) and WebSources (web).
   const agenticCitationItems = hasAgenticAnswerBlocks
     ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
@@ -888,22 +875,6 @@ function MessageBubble({
                   <AssistantMessage
                     key={`${message.id}-${block.kind}-${index}`}
                     className="px-0.5"
-                    reasoning={
-                      <ReasoningPanel
-                        className="w-full max-w-[38rem]"
-                        reasoningMd={
-                          message.reasoning_md ?? message.learner_reasoning_text
-                        }
-                        reasoningStatus={
-                          message.reasoning_status ??
-                          (message.learner_reasoning_text ? "completed" : null)
-                        }
-                        reasoningTruncated={message.reasoning_truncated === true}
-                        reasoningVisibilityStatus={
-                          message.reasoning_visibility_status
-                        }
-                      />
-                    }
                     process={
                       <TurnProcessDisclosure
                         className="mb-1 w-full max-w-[38rem]"
@@ -917,6 +888,25 @@ function MessageBubble({
                         isStreaming={message.status === "streaming"}
                         webSearchSummary={message.agentic_web_search ?? null}
                         contextCompaction={message.context_compaction ?? null}
+                        // Provider-reasoning projection feeds the same single
+                        // disclosure; no second surface exists.
+                        reasoningMd={
+                          message.reasoning_md ?? message.learner_reasoning_text
+                        }
+                        reasoningStatus={
+                          message.reasoning_status ??
+                          (message.learner_reasoning_text ? "completed" : null)
+                        }
+                        reasoningTruncated={message.reasoning_truncated === true}
+                        reasoningVisibilityStatus={
+                          message.reasoning_visibility_status
+                        }
+                        // Canonical frontend answer-stream state only.
+                        answerStarted={
+                          message.status === "streaming" &&
+                          (message.provisional_content_md ?? "").length > 0
+                        }
+                        turnStatus={message.status}
                       />
                     }
                     answer={
@@ -951,7 +941,11 @@ function MessageBubble({
                             {displayAnswerContent}
                           </MessageResponse>
                         ) : null}
-                        {turnNotice ? (
+                        {isColdStreamingStatus ? (
+                          <SystemMessage variant="quiet" isIconHidden>
+                            回答状态同步中…
+                          </SystemMessage>
+                        ) : turnNotice ? (
                           // A typed turn notice is the sole presentation owner
                           // for live and cold non-ok terminals as well as
                           // successful optional-tool warnings. The generic
@@ -1066,13 +1060,13 @@ function MessageBubble({
         </div>
         ) : (
           <AiMessage from={message.role} className="w-full max-w-[85%]">
-            <MessageContent className="bg-muted/60 px-3.5 py-2.5 text-[13.5px]">
-              <MessageResponse className="ask-message-response whitespace-pre-wrap text-[13.5px] leading-[1.75]">
+            <MessageContent className="rounded-xl bg-muted/55 px-3 py-2.5 text-sm">
+              <MessageResponse className="ask-message-response whitespace-pre-wrap text-sm leading-6">
                 {message.content_md}
               </MessageResponse>
             </MessageContent>
             <div className="flex items-center justify-end gap-2 pr-1 opacity-0 transition-opacity group-hover:opacity-70">
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
             </div>
@@ -1122,17 +1116,14 @@ function StarterState({
     {
       prompt: starterContent.prompts[0],
       entryAction: "ask_about_this" as const,
-      icon: MessageSquare,
     },
     {
       prompt: starterContent.prompts[1],
       entryAction: starterMode === "sentence" ? ("why_here" as const) : ("ask_about_this" as const),
-      icon: Search,
     },
     {
       prompt: starterContent.prompts[2],
       entryAction: "ask_about_this" as const,
-      icon: GitBranch,
     },
   ];
   const suggestions = webSearchCapable
@@ -1141,7 +1132,6 @@ function StarterState({
         {
           prompt: "查询这篇文章相关的其他资料。",
           entryAction: "ask_about_this" as const,
-          icon: Globe,
           // R2.1 — signals the host to enable web search for this send.
           webSearchOverride: "allowed" as const,
         },
@@ -1151,7 +1141,6 @@ function StarterState({
         {
           prompt: starterContent.prompts[3],
           entryAction: "ask_about_this" as const,
-          icon: PencilLine,
         },
       ];
 
@@ -1445,6 +1434,13 @@ export function AiWorkspacePanel({
     return null;
   })();
   const activeThread = activeThreadId ? threads.find((thread) => thread.id === activeThreadId) ?? null : null;
+  const currentArticleChipTitle =
+    recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
+  const threadTitle = activeThread?.title?.trim();
+  const panelTitle =
+    threadTitle && threadTitle !== "Ask Claread" && threadTitle !== "Untitled Reading"
+      ? threadTitle
+      : currentArticleChipTitle;
   const effectiveSelectedModelKey = (() => {
     if (isKnownModelOptionKey(modelOptions, selectedModelKey)) {
       return selectedModelKey;
@@ -1480,11 +1476,6 @@ export function AiWorkspacePanel({
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
   );
 
-  // Page-authoritative article title for the permanent composer chip
-  // (snapshot.record.title via the recordTitle prop; pageIdentity as a
-  // defensive fallback). Never the thread title.
-  const currentArticleChipTitle =
-    recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
 
   // ASK-WEB-G1-R2: reset the user-visible web search toggle to
   // ``"disabled"`` when the currently selected model option does not
@@ -2848,24 +2839,29 @@ export function AiWorkspacePanel({
         `ai-workspace-panel--surface-${surface}`,
         layout === "overlay"
           ? cn(
-              "fixed z-[var(--reader-z-floating-ask,40)] flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg",
+              "fixed z-[var(--reader-z-floating-ask,40)] flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-lg",
               isFloatingSurface
                 ? "inset-x-4 bottom-4 h-[min(85dvh,38rem)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:inset-x-auto md:right-4 md:bottom-4 md:w-[min(26rem,calc(100vw-2rem))]"
                 : "inset-x-3 bottom-3 max-h-[82vh] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none",
             )
-          : "relative flex flex-col overflow-hidden bg-background h-full w-full",
+          : "relative flex h-full w-full flex-col overflow-hidden bg-surface",
       )}
     >
-      <div className="ai-workspace-panel__header border-b bg-background px-4 py-3">
+      <div className="ai-workspace-panel__header bg-surface px-5 py-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <ClareadAiMark size="sm" className="shadow-none" badgeClassName="shadow-none" />
+          <div className="flex min-w-0 items-center gap-1.5">
+            <ClareadAiMark
+              size="sm"
+              showBadge={false}
+              className="!size-5 border-0 bg-transparent shadow-none"
+              markClassName="!size-4"
+            />
             <div className="min-w-0">
-              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-[13px] font-medium text-ink outline-none">Ask Claread</h2>
+              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} title={panelTitle} className="truncate text-sm font-medium text-ink outline-none">{panelTitle}</h2>
               <div aria-live="polite" role="status" className="sr-only" data-testid="ai-workspace-live-announcement">{liveAnnouncement}</div>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1">
             {onChangeSurface && hasSidecarCapacity ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2942,7 +2938,7 @@ export function AiWorkspacePanel({
       {capacityDowngradeNotice ? (
         <div
           data-testid="ask-capacity-downgrade-notice"
-          className="flex items-start gap-2 border-b border-hairline/60 bg-surface/60 px-4 py-2 text-[12px] leading-4 text-muted-foreground"
+          className="flex items-start gap-2 border-b border-hairline/60 bg-surface/60 px-4 py-2 text-xs leading-4 text-muted-foreground"
           role="status"
         >
           <span className="flex-1">{capacityDowngradeNotice}</span>
@@ -2962,32 +2958,29 @@ export function AiWorkspacePanel({
       {panelNotice ? (
         <div
           data-testid="ask-panel-notice"
-          className="border-b border-hairline/60 px-4 py-2"
+          className="px-4 py-2"
         >
           <SystemMessage
-            fill
-            variant={panelNotice.severity}
+            variant="quiet"
+            severity={panelNotice.severity}
+            isIconHidden
             cta={
               panelNotice.cta
                 ? {
                     label: panelNotice.cta.label,
                     onClick: () => handlePanelCta(panelNotice.cta!.action),
+                    variant: "ghost",
                   }
+                : undefined
+            }
+            dismiss={
+              panelNotice.dismissible
+                ? { label: "关闭提示", onClick: () => setPanelNotice(null) }
                 : undefined
             }
           >
             {panelNotice.message}
           </SystemMessage>
-          {panelNotice.dismissible ? (
-            <button
-              type="button"
-              onClick={() => setPanelNotice(null)}
-              aria-label="关闭提示"
-              className="mt-1 shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
-            >
-              <X aria-hidden="true" className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
         </div>
       ) : null}
 
@@ -3002,7 +2995,7 @@ export function AiWorkspacePanel({
             className="min-h-0 flex-1"
             hasMessages={messages.length > 0}
             latestUserMessageId={latestUserMessageId}
-            contentClassName={cn(messages.length === 0 ? "" : "gap-6 px-5 pb-8 pt-4")}
+            contentClassName={cn(messages.length === 0 ? "" : "gap-4 px-5 pb-6 pt-3")}
             emptyState={
               <StarterState
                 attachments={attachments}

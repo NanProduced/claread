@@ -90,9 +90,8 @@ function AskComposerSurface({
         }
         return onSubmit(value);
       }}
-      // Quiet low-elevation surface: very light border, no shadow,
-      // no heavy ring. The composer recedes; focus + send own the blue.
-      className="w-full rounded-lg border-border/50 bg-muted/30 shadow-none transition-colors focus-within:border-border/80"
+      className="w-full"
+      inputGroupClassName="rounded-2xl border-0 bg-surface shadow-sm transition-[box-shadow] dark:bg-surface has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/20"
     >
       {hasContextStrip ? (
         // Context strip is a fixed, horizontally scrollable row: chips never
@@ -100,7 +99,7 @@ function AskComposerSurface({
         // vertical scroll owner is created. Chips are shrink-0; overflow
         // scrolls sideways.
         <PromptInputHeader
-          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto border-b border-border/40 px-3 py-2 [scrollbar-width:none]"
+          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto px-3 pb-1 pt-2 [scrollbar-width:none]"
           data-ask-context-strip="true"
         >
           {contextStrip}
@@ -109,14 +108,14 @@ function AskComposerSurface({
 
       <PromptInputTextarea
         placeholder={placeholder}
-        className="min-h-[4rem] bg-transparent text-[14px] leading-6 placeholder:text-muted-foreground"
+        className="min-h-14 bg-transparent py-2.5 text-sm leading-6 placeholder:text-muted-foreground"
         disabled={sending}
         onFocus={onTextareaFocus}
         onBlur={onTextareaBlur}
         data-ask-composer-textarea="true"
       />
 
-      <PromptInputFooter className="w-full items-center justify-between gap-2 px-3 pb-2.5 pt-0.5">
+      <PromptInputFooter className="w-full items-center justify-between gap-2 px-3 pb-2 pt-1">
         <PromptInputTools>
           {actionMenu ? (
             <PromptInputActionMenu
@@ -125,7 +124,7 @@ function AskComposerSurface({
             >
               <PromptInputActionMenuTrigger
                 aria-label="添加其他文章"
-                className="rounded-full"
+                className="rounded-md"
               />
               <PromptInputActionMenuContent
                 side="top"
@@ -154,21 +153,16 @@ function AskComposerSurface({
               onClick={() =>
                 onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
               }
-              // Web toggle is a secondary control: neutral muted
-              // surface when on (not primary blue — blue is reserved for
-              // focus + send), quiet border when off. Blue appears only
-              // in the focus-visible ring.
               className={cn(
-                "inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs font-medium shadow-none transition-colors",
+                "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground shadow-none transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3",
+                "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5",
                 webSearchEnabled
-                  ? "border-border bg-muted text-foreground"
-                  : "border-border/70 text-muted-foreground/70 hover:bg-muted/40 hover:text-muted-foreground",
+                  ? "bg-muted text-foreground"
+                  : "hover:bg-muted/50 hover:text-foreground",
               )}
             >
               <Globe aria-hidden="true" />
-              <span>联网 · {webSearchEnabled ? "开" : "关"}</span>
             </button>
           ) : null}
         </PromptInputTools>
@@ -199,7 +193,7 @@ function AskComposerSurface({
           ) : null}
           <PromptInputSubmit
             aria-label={sending ? "停止生成" : "发送"}
-            className="rounded-full"
+            className="!size-7 rounded-full"
             status={sending ? "streaming" : "ready"}
             disabled={submitDisabled}
             onStop={sending ? onStop : undefined}
@@ -234,7 +228,7 @@ export function AskComposer({
   const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
 
   return (
-    <div className="shrink-0 border-t border-border/60 bg-background px-4 pb-3 pt-1.5">
+    <div className="shrink-0 bg-surface px-4 pb-3 pt-2">
       {displayErrorMessage ? (
         // Composer banner errors are recoverable (network/retry/
         // capability). Use warning+fill for a low-disturbance amber surface

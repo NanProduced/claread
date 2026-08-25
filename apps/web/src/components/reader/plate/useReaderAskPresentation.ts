@@ -39,8 +39,8 @@ export const READER_ASK_PRESENTATION_CONSTANTS: ReaderAskPresentationConstants =
   minimumReadingAreaRem: 48,
   outlineGutterRem: 2.5,
   askColumnMinRem: 24,
-  askColumnIdealVw: 29,
-  askColumnMaxRem: 37.5,
+  askColumnIdealVw: 25.5,
+  askColumnMaxRem: 32,
 };
 
 /** Default pixels-per-rem. Browsers default to 16px at the :root font-size. */
@@ -80,7 +80,7 @@ export interface ReaderAskPresentationResult {
 
 /**
  * Compute the px width reserved by the Ask column for a given viewport, using
- * the `clamp(24rem, 29vw, 37.5rem)` rule.
+ * the `clamp(24rem, 25.5vw, 32rem)` rule.
  */
 export function readerAskColumnWidthPx(
   viewportWidthPx: number,
@@ -97,7 +97,7 @@ export function readerAskColumnWidthPx(
  * Compute the minimum workspace width in px required to safely dock the
  * sidecar: minimum reading area + outline gutter + the viewport-aware Ask
  * column width (not just the floor). The Ask column grows with the viewport
- * via the 29vw branch of the clamp, so a workspace that docks at a narrow
+ * via the 25.5vw branch of the clamp, so a workspace that docks at a narrow
  * viewport may need to float at a wider one.
  */
 export function readerAskRequiredWorkspaceWidthPx(

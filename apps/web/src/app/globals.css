@@ -2231,7 +2231,7 @@ select {
   grid-template-columns:
     minmax(0, 1fr)
     var(--reader-ask-outline-gutter, var(--reader-record-outline-gap))
-    var(--reader-ask-column-width, clamp(24rem, 29vw, 37.5rem));
+    var(--reader-ask-column-width, clamp(24rem, 25.5vw, 32rem));
   grid-template-rows:
     var(--reader-record-top-bar-height, 2.75rem)
     minmax(0, 1fr);

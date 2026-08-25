@@ -5,8 +5,7 @@ import { AssistantMessage } from "./AssistantMessage";
 import { ConversationShell } from "./ConversationShell";
 import { FollowUpSuggestionChips } from "./FollowUpSuggestionChips";
 import { PromptSuggestions } from "./PromptSuggestions";
-import { ReasoningPanel } from "./ReasoningPanel";
-import { TaskProcessCard } from "./TaskProcessCard";
+import { TurnProcessDisclosure } from "./turn-process";
 import { ToolChipRow } from "./ToolChipRow";
 
 export default {
@@ -69,16 +68,15 @@ export const ConversationState = () => {
             </div>
 
             <AssistantMessage
-              reasoning={
-                <ReasoningPanel
-                  reasoningMd={`我先基于文章当前上下文抽取论证主线，再把细节压缩成一个可复用的大纲层级。\n\n接下来需要先确认：\n\n1. 文章是否采用“个人叙事 -> 概念界定 -> 层层反驳”的结构\n2. 是否要保留原文中的关键英文短句作为例证`}
-                  reasoningStatus="completed"
-                />
-              }
               process={
-                <TaskProcessCard
-                  title="正在组织回答"
-                  detail="已经读取当前文章、附件和本轮问题，准备输出结构化大纲。"
+                <TurnProcessDisclosure
+                  className="w-full max-w-[38rem]"
+                  // Static story fixture: a settled reasoning-only turn — the
+                  // same single disclosure the live panel renders.
+                  reasoningMd="我先基于文章当前上下文抽取论证主线，再把细节压缩成一个可复用的大纲层级。接下来需要先确认：1. 文章是否采用“个人叙事 -> 段落论证 -> 层层递进”的结构；2. 是否保留原文中的关键英文短句作为例证。"
+                  reasoningStatus="completed"
+                  reasoningVisibilityStatus="complete"
+                  turnStatus="completed"
                 />
               }
               answer={

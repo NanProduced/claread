@@ -110,8 +110,8 @@ describe("readerAskRequiredWorkspaceWidthPx", () => {
     expect(readerAskRequiredWorkspaceWidthPx(0)).toBe(1192);
   });
 
-  it("grows with the viewport because the Ask column uses 29vw", () => {
-    // At viewport 1920, the Ask column is 29vw = 556.8px (between floor and
+  it("grows with the viewport because the Ask column uses 25.5vw", () => {
+    // At viewport 1920, the Ask column is 25.5vw = 489.6px (between floor and
     // ceiling), so the required width exceeds the floor-only threshold.
     const required1920 = readerAskRequiredWorkspaceWidthPx(1920);
     expect(required1920).toBeGreaterThan(1192);
@@ -119,9 +119,9 @@ describe("readerAskRequiredWorkspaceWidthPx", () => {
       (48 + 2.5) * 16 + readerAskColumnWidthPx(1920),
     );
 
-    // At viewport 3000, the Ask column clamps to its ceiling (37.5rem=600px).
+    // At viewport 3000, the Ask column clamps to its ceiling (32rem=512px).
     const required3000 = readerAskRequiredWorkspaceWidthPx(3000);
-    expect(required3000).toBe((48 + 2.5) * 16 + 600);
+    expect(required3000).toBe((48 + 2.5) * 16 + 512);
   });
 
   it("respects a non-default rem size", () => {
@@ -132,16 +132,16 @@ describe("readerAskRequiredWorkspaceWidthPx", () => {
 });
 
 describe("readerAskColumnWidthPx", () => {
-  it("clamps to [24rem, 37.5rem] using 29vw as the ideal", () => {
+  it("clamps to [24rem, 32rem] using 25.5vw as the ideal", () => {
     const floor = 24 * 16;
-    const ceil = 37.5 * 16;
-    // Narrow viewport: 29vw < floor → floor.
+    const ceil = 32 * 16;
+    // Narrow viewport: 25.5vw < floor → floor.
     expect(readerAskColumnWidthPx(1000)).toBe(floor);
-    // Mid viewport: 29vw between floor and ceil → ideal.
+    // Mid viewport: 25.5vw between floor and ceil → ideal.
     expect(readerAskColumnWidthPx(1920)).toBe(
-      Math.min(ceil, Math.max(floor, 0.29 * 1920)),
+      Math.min(ceil, Math.max(floor, 0.255 * 1920)),
     );
-    // Wide viewport: 29vw > ceil → ceil.
+    // Wide viewport: 25.5vw > ceil → ceil.
     expect(readerAskColumnWidthPx(3000)).toBe(ceil);
   });
 });
@@ -152,10 +152,10 @@ describe("readerAskPresentationCssVars", () => {
     expect(vars["--reader-ask-minimum-reading-area"]).toBe("48rem");
     expect(vars["--reader-ask-outline-gutter"]).toBe("2.5rem");
     expect(vars["--reader-ask-column-min"]).toBe("24rem");
-    expect(vars["--reader-ask-column-ideal"]).toBe("29vw");
-    expect(vars["--reader-ask-column-max"]).toBe("37.5rem");
+    expect(vars["--reader-ask-column-ideal"]).toBe("25.5vw");
+    expect(vars["--reader-ask-column-max"]).toBe("32rem");
     expect(vars["--reader-ask-column-width"]).toBe(
-      "clamp(24rem, 29vw, 37.5rem)",
+      "clamp(24rem, 25.5vw, 32rem)",
     );
   });
 });
@@ -190,8 +190,8 @@ describe("useReaderAskPresentation", () => {
   });
 
   it("falls back to floating when workspace exceeds the floor threshold but not the viewport-aware threshold", () => {
-    // At viewport 1920, the 29vw Ask column is 556.8px, making the required
-    // workspace (48+2.5)*16 + 556.8 = 1364.8px. A workspace of 1200px exceeds
+    // At viewport 1920, the 25.5vw Ask column is 489.6px, making the required
+    // workspace (48+2.5)*16 + 489.6 = 1297.6px. A workspace of 1200px exceeds
     // the floor-only threshold (1192px) but NOT the viewport-aware threshold.
     const wideViewport = 1920;
     const requiredAtWide = readerAskRequiredWorkspaceWidthPx(wideViewport);
@@ -212,7 +212,7 @@ describe("useReaderAskPresentation", () => {
     expect(result.current.requiredWorkspaceWidthPx).toBe(requiredAtWide);
   });
 
-  it("recomputes capacity when viewport width changes the 29vw Ask column", () => {
+  it("recomputes capacity when viewport width changes the 25.5vw Ask column", () => {
     // Narrow viewport: Ask column at floor, required=1192. Workspace 1200px
     // → capacity true → sidecar.
     const el = makeWorkspace(1200);
@@ -227,7 +227,7 @@ describe("useReaderAskPresentation", () => {
     expect(result.current.hasSidecarCapacity).toBe(true);
     expect(result.current.effectiveSurface).toBe("sidecar");
 
-    // Wide viewport: Ask column = 29vw of 1920 = 556.8px, required = 1364.8px.
+    // Wide viewport: Ask column = 25.5vw of 1920 = 489.6px, required = 1297.6px.
     // Workspace 1200px → capacity false → floating.
     currentViewport = 1920;
     rerender();
