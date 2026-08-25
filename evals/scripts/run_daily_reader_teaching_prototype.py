@@ -688,6 +688,23 @@ def _apply_patch(container: dict[str, Any], patch: Mapping[str, Any]) -> None:
             container[key] = value
 
 
+def _persist_case_event(case_dir: Path, payload: Mapping[str, Any]) -> None:
+    """F-I2: persist stop/rejection diagnostics into the case directory.
+
+    skipped_by_stop cases never call this (they have no case directory), so
+    they stay fileless by construction.
+    """
+    path = case_dir / "stop-evidence.json"
+    index = 1
+    while path.exists():
+        path = case_dir / f"stop-evidence-{index}.json"
+        index += 1
+    _exclusive_write(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+
+
 def run_case(
     case: Mapping[str, Any],
     settings: Settings,
@@ -706,7 +723,11 @@ def run_case(
 
     ledger: list[dict[str, Any]] = []
 
-    def stop(reason: str) -> NoReturn:
+    def stop(reason: str, *, evidence: Mapping[str, Any] | None = None) -> NoReturn:
+        if evidence is not None:
+            # F-I2: the stopping case keeps a diagnostics file; cases that are
+            # merely skipped by this stop keep zero files.
+            _persist_case_event(case_dir, {"kind": "stop", "stop_reason": reason, **evidence})
         aggregate = _sum_usage(ledger)
         raise BatchStopped(
             f"{view['case_id']}:{reason}",
@@ -885,42 +906,95 @@ def run_case(
             refine_output = dispatch(refine_spec, refine_prompt)
             assert refine_output is not None
             patch = refine_output["refinement_patch"]
-            for key, value in patch.items():
-                if key in package_obj:
-                    _apply_patch(package_obj, {key: value})
-                elif key in blueprint_obj:
-                    _apply_patch(blueprint_obj, {key: value})
-                else:
-                    stop(f"refinement_patch_target_unknown:{key}")
-            # Patch values bypassed the transport DTOs at generation time, so
-            # the patched containers must re-pass the same DTO discipline
-            # before they can become the artifact. A violation is a structural
-            # refinement failure (same class as review_evidence_invalid), not a
-            # quality verdict: fail closed instead of shipping corrupt fields.
-            try:
-                BlueprintDraft.model_validate(blueprint_obj)
-            except ValidationError as exc:
-                stop(f"refinement_patch_schema_violation:blueprint:{exc.errors()[0]['type']}")
-            try:
-                LanguageSupportDraft.model_validate(
-                    {
-                        "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
-                        "language_targets": package_obj["language_targets"],
-                        "sentence_maps": package_obj["sentence_maps"],
-                    }
+            # F-I1 (Owner ruling, brief-p4f6 §6.1): patch violations no longer
+            # stop the batch. The patch is rejected, both containers are
+            # restored to their serialized pre-patch image, the refinement
+            # call's usage stays booked, and the case lands as
+            # quality_fail_continue with a FAIL after-review. Violation values
+            # never reach the artifact either way — fail-closed only moved the
+            # disposition point.
+            violations: list[dict[str, Any]] = []
+            for key in sorted(patch):
+                if key not in package_obj and key not in blueprint_obj:
+                    violations.append(
+                        {"container": None, "error_type": "unknown_target", "loc": [key]}
+                    )
+                elif key not in fields_to_fix:
+                    container_name = "learning_package" if key in package_obj else "blueprint"
+                    violations.append(
+                        {
+                            "container": container_name,
+                            "error_type": "outside_allowlist",
+                            "loc": [key],
+                        }
+                    )
+            if not violations:
+                pre_blueprint = json.loads(json.dumps(blueprint_obj))
+                pre_package = json.loads(json.dumps(package_obj))
+                for key, value in patch.items():
+                    if key in package_obj:
+                        _apply_patch(package_obj, {key: value})
+                    elif key in blueprint_obj:
+                        _apply_patch(blueprint_obj, {key: value})
+                try:
+                    BlueprintDraft.model_validate(blueprint_obj)
+                except ValidationError as exc:
+                    err = exc.errors()[0]
+                    violations.append(
+                        {
+                            "container": "blueprint",
+                            "error_type": err.get("type"),
+                            "loc": [str(part) for part in err.get("loc", [])],
+                        }
+                    )
+                try:
+                    LanguageSupportDraft.model_validate(
+                        {
+                            "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
+                            "language_targets": package_obj["language_targets"],
+                            "sentence_maps": package_obj["sentence_maps"],
+                        }
+                    )
+                except ValidationError as exc:
+                    err = exc.errors()[0]
+                    violations.append(
+                        {
+                            "container": "learning_package",
+                            "error_type": err.get("type"),
+                            "loc": [str(part) for part in err.get("loc", [])],
+                        }
+                    )
+                invalid_translations = sorted(
+                    pid
+                    for pid, value in package_obj["translations_by_paragraph_id"].items()
+                    if not isinstance(value, str) or not value.strip()
                 )
-            except ValidationError as exc:
-                stop(
-                    f"refinement_patch_schema_violation:learning_package:{exc.errors()[0]['type']}"
-                )
-            invalid_translations = sorted(
-                pid
-                for pid, value in package_obj["translations_by_paragraph_id"].items()
-                if not isinstance(value, str) or not value.strip()
-            )
-            if invalid_translations:
-                stop(f"refinement_patch_invalid_translation_values:{invalid_translations[:5]}")
+                if invalid_translations:
+                    violations.append(
+                        {
+                            "container": "learning_package",
+                            "error_type": "invalid_translation_value",
+                            "loc": invalid_translations[:5],
+                        }
+                    )
+                if violations:
+                    # Restore from the serialized pre-image: byte-faithful,
+                    # never a reconstruction.
+                    blueprint_obj.clear()
+                    blueprint_obj.update(pre_blueprint)
+                    package_obj.clear()
+                    package_obj.update(pre_package)
             refinement_count = 1
+            patch_rejected = bool(violations)
+            if patch_rejected:
+                _persist_case_event(
+                    case_dir,
+                    {
+                        "kind": "patch_rejected",
+                        "violations": violations,
+                        "restored_fields": sorted(patch),
+                    },
+                )
 
         if refinement_count:
             # Non-gold deterministic replay only — gold hard gates never feed
@@ -960,7 +1034,39 @@ def run_case(
             )
             effective_rechecks = refine_output["rechecked_contract_results"]
             effective_remaining = list(refine_output["remaining_issues"])
-            if not replay_passed:
+            if patch_rejected:
+                # The model's directed rechecks describe a patch that was
+                # rejected host-side; they are discarded and replaced with
+                # fail-closed rejection evidence per failed contract.
+                rejection_note = "; ".join(
+                    f"{v['container']}:{v['error_type']}:{','.join(str(p) for p in v['loc'])}"
+                    for v in violations
+                )
+                failed_contracts = [
+                    result["contract"]
+                    for result in review_evidence["contract_results"]
+                    if not result["passed"]
+                ]
+                effective_rechecks = [
+                    {
+                        "contract": contract,
+                        "passed": False,
+                        "rationale": (
+                            f"refinement patch rejected ({rejection_note}); "
+                            "directed fix not applied"
+                        ),
+                    }
+                    for contract in failed_contracts
+                ]
+                effective_remaining = [
+                    {
+                        "contract": contract,
+                        "field": "refinement_patch",
+                        "problem": f"refinement patch rejected ({rejection_note})",
+                    }
+                    for contract in failed_contracts
+                ]
+            elif not replay_passed:
                 # Host-owned deterministic evidence contradicts the directed
                 # rechecks; canonical PASS is impossible, so the rechecks are
                 # downgraded (fail-closed) and the after-review lands FAIL.
@@ -998,7 +1104,18 @@ def run_case(
                     prior_refinement_count=0,
                 )
             except (TypeError, ValueError) as exc:
-                stop(f"refinement_evidence_invalid:{exc}")
+                stop(
+                    f"refinement_evidence_invalid:{exc}",
+                    evidence={
+                        "error": {"error_type": type(exc).__name__, "message": str(exc)[:300]}
+                    },
+                )
+            if patch_rejected and refinement_evidence is not None:
+                refinement_evidence["rejection"] = {
+                    "reason": "patch_violation",
+                    "violations": violations,
+                    "restored_fields": sorted(patch),
+                }
 
         artifact: dict[str, Any] = {
             "case_id": view["case_id"],
@@ -1075,7 +1192,21 @@ def run_case(
         TypeError,
         AttributeError,
     ) as exc:
-        stop(f"unexpected:{type(exc).__name__}:{exc}")
+        error_detail: dict[str, Any] = {
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:300],
+        }
+        if isinstance(exc, ValidationError):
+            # F-I2: keep the structured field summary, not just the message.
+            errors = exc.errors()
+            error_detail["field_summary"] = [
+                {
+                    "type": err.get("type"),
+                    "loc": [str(part) for part in err.get("loc", [])],
+                }
+                for err in errors[:5]
+            ]
+        stop(f"unexpected:{type(exc).__name__}:{exc}", evidence={"error": error_detail})
 
 
 def _report_exit_code(report: Mapping[str, Any]) -> int:

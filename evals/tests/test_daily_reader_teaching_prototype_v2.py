@@ -1053,3 +1053,46 @@ def test_verbatim_anchor_check_stays_dormant_without_reading_units() -> None:
     blueprint, package = _valid_contract()
     package["language_targets"][0]["expression"] = "turn heads"
     assert "teaching_anchor_not_verbatim" not in _issue_codes(blueprint, package)
+
+
+# ---------------------------------------------------------------------------
+# P-4I: translation-source fidelity deterministic subset (RED first)
+# ---------------------------------------------------------------------------
+
+
+def test_ungrounded_translation_tokens_reported_with_reading_units() -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {
+        "u02": "该公司在2024年裁员350人，约占员工总数的30%，Bumble Inc. 发言人确认。",
+        "u03": "第二个实质单元的忠实译文，不含源文之外的事实。",
+    }
+    issues = validate_teaching_contract(blueprint, package, reading_units=UNITS)
+    mismatches = [i for i in issues if i["code"] == "translation_source_mismatch"]
+    assert [i["field"] for i in mismatches] == ["translations_by_paragraph_id.u02"]
+    detail = mismatches[0]["detail"]
+    assert "350" in detail and "30" in detail and "2024" in detail
+    assert "Inc" in detail
+
+    package["translations_by_paragraph_id"] = {
+        "u02": "第一个实质单元获得 66% 的支持。",
+        "u03": "第二个实质单元的忠实译文。",
+    }
+    units_with_number = [
+        {"id": "u01", "text": "Pure source chrome."},
+        {"id": "u02", "text": "First substantive unit with 66% support."},
+        {"id": "u03", "text": "Second substantive unit."},
+        {"id": "u04", "text": "Third substantive unit."},
+    ]
+    assert not [
+        i
+        for i in validate_teaching_contract(blueprint, package, reading_units=units_with_number)
+        if i["code"] == "translation_source_mismatch"
+    ]
+
+
+def test_fidelity_check_stays_dormant_without_reading_units() -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {
+        "u02": "该公司在2024年裁员350人，约占员工总数的30%。"
+    }
+    assert "translation_source_mismatch" not in _issue_codes(blueprint, package)

@@ -2073,10 +2073,13 @@ def _refinement_recheck_single(contract: str, patch: dict[str, Any]) -> dict[str
     }
 
 
-def test_refinement_patch_with_illegal_stance_is_stopped_not_applied(
+def test_refinement_patch_with_illegal_stance_is_rejected_and_restored(
     runner, eval_settings, tmp_path
 ):
+    import json as jsonlib
+
     settings, selection = eval_settings
+    out_dir = tmp_path / "out"
     queue = _Queue(
         [
             blueprint_payload(),
@@ -2094,17 +2097,29 @@ def test_refinement_patch_with_illegal_stance_is_stopped_not_applied(
         settings,
         selection,
         _offline_transport_factory(queue, probe),
-        tmp_path / "out",
+        out_dir,
     )
-    assert report["status"] == "stopped_batch"
+    assert report["status"] == "completed"
     case = report["cases"][0]
-    assert case["outcome"].startswith("stopped")
-    assert "refinement_patch_schema_violation" in case["stop_reason"]
-    assert case["artifact"] is None
+    assert case["outcome"] == "quality_fail_continue"
+    assert case["artifact"] is not None
+    assert case["artifact"]["lesson_blueprint"]["reading_mission_stance"] == "neutral"
     assert probe.requests == 5
+    evidence = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    rejection = evidence["refinement"]["rejection"]
+    assert rejection["violations"][0]["container"] == "blueprint"
+    assert rejection["restored_fields"] == ["reading_mission_stance"]
+    after = evidence["refinement"]["review_after_refinement"]
+    assert after["verdict"] == "FAIL"
 
 
-def test_refinement_patch_empty_translation_value_is_stopped(runner, eval_settings, tmp_path):
+def test_refinement_patch_empty_translation_value_is_rejected_and_restored(
+    runner, eval_settings, tmp_path
+):
+    import json as jsonlib
+
     review_fail = review_payload("FAIL", "translation_selection")
     review_fail["issues"] = [
         {
@@ -2116,6 +2131,7 @@ def test_refinement_patch_empty_translation_value_is_stopped(runner, eval_settin
     patched_map = _full_translation_map()
     patched_map["u03"] = ""
     settings, selection = eval_settings
+    out_dir = tmp_path / "out"
     queue = _Queue(
         [
             blueprint_payload(),
@@ -2133,13 +2149,98 @@ def test_refinement_patch_empty_translation_value_is_stopped(runner, eval_settin
         settings,
         selection,
         _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    assert report["status"] == "completed"
+    case = report["cases"][0]
+    assert case["outcome"] == "quality_fail_continue"
+    artifact_translations = case["artifact"]["learning_package"]["translations_by_paragraph_id"]
+    assert artifact_translations["u03"] == _full_translation_map()["u03"]
+    assert artifact_translations.keys() == _full_translation_map().keys()
+    evidence = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    violation = evidence["refinement"]["rejection"]["violations"][0]
+    assert violation["container"] == "learning_package"
+    assert violation["error_type"] == "invalid_translation_value"
+    assert "u03" in violation["loc"]
+
+
+def test_patch_rejection_lets_batch_continue_and_next_case_completes(
+    runner, eval_settings, tmp_path
+):
+    settings, selection = eval_settings
+    violating_case_queue = [
+        blueprint_payload(),
+        language_support_payload(),
+        translation_payload(),
+        _review_fail_stance(),
+        _refinement_recheck_single(
+            "reading_mission_neutrality", {"reading_mission_stance": "critical"}
+        ),
+    ]
+    clean_case_queue = list(pass_queue())
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(_Queue(violating_case_queue + clean_case_queue), probe),
         tmp_path / "out",
     )
+    assert report["status"] == "completed"
+    first, second = report["cases"]
+    assert first["outcome"] == "quality_fail_continue"
+    assert first["artifact"]["lesson_blueprint"]["reading_mission_stance"] == "neutral"
+    assert second["outcome"] == "completed"
+    total_requests = sum(e["usage"]["model_requests"] for e in first["stage_ledger"]) + sum(
+        e["usage"]["model_requests"] for e in second["stage_ledger"]
+    )
+    assert total_requests == report["aggregate"]["model_requests"] == 9
+
+
+def test_stop_path_persists_error_summary_and_skipped_case_stays_fileless(
+    runner, eval_settings, tmp_path
+):
+    import json as jsonlib
+
+    mismatched = refinement_payload(passed=True)
+    mismatched["rechecked_contract_results"] = [
+        {
+            "contract": "source_fidelity",
+            "passed": True,
+            "rationale": "recheck covers a contract the before-review passed",
+        }
+    ]
+    settings, selection = eval_settings
+    out_dir = tmp_path / "out"
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("FAIL", "transfer_mapping"),
+            mismatched,
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
     assert report["status"] == "stopped_batch"
-    case = report["cases"][0]
-    assert case["outcome"].startswith("stopped")
-    assert "refinement_patch_invalid_translation_values" in case["stop_reason"]
-    assert case["artifact"] is None
+    first = report["cases"][0]
+    assert first["outcome"].startswith("stopped")
+    event = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "stop-evidence.json").read_text(encoding="utf-8")
+    )
+    assert event["stop_reason"].startswith("refinement_evidence_invalid")
+    assert event["error"]["error_type"] == "ValueError"
+    assert report["cases"][1]["outcome"] == "skipped_by_stop"
+    assert not (out_dir / "syn-p4e-002").exists()
 
 
 def _echo_translation_payload() -> dict[str, Any]:
@@ -2375,6 +2476,68 @@ def test_non_verbatim_target_reaches_review_and_fails_replay(runner, eval_settin
     )
     review_prompt = probe.captures[3]["prompt_text"]
     assert "teaching_anchor_not_verbatim" in review_prompt
+    case = report["cases"][0]
+    assert case["outcome"] == "quality_fail_continue"
+    assert case["refinement_replay_all_passed"] is False
+    evidence = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    assert evidence["refinement"]["hard_gate_replay"]["all_passed"] is False
+
+
+# ---------------------------------------------------------------------------
+# P-4I: translation fidelity deterministic subset (RED first on de587e3d)
+# ---------------------------------------------------------------------------
+
+
+def _fabricated_translation_payload() -> dict[str, Any]:
+    payload = translation_payload()
+    payload["translations"][1]["translation"] = (
+        "分析人士指出，Bumble Inc. 已在2024年裁员350人，约占员工总数的30%。"
+    )
+    return payload
+
+
+def test_ungrounded_translation_tokens_reach_review_and_fail_replay(
+    runner, eval_settings, tmp_path
+):
+    import json as jsonlib
+
+    review_fail = review_payload("FAIL", "translation_selection")
+    review_fail["issues"] = [
+        {
+            "contract": "translation_selection",
+            "field": "learning_package.translations_by_paragraph_id.u02",
+            "problem": "the translation states facts the source unit does not contain",
+        }
+    ]
+    settings, selection = eval_settings
+    retained_map = {
+        item["paragraph_id"]: item["translation"]
+        for item in _fabricated_translation_payload()["translations"]
+    }
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            _fabricated_translation_payload(),
+            review_fail,
+            _refinement_recheck_single(
+                "translation_selection", {"translations_by_paragraph_id": retained_map}
+            ),
+        ]
+    )
+    probe = _Probe()
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    review_prompt = probe.captures[3]["prompt_text"]
+    assert "translation_source_mismatch" in review_prompt
     case = report["cases"][0]
     assert case["outcome"] == "quality_fail_continue"
     assert case["refinement_replay_all_passed"] is False

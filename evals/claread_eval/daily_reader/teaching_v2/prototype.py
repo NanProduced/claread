@@ -590,6 +590,26 @@ def _normalized_text(value: Any) -> str:
     return " ".join(value.split()).casefold() if isinstance(value, str) else ""
 
 
+def _ungrounded_tokens(translation: str, source: str) -> list[str]:
+    """Determinable fidelity subset (F-I3): multi-digit number groups and
+    Latin-script words in the translation that have no counterpart in the
+    anchored source unit. Single digits are ignored (month/day reformatting
+    noise); a decimal token passes if any dot-part matches; known false-
+    positive classes (unit conversion like 1.5 million -> 150万) remain a
+    fail-closed cost digested by directed review."""
+    folded = source.casefold()
+    tokens: list[str] = []
+    for token in re.findall(r"\d{2,4}(?:[.,]\d+)*%?", translation):
+        bare = token.rstrip("%")
+        parts = [part for part in bare.replace(",", ".").split(".") if part]
+        if bare not in folded and all(part not in folded for part in parts):
+            tokens.append(token)
+    for word in re.findall(r"[A-Za-z][A-Za-z\-']{2,}", translation):
+        if word.casefold() not in folded:
+            tokens.append(word)
+    return tokens
+
+
 def validate_teaching_contract(
     blueprint: Mapping[str, Any],
     learning_package: Mapping[str, Any],
@@ -606,7 +626,12 @@ def validate_teaching_contract(
       verbatim quote of its anchored unit is reported as
       ``teaching_anchor_not_verbatim`` (same normalization as the
       anchors_resolve gate: normalize_text for expressions, whitespace
-      squash for sentences).
+      squash for sentences);
+    - a translation containing multi-digit numbers or Latin-script words
+      absent from its anchored unit is reported as
+      ``translation_source_mismatch`` (the determinable subset of
+      translation fidelity; semantic fabrication without literal traces
+      stays with review/Judge/human).
     """
     issues: list[dict[str, str]] = []
     sections: dict[str, list[Any]] = {}
@@ -806,6 +831,25 @@ def validate_teaching_contract(
                             ),
                         }
                     )
+                source_unit = source_raw.get(paragraph_id)
+                if (
+                    isinstance(text, str)
+                    and text.strip()
+                    and isinstance(source_unit, str)
+                    and source_unit.strip()
+                ):
+                    tokens = _ungrounded_tokens(text, source_unit)
+                    if tokens:
+                        issues.append(
+                            {
+                                "code": "translation_source_mismatch",
+                                "field": f"translations_by_paragraph_id.{paragraph_id}",
+                                "detail": (
+                                    "translation contains tokens absent from the anchored "
+                                    "unit: " + ", ".join(tokens)
+                                ),
+                            }
+                        )
         for index, target in enumerate(sections["language_targets"]):
             if not isinstance(target, Mapping) or not isinstance(target.get("expression"), str):
                 continue
