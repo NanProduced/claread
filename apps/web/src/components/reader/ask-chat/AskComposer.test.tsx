@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AskComposer } from "./AskComposer";
@@ -71,6 +71,35 @@ describe("AskComposer web search toggle", () => {
     expect(toggle.textContent).toBe("");
   });
 
+  it("clears accepted text before the streaming submission settles", async () => {
+    let resolveSubmit: (() => void) | null = null;
+    const pendingSubmit = new Promise<void>((resolve) => {
+      resolveSubmit = resolve;
+    });
+    const onSubmit = vi.fn(() => pendingSubmit);
+
+    const { container } = render(
+      <AskComposer
+        onSubmit={onSubmit}
+        placeholder="继续问这篇文章…"
+        sending={false}
+      />,
+    );
+    const textarea = container.querySelector(
+      "[data-ask-composer-textarea]",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "解释这一段" } });
+    fireEvent.submit(container.querySelector("form")!);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("解释这一段"));
+    expect(textarea.value).toBe("");
+
+    await act(async () => {
+      resolveSubmit?.();
+      await pendingSubmit;
+    });
+  });
+
   it("uses the stop affordance and compact native model select while sending", () => {
     const onStop = vi.fn();
     const { container } = render(
@@ -92,10 +121,14 @@ describe("AskComposer web search toggle", () => {
     const modelTrigger = screen.getByRole("combobox", {
       name: "切换 Ask Claread 模型",
     });
+    expect(modelTrigger.getAttribute("data-size")).toBe("sm");
+    expect(modelTrigger.className).toContain("!h-7");
+    expect(modelTrigger.className).toContain("!text-xs");
+    expect(modelTrigger.className).toContain("!font-normal");
     expect(modelTrigger.className).toContain("max-w-[9rem]");
     expect(modelTrigger.className).not.toContain("opacity-0");
     expect(container.querySelector("[data-ask-composer-textarea]")?.className).toContain(
-      "text-sm",
+      "!text-sm",
     );
   });
 });

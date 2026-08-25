@@ -2847,7 +2847,7 @@ export function AiWorkspacePanel({
           : "relative flex h-full w-full flex-col overflow-hidden bg-surface",
       )}
     >
-      <div className="ai-workspace-panel__header bg-surface px-5 py-3">
+      <div className="ai-workspace-panel__header bg-surface">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-1.5">
             <ClareadAiMark
@@ -2995,7 +2995,11 @@ export function AiWorkspacePanel({
             className="min-h-0 flex-1"
             hasMessages={messages.length > 0}
             latestUserMessageId={latestUserMessageId}
-            contentClassName={cn(messages.length === 0 ? "" : "gap-4 px-5 pb-6 pt-3")}
+            contentClassName={cn(
+              messages.length === 0
+                ? ""
+                : "gap-4 px-5 pb-6 pt-3 sm:gap-4 sm:px-5 sm:pb-6 sm:pt-3",
+            )}
             emptyState={
               <StarterState
                 attachments={attachments}

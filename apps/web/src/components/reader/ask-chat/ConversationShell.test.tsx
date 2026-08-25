@@ -154,6 +154,28 @@ describe("ConversationShell", () => {
     expect(screen.getByText("content").closest("[class*=outer-shell]")).not.toBeNull();
   });
 
+  it("anchors restored history when the latest user message exists on first mount", () => {
+    const elements = targetElements();
+    Object.defineProperties(elements.scrollElement, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 500 },
+    });
+    scrollHarness.scrollElement = elements.scrollElement;
+    scrollHarness.contentElement = elements.contentElement;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    render(
+      <ConversationShell hasMessages latestUserMessageId="user-restored">
+        <div>restored answer</div>
+      </ConversationShell>,
+    );
+
+    expect(elements.scrollElement.scrollTop).toBe(384);
+  });
+
   it("switches from question anchor to persistent natural-bottom follow until the next user turn", async () => {
     const { rerender } = render(
       <ConversationShell hasMessages latestUserMessageId="user-1">

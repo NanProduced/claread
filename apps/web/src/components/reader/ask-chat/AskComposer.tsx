@@ -88,6 +88,7 @@ function AskComposerSurface({
         if (!value || sending) {
           return;
         }
+        textInput.clear();
         return onSubmit(value);
       }}
       className="w-full"
@@ -108,7 +109,7 @@ function AskComposerSurface({
 
       <PromptInputTextarea
         placeholder={placeholder}
-        className="min-h-14 bg-transparent py-2.5 text-sm leading-6 placeholder:text-muted-foreground"
+        className="min-h-14 bg-transparent py-2.5 !text-sm leading-6 placeholder:text-muted-foreground"
         disabled={sending}
         onFocus={onTextareaFocus}
         onBlur={onTextareaBlur}
@@ -175,7 +176,8 @@ function AskComposerSurface({
             >
               <PromptInputSelectTrigger
                 aria-label="切换 Ask Claread 模型"
-                className="h-7 max-w-[9rem] truncate rounded-md px-1.5 text-xs font-normal text-muted-foreground shadow-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3"
+                size="sm"
+                className="!h-7 max-w-[9rem] truncate rounded-md px-1.5 !text-xs !font-normal text-muted-foreground shadow-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3"
               >
                 <PromptInputSelectValue
                   className="truncate"

@@ -175,7 +175,7 @@ function FollowModeController({
   const { scrollRef, contentRef, scrollToBottom, state } =
     useStickToBottomContext();
   const previousModeRef = useRef<FollowMode>(followMode);
-  const previousUserIdRef = useRef<string | null>(latestUserMessageId);
+  const previousUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const scrollElement = scrollRef.current;
@@ -246,7 +246,6 @@ function FollowModeController({
     const enteredQuestionAnchor =
       previousMode !== "question-anchor" && followMode === "question-anchor";
     const newUserTurn =
-      previousUserId != null &&
       latestUserMessageId != null &&
       previousUserId !== latestUserMessageId;
     const enteredNaturalBottom =

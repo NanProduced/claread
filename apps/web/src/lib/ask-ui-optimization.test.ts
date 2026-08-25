@@ -46,4 +46,14 @@ describe("Ask Claread frozen UI cleanup", () => {
       /var\(--reader-ask-column-width,\s*clamp\(24rem,\s*25\.5vw,\s*32rem\)\)/,
     );
   });
+
+  it("keeps the Ask desktop density and compact composer typography explicit", () => {
+    const panel = read("src/components/reader/AiWorkspacePanel.tsx");
+    const composer = read("src/components/reader/ask-chat/AskComposer.tsx");
+
+    expect(panel).toContain("sm:gap-4 sm:px-5 sm:pb-6 sm:pt-3");
+    expect(composer).toContain("!text-sm");
+    expect(composer).toContain("!h-7");
+    expect(composer).toContain("!text-xs !font-normal");
+  });
 });
