@@ -1096,3 +1096,75 @@ def test_fidelity_check_stays_dormant_without_reading_units() -> None:
         "u02": "该公司在2024年裁员350人，约占员工总数的30%。"
     }
     assert "translation_source_mismatch" not in _issue_codes(blueprint, package)
+
+
+# ---------------------------------------------------------------------------
+# P-4J: blueprint identity calibration + fidelity false-positive normalization
+# (RED first on 5145c469)
+# ---------------------------------------------------------------------------
+
+
+def test_blueprint_prompt_calibrates_identity_and_difficulty() -> None:
+    article = {"title": "Synthetic", "source": "offline", "reading_units": UNITS[1:]}
+    flat = _flat(build_blueprint_prompt(article))
+    assert "news_report reports" in flat
+    assert "opinion_commentary argues" in flat
+    assert "explainer explains" in flat
+    assert "narrative_profile portrays" in flat
+    assert "never invent a fifth type" in flat
+    assert "concrete textual evidence" in flat
+
+
+@pytest.mark.parametrize(
+    ("source", "translation", "rule"),
+    [
+        (
+            "Officials in France count at least 5,700 excess deaths during the swelter.",
+            "官员们统计，在酷暑期间至少有5700例超额死亡。",
+            "thousands-separator",
+        ),
+        (
+            "Reddit's popular community - where half a million people share stories "
+            "- has questioned the changes.",
+            "这个社区——有50万人分享约会故事——对变更提出了质疑。",
+            "magnitude-conversion",
+        ),
+        (
+            "Stoffregen, a professor, has been studying motion sickness since the 1980s.",
+            "斯托弗雷根从20世纪80年代起就一直在研究晕动症。",
+            "decade-form",
+        ),
+    ],
+)
+def test_number_format_variants_are_grounded(source: str, translation: str, rule: str) -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {"u02": translation}
+    issues = validate_teaching_contract(
+        blueprint,
+        package,
+        reading_units=[
+            {"id": "u01", "text": "Pure source chrome."},
+            {"id": "u02", "text": source},
+        ],
+    )
+    assert [i["field"] for i in issues if i["code"] == "translation_source_mismatch"] == [], rule
+
+
+def test_tampered_year_still_flagged_after_normalization() -> None:
+    blueprint, package = _valid_contract()
+    package["translations_by_paragraph_id"] = {
+        "u02": "2022年一直是欧洲的酷热之夏，直到也许明年夏天。"
+    }
+    issues = validate_teaching_contract(
+        blueprint,
+        package,
+        reading_units=[
+            {
+                "id": "u02",
+                "text": "2026 has been Europe's summer of heat until perhaps next summer.",
+            }
+        ],
+    )
+    mismatch = [i for i in issues if i["code"] == "translation_source_mismatch"]
+    assert [i["field"] for i in mismatch] == ["translations_by_paragraph_id.u02"]
+    assert "2022" in mismatch[0]["detail"]

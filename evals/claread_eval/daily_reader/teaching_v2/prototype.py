@@ -67,10 +67,20 @@ def build_blueprint_prompt(article: Mapping[str, Any]) -> str:
     return """You design a sparse Daily Reader lesson from the supplied article.
 
 Decide article_type and effective_difficulty independently. article_type is exactly one of
-news_report, opinion_commentary, explainer, narrative_profile. Set reading_mission_stance to
+news_report, opinion_commentary, explainer, narrative_profile. Classify it by the article's
+dominant reading task: news_report reports verifiable events, where 5W1H facts, timelines,
+source attribution and quotes dominate; opinion_commentary argues, where a thesis, reasons,
+evidence, concessions, counterarguments and tone dominate over new facts; explainer explains,
+where concepts, mechanisms, causal chains, comparisons and limits dominate; narrative_profile
+portrays a person or story arc, where motivations, turns, scenes and voice dominate. Mixed
+articles take the single most explanatory type for the main reading task; never invent a fifth
+type. Set reading_mission_stance to
 neutral: the mission must not prescribe which side the reader should support. Identify core
 evidence, candidate transferable language, and genuinely difficult unit ids. Do not generate
 translations or detailed language explanations in this stage.
+Choose effective_difficulty from the article's actual sentence complexity, vocabulary density
+and discourse devices, and be ready to cite that concrete textual evidence for the level you
+declare.
 
 Produce 2-4 evidence checkpoints with prompt_subject and reference_answer_subject for audit.
 learning_objectives holds exactly 1-2 items and structure_map holds 2-6 nodes. Anchor every
@@ -590,19 +600,93 @@ def _normalized_text(value: Any) -> str:
     return " ".join(value.split()).casefold() if isinstance(value, str) else ""
 
 
-def _ungrounded_tokens(translation: str, source: str) -> list[str]:
-    """Determinable fidelity subset (F-I3): multi-digit number groups and
-    Latin-script words in the translation that have no counterpart in the
-    anchored source unit. Single digits are ignored (month/day reformatting
-    noise); a decimal token passes if any dot-part matches; known false-
-    positive classes (unit conversion like 1.5 million -> 150万) remain a
-    fail-closed cost digested by directed review."""
-    folded = source.casefold()
-    tokens: list[str] = []
-    for token in re.findall(r"\d{2,4}(?:[.,]\d+)*%?", translation):
+def _digit_value_keys(text: str) -> set[str]:
+    """Numeric value keys for digit tokens. F-J2 rule A strips thousands
+    separators ('5,700' -> '5700'); CJK 万/亿 scale to absolute values;
+    rule C expands '20世纪80年代' decade forms to candidate years
+    ('1980'/'2080')."""
+    cleaned = text.replace(",", "")
+    keys: set[str] = set()
+    for token in re.findall(r"\d+(?:\.\d+)?(?:[万亿%])?", cleaned):
         bare = token.rstrip("%")
-        parts = [part for part in bare.replace(",", ".").split(".") if part]
-        if bare not in folded and all(part not in folded for part in parts):
+        scale = 1
+        if bare.endswith("万"):
+            scale = 10000
+            bare = bare[:-1]
+        elif bare.endswith("亿"):
+            scale = 100000000
+            bare = bare[:-1]
+        try:
+            value = float(bare) * scale
+        except ValueError:
+            continue
+        keys.add(f"{value:g}")
+        keys.add(token)
+    for century, decade in re.findall(r"(\d{1,2})世纪(\d{2})年代", cleaned):
+        c, d = int(century), int(decade)
+        keys.update({str((c - 1) * 100 + d), str(c * 100 + d)})
+    return keys
+
+
+_MAGNITUDE_WORDS = {
+    "hundred": 100,
+    "thousand": 1_000,
+    "million": 1_000_000,
+    "billion": 1_000_000_000,
+}
+
+
+def _word_number_keys(text: str) -> set[str]:
+    """English magnitude words as numeric values (F-J2 rule B:
+    'half a million' -> 500000)."""
+    keys: set[str] = set()
+    for match in re.finditer(
+        r"(half\s+a\s+|a\s+)?(hundred|thousand|million|billion)", text.casefold()
+    ):
+        base = _MAGNITUDE_WORDS[match.group(2)]
+        prefix = (match.group(1) or "").strip()
+        if prefix == "half a":
+            keys.add(f"{base * 0.5:g}")
+        elif prefix and prefix != "a":
+            try:
+                keys.add(f"{float(prefix) * base:g}")
+            except ValueError:
+                keys.add(f"{base:g}")
+        else:
+            keys.add(f"{base:g}")
+    return keys
+
+
+def _ungrounded_tokens(translation: str, source: str) -> list[str]:
+    """Determinable fidelity subset (F-I3), normalized per F-J2 against the
+    three P-4F7 measured false-positive classes:
+    - rule A thousands separators ('at least 5,700 excess deaths' vs
+      '至少有5700例超额死亡');
+    - rule B magnitude conversion ('half a million people' vs '50万人');
+    - rule C decade form ('since the 1980s' vs '从20世纪80年代起').
+    Single digits stay ignored; fabricated numbers/names with no grounded
+    counterpart on the source side (the bumble-u23 class: 无源数字/专名)
+    remain flagged, as do altered years (2026->2022)."""
+    folded = source.casefold()
+    grounded_values = _digit_value_keys(source) | _word_number_keys(source)
+    # Rule C needs the paired 'N世纪M年代' context: both digits are grounded
+    # together when a candidate year appears on the source side.
+    decade_grounded: set[str] = set()
+    for century, decade in re.findall(r"(\d{1,2})世纪(\d{2})年代", translation):
+        c, d = int(century), int(decade)
+        candidates = {str((c - 1) * 100 + d), str(c * 100 + d)}
+        if any(cand in folded or cand in grounded_values for cand in candidates):
+            decade_grounded.update({century, decade})
+    tokens: list[str] = []
+    for token in re.findall(r"\d{2,4}(?:[.,]\d+)*(?:[万亿%])?", translation):
+        if token in decade_grounded or token.rstrip("%") in decade_grounded:
+            continue
+        bare = token.rstrip("%").rstrip("万亿")
+        literal_ok = bare in folded or any(
+            part and part in folded for part in bare.replace(",", ".").split(".")
+        )
+        value_ok = bool(_digit_value_keys(token) & grounded_values)
+        if not literal_ok and not value_ok:
             tokens.append(token)
     for word in re.findall(r"[A-Za-z][A-Za-z\-']{2,}", translation):
         if word.casefold() not in folded:
