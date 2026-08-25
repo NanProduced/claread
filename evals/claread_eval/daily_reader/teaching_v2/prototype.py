@@ -1,8 +1,11 @@
 """Offline-only teaching v2 prototype contracts."""
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+from claread_eval.daily_reader.checks import normalize_text
 
 TRANSFER_TASK_KIND_BY_ARTICLE_TYPE = {
     "news_report": "retell",
@@ -70,10 +73,12 @@ evidence, candidate transferable language, and genuinely difficult unit ids. Do 
 translations or detailed language explanations in this stage.
 
 Produce 2-4 evidence checkpoints with prompt_subject and reference_answer_subject for audit.
-Produce exactly one transfer task using this fixed mapping: news_report=retell,
-opinion_commentary=counter, explainer=explain, narrative_profile=rewrite. Its
-required_language_target_expressions must name at least one expression for language support to
-teach. Its content_requirement must be fact_chain, original_stance, mechanism_or_causality, or
+learning_objectives holds exactly 1-2 items and structure_map holds 2-6 nodes. Anchor every
+paragraph reference to the exact reading unit ids supplied in ARTICLE.reading_units (ids like
+u07); never emit bare numbers. Produce exactly one transfer task using this fixed mapping:
+news_report=retell, opinion_commentary=counter, explainer=explain, narrative_profile=rewrite.
+Its required_language_target_expressions must name at least one expression for language support
+to teach. Its content_requirement must be fact_chain, original_stance, mechanism_or_causality, or
 one of character_motivation, scene_contrast, quotation_characterization, narrative_viewpoint,
 as appropriate to the article type. A narrative rewrite must use the named narrative technique.
 
@@ -90,12 +95,15 @@ def build_language_support_prompt(
     return """Create language support using only the supplied selected units.
 
 Return 3-5 transferable language targets. Prefer Tier II language, idioms, stance or tone,
-rhetoric, and discourse links; reject ordinary complete fact sentences. Each target includes
-target_kind and teaching_purpose, and must fill meaning_zh, usage_note, and reusable_pattern
-with concrete non-empty values grounded in the unit's context; leaving any of them empty or
-placeholder is a contract violation. Return 1-2 sentence maps. For C1, every map must be either
-complex_syntax or argument_structure and must explain why. Return explicit
-high_difficulty_unit_ids. Do not add fields used by evaluation answers.
+rhetoric, and discourse links; reject ordinary complete fact sentences. Quote every target
+expression and every sentence-map sentence verbatim from its unit — exact words and inflection;
+if an inflected form matters, explain it in usage_note instead of altering the quotation. Use
+the exact unit ids from SELECTED INPUT. Each target includes target_kind and teaching_purpose,
+and must fill meaning_zh, usage_note, and reusable_pattern with concrete non-empty values
+grounded in the unit's context; leaving any of them empty or placeholder is a contract
+violation. Return 1-2 sentence maps. For C1, every map must be either complex_syntax or
+argument_structure and must explain why. Return explicit high_difficulty_unit_ids. Do not add
+fields used by evaluation answers.
 
 SELECTED INPUT:
 """ + _stable_json(payload)
@@ -590,9 +598,15 @@ def validate_teaching_contract(
 ) -> list[dict[str, str]]:
     """Return deterministic teaching-contract issues; an empty list means pass.
 
-    When ``reading_units`` is supplied, a translation that merely repeats its
-    source unit verbatim is reported as ``translation_source_echo`` — the
-    deterministic counterpart of the translation target-language contract.
+    When ``reading_units`` is supplied:
+    - a translation that merely repeats its source unit verbatim is reported
+      as ``translation_source_echo`` (counterpart of the translation
+      target-language contract);
+    - a language-target expression or sentence-map sentence that is not a
+      verbatim quote of its anchored unit is reported as
+      ``teaching_anchor_not_verbatim`` (same normalization as the
+      anchors_resolve gate: normalize_text for expressions, whitespace
+      squash for sentences).
     """
     issues: list[dict[str, str]] = []
     sections: dict[str, list[Any]] = {}
@@ -774,6 +788,9 @@ def validate_teaching_contract(
             for unit in reading_units
             if isinstance(unit, Mapping)
         }
+        source_raw = {
+            unit.get("id"): unit.get("text") for unit in reading_units if isinstance(unit, Mapping)
+        }
         translations = learning_package.get("translations_by_paragraph_id")
         if isinstance(translations, Mapping):
             for paragraph_id, text in translations.items():
@@ -789,4 +806,38 @@ def validate_teaching_contract(
                             ),
                         }
                     )
+        for index, target in enumerate(sections["language_targets"]):
+            if not isinstance(target, Mapping) or not isinstance(target.get("expression"), str):
+                continue
+            expr = normalize_text(target["expression"])
+            if expr and expr not in normalize_text(source_raw.get(target.get("paragraph_id"))):
+                issues.append(
+                    {
+                        "code": "teaching_anchor_not_verbatim",
+                        "field": f"language_targets[{index}]",
+                        "detail": (
+                            "target expression is not a verbatim quote of its anchored "
+                            "unit (whitespace/case normalized)"
+                        ),
+                    }
+                )
+        for index, sentence_map in enumerate(sections["sentence_maps"]):
+            if not isinstance(sentence_map, Mapping) or not isinstance(
+                sentence_map.get("sentence"), str
+            ):
+                continue
+            squashed = re.sub(r"\s+", "", sentence_map["sentence"])
+            unit_text = source_raw.get(sentence_map.get("paragraph_id"))
+            haystack = re.sub(r"\s+", "", unit_text) if isinstance(unit_text, str) else ""
+            if squashed and squashed not in haystack:
+                issues.append(
+                    {
+                        "code": "teaching_anchor_not_verbatim",
+                        "field": f"sentence_maps[{index}]",
+                        "detail": (
+                            "sentence-map sentence is not a verbatim quote of its "
+                            "anchored unit (whitespace squashed)"
+                        ),
+                    }
+                )
     return issues

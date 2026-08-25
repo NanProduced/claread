@@ -2233,3 +2233,152 @@ def test_p4g_prompt_additions_keep_generation_lane_clean(runner):
     }
     for _stage, prompt in prompts.items():
         runner.assert_prompt_clean(prompt)
+
+
+# ---------------------------------------------------------------------------
+# P-4H: blueprint-layer count/anchor repair (RED first on 682cd9d3)
+# ---------------------------------------------------------------------------
+
+
+def test_blueprint_draft_enforces_gate_count_bounds(runner):
+    base = blueprint_payload()
+    base.pop("_usage", None)
+
+    too_many_objectives = json.loads(json.dumps(base))
+    too_many_objectives["learning_objectives"] = ["a", "b", "c"]
+    with pytest.raises(runner.ValidationError):
+        runner.BlueprintDraft.model_validate(too_many_objectives)
+
+    too_many_nodes = json.loads(json.dumps(base))
+    extra = dict(too_many_nodes["structure_map"][0])
+    extra["paragraph_ids"] = ["u01"]
+    too_many_nodes["structure_map"] = [dict(extra) for _ in range(7)]
+    with pytest.raises(runner.ValidationError):
+        runner.BlueprintDraft.model_validate(too_many_nodes)
+
+    too_few_checkpoints = json.loads(json.dumps(base))
+    too_few_checkpoints["comprehension_checkpoints"] = too_few_checkpoints[
+        "comprehension_checkpoints"
+    ][:1]
+    with pytest.raises(runner.ValidationError):
+        runner.BlueprintDraft.model_validate(too_few_checkpoints)
+
+    boundary = json.loads(json.dumps(base))
+    boundary["learning_objectives"] = ["a", "b"]
+    assert len(runner.BlueprintDraft.model_validate(boundary).learning_objectives) == 2
+
+
+def test_language_support_draft_enforces_gate_count_bounds(runner):
+    base = _language_support_payload_without_usage()
+
+    too_many_targets = json.loads(json.dumps(base))
+    for index in range(3):
+        clone = dict(too_many_targets["language_targets"][0])
+        clone["expression"] = f"extra expression {index}"
+        clone["paragraph_id"] = "u01"
+        too_many_targets["language_targets"].append(clone)
+    with pytest.raises(runner.ValidationError):
+        runner.LanguageSupportDraft.model_validate(too_many_targets)
+
+    no_maps = json.loads(json.dumps(base))
+    no_maps["sentence_maps"] = []
+    with pytest.raises(runner.ValidationError):
+        runner.LanguageSupportDraft.model_validate(no_maps)
+
+    runner.LanguageSupportDraft.model_validate(json.loads(json.dumps(base)))
+
+
+def test_anchor_id_fields_reject_malformed_unit_ids(runner):
+    payload = blueprint_payload()
+    payload.pop("_usage", None)
+    bad = json.loads(json.dumps(payload))
+    bad["structure_map"][1]["paragraph_ids"] = ["u02", "u03", "21"]
+    with pytest.raises(runner.ValidationError):
+        runner.BlueprintDraft.model_validate(bad)
+
+    with pytest.raises(runner.ValidationError):
+        runner.SentenceMapDraft.model_validate({"sentence": SENTENCE, "paragraph_id": "14"})
+
+    ok_map = runner.SentenceMapDraft.model_validate(
+        {"sentence": SENTENCE, "paragraph_id": "u14", "translation": "x", "teaching_purpose": "p"}
+    )
+    assert ok_map.paragraph_id == "u14"
+
+
+def test_blueprint_retry_recovers_from_malformed_anchor_id(runner, eval_settings, tmp_path):
+    malformed = blueprint_payload()
+    malformed["structure_map"][1]["paragraph_ids"] = ["u02", "u03", "21"]
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            malformed,
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("PASS"),
+        ]
+    )
+    probe = _Probe()
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        tmp_path / "out",
+    )
+    case = report["cases"][0]
+    ledger = {e["stage"]: e for e in case["stage_ledger"]}
+    assert ledger["blueprint"]["outcome"] == "ok"
+    assert ledger["blueprint"]["usage"]["model_requests"] == 2
+    assert case["outcome"] == "completed"
+    assert probe.requests == 5
+
+
+def _non_verbatim_language_support() -> dict[str, Any]:
+    payload = language_support_payload()
+    payload["language_targets"][0]["expression"] = "turn heads"
+    return payload
+
+
+def test_non_verbatim_target_reaches_review_and_fails_replay(runner, eval_settings, tmp_path):
+    import json as jsonlib
+
+    review_fail = review_payload("FAIL", "language_target_value")
+    review_fail["issues"] = [
+        {
+            "contract": "language_target_value",
+            "field": "learning_package.language_targets[0].expression",
+            "problem": "the expression is not the source wording",
+        }
+    ]
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            _non_verbatim_language_support(),
+            translation_payload(),
+            review_fail,
+            _refinement_recheck_single(
+                "language_target_value",
+                {"language_targets": _non_verbatim_language_support()["language_targets"]},
+            ),
+        ]
+    )
+    probe = _Probe()
+    out_dir = tmp_path / "out"
+    report = runner.run_batch(
+        [mini_case()],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    review_prompt = probe.captures[3]["prompt_text"]
+    assert "teaching_anchor_not_verbatim" in review_prompt
+    case = report["cases"][0]
+    assert case["outcome"] == "quality_fail_continue"
+    assert case["refinement_replay_all_passed"] is False
+    evidence = jsonlib.loads(
+        (out_dir / "syn-p4e-001" / "review-evidence.json").read_text(encoding="utf-8")
+    )
+    assert evidence["refinement"]["hard_gate_replay"]["all_passed"] is False

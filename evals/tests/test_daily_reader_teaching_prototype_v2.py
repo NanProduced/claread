@@ -1003,3 +1003,53 @@ def test_translation_echo_check_stays_dormant_without_reading_units() -> None:
     package["translations_by_paragraph_id"] = {"u02": UNITS[1]["text"]}
     codes = _issue_codes(blueprint, package)
     assert "translation_source_echo" not in codes
+
+
+# ---------------------------------------------------------------------------
+# P-4H: blueprint-layer count/anchor repair (RED first on 682cd9d3)
+# ---------------------------------------------------------------------------
+
+
+def test_blueprint_prompt_declares_collection_counts_and_unit_ids() -> None:
+    article = {"title": "Synthetic", "source": "offline", "reading_units": UNITS[1:]}
+    flat = _flat(build_blueprint_prompt(article))
+    assert "learning_objectives" in flat
+    assert "exactly 1-2" in flat
+    assert "structure_map" in flat
+    assert "2-6" in flat
+    assert "never emit bare numbers" in flat
+
+
+def test_language_support_prompt_requires_verbatim_quotation() -> None:
+    flat = _flat(build_language_support_prompt([UNITS[2]], "B2"))
+    assert "verbatim" in flat
+    assert "exact words and inflection" in flat
+    assert "usage_note" in flat
+
+
+def test_non_verbatim_teaching_anchors_reported_with_reading_units() -> None:
+    blueprint, package = _valid_contract()
+    for index, target in enumerate(package["language_targets"]):
+        target["expression"] = UNITS[index + 1]["text"]
+    package["language_targets"][0]["expression"] = "turn heads"
+    package["sentence_maps"][0]["sentence"] = (
+        "Although demand fell, the company stayed open because exports kept growing."
+    )
+    issues = validate_teaching_contract(blueprint, package, reading_units=UNITS)
+    mismatch = [i for i in issues if i["code"] == "teaching_anchor_not_verbatim"]
+    fields = sorted(i["field"] for i in mismatch)
+    assert fields == ["language_targets[0]", "sentence_maps[0]"]
+
+    package["language_targets"][0]["expression"] = UNITS[1]["text"]
+    package["sentence_maps"][0]["sentence"] = UNITS[3]["text"]
+    assert not [
+        i
+        for i in validate_teaching_contract(blueprint, package, reading_units=UNITS)
+        if i["code"] == "teaching_anchor_not_verbatim"
+    ]
+
+
+def test_verbatim_anchor_check_stays_dormant_without_reading_units() -> None:
+    blueprint, package = _valid_contract()
+    package["language_targets"][0]["expression"] = "turn heads"
+    assert "teaching_anchor_not_verbatim" not in _issue_codes(blueprint, package)

@@ -29,7 +29,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 
 EVALS_ROOT = Path(__file__).resolve().parents[1]
 SERVICES_API_ROOT = EVALS_ROOT.parent / "services" / "api"
@@ -201,14 +201,20 @@ def validate_topology(topology: Sequence[StageSpec] = STAGE_TOPOLOGY) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Mirrors schema.py UNIT_ID_RE exactly: a malformed anchor id ("14") becomes
+# an output-validation failure that burns an in-call retry instead of shipping
+# an unresolvable anchor to the hard gates.
+UnitId = Annotated[str, Field(pattern=r"^u\d{2,3}$")]
+
+
 class CheckpointDraft(BaseModel):
     skill: Literal[*CHECKPOINT_SKILLS]
     prompt: str
     prompt_subject: str
     reference_answer: str
     reference_answer_subject: str
-    evidence_paragraph_ids: list[str]
-    answer_evidence_paragraph_ids: list[str]
+    evidence_paragraph_ids: list[UnitId]
+    answer_evidence_paragraph_ids: list[UnitId]
 
 
 class TransferTaskDraft(BaseModel):
@@ -223,7 +229,7 @@ class TransferTaskDraft(BaseModel):
 class StructureNodeDraft(BaseModel):
     label: str
     function: str
-    paragraph_ids: list[str]
+    paragraph_ids: list[UnitId]
 
 
 class BlueprintDraft(BaseModel):
@@ -231,16 +237,19 @@ class BlueprintDraft(BaseModel):
     effective_difficulty: Literal[*DIFFICULTIES]
     reading_mission: str
     reading_mission_stance: Literal["neutral"]
-    learning_objectives: list[str]
-    structure_map: list[StructureNodeDraft]
-    selected_paragraph_ids: list[str]
-    comprehension_checkpoints: list[CheckpointDraft]
+    # Collection bounds mirror gates.py exactly (_BOUNDS + 1-2 / 2-6):
+    # over-generation is an output-validation failure burning an in-call
+    # output retry instead of a guaranteed hard-gate failure after the run.
+    learning_objectives: list[str] = Field(min_length=1, max_length=2)
+    structure_map: list[StructureNodeDraft] = Field(min_length=2, max_length=6)
+    selected_paragraph_ids: list[UnitId]
+    comprehension_checkpoints: list[CheckpointDraft] = Field(min_length=2, max_length=4)
     transfer_task: TransferTaskDraft
 
 
 class LanguageTargetDraft(BaseModel):
     expression: str
-    paragraph_id: str
+    paragraph_id: UnitId
     target_kind: str
     teaching_purpose: str
     # P-1 §3.4 minimum semantic fields: omission or blank values are output-
@@ -252,15 +261,15 @@ class LanguageTargetDraft(BaseModel):
 
 class SentenceMapDraft(BaseModel):
     sentence: str
-    paragraph_id: str
+    paragraph_id: UnitId
     translation: str = ""
     complexity_kind: Literal["complex_syntax", "argument_structure"] | None = None
     teaching_purpose: str = ""
 
 
 class LanguageSupportDraft(BaseModel):
-    language_targets: list[LanguageTargetDraft]
-    sentence_maps: list[SentenceMapDraft]
+    language_targets: list[LanguageTargetDraft] = Field(min_length=3, max_length=5)
+    sentence_maps: list[SentenceMapDraft] = Field(min_length=1, max_length=2)
     high_difficulty_unit_ids: list[str]
 
 
