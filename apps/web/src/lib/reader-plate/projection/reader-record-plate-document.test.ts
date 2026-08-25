@@ -4620,3 +4620,296 @@ describe("G3b Reader image tree projection Slice A - standalone and inline RED",
     ]);
   });
 });
+
+describe("G2D-B image override_url projection", () => {
+  function localTreeNode(
+    overrides: Partial<ReaderStableDocumentBlockNodeDto>,
+  ): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "x",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+
+  function makeOverrideSnapshot(
+    payloadOverride: Record<string, unknown>,
+    inlineOverrides?: Array<{ ordinal: number; override: unknown }>,
+  ): ReaderPlateSnapshotDto {
+    const text = "Hello world";
+    const textHash = computeUtf16FNV1a(text);
+    const segId = "s1";
+    const unitId = "u_p1";
+    const baseId = "base_w1";
+    const inlineImages: Record<string, unknown>[] = inlineOverrides
+      ? (() => {
+          const maxOrd = Math.max(...inlineOverrides.map((o) => o.ordinal), 0);
+          const arr: Record<string, unknown>[] = [];
+          for (let i = 0; i <= maxOrd; i += 1) {
+            const found = inlineOverrides.find((o) => o.ordinal === i);
+            if (found) {
+              if (found.override === undefined) {
+                arr.push({
+                  source_url: "https://example.com/inline_source.png",
+                  alt_text: "inline alt",
+                  title: null,
+                  before_utf16: 0,
+                  effective_url: "https://example.com/inline_source.png",
+                });
+              } else {
+                arr.push({
+                  source_url: "https://example.com/inline_source.png",
+                  alt_text: "inline alt",
+                  title: null,
+                  before_utf16: 0,
+                  effective_url: "https://example.com/inline_source.png",
+                  override_url: found.override,
+                });
+              }
+            } else {
+              arr.push({
+                source_url: "https://example.com/inline_source.png",
+                alt_text: "inline alt",
+                title: null,
+                before_utf16: 0,
+                effective_url: "https://example.com/inline_source.png",
+              });
+            }
+          }
+          return arr;
+        })()
+      : [
+          {
+            source_url: "https://example.com/inline_source.png",
+            alt_text: "inline alt",
+            title: null,
+            before_utf16: 0,
+            effective_url: "https://example.com/inline_source.png",
+          },
+        ];
+
+    return {
+      schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
+      snapshot_id: "snap_1",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_w1",
+      record: {
+        title: "Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: baseId,
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: text.length,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: {
+        units: [
+          {
+            unit_id: unitId,
+            order_index: 1,
+            unit_type: "body",
+            boundary_quality: "normal",
+            label: null,
+            base_start_utf16: 0,
+            base_end_utf16: text.length,
+            text_hash: textHash,
+            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            stable_block_type: "paragraph",
+            heading_level: null,
+          },
+        ],
+      },
+      anchor_segments: [
+        {
+          anchor_segment_id: segId,
+          sentence_id: "sent_s1",
+          paragraph_id: unitId,
+          unit_id: unitId,
+          order_index: 1,
+          unit_order_index: 1,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: text.length,
+          unit_start_utf16: 0,
+          unit_end_utf16: text.length,
+          text_hash: textHash,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        },
+      ],
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      analysis_progress: makeAnalysisProgressDto(),
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: [
+        {
+          type: "reader_unit",
+          owner: "stable",
+          base_id: baseId,
+          unit_id: unitId,
+          order_index: 1,
+          unit_type: "body",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: text.length,
+          text_hash: textHash,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              type: "reader_source_block",
+              owner: "stable",
+              base_id: baseId,
+              unit_id: unitId,
+              base_start_utf16: 0,
+              base_end_utf16: text.length,
+              stableBlockType: "paragraph",
+              stableBlockId: "b1",
+              headingLevel: null,
+              parentStableBlockId: null,
+              children: [
+                {
+                  type: "reader_anchor_segment",
+                  owner: "stable",
+                  base_id: baseId,
+                  unit_id: unitId,
+                  anchor_segment_id: segId,
+                  sentence_id: "sent_s1",
+                  segment_type: "sentence",
+                  boundary_quality: "normal",
+                  base_start_utf16: 0,
+                  base_end_utf16: text.length,
+                  unit_start_utf16: 0,
+                  unit_end_utf16: text.length,
+                  text_hash: textHash,
+                  hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                  children: [
+                    {
+                      text,
+                      owner: "stable",
+                      lock_source: true,
+                      source_role: "segment_text",
+                      base_start_utf16: 0,
+                      base_end_utf16: text.length,
+                      anchor_segment_id: segId,
+                      segment_start_utf16: 0,
+                      segment_end_utf16: text.length,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      stable_document_tree: [
+        localTreeNode({
+          block_id: "img_standalone",
+          block_type: "image",
+          order_index: 0,
+          payload: {
+            source_url: "https://example.com/source.png",
+            alt_text: "alt",
+            title: null,
+            position_kind: "standalone",
+            effective_url: "https://example.com/source.png",
+            ...payloadOverride,
+          },
+        }),
+        localTreeNode({
+          block_id: "b1",
+          block_type: "paragraph",
+          order_index: 1,
+          payload: { inline_images: inlineImages },
+        }),
+      ],
+    };
+  }
+
+  it("standalone override_url enters unique Reader image data", () => {
+    const snap = makeOverrideSnapshot({ override_url: "https://example.com/override.png" });
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snap);
+    const img = doc.children.find((c) => (c as { id: string }).id === "image:img_standalone") as unknown as {
+      data: { overrideUrl?: string; sourceUrl: string; effectiveUrl: string | null };
+    };
+    expect(img).toBeTruthy();
+    expect(img.data.overrideUrl).toBe("https://example.com/override.png");
+  });
+
+  it("inline ordinal corresponding item enters overrideUrl", () => {
+    const snap = makeOverrideSnapshot({}, [{ ordinal: 0, override: "https://example.com/inline_override.png" }]);
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snap);
+    const para = doc.children.find((c) => (c as { type: string }).type === "paragraph") as unknown as {
+      children: Array<{ type?: string; id?: string; data?: { overrideUrl?: string } }>;
+    };
+    const img = para.children.find((c) => c.id === "image:b1:0") as unknown as { data: { overrideUrl?: string } };
+    expect(img).toBeTruthy();
+    expect(img.data.overrideUrl).toBe("https://example.com/inline_override.png");
+  });
+
+  it("absent key vs empty string are distinguishable", () => {
+    const snapAbsent = makeOverrideSnapshot({});
+    const docAbsent = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapAbsent);
+    const imgAbsent = docAbsent.children.find((c) => (c as { id: string }).id === "image:img_standalone") as unknown as {
+      data: { overrideUrl?: string };
+    };
+    expect(Object.prototype.hasOwnProperty.call(imgAbsent.data, "overrideUrl")).toBe(false);
+    expect(typeof imgAbsent.data.overrideUrl).not.toBe("string");
+
+    const snapEmpty = makeOverrideSnapshot({ override_url: "" });
+    const docEmpty = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapEmpty);
+    const imgEmpty = docEmpty.children.find((c) => (c as { id: string }).id === "image:img_standalone") as unknown as {
+      data: { overrideUrl?: string };
+    };
+    expect(Object.prototype.hasOwnProperty.call(imgEmpty.data, "overrideUrl")).toBe(true);
+    expect(imgEmpty.data.overrideUrl).toBe("");
+  });
+
+  it("unsafe raw string is preserved verbatim", () => {
+    const unsafe = "javascript:alert(1)";
+    const snap = makeOverrideSnapshot({ override_url: unsafe });
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snap);
+    const img = doc.children.find((c) => (c as { id: string }).id === "image:img_standalone") as unknown as {
+      data: { overrideUrl?: string };
+    };
+    expect(img.data.overrideUrl).toBe(unsafe);
+  });
+
+  it("non-string override fails closed as key missing", () => {
+    const snap = makeOverrideSnapshot({ override_url: 123 as unknown as string });
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snap);
+    const img = doc.children.find((c) => (c as { id: string }).id === "image:img_standalone") as unknown as {
+      data: { overrideUrl?: string };
+    };
+    expect(Object.prototype.hasOwnProperty.call(img.data, "overrideUrl")).toBe(false);
+  });
+});

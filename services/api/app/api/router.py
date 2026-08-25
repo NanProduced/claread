@@ -10,6 +10,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.internal_feedback import router as internal_feedback_router
 from app.api.routes.prompt_debug import router as prompt_debug_router
 from app.api.routes.quota import router as quota_router
+from app.api.routes.reader_image_overrides import router as reader_image_overrides_router
 from app.api.routes.reader_notes import router as reader_notes_router
 from app.api.routes.reader_orchestration import router as reader_orchestration_router
 from app.api.routes.reader_record_ask import router as reader_record_ask_router
@@ -23,6 +24,7 @@ api_router.include_router(dict_router)
 api_router.include_router(auth_router)
 api_router.include_router(quota_router)
 api_router.include_router(reader_orchestration_router)
+api_router.include_router(reader_image_overrides_router)
 api_router.include_router(reader_record_ask_router)
 api_router.include_router(reader_recovery_router)
 api_router.include_router(favorites_router)

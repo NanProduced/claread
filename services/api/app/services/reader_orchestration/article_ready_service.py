@@ -210,6 +210,8 @@ class ArticleReadyPersistenceService:
             analysis_progress=analysis_progress,
             user_assets=facts.user_assets,
             ask_supplements=facts.ask_supplements,
+            image_source_overrides=facts.image_source_overrides,
+            stable_document_id=facts.stable_document_id,
         )
 
 

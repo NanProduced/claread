@@ -37,6 +37,7 @@ import type {
   ReaderListItemElement,
   ReaderListElement,
   ReaderMarkdownBlockquoteElement,
+  ReaderMathInlineElement,
   ReaderParagraphElement,
   ReaderSentenceAnalysisChunkElement,
   ReaderSourceCalloutElement,
@@ -56,6 +57,8 @@ import {
   READER_LIST_ITEM_TYPE,
   READER_LIST_TYPE,
   READER_MARKDOWN_BLOCKQUOTE_TYPE,
+  READER_MATH_BLOCK_TYPE,
+  READER_MATH_INLINE_TYPE,
   READER_PARAGRAPH_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
@@ -65,6 +68,7 @@ import {
   READER_TABLE_ROW_TYPE,
   READER_TABLE_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import katex from "katex";
 import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
@@ -315,6 +319,23 @@ const copyExcludeProps = {
   "data-reader-record-copy-exclude": "true",
 } as const;
 
+// G2D-B: frozen image URL override — minimal context, no media framework
+export interface ReaderFrozenImageOverrideLocator {
+  blockId: string;
+  inlineOrdinal: number | null;
+}
+export interface ReaderFrozenImageOverrideContextValue {
+  canEdit: boolean;
+  stableDocumentId: string | null;
+  upsert: (
+    locator: ReaderFrozenImageOverrideLocator,
+    rawUrl: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
+  remove: (locator: ReaderFrozenImageOverrideLocator) => Promise<{ ok: boolean; message?: string }>;
+}
+export const ReaderFrozenImageOverrideContext =
+  createContext<ReaderFrozenImageOverrideContextValue | null>(null);
+
 // ---------------------------------------------------------------------------
 // G3b Reader image (standalone + inline) — single image data shape, reuse
 // isLoadableImageUrl, native <img> + Clipboard API, no media framework.
@@ -335,19 +356,40 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     positionKind?: unknown;
     stableBlockId?: unknown;
     parentStableBlockId?: unknown;
+    overrideUrl?: unknown;
+    inlineOrdinal?: unknown;
+    beforeUtf16?: unknown;
   };
   const sourceUrl = typeof data.sourceUrl === "string" ? data.sourceUrl : "";
   const effectiveUrl = data.effectiveUrl;
   const altText = typeof data.altText === "string" ? data.altText : "";
   const title = typeof data.title === "string" ? data.title : undefined;
   const positionKind = data.positionKind === "inline" ? "inline" : data.positionKind === "standalone" ? "standalone" : "inline";
+  const overrideUrlRaw = data.overrideUrl;
+  const hasOverride = typeof overrideUrlRaw === "string";
+  const overrideUrl = hasOverride ? (overrideUrlRaw as string) : undefined;
+  const stableBlockId = typeof data.stableBlockId === "string" ? data.stableBlockId : "";
+  // standalone has no inlineOrdinal; inline has ordinal.
+  const locatorInlineOrdinal =
+    positionKind === "inline" && typeof data.inlineOrdinal === "number" && Number.isInteger(data.inlineOrdinal)
+      ? (data.inlineOrdinal as number)
+      : null;
+  const resolvedInlineOrdinal = positionKind === "inline" ? locatorInlineOrdinal : null;
+
   const safe = typeof effectiveUrl === "string" && isLoadableImageUrl(effectiveUrl);
+  const ctx = useContext(ReaderFrozenImageOverrideContext);
+  const canEdit = Boolean(ctx?.canEdit && stableBlockId && ctx?.stableDocumentId);
   const [loadState, setLoadState] = React.useState<"loading" | "loaded" | "failed">("loading");
   const [prevUrl, setPrevUrl] = React.useState<unknown>(effectiveUrl);
   if (prevUrl !== effectiveUrl) {
     setPrevUrl(effectiveUrl);
     setLoadState("loading");
   }
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
   const copyLink = React.useCallback(() => {
     if (!safe || typeof effectiveUrl !== "string") return;
     try {
@@ -355,7 +397,88 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     } catch {}
   }, [effectiveUrl, safe]);
 
-  // unsafe / null effectiveUrl
+  const handleEdit = React.useCallback(() => {
+    setDraft(hasOverride ? (overrideUrl as string) : "");
+    setError(null);
+    setSaving(false);
+    setIsEditing(true);
+  }, [hasOverride, overrideUrl]);
+
+  const handleCancel = React.useCallback(() => {
+    setIsEditing(false);
+    setError(null);
+    setSaving(false);
+  }, []);
+
+  const handleSave = React.useCallback(async () => {
+    if (!ctx || !stableBlockId) return;
+    setSaving(true);
+    setError(null);
+    const locator = { blockId: stableBlockId, inlineOrdinal: resolvedInlineOrdinal };
+    const result = await ctx.upsert(locator, draft);
+    setSaving(false);
+    if (result.ok) {
+      setIsEditing(false);
+      setError(null);
+    } else {
+      setError(result.message ?? "保存失败，请重试。");
+    }
+  }, [ctx, stableBlockId, resolvedInlineOrdinal, draft]);
+
+  const handleRestore = React.useCallback(async () => {
+    if (!ctx || !stableBlockId) return;
+    setSaving(true);
+    setError(null);
+    const locator = { blockId: stableBlockId, inlineOrdinal: resolvedInlineOrdinal };
+    const result = await ctx.remove(locator);
+    setSaving(false);
+    if (result.ok) {
+      setIsEditing(false);
+      setError(null);
+    } else {
+      setError(result.message ?? "恢复失败，请重试。");
+    }
+  }, [ctx, stableBlockId, resolvedInlineOrdinal]);
+
+  const editChrome = canEdit ? (
+    <span {...copyExcludeProps} className="mt-1 flex flex-wrap items-center gap-1">
+      <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
+        修改链接
+      </button>
+    </span>
+  ) : null;
+
+  const editingPanel = isEditing ? (
+    <span {...copyExcludeProps} className="mt-2 flex max-w-full flex-col gap-1.5 rounded border border-hairline bg-surface-raised/70 p-2 text-xs">
+      <span className="break-all">
+        <span className="font-medium">原始地址：</span>
+        <span className="font-mono text-xs">{sourceUrl}</span>
+      </span>
+      <input
+        aria-label="图片覆盖地址"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        className="w-full rounded border border-hairline bg-white px-2 py-1 text-xs font-mono"
+        placeholder="输入图片链接"
+      />
+      {error ? <span className="text-rose-600">{error}</span> : null}
+      <span className="flex flex-wrap gap-1">
+        <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleSave} disabled={saving}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+        <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleCancel} disabled={saving}>
+          取消
+        </button>
+        {hasOverride ? (
+          <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleRestore} disabled={saving}>
+            恢复原始地址
+          </button>
+        ) : null}
+      </span>
+    </span>
+  ) : null;
+
+  // unsafe / null effectiveUrl — still show edit entry
   if (!safe) {
     return (
       <span
@@ -369,12 +492,14 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           <span className="font-medium text-ink">链接不安全</span>
           <span className="break-all font-mono text-xs">{sourceUrl}</span>
         </span>
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
         {children}
       </span>
     );
   }
 
-  // safe: loading / loaded / load_failed
+  // safe: loading / loaded / load_failed — share same edit handling
   if (loadState === "failed") {
     return (
       <span
@@ -392,6 +517,8 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
             </button>
           </span>
         </span>
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
         {children}
       </span>
     );
@@ -425,10 +552,12 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
         />
         {loadState === "loaded" ? (
-          <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+          <button type="button" className={READER_IMAGE_BUTTON_CLASS} {...copyExcludeProps} onClick={copyLink}>
             复制链接
           </button>
         ) : null}
+        {canEdit && !isEditing ? editChrome : null}
+        {editingPanel}
       </span>
       {children}
     </span>
@@ -460,6 +589,99 @@ function ReaderImageBlockComponent({ attributes, children }: PlateElementProps) 
 export const ReaderImageBlockPlugin = createPlatePlugin({
   key: READER_IMAGE_BLOCK_TYPE,
   node: { isElement: true, component: ReaderImageBlockComponent },
+});
+
+// ---------------------------------------------------------------------------
+// Reader math (inline + block) — KaTeX, fail-closed, chrome excluded
+// Mirrors G3b image surface: math rendering product is void inline + block
+// wrapper, excluded from copy/selection/word count via same contracts.
+// ---------------------------------------------------------------------------
+
+const READER_MATH_FALLBACK_CLASS =
+  "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
+const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+
+function ReaderMathInlineComponent({ attributes, children, element }: PlateElementProps) {
+  const node = element as unknown as ReaderMathInlineElement;
+  const data = (node.data ?? {}) as unknown as { latex?: unknown; display?: unknown };
+  const latex = typeof data.latex === "string" ? data.latex : "";
+  const display = data.display === true;
+  const katexRef = React.useRef<HTMLSpanElement>(null);
+  let html: string | null = null;
+  let isError = false;
+  try {
+    html = katex.renderToString(latex, {
+      displayMode: display,
+      throwOnError: true,
+      strict: false,
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    isError = true;
+    html = null;
+  }
+  React.useLayoutEffect(() => {
+    if (isError || !html || !katexRef.current) return;
+    katexRef.current.innerHTML = html;
+  }, [html, isError]);
+  const wrapperClass = display ? READER_MATH_DISPLAY_WRAPPER_CLASS : "inline-flex align-baseline";
+  if (isError || !html) {
+    // fail-closed: show raw latex source, never throw, never silently drop
+    return (
+      <span
+        {...attributes}
+        data-reader-math="true"
+        data-math-display={display ? "true" : "false"}
+        data-math-state="error"
+        className={display ? "inline-block max-w-full align-top" : "inline-block align-baseline"}
+      >
+        <span {...copyExcludeProps} className={READER_MATH_FALLBACK_CLASS} data-reader-math-fallback="true">
+          {latex}
+        </span>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <span
+      {...attributes}
+      data-reader-math="true"
+      data-math-display={display ? "true" : "false"}
+      data-math-state="ok"
+      className={display ? "inline-block max-w-full align-top" : "inline-block align-baseline"}
+    >
+      <span
+        {...copyExcludeProps}
+        ref={katexRef}
+        className={wrapperClass}
+        data-reader-math-content="true"
+      />
+      {children}
+    </span>
+  );
+}
+
+export const ReaderMathInlinePlugin = createPlatePlugin({
+  key: READER_MATH_INLINE_TYPE,
+  node: { isElement: true, isInline: true, isVoid: true, component: ReaderMathInlineComponent },
+});
+
+function ReaderMathBlockComponent({ attributes, children }: PlateElementProps) {
+  return (
+    <div
+      {...attributes}
+      data-reader-math-block="true"
+      className="reader-record-plate-math-block my-3 flex w-full justify-center overflow-x-auto"
+    >
+      {children}
+    </div>
+  );
+}
+
+export const ReaderMathBlockPlugin = createPlatePlugin({
+  key: READER_MATH_BLOCK_TYPE,
+  node: { isElement: true, component: ReaderMathBlockComponent },
 });
 
 function stopReaderCalloutControlEvent(
@@ -2199,6 +2421,8 @@ export const ReaderBlocksKit = [
   ReaderStableSourceCalloutPlugin,
   ReaderImagePlugin,
   ReaderImageBlockPlugin,
+  ReaderMathInlinePlugin,
+  ReaderMathBlockPlugin,
   // source_callout（非 stable-block 路径）：当 enhancement children markdown
   // 反序列化遇到 `<aside>` 或 GFM alert 时，SOURCE_CALLOUT_RULES 产出
   // `{type:"source_callout"}` element。此处注册 SourceCalloutPlugin 让该

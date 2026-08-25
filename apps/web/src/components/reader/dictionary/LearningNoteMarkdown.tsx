@@ -3,7 +3,7 @@
 /**
  * Safe Markdown renderer for phrase_gloss `learning_note`.
  *
- * Contract subset only:
+ * Contract subset only (Math-C 既定决策：math 不在合同子集内):
  * - plain paragraphs
  * - bold emphasis
  * - inline code
@@ -11,7 +11,10 @@
  * - necessary line breaks
  *
  * Headings, links, images, tables, blockquotes, ordered lists, fenced code
- * blocks, and raw HTML must not produce matching DOM. Uses Streamdown with
+ * blocks, raw HTML, and math (equation / inline_equation, $..$ / $$..$$)
+ * must not produce matching DOM. Math intentionally excluded from this
+ * {cjk} contract-subset; input preview (MarkdownTextInput + Content Check)
+ * owns KaTeX rendering, Reader owns Math-B rendering. Uses Streamdown with
  * no dangerouslySetInnerHTML.
  */
 import { cjk } from "@streamdown/cjk";

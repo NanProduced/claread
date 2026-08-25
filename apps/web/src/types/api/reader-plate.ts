@@ -164,6 +164,7 @@ export interface ReaderSnapshotBaseDto {
   segmenter_version: string;
   text_length_utf16: number;
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+  stable_document_id?: string | null;
 }
 
 export type ReaderTitleGenerationStatus =
@@ -1505,6 +1506,22 @@ export interface ReaderStableDocumentResponseDto {
   stable_document: ReaderStableDocumentMetadataDto;
   blocks: ReaderStableDocumentBlockDto[];
   anchor_segments: ReaderStableDocumentAnchorSegmentDto[];
+}
+
+// ---------------------------------------------------------------------------
+// G2D-B: Reader image source overrides (PUT + DELETE, no GET)
+// ---------------------------------------------------------------------------
+
+export interface ReaderImageSourceOverrideUpsertRequestDto {
+  stable_document_id: string;
+  block_id: string;
+  inline_ordinal: number | null;
+  url: string;
+}
+
+export interface ReaderImageSourceOverrideWriteResponseDto {
+  ok: true;
+  last_event_sequence: number;
 }
 
 // ---------------------------------------------------------------------------

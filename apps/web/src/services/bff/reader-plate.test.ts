@@ -15,6 +15,8 @@ vi.mock("@/services/api/reader-plate", () => ({
   getUpstreamReaderPlateSnapshot: vi.fn(),
   pollUpstreamReaderEvents: vi.fn(),
   putUpstreamReaderConfirmedSource: vi.fn(),
+  putUpstreamReaderImageSourceOverride: vi.fn(),
+  deleteUpstreamReaderImageSourceOverride: vi.fn(),
   initUpstreamReaderSourceArtifactUpload: vi.fn(),
   completeUpstreamReaderSourceArtifactUpload: vi.fn(),
   submitUpstreamReaderSourceArtifactInput: vi.fn(),
@@ -32,6 +34,7 @@ import { getWebSession } from "@/services/bff/session";
 import {
   completeUpstreamReaderSourceArtifactUpload,
   confirmUpstreamReaderCandidateDocument,
+  deleteUpstreamReaderImageSourceOverride,
   ensureUpstreamReaderArticleRagIndex,
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
@@ -41,6 +44,7 @@ import {
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   putUpstreamReaderConfirmedSource,
+  putUpstreamReaderImageSourceOverride,
   submitUpstreamReaderPlainText,
   submitUpstreamReaderAnalysisSectionRequest,
   submitUpstreamReaderSectionTranslation,
@@ -50,6 +54,7 @@ import {
 import {
   completeReaderSourceArtifactUploadFromWeb,
   confirmReaderCandidateDocumentFromWeb,
+  deleteReaderImageSourceOverrideFromWeb,
   ensureReaderArticleRagIndexFromWeb,
   getReaderArticleRagIndexStatusFromWeb,
   getReaderArtifactPipelineStatusFromWeb,
@@ -65,6 +70,7 @@ import {
   submitReaderUnifiedInputFromWeb,
   submitReadingRecordPlainTextFromWeb,
   updateReaderConfirmedSourceFromWeb,
+  upsertReaderImageSourceOverrideFromWeb,
 } from "./reader-plate";
 import { appReaderRoute } from "@/lib/routes";
 import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
@@ -2322,6 +2328,197 @@ describe("submitReaderAnalysisSectionRequestFromWeb", () => {
     expect(result).toMatchObject({ ok: false, code: "invalid_input", status: 400 });
     if (!result.ok) {
       expect(result.message).not.toContain("validation failed");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2D-B-R2: image source override PUT/DELETE share one closed error mapper.
+// The upstream envelope (`{ok,code,message}` service errors and FastAPI
+// `{detail:[...]}` schema rejections) must never reach the browser verbatim;
+// copy is chosen only from the controlled ``body.code`` plus HTTP status.
+// ---------------------------------------------------------------------------
+
+const IMAGE_OVERRIDE_UPSERT_INPUT = {
+  recordId: "rec_1",
+  stableDocumentId: "11111111-1111-1111-1111-111111111111",
+  blockId: "b_img_1",
+  inlineOrdinal: null,
+  url: "https://example.com/a.png",
+};
+
+const IMAGE_OVERRIDE_DELETE_INPUT = {
+  recordId: "rec_1",
+  stableDocumentId: "11111111-1111-1111-1111-111111111111",
+  blockId: "b_img_1",
+  inlineOrdinal: null,
+};
+
+describe("reader-plate BFF image source overrides — closed error mapping", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("PUT 409 stable_document_not_active maps to fixed refresh copy without leaking upstream message", async () => {
+    vi.mocked(putUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "目标 Stable Document 已被新版本取代。",
+      body: {
+        ok: false,
+        code: "stable_document_not_active",
+        message: "目标 Stable Document 已被新版本取代。",
+      },
+    });
+
+    const result = await upsertReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_UPSERT_INPUT,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: "image_source_override_conflict",
+      message: "文章状态已更新，请刷新后重试。",
+    });
+    if (!result.ok) {
+      expect(result.message.length).toBeGreaterThan(0);
+      expect(result.message).not.toContain("已被新版本取代");
+    }
+  });
+
+  it("DELETE 409 stable_document_not_active maps to the same fixed refresh copy", async () => {
+    vi.mocked(deleteUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "目标 Stable Document 已被新版本取代。",
+      body: {
+        ok: false,
+        code: "stable_document_not_active",
+        message: "目标 Stable Document 已被新版本取代。",
+      },
+    });
+
+    const result = await deleteReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_DELETE_INPUT,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "image_source_override_conflict",
+    });
+    if (!result.ok) {
+      expect(result.message).toBe("文章状态已更新，请刷新后重试。");
+    }
+  });
+
+  it("PUT 422 business code maps to fixed invalid_input without leaking upstream copy", async () => {
+    vi.mocked(putUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 422,
+      message: "定位不是有效的图片目标。",
+      body: {
+        ok: false,
+        code: "image_target_not_found",
+        message: "定位不是有效的图片目标。",
+      },
+    });
+
+    const result = await upsertReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_UPSERT_INPUT,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+      message: "请求参数不正确，请刷新后重试。",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("定位不是有效的图片目标");
+    }
+  });
+
+  it("DELETE 422 pydantic detail rejection maps to fixed invalid_input and never leaks input or docs URL", async () => {
+    const pydanticDetail = [
+      {
+        type: "uuid_parsing",
+        loc: ["path", "stable_document_id"],
+        msg: "Input should be a valid UUID",
+        input: "not-a-uuid-at-all",
+        ctx: { error: "uuid parsing failed" },
+        url: "https://errors.pydantic.dev/2.11/v/uuid_parsing",
+      },
+    ];
+    vi.mocked(deleteUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 422,
+      message: JSON.stringify(pydanticDetail),
+      payload: { detail: pydanticDetail },
+      body: { detail: pydanticDetail },
+    });
+
+    const result = await deleteReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_DELETE_INPUT,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+      message: "请求参数不正确，请刷新后重试。",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("pydantic.dev");
+      expect(result.message).not.toContain("not-a-uuid-at-all");
+      expect(result.message).not.toContain("uuid_parsing");
+    }
+  });
+
+  it("PUT 5xx with empty statusText still returns non-empty safe 503 copy", async () => {
+    // Simulates fastApiFetch on a 5xx whose body is not JSON and whose
+    // statusText is empty: getErrorMessage falls back to "" and there is
+    // no plain-object body.
+    vi.mocked(putUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 502,
+      message: "",
+      payload: "<html>Bad Gateway</html>",
+    });
+
+    const result = await upsertReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_UPSERT_INPUT,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+      message: "透读服务暂时不可用，请稍后重试。",
+    });
+  });
+
+  it("DELETE network failure (status 0) returns non-empty safe 503 copy without leaking fetch error", async () => {
+    vi.mocked(deleteUpstreamReaderImageSourceOverride).mockResolvedValue({
+      ok: false,
+      status: 0,
+      message: "fetch failed",
+    });
+
+    const result = await deleteReaderImageSourceOverrideFromWeb(
+      IMAGE_OVERRIDE_DELETE_INPUT,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+      message: "透读服务暂时不可用，请稍后重试。",
+    });
+    if (!result.ok) {
+      expect(result.message).not.toContain("fetch failed");
     }
   });
 });

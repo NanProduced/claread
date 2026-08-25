@@ -118,6 +118,8 @@ import type { Descendant, Value } from "platejs";
 import {
   INPUT_MARKDOWN_PLUGIN_OPTIONS,
   InputMarkdownImagePlugin,
+  InputMarkdownMathBlockPlugin,
+  InputMarkdownMathInlinePlugin,
 } from "@/components/editor/plugins/input-markdown-image-kit";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { negotiateClipboardSource } from "@/lib/clipboard/clipboard-source-negotiation";
@@ -369,6 +371,11 @@ export const markdownTextInputPlugins = [
   // 输入端图片（G1′）：inline void img element + 四态预览组件
   // （loading/loaded/unsafe/load_failed + URL 编辑）。
   InputMarkdownImagePlugin,
+  // Math-C 输入预览：inline $..$ 与块级 $$..$$ 统一走 remark-math →
+  // equation/inline_equation，KaTeX 渲染复用 Math-B 依赖与 fail-closed，
+  // serialize 逐字保真由 @platejs/markdown 默认 math 规则承载。
+  InputMarkdownMathInlinePlugin,
+  InputMarkdownMathBlockPlugin,
   // basic-nodes：标题/引用/分隔线
   BaseH1Plugin.configure({ node: { component: MarkdownHeading } }),
   BaseH2Plugin.configure({ node: { component: MarkdownHeading } }),
@@ -443,11 +450,15 @@ function hasTextContent(nodes: unknown[]): boolean {
     if ("text" in node) {
       return typeof node.text === "string" && node.text.length > 0;
     }
-    // 输入端图片（G1′）是 inline void element：图片本身即内容，
-    // image-only 编辑器必须判非空（data-empty=false、serialize 不短路）。
-    // URL/alt/title 是 element 字段而非 text leaf，不进入正文文本语义
-    // （word count / 后端 canonical text 不受影响）。
-    if ((node as { type?: unknown }).type === "img") {
+    // 输入端图片（G1′）与数学（Math-C）是 inline/block void element：
+    // 图片本身、公式本身即内容，math/image-only 编辑器必须判非空
+    // （data-empty=false、serialize 不短路）。URL/alt/title 与 latex
+    // 是 element 字段而非 text leaf，不进入普通 text 语义但计为有效内容。
+    if (
+      (node as { type?: unknown }).type === "img" ||
+      (node as { type?: unknown }).type === "inline_equation" ||
+      (node as { type?: unknown }).type === "equation"
+    ) {
       return true;
     }
     if ("children" in node && Array.isArray(node.children)) {

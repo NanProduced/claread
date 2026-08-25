@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
   completeUpstreamReaderSourceArtifactUpload,
   confirmUpstreamReaderCandidateDocument,
+  deleteUpstreamReaderImageSourceOverride,
   ensureUpstreamReaderArticleRagIndex,
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
@@ -15,6 +16,7 @@ import {
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
   putUpstreamReaderConfirmedSource,
+  putUpstreamReaderImageSourceOverride,
   submitUpstreamReaderPlainText,
   submitUpstreamReaderAnalysisSectionRequest,
   submitUpstreamReaderSectionTranslation,
@@ -96,7 +98,10 @@ export type ReaderPlateBffError = {
     | "stale_candidate_revision"
     // Section-translation fence conflict (409 from upstream).
     | "section_translation_conflict"
-    | "analysis_section_conflict";
+    | "analysis_section_conflict"
+    // G2D-B image override: stable document superseded mid-edit (409 from
+    // upstream ``stable_document_not_active``).
+    | "image_source_override_conflict";
   message: string;
   recordId?: string;
   /**
@@ -1577,4 +1582,202 @@ export async function submitReaderAnalysisSectionRequestFromWeb(
     event_sequence: data.event_sequence,
     reason_code: data.reason_code,
   };
+}
+
+// ---------------------------------------------------------------------------
+// G2D-B: Reader image source overrides (PUT + DELETE via BFF)
+// ---------------------------------------------------------------------------
+
+export type ReaderImageSourceOverrideWriteResult =
+  | { ok: true; last_event_sequence: number }
+  | ReaderPlateBffError;
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function parseInlineOrdinal(value: unknown): number | null | undefined {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 0) return value;
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    const num = Number(trimmed);
+    if (!Number.isInteger(num) || num < 0 || String(num) !== trimmed) return undefined;
+    return num;
+  }
+  return undefined;
+}
+
+/**
+ * Closed error mapper shared by image override PUT/DELETE. The upstream
+ * envelope (`{ok,code,message}` service errors and FastAPI `{detail:[...]}`
+ * schema rejections) never reaches the browser: user-facing copy is chosen
+ * only from the controlled ``body.code`` plus the HTTP status, so neither a
+ * leaked upstream ``message``/``detail``/``input`` nor an empty upstream
+ * ``statusText`` can produce an unsafe or empty message.
+ */
+function imageSourceOverrideUpstreamError(
+  status: number,
+  body: unknown,
+): ReaderPlateBffError {
+  if (status === 0 || status >= 500) {
+    return {
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+      message: "透读服务暂时不可用，请稍后重试。",
+    };
+  }
+  if (status === 401) {
+    return {
+      ok: false,
+      status: 401,
+      code: "upstream_auth_failed",
+      message: "登录态已失效，请重新登录后再试。",
+    };
+  }
+  if (status === 404) {
+    return {
+      ok: false,
+      status: 404,
+      code: "record_not_found",
+      message: "没有找到这条阅读记录。",
+    };
+  }
+  const upstreamCode =
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as { code?: unknown }).code === "string"
+      ? ((body as { code: string }).code)
+      : null;
+  if (status === 409 && upstreamCode === "stable_document_not_active") {
+    return {
+      ok: false,
+      status: 409,
+      code: "image_source_override_conflict",
+      message: "文章状态已更新，请刷新后重试。",
+    };
+  }
+  if (status === 422) {
+    // 业务码与 pydantic schema 拒绝统一折叠为 400 invalid_input；
+    // 上游 detail / input / pydantic 文档 URL 一律不出 BFF。
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+      message: "请求参数不正确，请刷新后重试。",
+    };
+  }
+  return {
+    ok: false,
+    status,
+    code: "upstream_error",
+    message: "操作失败，请稍后重试。",
+  };
+}
+
+export async function upsertReaderImageSourceOverrideFromWeb(input: {
+  recordId?: unknown;
+  stableDocumentId?: unknown;
+  blockId?: unknown;
+  inlineOrdinal?: unknown;
+  url?: unknown;
+}): Promise<ReaderImageSourceOverrideWriteResult> {
+  if (!isNonEmptyString(input.recordId)) {
+    return invalidInput("缺少 record_id。");
+  }
+  if (!isNonEmptyString(input.stableDocumentId)) {
+    return invalidInput("缺少 stable_document_id。");
+  }
+  if (!isNonEmptyString(input.blockId)) {
+    return invalidInput("缺少 block_id。");
+  }
+  const inlineOrdinal = (() => {
+    if (input.inlineOrdinal === null || input.inlineOrdinal === undefined) return null;
+    if (typeof input.inlineOrdinal === "number") {
+      if (Number.isInteger(input.inlineOrdinal) && input.inlineOrdinal >= 0) return input.inlineOrdinal;
+      return undefined;
+    }
+    return undefined;
+  })();
+  if (inlineOrdinal === undefined) {
+    return invalidInput("inline_ordinal 必须为 null 或大于等于 0 的整数。");
+  }
+  if (typeof input.url !== "string") {
+    return invalidInput("url 必须为 string。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await putUpstreamReaderImageSourceOverride(
+    input.recordId,
+    {
+      stable_document_id: input.stableDocumentId,
+      block_id: input.blockId,
+      inline_ordinal: inlineOrdinal,
+      url: input.url,
+    },
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return imageSourceOverrideUpstreamError(
+      upstreamResult.status,
+      upstreamResult.body,
+    );
+  }
+
+  return { ok: true, last_event_sequence: upstreamResult.data.last_event_sequence };
+}
+
+export async function deleteReaderImageSourceOverrideFromWeb(input: {
+  recordId?: unknown;
+  stableDocumentId?: unknown;
+  blockId?: unknown;
+  inlineOrdinal?: unknown;
+}): Promise<ReaderImageSourceOverrideWriteResult> {
+  if (!isNonEmptyString(input.recordId)) {
+    return invalidInput("缺少 record_id。");
+  }
+  if (!isNonEmptyString(input.stableDocumentId)) {
+    return invalidInput("缺少 stable_document_id。");
+  }
+  if (!isNonEmptyString(input.blockId)) {
+    return invalidInput("缺少 block_id。");
+  }
+  const inlineOrdinal = parseInlineOrdinal(input.inlineOrdinal);
+  if (inlineOrdinal === undefined) {
+    return invalidInput("inline_ordinal 必须为 null 或大于等于 0 的整数。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await deleteUpstreamReaderImageSourceOverride(
+    input.recordId,
+    input.stableDocumentId,
+    input.blockId,
+    inlineOrdinal,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    return imageSourceOverrideUpstreamError(
+      upstreamResult.status,
+      upstreamResult.body,
+    );
+  }
+
+  return { ok: true, last_event_sequence: upstreamResult.data.last_event_sequence };
 }

@@ -84,6 +84,7 @@ export interface ReaderRecordPlateImageData {
   parentStableBlockId: string | null;
   inlineOrdinal?: number;
   beforeUtf16?: number;
+  overrideUrl?: string;
 }
 
 export interface ReaderRecordPlateImageBlock {
@@ -93,9 +94,27 @@ export interface ReaderRecordPlateImageBlock {
   data: ReaderRecordPlateImageData;
 }
 
+export interface ReaderRecordPlateMathData {
+  latex: string;
+  display: boolean;
+  stableBlockId: string;
+  parentStableBlockId: string | null;
+  positionKind: "inline" | "block";
+  beforeUtf16?: number;
+  inlineOrdinal?: number;
+}
+
+export interface ReaderRecordPlateMathBlock {
+  type: "math";
+  id: string;
+  children: [{ text: "" }];
+  data: ReaderRecordPlateMathData;
+}
+
 export type ReaderRecordPlateInlineNode =
   | ReaderRecordPlateTextLeaf
-  | ReaderRecordPlateImageBlock;
+  | ReaderRecordPlateImageBlock
+  | ReaderRecordPlateMathBlock;
 
 export type ReaderRecordPlateBlock =
   | ReaderRecordPlateParagraphBlock<ReaderRecordPlateInlineNode>
@@ -115,7 +134,8 @@ export type ReaderRecordPlateBlock =
   | ReaderRecordPlateTableCellBlock<ReaderRecordPlateInlineNode>
   | ReaderRecordPlateHrBlock
   | ReaderRecordPlateSourceCalloutBlock
-  | ReaderRecordPlateImageBlock;
+  | ReaderRecordPlateImageBlock
+  | ReaderRecordPlateMathBlock;
 
 /** 原文段落块 — 一个 source span 对应一个 paragraph */
 export interface ReaderRecordPlateParagraphBlock<
@@ -3007,7 +3027,8 @@ function isTextLeaf(node: unknown): node is ReaderRecordPlateTextLeaf {
   return (
     !!node &&
     typeof (node as { text?: unknown }).text === "string" &&
-    (node as { type?: unknown }).type !== "image"
+    (node as { type?: unknown }).type !== "image" &&
+    (node as { type?: unknown }).type !== "math"
   );
 }
 
@@ -3022,6 +3043,8 @@ function makeStandaloneImageBlock(
   const altText = typeof p.alt_text === "string" ? (p.alt_text as string) : "";
   const titleRaw = p.title;
   const title = typeof titleRaw === "string" ? (titleRaw as string) : titleRaw === null ? null : null;
+  const overrideRaw = p.override_url;
+  const overrideUrl = typeof overrideRaw === "string" ? (overrideRaw as string) : undefined;
   return {
     type: "image",
     id: `image:${node.block_id}`,
@@ -3034,6 +3057,7 @@ function makeStandaloneImageBlock(
       positionKind: "standalone",
       stableBlockId: node.block_id,
       parentStableBlockId: node.parent_block_id,
+      ...(overrideUrl !== undefined ? { overrideUrl } : {}),
     },
   };
 }
@@ -3056,6 +3080,8 @@ function makeInlineImageBlock(
   const effectiveUrl = typeof effectiveRaw === "string" ? effectiveRaw : effectiveRaw === null ? null : null;
   // before is validated outside (integer and bounds), but also guard here
   if (typeof before !== "number" || !Number.isInteger(before)) return null;
+  const overrideRaw = entry.override_url;
+  const overrideUrl = typeof overrideRaw === "string" ? (overrideRaw as string) : undefined;
   return {
     type: "image",
     id: `image:${owningId}:${ordinal}`,
@@ -3070,6 +3096,7 @@ function makeInlineImageBlock(
       parentStableBlockId,
       inlineOrdinal: ordinal,
       beforeUtf16: before as number,
+      ...(overrideUrl !== undefined ? { overrideUrl } : {}),
     },
   };
 }
@@ -3209,6 +3236,167 @@ function enrichInlineImagesForBlock(
   block.children = finalChildren;
 }
 
+function makeInlineMathBlock(
+  entry: Record<string, unknown>,
+  owningId: string,
+  parentStableBlockId: string | null,
+  ordinal: number,
+): ReaderRecordPlateMathBlock | null {
+  const latex = entry.latex;
+  const display = entry.display;
+  const before = entry.before_utf16;
+  if (typeof latex !== "string") return null;
+  if (typeof display !== "boolean") return null;
+  if (typeof before !== "number" || !Number.isInteger(before)) return null;
+  return {
+    type: "math",
+    id: `math:${owningId}:${ordinal}`,
+    children: [{ text: "" }],
+    data: {
+      latex,
+      display,
+      stableBlockId: owningId,
+      parentStableBlockId,
+      positionKind: "inline",
+      beforeUtf16: before as number,
+      inlineOrdinal: ordinal,
+    },
+  };
+}
+
+function makeBlockMathBlock(
+  entry: Record<string, unknown>,
+  owningId: string,
+  parentStableBlockId: string | null,
+  ordinal: number,
+): ReaderRecordPlateMathBlock | null {
+  const latex = entry.latex;
+  const display = entry.display;
+  if (typeof latex !== "string") return null;
+  if (typeof display !== "boolean") return null;
+  return {
+    type: "math",
+    id: `math:${owningId}:block:${ordinal}`,
+    children: [{ text: "" }],
+    data: {
+      latex,
+      display,
+      stableBlockId: owningId,
+      parentStableBlockId,
+      positionKind: "block",
+      inlineOrdinal: ordinal,
+    },
+  };
+}
+
+function enrichInlineMathForBlock(
+  block: ReaderRecordPlateBlock,
+  placements: Array<{
+    entry: Record<string, unknown>;
+    ordinal: number;
+    localBefore: number;
+  }>,
+  owningId: string,
+  parentStableBlockId: string | null,
+): void {
+  if (
+    block.type !== "paragraph" &&
+    block.type !== "heading" &&
+    block.type !== "list_item" &&
+    block.type !== "markdown_blockquote" &&
+    block.type !== "table_cell"
+  ) {
+    return;
+  }
+  const textLeaves = block.children.filter(isTextLeaf);
+  const textLength = textLeaves.reduce((length, leaf) => length + leaf.text.length, 0);
+  const valid = placements
+    .filter(
+      ({ entry, localBefore }) =>
+        Number.isInteger(localBefore) &&
+        localBefore >= 0 &&
+        localBefore <= textLength &&
+        typeof entry.latex === "string" &&
+        typeof entry.display === "boolean",
+    )
+    .sort((a, b) => a.localBefore - b.localBefore || a.ordinal - b.ordinal);
+  if (valid.length === 0) return;
+  const offsets = valid.map(({ localBefore }) => localBefore);
+  const splitLeaves = splitLeavesAtOffsets(textLeaves, offsets);
+  const byOffset = new Map<number, ReaderRecordPlateMathBlock[]>();
+  for (const v of valid) {
+    const before = v.localBefore;
+    const math = makeInlineMathBlock(v.entry, owningId, parentStableBlockId, v.ordinal);
+    if (!math) continue;
+    const arr = byOffset.get(before) ?? [];
+    arr.push(math);
+    byOffset.set(before, arr);
+  }
+  const sortedOffsets = [...byOffset.keys()].sort((a, b) => a - b);
+  const leafOffsets: Array<{ leaf: ReaderRecordPlateTextLeaf; start: number; end: number }> = [];
+  let cum2 = 0;
+  for (const leaf of splitLeaves) {
+    const len = leaf.text.length;
+    leafOffsets.push({ leaf, start: cum2, end: cum2 + len });
+    cum2 += len;
+  }
+  const finalChildren: Array<ReaderRecordPlateTextLeaf | ReaderRecordPlateMathBlock | ReaderRecordPlateImageBlock> = [];
+  let leafIdx = 0;
+  for (const off of sortedOffsets) {
+    while (leafIdx < leafOffsets.length && leafOffsets[leafIdx].end <= off) {
+      finalChildren.push(leafOffsets[leafIdx].leaf);
+      leafIdx += 1;
+    }
+    const maths = byOffset.get(off) ?? [];
+    finalChildren.push(...maths);
+  }
+  while (leafIdx < leafOffsets.length) {
+    finalChildren.push(leafOffsets[leafIdx].leaf);
+    leafIdx += 1;
+  }
+  if (splitLeaves.length === 0 && valid.length > 0) {
+    block.children = sortedOffsets.flatMap((off) => byOffset.get(off) ?? []) as unknown as typeof block.children;
+    return;
+  }
+  block.children = finalChildren as unknown as typeof block.children;
+}
+
+function enrichBlockMathForBlock(
+  block: ReaderRecordPlateBlock,
+  entries: Array<{ entry: Record<string, unknown>; ordinal: number }>,
+  owningId: string,
+  parentStableBlockId: string | null,
+): void {
+  if (
+    block.type !== "paragraph" &&
+    block.type !== "heading" &&
+    block.type !== "list_item" &&
+    block.type !== "markdown_blockquote" &&
+    block.type !== "table_cell" &&
+    block.type !== "blockquote" &&
+    block.type !== "source_callout"
+  ) {
+    return;
+  }
+  const maths: ReaderRecordPlateMathBlock[] = [];
+  for (const { entry, ordinal } of entries) {
+    const math = makeBlockMathBlock(entry, owningId, parentStableBlockId, ordinal);
+    if (math) maths.push(math);
+  }
+  if (maths.length === 0) return;
+  // Append after existing inline children; block math is display-styled even inside inline context.
+  // For pure containers the existing text leaves may be empty/fallback; keep maths as primary content.
+  const current = block.children as unknown as Array<ReaderRecordPlateTextLeaf | ReaderRecordPlateMathBlock | ReaderRecordPlateImageBlock>;
+  const hasText = current.some((node) => isTextLeaf(node) && (node as ReaderRecordPlateTextLeaf).text.trim().length > 0);
+  if (!hasText && current.filter(isTextLeaf).length > 0) {
+    // Pure container where text leaves are fallback/empty: replace text leaves with maths (keep maths only)
+    // Preserve scenario where block previously had no meaningful text (e.g., pure math heading)
+    block.children = maths as unknown as typeof block.children;
+  } else {
+    block.children = [...current, ...maths] as unknown as typeof block.children;
+  }
+}
+
 function findBlocksByStableId(
   blocks: ReaderRecordPlateBlock[],
   stableId: string,
@@ -3344,6 +3532,153 @@ function injectImages(
   return children;
 }
 
+function injectInlineMath(
+  children: ReaderRecordPlateBlock[],
+  tree: ReaderStableDocumentBlockNodeDto[],
+): ReaderRecordPlateBlock[] {
+  const inlineById = new Map<string, unknown[]>();
+  const nodeById = new Map<string, ReaderStableDocumentBlockNodeDto>();
+  const walkCollect = (list: ReaderStableDocumentBlockNodeDto[]) => {
+    for (const n of list) {
+      nodeById.set(n.block_id, n);
+      const inline = n.payload["inline_math"];
+      if (Array.isArray(inline)) inlineById.set(n.block_id, inline);
+      if (n.children?.length) walkCollect(n.children);
+    }
+  };
+  walkCollect(tree);
+
+  for (const [owningId, rawEntries] of inlineById.entries()) {
+    const targets: ReaderRecordPlateBlock[] = [];
+    findBlocksByStableId(children, owningId, targets);
+    const owningNode = nodeById.get(owningId);
+    const parentStableBlockId = owningNode?.parent_block_id ?? null;
+    const inlineTargets = targets.filter(
+      (target) =>
+        target.type === "paragraph" ||
+        target.type === "heading" ||
+        target.type === "list_item" ||
+        target.type === "markdown_blockquote" ||
+        target.type === "table_cell",
+    );
+    if (inlineTargets.length === 0) continue;
+
+    const lengths = inlineTargets.map((target) =>
+      target.children.filter(isTextLeaf).reduce((sum, leaf) => sum + leaf.text.length, 0),
+    );
+    const totalLength = lengths.reduce((sum, length) => sum + length, 0);
+    const placements = inlineTargets.map(() => [] as Array<{
+      entry: Record<string, unknown>;
+      ordinal: number;
+      localBefore: number;
+    }>);
+
+    rawEntries.forEach((raw, ordinal) => {
+      if (!raw || typeof raw !== "object") return;
+      const entry = raw as Record<string, unknown>;
+      const before = entry["before_utf16"];
+      if (
+        typeof before !== "number" ||
+        !Number.isInteger(before) ||
+        before < 0 ||
+        before > totalLength ||
+        typeof entry["latex"] !== "string" ||
+        typeof entry["display"] !== "boolean"
+      ) {
+        return;
+      }
+      let start = 0;
+      for (let index = 0; index < inlineTargets.length; index += 1) {
+        const end = start + lengths[index];
+        if (before < end || (index === inlineTargets.length - 1 && before <= end)) {
+          placements[index].push({
+            entry,
+            ordinal,
+            localBefore: before - start,
+          });
+          return;
+        }
+        start = end;
+      }
+    });
+
+    inlineTargets.forEach((target, index) => {
+      enrichInlineMathForBlock(
+        target,
+        placements[index],
+        owningId,
+        parentStableBlockId,
+      );
+    });
+  }
+  return children;
+}
+
+function injectBlockMath(
+  children: ReaderRecordPlateBlock[],
+  tree: ReaderStableDocumentBlockNodeDto[],
+): ReaderRecordPlateBlock[] {
+  const blockById = new Map<string, unknown[]>();
+  const nodeById = new Map<string, ReaderStableDocumentBlockNodeDto>();
+  const orderById = new Map<string, number>();
+  const walkCollect = (list: ReaderStableDocumentBlockNodeDto[]) => {
+    for (const n of list) {
+      nodeById.set(n.block_id, n);
+      orderById.set(n.block_id, n.order_index);
+      const blocks = n.payload["math_blocks"];
+      if (Array.isArray(blocks) && blocks.length > 0) blockById.set(n.block_id, blocks);
+      if (n.children?.length) walkCollect(n.children);
+    }
+  };
+  walkCollect(tree);
+
+  const remainingBlocks: ReaderRecordPlateBlock[] = [];
+
+  for (const [owningId, rawEntries] of blockById.entries()) {
+    const owningNode = nodeById.get(owningId);
+    const parentStableBlockId = owningNode?.parent_block_id ?? null;
+    const targets: ReaderRecordPlateBlock[] = [];
+    findBlocksByStableId(children, owningId, targets);
+    // Filter to textual containers that can host block math inline
+    const hostTargets = targets.filter(
+      (target) =>
+        target.type === "paragraph" ||
+        target.type === "heading" ||
+        target.type === "list_item" ||
+        target.type === "markdown_blockquote" ||
+        target.type === "table_cell" ||
+        target.type === "blockquote" ||
+        target.type === "source_callout",
+    );
+    if (hostTargets.length > 0) {
+      // Enrich each host with block maths (append)
+      hostTargets.forEach((target) => {
+        const entries = rawEntries
+          .map((raw, ordinal) => ({ entry: raw as Record<string, unknown>, ordinal }))
+          .filter(({ entry }) => typeof entry.latex === "string" && typeof entry.display === "boolean");
+        enrichBlockMathForBlock(target, entries, owningId, parentStableBlockId);
+      });
+      continue;
+    }
+    // No host found: pure/math-only container or standalone $$ paragraph.
+    // Create standalone math blocks at root order for each entry.
+    // For list interior math paragraphs (parent is list_item), we still create math blocks
+    // but mergeRootBlocks will order them correctly; if parent was list_item, the math paragraph's order
+    // will place it after the list grouping via mergeRootBlocks grouping. For simplicity we create
+    // math blocks at root.
+    rawEntries.forEach((raw, ordinal) => {
+      if (!raw || typeof raw !== "object") return;
+      const entry = raw as Record<string, unknown>;
+      const math = makeBlockMathBlock(entry, owningId, parentStableBlockId, ordinal);
+      if (math) remainingBlocks.push(math);
+    });
+  }
+
+  if (remainingBlocks.length === 0) return children;
+  // Merge remaining math blocks into root ordering via stable order_index
+  return mergeRootBlocks(children, remainingBlocks, orderById);
+}
+
 export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordPlateDocument {
@@ -3369,9 +3704,12 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   const baseChildren = snapshot.stable_document_tree?.length
     ? projectStableDocumentTree(snapshot.stable_document_tree, flatChildren)
     : groupStableWrapperBlocks(flatChildren);
-  const children = snapshot.stable_document_tree?.length
-    ? injectImages(baseChildren, snapshot.stable_document_tree)
-    : baseChildren;
+  let children = baseChildren;
+  if (snapshot.stable_document_tree?.length) {
+    children = injectImages(children, snapshot.stable_document_tree);
+    children = injectInlineMath(children, snapshot.stable_document_tree);
+    children = injectBlockMath(children, snapshot.stable_document_tree);
+  }
 
   return {
     type: "reader_record_plate_document",

@@ -514,6 +514,10 @@ class ReaderSnapshotBase(BaseModel):
     segmenter_version: str = Field(min_length=1)
     text_length_utf16: int = Field(ge=1)
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
+    # G2d-A（T19 缺口闭合）：Web 构造 PUT/DELETE override locator 所需。
+    # 真实 Reader API persisted path 必为非空字符串；None 仅为兼容既有
+    # synthetic/profiler 构建路径的默认（TECHNICAL_COMPATIBILITY_ADAPTATION）。
+    stable_document_id: str | None = Field(default=None, min_length=1)
 
 
 class ReaderSnapshotRecord(BaseModel):
