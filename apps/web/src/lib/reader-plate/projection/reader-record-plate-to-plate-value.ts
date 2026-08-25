@@ -83,6 +83,8 @@ export const READER_HR_TYPE = "reader_hr" as const;
 export const READER_SOURCE_CALLOUT_TYPE = "reader_source_callout" as const;
 export const READER_IMAGE_TYPE = "reader_image" as const;
 export const READER_IMAGE_BLOCK_TYPE = "reader_image_block" as const;
+export const READER_MATH_INLINE_TYPE = "reader_math_inline" as const;
+export const READER_MATH_BLOCK_TYPE = "reader_math_block" as const;
 
 // --- Mark key constants ---
 
@@ -97,7 +99,7 @@ export const READER_SENTENCE_CHUNK_MARK_KEY = "sentence_chunk" as const;
 export interface ReaderParagraphElement {
   type: typeof READER_PARAGRAPH_TYPE;
   id: ReaderRecordPlateParagraphBlock["id"];
-  children: Array<PlateTextNode | ReaderImageElement>;
+  children: Array<PlateTextNode | ReaderImageElement | ReaderMathInlineElement>;
   data: ReaderRecordPlateParagraphBlock["data"];
 }
 
@@ -143,7 +145,7 @@ export interface ReaderHeadingElement {
   id: ReaderRecordPlateHeadingBlock["id"];
   /** 1-based heading level (clamped to 1-6). */
   level: ReaderRecordPlateHeadingBlock["level"];
-  children: Array<PlateTextNode | ReaderImageElement>;
+  children: Array<PlateTextNode | ReaderImageElement | ReaderMathInlineElement>;
   data: ReaderRecordPlateHeadingBlock["data"];
 }
 
@@ -160,7 +162,7 @@ export interface ReaderListItemElement {
   type: typeof READER_LIST_ITEM_TYPE;
   id: ReaderRecordPlateListItemBlock["id"];
   children: Array<
-    PlateTextNode | ReaderImageElement | ReaderImageBlockElement | ReaderListElement
+    PlateTextNode | ReaderImageElement | ReaderImageBlockElement | ReaderMathInlineElement | ReaderMathBlockElement | ReaderListElement
   >;
   data: ReaderRecordPlateListItemBlock["data"];
 }
@@ -175,7 +177,7 @@ export interface ReaderCodeBlockElement {
 export interface ReaderMarkdownBlockquoteElement {
   type: typeof READER_MARKDOWN_BLOCKQUOTE_TYPE;
   id: ReaderRecordPlateMarkdownBlockquoteBlock["id"];
-  children: Array<PlateTextNode | ReaderImageElement>;
+  children: Array<PlateTextNode | ReaderImageElement | ReaderMathInlineElement | ReaderMathBlockElement>;
   data: ReaderRecordPlateMarkdownBlockquoteBlock["data"];
 }
 
@@ -196,7 +198,7 @@ export interface ReaderTableRowElement {
 export interface ReaderTableCellElement {
   type: typeof READER_TABLE_CELL_TYPE;
   id: ReaderRecordPlateTableCellBlock["id"];
-  children: Array<PlateTextNode | ReaderImageElement>;
+  children: Array<PlateTextNode | ReaderImageElement | ReaderMathInlineElement>;
   data: ReaderRecordPlateTableCellBlock["data"];
 }
 
@@ -228,6 +230,20 @@ export interface ReaderImageBlockElement {
   data: { stableBlockId: string; parentStableBlockId: string | null };
 }
 
+export interface ReaderMathInlineElement {
+  type: typeof READER_MATH_INLINE_TYPE;
+  id: string;
+  children: [{ text: "" }];
+  data: import("./reader-record-plate-document").ReaderRecordPlateMathBlock["data"];
+}
+
+export interface ReaderMathBlockElement {
+  type: typeof READER_MATH_BLOCK_TYPE;
+  id: string;
+  children: [ReaderMathInlineElement];
+  data: { stableBlockId: string; parentStableBlockId: string | null };
+}
+
 export type ReaderPlateElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
@@ -247,7 +263,9 @@ export type ReaderPlateElement =
   | ReaderHrElement
   | ReaderSourceCalloutElement
   | ReaderImageElement
-  | ReaderImageBlockElement;
+  | ReaderImageBlockElement
+  | ReaderMathInlineElement
+  | ReaderMathBlockElement;
 
 // --- Text node type ---
 
@@ -480,6 +498,10 @@ function isImageNode(node: unknown): node is ReaderRecordPlateImageBlock {
   return (node as { type?: string })?.type === "image";
 }
 
+function isMathNode(node: unknown): node is import("./reader-record-plate-document").ReaderRecordPlateMathBlock {
+  return (node as { type?: string })?.type === "math";
+}
+
 function inlineImageToPlateElement(block: ReaderRecordPlateImageBlock): ReaderImageElement {
   return {
     type: READER_IMAGE_TYPE,
@@ -499,13 +521,38 @@ function imageBlockToPlateElement(block: ReaderRecordPlateImageBlock): ReaderIma
   };
 }
 
+function inlineMathToPlateElement(
+  block: import("./reader-record-plate-document").ReaderRecordPlateMathBlock,
+): ReaderMathInlineElement {
+  return {
+    type: READER_MATH_INLINE_TYPE,
+    id: block.id,
+    children: [{ text: "" }],
+    data: block.data,
+  };
+}
+
+function mathBlockToPlateElement(
+  block: import("./reader-record-plate-document").ReaderRecordPlateMathBlock,
+): ReaderMathBlockElement {
+  const mathInline = inlineMathToPlateElement(block);
+  return {
+    type: READER_MATH_BLOCK_TYPE,
+    id: `block:${block.id}`,
+    children: [mathInline],
+    data: { stableBlockId: block.data.stableBlockId, parentStableBlockId: block.data.parentStableBlockId },
+  };
+}
+
 function inlineNodesToPlateChildren(
   nodes: ReaderRecordPlateInlineNode[],
-): Array<PlateTextNode | ReaderImageElement> {
+): Array<PlateTextNode | ReaderImageElement | ReaderMathInlineElement> {
   if (nodes.length === 0) return [{ text: "" }];
-  return nodes.map((node) =>
-    isImageNode(node) ? inlineImageToPlateElement(node) : textLeafToPlateTextNode(node),
-  );
+  return nodes.map((node) => {
+    if (isImageNode(node)) return inlineImageToPlateElement(node);
+    if (isMathNode(node)) return inlineMathToPlateElement(node);
+    return textLeafToPlateTextNode(node as import("./reader-record-plate-document").ReaderRecordPlateTextLeaf);
+  });
 }
 
 // --- Block → Element converters ---
@@ -788,6 +835,8 @@ function readerBlockToPlateElement(
       return sourceCalloutBlockToElement(block);
     case "image":
       return imageBlockToPlateElement(block as unknown as ReaderRecordPlateImageBlock) as unknown as ReaderPlateElement;
+    case "math":
+      return mathBlockToPlateElement(block as unknown as import("./reader-record-plate-document").ReaderRecordPlateMathBlock) as unknown as ReaderPlateElement;
   }
 }
 

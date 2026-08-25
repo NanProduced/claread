@@ -37,6 +37,7 @@ import type {
   ReaderListItemElement,
   ReaderListElement,
   ReaderMarkdownBlockquoteElement,
+  ReaderMathInlineElement,
   ReaderParagraphElement,
   ReaderSentenceAnalysisChunkElement,
   ReaderSourceCalloutElement,
@@ -56,6 +57,8 @@ import {
   READER_LIST_ITEM_TYPE,
   READER_LIST_TYPE,
   READER_MARKDOWN_BLOCKQUOTE_TYPE,
+  READER_MATH_BLOCK_TYPE,
+  READER_MATH_INLINE_TYPE,
   READER_PARAGRAPH_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
@@ -65,6 +68,7 @@ import {
   READER_TABLE_ROW_TYPE,
   READER_TABLE_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import katex from "katex";
 import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
@@ -585,6 +589,99 @@ function ReaderImageBlockComponent({ attributes, children }: PlateElementProps) 
 export const ReaderImageBlockPlugin = createPlatePlugin({
   key: READER_IMAGE_BLOCK_TYPE,
   node: { isElement: true, component: ReaderImageBlockComponent },
+});
+
+// ---------------------------------------------------------------------------
+// Reader math (inline + block) — KaTeX, fail-closed, chrome excluded
+// Mirrors G3b image surface: math rendering product is void inline + block
+// wrapper, excluded from copy/selection/word count via same contracts.
+// ---------------------------------------------------------------------------
+
+const READER_MATH_FALLBACK_CLASS =
+  "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
+const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+
+function ReaderMathInlineComponent({ attributes, children, element }: PlateElementProps) {
+  const node = element as unknown as ReaderMathInlineElement;
+  const data = (node.data ?? {}) as unknown as { latex?: unknown; display?: unknown };
+  const latex = typeof data.latex === "string" ? data.latex : "";
+  const display = data.display === true;
+  const katexRef = React.useRef<HTMLSpanElement>(null);
+  let html: string | null = null;
+  let isError = false;
+  try {
+    html = katex.renderToString(latex, {
+      displayMode: display,
+      throwOnError: true,
+      strict: false,
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    isError = true;
+    html = null;
+  }
+  React.useLayoutEffect(() => {
+    if (isError || !html || !katexRef.current) return;
+    katexRef.current.innerHTML = html;
+  }, [html, isError]);
+  const wrapperClass = display ? READER_MATH_DISPLAY_WRAPPER_CLASS : "inline-flex align-baseline";
+  if (isError || !html) {
+    // fail-closed: show raw latex source, never throw, never silently drop
+    return (
+      <span
+        {...attributes}
+        data-reader-math="true"
+        data-math-display={display ? "true" : "false"}
+        data-math-state="error"
+        className={display ? "inline-block max-w-full align-top" : "inline-block align-baseline"}
+      >
+        <span {...copyExcludeProps} className={READER_MATH_FALLBACK_CLASS} data-reader-math-fallback="true">
+          {latex}
+        </span>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <span
+      {...attributes}
+      data-reader-math="true"
+      data-math-display={display ? "true" : "false"}
+      data-math-state="ok"
+      className={display ? "inline-block max-w-full align-top" : "inline-block align-baseline"}
+    >
+      <span
+        {...copyExcludeProps}
+        ref={katexRef}
+        className={wrapperClass}
+        data-reader-math-content="true"
+      />
+      {children}
+    </span>
+  );
+}
+
+export const ReaderMathInlinePlugin = createPlatePlugin({
+  key: READER_MATH_INLINE_TYPE,
+  node: { isElement: true, isInline: true, isVoid: true, component: ReaderMathInlineComponent },
+});
+
+function ReaderMathBlockComponent({ attributes, children }: PlateElementProps) {
+  return (
+    <div
+      {...attributes}
+      data-reader-math-block="true"
+      className="reader-record-plate-math-block my-3 flex w-full justify-center overflow-x-auto"
+    >
+      {children}
+    </div>
+  );
+}
+
+export const ReaderMathBlockPlugin = createPlatePlugin({
+  key: READER_MATH_BLOCK_TYPE,
+  node: { isElement: true, component: ReaderMathBlockComponent },
 });
 
 function stopReaderCalloutControlEvent(
@@ -2324,6 +2421,8 @@ export const ReaderBlocksKit = [
   ReaderStableSourceCalloutPlugin,
   ReaderImagePlugin,
   ReaderImageBlockPlugin,
+  ReaderMathInlinePlugin,
+  ReaderMathBlockPlugin,
   // source_callout（非 stable-block 路径）：当 enhancement children markdown
   // 反序列化遇到 `<aside>` 或 GFM alert 时，SOURCE_CALLOUT_RULES 产出
   // `{type:"source_callout"}` element。此处注册 SourceCalloutPlugin 让该
