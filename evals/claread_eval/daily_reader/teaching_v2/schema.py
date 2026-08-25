@@ -354,6 +354,11 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
             f"{bp.get('effective_difficulty')!r} must equal "
             f"gold.expected_difficulty {gold.get('expected_difficulty')!r}"
         )
+    # P-5A title contract: v2 dataset artifacts must declare the Chinese
+    # headline fields (shape/purity validated in the shared module).
+    for field in ("title_zh", "subtitle_zh", "tags_zh"):
+        if field not in bp:
+            errs.append(f"lesson_blueprint.{field} is required (v2 title contract)")
     return errs
 
 

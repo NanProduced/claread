@@ -29,6 +29,19 @@ CHECKPOINT_SKILLS = (
 TRANSFER_TASK_KINDS = ("retell", "rewrite", "counter", "explain")
 UNIT_ID_RE = re.compile(r"^u\d{2,3}$")
 
+# P-5A title contract (production口径 daily_interpretation.yaml 26-40 +
+# internal CloseReadingTakeaways): title_zh 8-18 字, subtitle_zh ≤30 字,
+# tags_zh = 2-4 个全中文标签. Length bounds are enforced by the
+# counts_in_bounds gate; shape/purity checks live here.
+TITLE_ZH_MIN_LEN = 8
+TITLE_ZH_MAX_LEN = 18
+SUBTITLE_ZH_MAX_LEN = 30
+TAGS_ZH_MIN_COUNT = 2
+TAGS_ZH_MAX_COUNT = 4
+
+_ASCII_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
@@ -161,4 +174,25 @@ def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[st
         errs.append(f"transfer_task.task_kind must be one of {TRANSFER_TASK_KINDS}")
     elif tt is not None and not isinstance(tt, dict):
         errs.append("transfer_task must be an object")
+
+    # P-5A title contract: shape/purity of the Chinese headline fields
+    # (presence itself is enforced by the eval-side dataset contract).
+    title = bp.get("title_zh")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        errs.append(f"lesson_blueprint.title_zh must be a non-empty string, got {title!r}")
+    subtitle = bp.get("subtitle_zh")
+    if subtitle is not None and (not isinstance(subtitle, str) or not subtitle.strip()):
+        errs.append(f"lesson_blueprint.subtitle_zh must be a non-empty string, got {subtitle!r}")
+    tags = bp.get("tags_zh")
+    if tags is not None:
+        if not isinstance(tags, list):
+            errs.append(f"lesson_blueprint.tags_zh must be a list, got {tags!r}")
+        else:
+            for i, tag in enumerate(tags):
+                if not isinstance(tag, str) or not tag.strip():
+                    errs.append(f"lesson_blueprint.tags_zh[{i}] must be a non-empty string")
+                elif _ASCII_ALNUM_RE.search(tag) or not _CJK_RE.search(tag):
+                    errs.append(
+                        f"lesson_blueprint.tags_zh[{i}] must be an all-Chinese label: {tag!r}"
+                    )
     return errs

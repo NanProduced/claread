@@ -16,7 +16,14 @@ from collections.abc import Callable
 from typing import Any
 
 from app.services.daily_reader.teaching.normalize import normalize_expression, normalize_text
-from app.services.daily_reader.teaching.schema import substantive_unit_ids
+from app.services.daily_reader.teaching.schema import (
+    SUBTITLE_ZH_MAX_LEN,
+    TAGS_ZH_MAX_COUNT,
+    TAGS_ZH_MIN_COUNT,
+    TITLE_ZH_MAX_LEN,
+    TITLE_ZH_MIN_LEN,
+    substantive_unit_ids,
+)
 
 GateFn = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
@@ -63,6 +70,8 @@ def _artifact_surface_texts(artifact: dict[str, Any]) -> list[str]:
     """Every user-visible text surface of a v2 artifact."""
     texts: list[str] = []
     bp = _bp(artifact)
+    texts += [bp.get("title_zh") or "", bp.get("subtitle_zh") or ""]
+    texts += [t for t in bp.get("tags_zh") or [] if isinstance(t, str)]
     texts += [bp.get("reading_mission", "")]
     texts += list(bp.get("learning_objectives") or [])
     for node in bp.get("structure_map") or []:
@@ -222,6 +231,24 @@ def gate_counts_in_bounds(case: dict[str, Any], artifact: dict[str, Any]) -> dic
         violations.append(f"structure_map={n} outside 2-6")
     if not isinstance(pkg.get("transfer_task"), dict):
         violations.append("transfer_task must be exactly 1 object")
+    # P-5A title contract bounds (production口径: title 8-18 字,
+    # subtitle ≤30 字, tags 2-4 个; absent fields stay gate-silent —
+    # presence is the dataset schema's job).
+    title = bp.get("title_zh")
+    if isinstance(title, str) and title.strip():
+        if not TITLE_ZH_MIN_LEN <= len(title) <= TITLE_ZH_MAX_LEN:
+            violations.append(
+                f"title_zh length {len(title)} outside {TITLE_ZH_MIN_LEN}-{TITLE_ZH_MAX_LEN}"
+            )
+    subtitle = bp.get("subtitle_zh")
+    if isinstance(subtitle, str) and subtitle.strip():
+        if len(subtitle) > SUBTITLE_ZH_MAX_LEN:
+            violations.append(f"subtitle_zh length {len(subtitle)} outside 1-{SUBTITLE_ZH_MAX_LEN}")
+    tags = bp.get("tags_zh")
+    if tags is not None:
+        n = len(tags) if isinstance(tags, list) else -1
+        if not TAGS_ZH_MIN_COUNT <= n <= TAGS_ZH_MAX_COUNT:
+            violations.append(f"tags_zh={n} outside {TAGS_ZH_MIN_COUNT}-{TAGS_ZH_MAX_COUNT}")
     return {"passed": not violations, "detail": {"violations": violations}}
 
 

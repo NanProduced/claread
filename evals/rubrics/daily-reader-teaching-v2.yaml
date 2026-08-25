@@ -35,7 +35,8 @@ deterministic_checks:
     description: >
       checkpoints 2-4, language targets 3-5, sentence maps 1-2,
       learning objectives 1-2, structure nodes 2-6, transfer task
-      exactly 1.
+      exactly 1. P-5A title contract: title_zh 8-18 字,
+      subtitle_zh ≤30 字, tags_zh 2-4 个.
     fail_mode: any_bound_violated
   - id: no_empty_placeholders
     description: >
@@ -172,7 +173,10 @@ judge:
       pass_score: 4
       criteria: >
         中文自然、准确、无模板化 AI 腔（不用"深度解析/一文读懂/揭秘"
-        等套话）；机翻腔、空话或错别字按数量扣分。
+        等套话）；机翻腔、空话或错别字按数量扣分。标题合同（P-5A）：
+        title_zh 是刊物级编辑标题而非逐词直译（8-18 字、纯中文、信雅达、
+        不脱离原意），subtitle_zh 一句话点题且与标题不重复，tags_zh 为
+        2-4 个全中文主题标签；标题/副题/标签空洞或模板化按程度扣分。
     - id: learning_sequence
       label: 学习顺序
       score_min: 1

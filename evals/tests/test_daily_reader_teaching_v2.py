@@ -38,18 +38,24 @@ def _b1_case(**gold_over) -> dict:
         "schema_version": 2,
         "case_id": "fx-b1",
         "dataset_id": "daily-reader-teaching-v2",
-        "origin": {"kind": "frozen_real_article", "source": "bbc",
-                   "source_url": "https://example.test/a",
-                   "captured_at": "2026-08-21", "frozen_real_article": True},
+        "origin": {
+            "kind": "frozen_real_article",
+            "source": "bbc",
+            "source_url": "https://example.test/a",
+            "captured_at": "2026-08-21",
+            "frozen_real_article": True,
+        },
         "input": {
             "title": "Small town opens new library",
             "subtitle": "The library opens on Saturday.",
             "source": "bbc",
             "source_url": "https://example.test/a",
-            "original_text": ("The town opened a new library on Saturday.\n"
-                              "Many families came to the opening event.\n"
-                              "The mayor said books help children learn.\n"
-                              "The library will stay open until nine at night."),
+            "original_text": (
+                "The town opened a new library on Saturday.\n"
+                "Many families came to the opening event.\n"
+                "The mayor said books help children learn.\n"
+                "The library will stay open until nine at night."
+            ),
             "reading_units": [
                 {"id": "u01", "text": "The town opened a new library on Saturday."},
                 {"id": "u02", "text": "Many families came to the opening event."},
@@ -66,23 +72,34 @@ def _b1_case(**gold_over) -> dict:
             "dirty_fragments": [],
             "rejection_reasons": [],
             "key_evidence": [
-                {"source_quote": "The town opened a new library on Saturday",
-                 "acceptable_answer_points_zh": ["新图书馆周六开放"],
-                 "paragraph_ids": ["u01"]},
-                {"source_quote": "The mayor said books help children learn",
-                 "acceptable_answer_points_zh": ["市长认为书籍帮助儿童学习"],
-                 "paragraph_ids": ["u03"]},
+                {
+                    "source_quote": "The town opened a new library on Saturday",
+                    "acceptable_answer_points_zh": ["新图书馆周六开放"],
+                    "paragraph_ids": ["u01"],
+                },
+                {
+                    "source_quote": "The mayor said books help children learn",
+                    "acceptable_answer_points_zh": ["市长认为书籍帮助儿童学习"],
+                    "paragraph_ids": ["u03"],
+                },
             ],
             "core_expressions": [
-                {"expression": "stay open", "source_quote": "stay open until nine",
-                 "meaning_zh": "保持开放", "teaching_value": "常用搭配",
-                 "paragraph_ids": ["u04"]},
+                {
+                    "expression": "stay open",
+                    "source_quote": "stay open until nine",
+                    "meaning_zh": "保持开放",
+                    "teaching_value": "常用搭配",
+                    "paragraph_ids": ["u04"],
+                },
             ],
-            "forbidden_facts": [
-                {"claim_zh": "图书馆周日开放", "reason": "原文为周六"}],
+            "forbidden_facts": [{"claim_zh": "图书馆周日开放", "reason": "原文为周六"}],
             "acceptable_transfer_directions": [
-                {"task_kind": "retell", "required_learning_target": "stay open",
-                 "acceptable_direction_zh": "用 stay open 复述开放时间"}],
+                {
+                    "task_kind": "retell",
+                    "required_learning_target": "stay open",
+                    "acceptable_direction_zh": "用 stay open 复述开放时间",
+                }
+            ],
             "expected_translation_coverage": {
                 "policy": "all_units",
                 "required_paragraph_ids": ["u01", "u02", "u03", "u04"],
@@ -100,6 +117,11 @@ def _b1_artifact(**over) -> dict:
         "lesson_blueprint": {
             "article_type": "news_report",
             "effective_difficulty": "B1",
+            # P-5A title contract (production口径: 刊物级编辑标题 8-18 字,
+            # 副标题 ≤30 字, tags 2-4 个全中文)
+            "title_zh": "小镇图书馆周六开放",
+            "subtitle_zh": "新图书馆首日吸引许多家庭，市长强调儿童阅读的价值。",
+            "tags_zh": ["公共图书馆", "社区", "儿童阅读"],
             "reading_mission": "带着‘新图书馆为社区带来什么’的问题读这篇短新闻。",
             "learning_objectives": ["抓住新闻中的时间、地点和人物事实"],
             "structure_map": [
@@ -110,33 +132,53 @@ def _b1_artifact(**over) -> dict:
         },
         "learning_package": {
             "comprehension_checkpoints": [
-                {"prompt": "新图书馆什么时候开放？", "skill": "fact_location",
-                 "evidence_paragraph_ids": ["u01"],
-                 "answer_evidence_paragraph_ids": ["u01"],
-                 "reference_answer": "周六开放。",
-                 "explanation_zh": "第一段第一句直接给出时间。"},
-                {"prompt": "市长认为书有什么作用？", "skill": "fact_location",
-                 "evidence_paragraph_ids": ["u03"],
-                 "answer_evidence_paragraph_ids": ["u03"],
-                 "reference_answer": "帮助儿童学习。",
-                 "explanation_zh": "第三段引述市长原话。"},
+                {
+                    "prompt": "新图书馆什么时候开放？",
+                    "skill": "fact_location",
+                    "evidence_paragraph_ids": ["u01"],
+                    "answer_evidence_paragraph_ids": ["u01"],
+                    "reference_answer": "周六开放。",
+                    "explanation_zh": "第一段第一句直接给出时间。",
+                },
+                {
+                    "prompt": "市长认为书有什么作用？",
+                    "skill": "fact_location",
+                    "evidence_paragraph_ids": ["u03"],
+                    "answer_evidence_paragraph_ids": ["u03"],
+                    "reference_answer": "帮助儿童学习。",
+                    "explanation_zh": "第三段引述市长原话。",
+                },
             ],
             "language_targets": [
-                {"expression": "stay open", "paragraph_id": "u04",
-                 "meaning_zh": "保持开放", "usage_note": "描述营业/开放时间的常用搭配",
-                 "reusable_pattern": "stay open until + 时间"},
-                {"expression": "opening event", "paragraph_id": "u02",
-                 "meaning_zh": "开幕活动", "usage_note": "名词修饰名词",
-                 "reusable_pattern": "opening + 名词"},
-                {"expression": "help children learn", "paragraph_id": "u03",
-                 "meaning_zh": "帮助儿童学习", "usage_note": "help + 人 + 动词原形",
-                 "reusable_pattern": "help sb do sth"},
+                {
+                    "expression": "stay open",
+                    "paragraph_id": "u04",
+                    "meaning_zh": "保持开放",
+                    "usage_note": "描述营业/开放时间的常用搭配",
+                    "reusable_pattern": "stay open until + 时间",
+                },
+                {
+                    "expression": "opening event",
+                    "paragraph_id": "u02",
+                    "meaning_zh": "开幕活动",
+                    "usage_note": "名词修饰名词",
+                    "reusable_pattern": "opening + 名词",
+                },
+                {
+                    "expression": "help children learn",
+                    "paragraph_id": "u03",
+                    "meaning_zh": "帮助儿童学习",
+                    "usage_note": "help + 人 + 动词原形",
+                    "reusable_pattern": "help sb do sth",
+                },
             ],
             "sentence_maps": [
-                {"sentence": "The town opened a new library on Saturday.",
-                 "paragraph_id": "u01",
-                 "structure_zh": "主语(The town)+谓语(opened)+宾语(a new library)+时间状语",
-                 "translation": "小镇在周六开设了一家新图书馆。"},
+                {
+                    "sentence": "The town opened a new library on Saturday.",
+                    "paragraph_id": "u01",
+                    "structure_zh": "主语(The town)+谓语(opened)+宾语(a new library)+时间状语",
+                    "translation": "小镇在周六开设了一家新图书馆。",
+                },
             ],
             "translations_by_paragraph_id": {
                 "u01": "小镇在周六开设了一家新图书馆。",
@@ -145,15 +187,21 @@ def _b1_artifact(**over) -> dict:
                 "u04": "图书馆将保持开放到晚上九点。",
             },
             "post_read_summary": "小镇周六开放新图书馆，开幕活动吸引许多家庭，"
-                                 "市长强调阅读对儿童的价值。",
-            "transfer_task": {"task_kind": "retell",
-                              "prompt": "用 stay open 复述图书馆的开放时间。",
-                              "scaffold": "The library stays open until ...",
-                              "reference_points": ["周六开放", "开放到晚上九点"]},
+            "市长强调阅读对儿童的价值。",
+            "transfer_task": {
+                "task_kind": "retell",
+                "prompt": "用 stay open 复述图书馆的开放时间。",
+                "scaffold": "The library stays open until ...",
+                "reference_points": ["周六开放", "开放到晚上九点"],
+            },
         },
         "source_assets": {"source_caption": "The new library in the town centre."},
-        "run_meta": {"outcome": "cleaned_publish", "abort": False,
-                     "refinement_count": 0, "usage": None},
+        "run_meta": {
+            "outcome": "cleaned_publish",
+            "abort": False,
+            "refinement_count": 0,
+            "usage": None,
+        },
     }
     art.update(over)
     return art
@@ -214,11 +262,17 @@ def _reject_case() -> dict:
 
 
 def _reject_artifact() -> dict:
-    return {"case_id": "fx-reject",
-            "source_assets": {"source_caption": "The new library in the town centre."},
-            "run_meta": {"outcome": "reject", "abort": True,
-                         "rejection_reason": "transcript_skeleton",
-                         "refinement_count": 0, "usage": None}}
+    return {
+        "case_id": "fx-reject",
+        "source_assets": {"source_caption": "The new library in the town centre."},
+        "run_meta": {
+            "outcome": "reject",
+            "abort": True,
+            "rejection_reason": "transcript_skeleton",
+            "refinement_count": 0,
+            "usage": None,
+        },
+    }
 
 
 def _run(case: dict, artifact: dict) -> dict:
@@ -245,8 +299,7 @@ def test_v1_checks_do_not_score_v2_artifact():
     art["learning_package"]["post_read_summary"] = "- Published leaked into v2 surface"
     det = run_deterministic_checks(case, art)
     assert det["checks"]["no_boilerplate"]["passed"] is True  # v1 saw nothing
-    assert det["checks"]["gold_expression_coverage"]["detail"].get("note") == \
-        "no gold expressions"
+    assert det["checks"]["gold_expression_coverage"]["detail"].get("note") == "no gold expressions"
     # the v2 stack catches the same leak through its own surface inventory
     res = g2.run_hard_gates(case, art)
     assert res["gates"]["no_boilerplate_residue"]["passed"] is False
@@ -299,19 +352,22 @@ def test_validate_artifact_flags_bad_fields():
 
 
 def test_dataset_coverage_matrix_validation():
-    cases = [json.loads(p.read_text(encoding="utf-8"))
-             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cases = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((DATASET_DIR / "cases").glob("*.json"))
+    ]
     assert sc.validate_dataset_coverage(cases) == []
 
 
 def test_dataset_coverage_matrix_gaps_detected():
-    cases = [json.loads(p.read_text(encoding="utf-8"))
-             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cases = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((DATASET_DIR / "cases").glob("*.json"))
+    ]
     too_few = copy.deepcopy(cases)[:5]
     errs = sc.validate_dataset_coverage(too_few)
     assert any("8-12" in e for e in errs)
-    no_b1 = [c for c in copy.deepcopy(cases)
-             if c["gold"]["expected_difficulty"] != "B1"]
+    no_b1 = [c for c in copy.deepcopy(cases) if c["gold"]["expected_difficulty"] != "B1"]
     errs = sc.validate_dataset_coverage(no_b1)
     assert any("B1" in e for e in errs)
     a2 = copy.deepcopy(cases)
@@ -379,13 +435,16 @@ def test_gate_duplicate_expression():
     assert _gate(_run(_b1_case(), art), "expression_explained_once")["passed"] is False
 
 
-@pytest.mark.parametrize("path,count", [
-    (("learning_package", "comprehension_checkpoints"), 5),
-    (("learning_package", "language_targets"), 2),
-    (("learning_package", "sentence_maps"), 3),
-    (("lesson_blueprint", "learning_objectives"), 3),
-    (("lesson_blueprint", "structure_map"), 1),
-])
+@pytest.mark.parametrize(
+    "path,count",
+    [
+        (("learning_package", "comprehension_checkpoints"), 5),
+        (("learning_package", "language_targets"), 2),
+        (("learning_package", "sentence_maps"), 3),
+        (("lesson_blueprint", "learning_objectives"), 3),
+        (("lesson_blueprint", "structure_map"), 1),
+    ],
+)
 def test_gate_counts_out_of_bounds(path, count):
     art = _b1_artifact()
     node = art
@@ -419,20 +478,19 @@ def test_gate_empty_placeholder():
 
 def test_gate_answer_evidence_must_be_subset():
     art = _b1_artifact()
-    art["learning_package"]["comprehension_checkpoints"][0][
-        "answer_evidence_paragraph_ids"] = ["u02"]
+    art["learning_package"]["comprehension_checkpoints"][0]["answer_evidence_paragraph_ids"] = [
+        "u02"
+    ]
     assert _gate(_run(_b1_case(), art), "checkpoint_evidence_valid")["passed"] is False
     art2 = _b1_artifact()
-    art2["learning_package"]["comprehension_checkpoints"][0][
-        "answer_evidence_paragraph_ids"] = []
+    art2["learning_package"]["comprehension_checkpoints"][0]["answer_evidence_paragraph_ids"] = []
     assert _gate(_run(_b1_case(), art2), "checkpoint_evidence_valid")["passed"] is False
 
 
 def test_gate_sentence_map_translation_must_reuse_shared():
     art = _b1_artifact()
     art["learning_package"]["sentence_maps"][0]["translation"] = "城里周六开了图书馆。"
-    assert _gate(_run(_b1_case(), art),
-                 "sentence_map_translation_reuse")["passed"] is False
+    assert _gate(_run(_b1_case(), art), "sentence_map_translation_reuse")["passed"] is False
 
 
 def test_gate_source_caption_overwritten():
@@ -504,7 +562,11 @@ def test_gate_b2_missing_required_fails():
 def test_gate_b2_associated_units_need_translation():
     case = _b2_case()
     case["gold"]["expected_translation_coverage"]["allowed_paragraph_ids"] = [
-        "u01", "u02", "u03", "u04"]
+        "u01",
+        "u02",
+        "u03",
+        "u04",
+    ]
     art = _b2_artifact()
     del art["learning_package"]["translations_by_paragraph_id"]["u04"]
     assert _gate(_run(case, art), "translation_coverage_policy")["passed"] is False
@@ -534,17 +596,30 @@ def rubric() -> dict:
 
 
 def _judge_output(rubric: dict, score: int = 4) -> dict:
-    return {"dimensions": {d["id"]: {"score": score, "rationale": "依据充分。"}
-                           for d in rubric["judge"]["dimensions"]}}
+    return {
+        "dimensions": {
+            d["id"]: {"score": score, "rationale": "依据充分。"}
+            for d in rubric["judge"]["dimensions"]
+        }
+    }
 
 
 def test_rubric_has_exactly_8_dimensions_with_contract_ids(rubric):
     ids = [d["id"] for d in rubric["judge"]["dimensions"]]
-    assert ids == ["source_fidelity", "pedagogical_focus", "difficulty_fit",
-                   "article_type_fit", "evidence_retrieval", "transfer_value",
-                   "chinese_quality", "learning_sequence"]
-    assert all(d["score_min"] == 1 and d["score_max"] == 5 and d["pass_score"] == 4
-               for d in rubric["judge"]["dimensions"])
+    assert ids == [
+        "source_fidelity",
+        "pedagogical_focus",
+        "difficulty_fit",
+        "article_type_fit",
+        "evidence_retrieval",
+        "transfer_value",
+        "chinese_quality",
+        "learning_sequence",
+    ]
+    assert all(
+        d["score_min"] == 1 and d["score_max"] == 5 and d["pass_score"] == 4
+        for d in rubric["judge"]["dimensions"]
+    )
     assert rubric["judge"]["temperature"] == 0.0
 
 
@@ -611,20 +686,37 @@ def test_judge_mean_only_on_ok(rubric):
 def _review_items(decisions: list[str], factual_errors: int = 0) -> list[dict]:
     items = []
     for i, d in enumerate(decisions):
-        items.append({"item_id": f"t{i}", "kind": "checkpoint", "decision": d,
-                      "reviewer": "pm", "reviewed_at": "2026-08-21",
-                      "factual_major_error": i < factual_errors,
-                      "reason": "r", "suggested_edit": None})
+        items.append(
+            {
+                "item_id": f"t{i}",
+                "kind": "checkpoint",
+                "decision": d,
+                "reviewer": "pm",
+                "reviewed_at": "2026-08-21",
+                "factual_major_error": i < factual_errors,
+                "reason": "r",
+                "suggested_edit": None,
+            }
+        )
     return items
 
 
 def _full_review_doc(artifact: dict, decision: str = "keep", drop: int = 0) -> dict:
     """A reviewed doc covering every expected teaching point of the artifact."""
     ids = rv.expected_review_item_ids(artifact)
-    items = [{"item_id": i, "kind": i.split(":")[0], "decision": decision,
-              "reviewer": "pm", "reviewed_at": "2026-08-21",
-              "factual_major_error": False, "reason": "r",
-              "suggested_edit": None} for i in ids]
+    items = [
+        {
+            "item_id": i,
+            "kind": i.split(":")[0],
+            "decision": decision,
+            "reviewer": "pm",
+            "reviewed_at": "2026-08-21",
+            "factual_major_error": False,
+            "reason": "r",
+            "suggested_edit": None,
+        }
+        for i in ids
+    ]
     if drop:
         items = items[:-drop]
     return {"case_id": artifact["case_id"], "status": "reviewed", "items": items}
@@ -684,8 +776,11 @@ def test_cost_block_placeholder_when_usage_missing():
 
 def test_cost_block_passthrough_not_overwritten_to_null():
     usage = {
-        "provider_requests": 5, "logical_llm_calls": 5, "retry_count": 0,
-        "output_retry_count": 1, "refinement_count": 1,
+        "provider_requests": 5,
+        "logical_llm_calls": 5,
+        "retry_count": 0,
+        "output_retry_count": 1,
+        "refinement_count": 1,
         "per_agent_tokens": {"blueprint": {"input": 100, "output": 90}},
         "per_agent_latency_ms": {"blueprint": 1200},
         "end_to_end_latency_ms": 20000,
@@ -705,9 +800,11 @@ def test_cost_block_passthrough_not_overwritten_to_null():
 
 def _runner():
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
         "run_daily_reader_teaching_eval",
-        EVALS_ROOT / "scripts" / "run_daily_reader_teaching_eval.py")
+        EVALS_ROOT / "scripts" / "run_daily_reader_teaching_eval.py",
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -715,46 +812,54 @@ def _runner():
 
 def test_runner_no_judge_verdict_is_semantic_not_run(rubric):
     mod = _runner()
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=None, skip_judge=True)
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True)
     assert res["verdict"] == j2.SEMANTIC_NOT_RUN
     assert res["judge"]["status"] == j2.SEMANTIC_NOT_RUN
 
 
 def test_runner_human_pending_verdict(rubric):
     mod = _runner()
-    judged = {"status": "ok", "dimensions": {
-        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=None, judge_result=judged)
+    judged = {
+        "status": "ok",
+        "dimensions": {
+            d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]
+        },
+    }
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=None, judge_result=judged)
     assert res["verdict"] == rv.HUMAN_REVIEW_PENDING
 
 
 def test_runner_pass_requires_all_gates_and_scores(rubric):
     mod = _runner()
     reviewed = _full_review_doc(_b1_artifact())
-    judged_ok = {"status": "ok", "dimensions": {
-        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=reviewed, judge_result=judged_ok)
+    judged_ok = {
+        "status": "ok",
+        "dimensions": {
+            d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]
+        },
+    }
+    res = mod.score_case(
+        rubric, _b1_case(), _b1_artifact(), review_doc=reviewed, judge_result=judged_ok
+    )
     assert res["verdict"] == "PASS"
     assert res["overall"] >= 0.90
     judged_low = copy.deepcopy(judged_ok)
     judged_low["dimensions"]["chinese_quality"]["score"] = 3
-    res2 = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                          review_doc=reviewed, judge_result=judged_low)
+    res2 = mod.score_case(
+        rubric, _b1_case(), _b1_artifact(), review_doc=reviewed, judge_result=judged_low
+    )
     assert res2["verdict"] != "PASS"
     art = _b1_artifact()
     art["run_meta"]["refinement_count"] = 2
-    res3 = mod.score_case(rubric, _b1_case(), art,
-                          review_doc=reviewed, judge_result=judged_ok)
+    res3 = mod.score_case(rubric, _b1_case(), art, review_doc=reviewed, judge_result=judged_ok)
     assert res3["verdict"] == "FAIL"
 
 
 def test_runner_reject_case_verdict(rubric):
     mod = _runner()
-    res = mod.score_case(rubric, _reject_case(), _reject_artifact(),
-                         review_doc=None, skip_judge=True)
+    res = mod.score_case(
+        rubric, _reject_case(), _reject_artifact(), review_doc=None, skip_judge=True
+    )
     assert res["verdict"] == "EXPECTED_REJECT"
     assert res["verdict"] != "PASS"
     assert res["judge"]["status"] == "not_applicable_rejected"
@@ -762,10 +867,10 @@ def test_runner_reject_case_verdict(rubric):
 
 def test_runner_usage_passthrough_in_run(rubric):
     mod = _runner()
-    usage_art = json.loads((FIXTURE_DIR / "artifacts" / "fx-b1.with-usage.json")
-                           .read_text(encoding="utf-8"))
-    res = mod.score_case(rubric, _b1_case(), usage_art,
-                         review_doc=None, skip_judge=True)
+    usage_art = json.loads(
+        (FIXTURE_DIR / "artifacts" / "fx-b1.with-usage.json").read_text(encoding="utf-8")
+    )
+    res = mod.score_case(rubric, _b1_case(), usage_art, review_doc=None, skip_judge=True)
     assert res["cost"]["provider_requests"] == 5
     assert res["cost"]["status"] != "NOT_RUN_OWNER_REQUIRED"
 
@@ -776,8 +881,10 @@ def test_runner_usage_passthrough_in_run(rubric):
 
 
 def test_all_dataset_cases_validate_and_golds_are_draft():
-    cases = [json.loads(p.read_text(encoding="utf-8"))
-             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cases = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((DATASET_DIR / "cases").glob("*.json"))
+    ]
     assert 8 <= len(cases) <= 12
     for case in cases:
         assert sc.validate_case(case) == [], case["case_id"]
@@ -833,12 +940,17 @@ def test_review_unknown_decision_fails_closed():
 
 def test_runner_schema_violation_artifact_fails(rubric):
     mod = _runner()
-    judged_ok = {"status": "ok", "dimensions": {
-        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+    judged_ok = {
+        "status": "ok",
+        "dimensions": {
+            d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]
+        },
+    }
     art = _b1_artifact()
     art["lesson_blueprint"]["effective_difficulty"] = "A2"
-    res = mod.score_case(rubric, _b1_case(), art,
-                         review_doc=_full_review_doc(art), judge_result=judged_ok)
+    res = mod.score_case(
+        rubric, _b1_case(), art, review_doc=_full_review_doc(art), judge_result=judged_ok
+    )
     assert res["verdict"] == "FAIL"
     assert res["schema_errors"]
     art2 = _b1_artifact()
@@ -864,26 +976,51 @@ def test_review_partial_coverage_not_accepted():
 
 def test_review_expected_item_ids_cover_all_teaching_points():
     ids = rv.expected_review_item_ids(_b1_artifact())
-    assert ids == ["checkpoint:0", "checkpoint:1", "language_target:0",
-                   "language_target:1", "language_target:2", "sentence_map:0",
-                   "transfer_task:0"]
+    assert ids == [
+        "checkpoint:0",
+        "checkpoint:1",
+        "language_target:0",
+        "language_target:1",
+        "language_target:2",
+        "sentence_map:0",
+        "transfer_task:0",
+    ]
 
 
 def test_runner_main_end_to_end_writes_tmp_path(rubric, tmp_path, monkeypatch):
     mod = _runner()
     runs_root = EVALS_ROOT / "runs"
     before = {p.name for p in runs_root.glob("*")} if runs_root.exists() else set()
-    monkeypatch.setattr(sys, "argv", [
-        "runner", "--dataset-dir", str(DATASET_DIR),
-        "--artifacts-dir", str(FIXTURE_DIR / "artifacts"),
-        "--runs-dir", str(tmp_path), "--run-id", "tmp-e2e", "--no-judge"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--dataset-dir",
+            str(DATASET_DIR),
+            "--artifacts-dir",
+            str(FIXTURE_DIR / "artifacts"),
+            "--runs-dir",
+            str(tmp_path),
+            "--run-id",
+            "tmp-e2e",
+            "--no-judge",
+        ],
+    )
     mod.main()
     run_dir = tmp_path / "tmp-e2e"
     run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     report = (run_dir / "report.md").read_text(encoding="utf-8")
     assert run["aggregate"]["case_count"] == 10
-    for section in ("矩阵覆盖", "逐篇硬门禁", "八维 Judge 状态", "人工审阅状态",
-                    "分层", "失败证据", "成本状态"):
+    for section in (
+        "矩阵覆盖",
+        "逐篇硬门禁",
+        "八维 Judge 状态",
+        "人工审阅状态",
+        "分层",
+        "失败证据",
+        "成本状态",
+    ):
         assert section in report, f"report missing section {section}"
     after = {p.name for p in runs_root.glob("*")} if runs_root.exists() else set()
     assert after == before, "runner must not write into the shared evals/runs/"
@@ -903,8 +1040,14 @@ def test_validate_case_empty_source_quote_fails():
 
 
 def test_cost_block_invalid_values_nulled_not_passthrough():
-    block = rp.cost_block({"provider_requests": -5, "logical_llm_calls": 5,
-                           "end_to_end_latency_ms": "fast", "retry_count": True})
+    block = rp.cost_block(
+        {
+            "provider_requests": -5,
+            "logical_llm_calls": 5,
+            "end_to_end_latency_ms": "fast",
+            "retry_count": True,
+        }
+    )
     assert block["provider_requests"] is None
     assert block["end_to_end_latency_ms"] is None
     assert block["retry_count"] is None
@@ -915,18 +1058,23 @@ def test_cost_block_invalid_values_nulled_not_passthrough():
 
 def test_runner_reviewed_but_rejected_is_fail_not_pending(rubric):
     mod = _runner()
-    judged_ok = {"status": "ok", "dimensions": {
-        d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+    judged_ok = {
+        "status": "ok",
+        "dimensions": {
+            d["id"]: {"score": 5, "rationale": "ok"} for d in rubric["judge"]["dimensions"]
+        },
+    }
     doc = _full_review_doc(_b1_artifact(), decision="major_edit")
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=doc, judge_result=judged_ok)
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=doc, judge_result=judged_ok)
     assert res["verdict"] == "FAIL"
     assert res["verdict"] != rv.HUMAN_REVIEW_PENDING
 
 
 def test_dataset_coverage_source_whitelist():
-    cases = [json.loads(p.read_text(encoding="utf-8"))
-             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cases = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((DATASET_DIR / "cases").glob("*.json"))
+    ]
     assert sc.validate_dataset_coverage(cases) == []
     bad = copy.deepcopy(cases)
     bad[0]["input"]["source"] = "nytimes"
@@ -936,12 +1084,16 @@ def test_dataset_coverage_source_whitelist():
 
 def test_report_md_contains_cost_status_lines(rubric):
     mod = _runner()
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=None, skip_judge=True)
-    run = rp.build_run(run_id="cost-t", dataset_id="daily-reader-teaching-v2",
-                       dataset_dir=".", rubric=rubric,
-                       case_results=[mod.decorate(_b1_case(), res)],
-                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True)
+    run = rp.build_run(
+        run_id="cost-t",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), res)],
+        judge_status="disabled_by_flag",
+        created_at="2026-08-21T00:00:00",
+    )
     md = rp.render_report_md(run)
     assert "成本状态" in md and "NOT_RUN_OWNER_REQUIRED" in md
 
@@ -956,10 +1108,15 @@ def test_schema_errors_surface_in_failure_evidence(rubric):
     art = _b1_artifact()
     art["lesson_blueprint"]["effective_difficulty"] = "A2"
     res = mod.score_case(rubric, _b1_case(), art, review_doc=None, skip_judge=True)
-    run = rp.build_run(run_id="se-t", dataset_id="daily-reader-teaching-v2",
-                       dataset_dir=".", rubric=rubric,
-                       case_results=[mod.decorate(_b1_case(), res)],
-                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    run = rp.build_run(
+        run_id="se-t",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), res)],
+        judge_status="disabled_by_flag",
+        created_at="2026-08-21T00:00:00",
+    )
     md = rp.render_report_md(run)
     assert "schema" in md and "A2" in md
 
@@ -970,18 +1127,25 @@ def test_schema_errors_surface_in_failure_evidence(rubric):
 
 
 def _judged_ok(rubric: dict, score: int = 5) -> dict:
-    return {"status": "ok", "dimensions": {
-        d["id"]: {"score": score, "rationale": "ok"} for d in rubric["judge"]["dimensions"]}}
+    return {
+        "status": "ok",
+        "dimensions": {
+            d["id"]: {"score": score, "rationale": "ok"} for d in rubric["judge"]["dimensions"]
+        },
+    }
 
 
 def test_score_case_single_five_score_dimension_cannot_pass(rubric):
     """External judge_result with only one 5-score dimension must error/FAIL."""
     mod = _runner()
-    judged = {"status": "ok", "dimensions": {
-        "source_fidelity": {"score": 5, "rationale": "ok"}}}
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=_full_review_doc(_b1_artifact()),
-                         judge_result=judged)
+    judged = {"status": "ok", "dimensions": {"source_fidelity": {"score": 5, "rationale": "ok"}}}
+    res = mod.score_case(
+        rubric,
+        _b1_case(),
+        _b1_artifact(),
+        review_doc=_full_review_doc(_b1_artifact()),
+        judge_result=judged,
+    )
     assert res["judge"]["status"] == "error"
     assert res["verdict"] == "FAIL"
     assert res["verdict"] != "PASS"
@@ -997,11 +1161,14 @@ def test_score_case_does_not_trust_external_judge_result(rubric, mutate):
         judged["dimensions"]["bonus_dim"] = {"score": 5, "rationale": "x"}
     else:
         judged["dimensions"]["source_fidelity"]["score"] = 4.0
-    parsed = j2.parse_judge_output(rubric, json.dumps(
-        {"dimensions": judged["dimensions"]}))
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=_full_review_doc(_b1_artifact()),
-                         judge_result=judged)
+    parsed = j2.parse_judge_output(rubric, json.dumps({"dimensions": judged["dimensions"]}))
+    res = mod.score_case(
+        rubric,
+        _b1_case(),
+        _b1_artifact(),
+        review_doc=_full_review_doc(_b1_artifact()),
+        judge_result=judged,
+    )
     assert parsed["status"] == "error"
     assert res["judge"]["status"] == "error"
     assert res["judge"].get("reason") == parsed.get("reason")
@@ -1026,15 +1193,18 @@ def test_review_case_id_mismatch_is_incomplete():
     assert st["accepted"] is False
 
 
-@pytest.mark.parametrize("field,value", [
-    ("reviewer", ""),
-    ("reviewed_at", "  "),
-    ("reason", None),
-    ("factual_major_error", "yes"),
-    ("decision", "maybe"),
-    ("kind", "banana"),
-    ("suggested_edit", ["rewrite"]),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("reviewer", ""),
+        ("reviewed_at", "  "),
+        ("reason", None),
+        ("factual_major_error", "yes"),
+        ("decision", "maybe"),
+        ("kind", "banana"),
+        ("suggested_edit", ["rewrite"]),
+    ],
+)
 def test_review_illegal_item_fields_are_incomplete(field, value):
     case, art = _b1_case(), _b1_artifact()
     doc = _full_review_doc(art)
@@ -1049,19 +1219,21 @@ def test_review_incomplete_verdict_is_fail(rubric):
     art = _b1_artifact()
     doc = _full_review_doc(art)
     del doc["items"][0]["reason"]
-    res = mod.score_case(rubric, _b1_case(), art,
-                         review_doc=doc, judge_result=_judged_ok(rubric))
+    res = mod.score_case(rubric, _b1_case(), art, review_doc=doc, judge_result=_judged_ok(rubric))
     assert res["review"]["status"] == "REVIEW_INCOMPLETE"
     assert res["verdict"] == "FAIL"
 
 
-@pytest.mark.parametrize("payload", [
-    {"schema_version": 2, "input": {"reading_units": ["u01"]}},
-    {"schema_version": 2, "gold": {"key_evidence": "not-a-list"}},
-    {"schema_version": 2, "gold": {"key_evidence": [None]}},
-    {"schema_version": 2, "gold": {"core_expressions": [{"expression": 1}]}},
-    {"schema_version": 2, "origin": ["bbc"], "input": {}, "gold": {}},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 2, "input": {"reading_units": ["u01"]}},
+        {"schema_version": 2, "gold": {"key_evidence": "not-a-list"}},
+        {"schema_version": 2, "gold": {"key_evidence": [None]}},
+        {"schema_version": 2, "gold": {"core_expressions": [{"expression": 1}]}},
+        {"schema_version": 2, "origin": ["bbc"], "input": {}, "gold": {}},
+    ],
+)
 def test_validate_case_malformed_nested_returns_errors_not_raises(payload):
     errs = sc.validate_case(payload)
     assert isinstance(errs, list) and errs
@@ -1083,15 +1255,26 @@ def test_validate_case_requires_case_id_and_gold_contract_fields():
 def test_overall_mean_null_when_all_semantic_not_run(rubric):
     mod = _runner()
     results = [
-        mod.decorate(_b1_case(), mod.score_case(
-            rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True)),
-        mod.decorate(_reject_case(), mod.score_case(
-            rubric, _reject_case(), _reject_artifact(),
-            review_doc=None, skip_judge=True)),
+        mod.decorate(
+            _b1_case(),
+            mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True),
+        ),
+        mod.decorate(
+            _reject_case(),
+            mod.score_case(
+                rubric, _reject_case(), _reject_artifact(), review_doc=None, skip_judge=True
+            ),
+        ),
     ]
-    run = rp.build_run(run_id="mean-null", dataset_id="daily-reader-teaching-v2",
-                       dataset_dir=".", rubric=rubric, case_results=results,
-                       judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+    run = rp.build_run(
+        run_id="mean-null",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
+        case_results=results,
+        judge_status="disabled_by_flag",
+        created_at="2026-08-21T00:00:00",
+    )
     assert results[0]["verdict"] == j2.SEMANTIC_NOT_RUN
     assert results[1]["verdict"] == "EXPECTED_REJECT"
     assert run["aggregate"]["overall_mean"] is None
@@ -1099,22 +1282,39 @@ def test_overall_mean_null_when_all_semantic_not_run(rubric):
 
 def test_overall_mean_only_completed_eight_dim_cleaned_publish(rubric):
     mod = _runner()
-    ok = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                        review_doc=_full_review_doc(_b1_artifact()),
-                        judge_result=_judged_ok(rubric))
-    one_dim = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                             review_doc=_full_review_doc(_b1_artifact()),
-                             judge_result={"status": "ok", "dimensions": {
-                                 "source_fidelity": {"score": 5, "rationale": "ok"}}})
-    reject = mod.score_case(rubric, _reject_case(), _reject_artifact(),
-                            review_doc=None, skip_judge=True)
+    ok = mod.score_case(
+        rubric,
+        _b1_case(),
+        _b1_artifact(),
+        review_doc=_full_review_doc(_b1_artifact()),
+        judge_result=_judged_ok(rubric),
+    )
+    one_dim = mod.score_case(
+        rubric,
+        _b1_case(),
+        _b1_artifact(),
+        review_doc=_full_review_doc(_b1_artifact()),
+        judge_result={
+            "status": "ok",
+            "dimensions": {"source_fidelity": {"score": 5, "rationale": "ok"}},
+        },
+    )
+    reject = mod.score_case(
+        rubric, _reject_case(), _reject_artifact(), review_doc=None, skip_judge=True
+    )
     run = rp.build_run(
-        run_id="mean-pub", dataset_id="daily-reader-teaching-v2",
-        dataset_dir=".", rubric=rubric,
-        case_results=[mod.decorate(_b1_case(), ok),
-                      mod.decorate(_b1_case(), one_dim),
-                      mod.decorate(_reject_case(), reject)],
-        judge_status="ok", created_at="2026-08-21T00:00:00")
+        run_id="mean-pub",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
+        case_results=[
+            mod.decorate(_b1_case(), ok),
+            mod.decorate(_b1_case(), one_dim),
+            mod.decorate(_reject_case(), reject),
+        ],
+        judge_status="ok",
+        created_at="2026-08-21T00:00:00",
+    )
     assert ok["overall"] is not None
     assert run["aggregate"]["overall_mean"] == ok["overall"]
     assert run["aggregate"]["pass_count"] == 1
@@ -1125,15 +1325,19 @@ def test_overall_mean_only_completed_eight_dim_cleaned_publish(rubric):
 
 
 def test_difficulty_quota_counts_only_cleaned_publish():
-    cases = [json.loads(p.read_text(encoding="utf-8"))
-             for p in sorted((DATASET_DIR / "cases").glob("*.json"))]
+    cases = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((DATASET_DIR / "cases").glob("*.json"))
+    ]
     cloned = copy.deepcopy(cases)
     changed = 0
     for case in cloned:
         gold = case["gold"]
-        if (gold.get("expected_difficulty") == "B2"
-                and gold.get("expected_outcome") == "cleaned_publish"
-                and changed < 2):
+        if (
+            gold.get("expected_difficulty") == "B2"
+            and gold.get("expected_outcome") == "cleaned_publish"
+            and changed < 2
+        ):
             gold["expected_difficulty"] = "C1"
             changed += 1
     assert changed == 2
@@ -1155,11 +1359,12 @@ def test_cleaned_publish_transfer_kinds_follow_p1_types():
         assert directions
         kind = directions[0]["task_kind"]
         kinds.add(kind)
-        if gold["article_type"] == "opinion_commentary" and gold[
-                "expected_difficulty"] in ("B2", "C1"):
+        if gold["article_type"] == "opinion_commentary" and gold["expected_difficulty"] in (
+            "B2",
+            "C1",
+        ):
             opinion_kinds.add(kind)
-        if gold["article_type"] == "explainer" and gold[
-                "expected_difficulty"] in ("B2", "C1"):
+        if gold["article_type"] == "explainer" and gold["expected_difficulty"] in ("B2", "C1"):
             explainer_kinds.add(kind)
     assert kinds == set(sc.TRANSFER_TASK_KINDS)
     assert opinion_kinds == {"counter"}
@@ -1178,9 +1383,9 @@ def test_artifact_identity_mismatch_legal_enums_cannot_pass(rubric):
     art["case_id"] = "someone-else"
     art["lesson_blueprint"]["article_type"] = "explainer"
     art["lesson_blueprint"]["effective_difficulty"] = "C1"
-    res = mod.score_case(rubric, case, art,
-                         review_doc=_full_review_doc(art),
-                         judge_result=_judged_ok(rubric))
+    res = mod.score_case(
+        rubric, case, art, review_doc=_full_review_doc(art), judge_result=_judged_ok(rubric)
+    )
     assert res["verdict"] == "FAIL"
     joined = " ".join(res["schema_errors"])
     assert "case_id" in joined
@@ -1197,10 +1402,16 @@ def test_artifact_empty_case_id_cannot_pass(rubric):
     assert any("case_id" in e for e in res["schema_errors"])
 
 
-@pytest.mark.parametrize("mutate", [
-    "gold_list", "run_meta_list", "learning_package_list",
-    "source_assets_list", "usage_list",
-])
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        "gold_list",
+        "run_meta_list",
+        "learning_package_list",
+        "source_assets_list",
+        "usage_list",
+    ],
+)
 def test_score_case_malformed_nested_returns_fail_not_traceback(rubric, mutate):
     mod = _runner()
     case, art = _b1_case(), _b1_artifact()
@@ -1219,12 +1430,15 @@ def test_score_case_malformed_nested_returns_fail_not_traceback(rubric, mutate):
     assert res["schema_errors"]
 
 
-@pytest.mark.parametrize("payload", [
-    "not-a-list",
-    [None],
-    [{"gold": ["x"], "input": 3}],
-    [{"gold": {}, "input": {"original_text": ["not", "str"]}}],
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-a-list",
+        [None],
+        [{"gold": ["x"], "input": 3}],
+        [{"gold": {}, "input": {"original_text": ["not", "str"]}}],
+    ],
+)
 def test_validate_dataset_coverage_malformed_top_level_not_raises(payload):
     errs = sc.validate_dataset_coverage(payload)
     assert isinstance(errs, list) and errs
@@ -1238,17 +1452,25 @@ def test_evaluate_review_non_dict_item_accepted_false():
 
 def test_quality_strata_ignore_expected_reject(rubric):
     mod = _runner()
-    ok = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                        review_doc=_full_review_doc(_b1_artifact()),
-                        judge_result=_judged_ok(rubric))
-    reject = mod.score_case(rubric, _reject_case(), _reject_artifact(),
-                            review_doc=None, skip_judge=True)
+    ok = mod.score_case(
+        rubric,
+        _b1_case(),
+        _b1_artifact(),
+        review_doc=_full_review_doc(_b1_artifact()),
+        judge_result=_judged_ok(rubric),
+    )
+    reject = mod.score_case(
+        rubric, _reject_case(), _reject_artifact(), review_doc=None, skip_judge=True
+    )
     run = rp.build_run(
-        run_id="strata-q", dataset_id="daily-reader-teaching-v2",
-        dataset_dir=".", rubric=rubric,
-        case_results=[mod.decorate(_b1_case(), ok),
-                      mod.decorate(_reject_case(), reject)],
-        judge_status="ok", created_at="2026-08-21T00:00:00")
+        run_id="strata-q",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
+        case_results=[mod.decorate(_b1_case(), ok), mod.decorate(_reject_case(), reject)],
+        judge_status="ok",
+        created_at="2026-08-21T00:00:00",
+    )
     assert ok["verdict"] == "PASS"
     assert reject["verdict"] == "EXPECTED_REJECT"
     assert run["aggregate"]["expected_reject_count"] == 1
@@ -1264,13 +1486,16 @@ def test_quality_strata_ignore_expected_reject(rubric):
 
 def test_no_judge_quality_strata_not_accepted(rubric):
     mod = _runner()
-    res = mod.score_case(rubric, _b1_case(), _b1_artifact(),
-                         review_doc=None, skip_judge=True)
+    res = mod.score_case(rubric, _b1_case(), _b1_artifact(), review_doc=None, skip_judge=True)
     run = rp.build_run(
-        run_id="strata-nj", dataset_id="daily-reader-teaching-v2",
-        dataset_dir=".", rubric=rubric,
+        run_id="strata-nj",
+        dataset_id="daily-reader-teaching-v2",
+        dataset_dir=".",
+        rubric=rubric,
         case_results=[mod.decorate(_b1_case(), res)],
-        judge_status="disabled_by_flag", created_at="2026-08-21T00:00:00")
+        judge_status="disabled_by_flag",
+        created_at="2026-08-21T00:00:00",
+    )
     assert res["verdict"] == j2.SEMANTIC_NOT_RUN
     assert run["strata_all_accepted"] is False
     for groups in run["strata"].values():
@@ -1296,8 +1521,7 @@ def test_gold_gate_quote_only_in_other_paragraph_fails():
     reading unit -> schema error (RED: current schema only checks original)."""
     case = _b1_case()
     # quote lives verbatim in u02; declared unit is u03 -> mis-declared
-    case["gold"]["key_evidence"][0]["source_quote"] = \
-        "Many families came to the opening event"
+    case["gold"]["key_evidence"][0]["source_quote"] = "Many families came to the opening event"
     case["gold"]["key_evidence"][0]["paragraph_ids"] = ["u03"]
     errs = sc.validate_case(case)
     assert any("source_quote" in e and "declared paragraph" in e for e in errs)
@@ -1305,8 +1529,7 @@ def test_gold_gate_quote_only_in_other_paragraph_fails():
 
 def test_gold_gate_quote_spanning_declared_unit_passes():
     case = _b1_case()
-    case["gold"]["key_evidence"][0]["source_quote"] = \
-        "The town opened a new library on Saturday"
+    case["gold"]["key_evidence"][0]["source_quote"] = "The town opened a new library on Saturday"
     assert sc.validate_case(case) == []
 
 
@@ -1360,29 +1583,32 @@ def test_run_hard_gates_fail_closed_on_minimal_artifact():
 # P-2G-C — per-artifact source-text / paragraph-id targeted probes
 # ---------------------------------------------------------------------------
 
+
 def _load_case(case_id: str) -> dict:
     return json.loads((DATASET_DIR / "cases" / f"{case_id}.json").read_text(encoding="utf-8"))
 
 
 def _load_artifact(case_id: str) -> dict:
-    return json.loads((FIXTURE_DIR / "artifacts" / f"{case_id}.artifact.json")
-                      .read_text(encoding="utf-8"))
+    return json.loads(
+        (FIXTURE_DIR / "artifacts" / f"{case_id}.artifact.json").read_text(encoding="utf-8")
+    )
 
 
 def test_p2gc_bumble_swamped_quote_declared_u15():
     case = _load_case("bbc-bumble-001")
-    core = [e for e in case["gold"]["core_expressions"]
-            if e["expression"] == "swamped with"][0]
+    core = [e for e in case["gold"]["core_expressions"] if e["expression"] == "swamped with"][0]
     assert core["paragraph_ids"] == ["u15"]
     u15 = next(u["text"] for u in case["input"]["reading_units"] if u["id"] == "u15")
     assert core["source_quote"].strip('"') in u15
     art = _load_artifact("bbc-bumble-001")
-    lt = [t for t in art["learning_package"]["language_targets"]
-          if t["expression"] == "swamped with"][0]
+    lt = [
+        t for t in art["learning_package"]["language_targets"] if t["expression"] == "swamped with"
+    ][0]
     assert lt["paragraph_id"] == "u15"
     # structure map must not reference the pure dirty `- Published` unit u01
-    refs = [pid for node in art["lesson_blueprint"]["structure_map"]
-            for pid in node["paragraph_ids"]]
+    refs = [
+        pid for node in art["lesson_blueprint"]["structure_map"] for pid in node["paragraph_ids"]
+    ]
     assert "u01" not in refs
 
 
@@ -1392,8 +1618,9 @@ def test_p2gc_divine_key_evidence_three_and_anchored():
     assert len(ke) == 3
     by_quote = {k["source_quote"]: k for k in ke}
     restore = by_quote["More than 2.5 million original Vines have now been restored"]
-    tension = by_quote["Divine now has to prove you can remove some of the addiction "
-                       "without removing the magic"]
+    tension = by_quote[
+        "Divine now has to prove you can remove some of the addiction without removing the magic"
+    ]
     assert restore["paragraph_ids"] == ["u07"]
     assert tension["paragraph_ids"] == ["u11"]
     units = {u["id"]: u["text"] for u in case["input"]["reading_units"]}
@@ -1433,12 +1660,14 @@ def test_p2gc_manifestos_and_heat_structure_map_omit_pure_dirty_u01():
     for cid in ("bbc-manifestos-002", "npr-europe-heat-010"):
         case = _load_case(cid)
         art = _load_artifact(cid)
-        refs = [pid for node in art["lesson_blueprint"]["structure_map"]
-                for pid in node["paragraph_ids"]]
+        refs = [
+            pid
+            for node in art["lesson_blueprint"]["structure_map"]
+            for pid in node["paragraph_ids"]
+        ]
         # the pure dirty unit full-text equals the first declared dirty fragment
         first_dirty = case["gold"]["dirty_fragments"][0]
-        pure_ids = {u["id"] for u in case["input"]["reading_units"]
-                    if u["text"] == first_dirty}
+        pure_ids = {u["id"] for u in case["input"]["reading_units"] if u["text"] == first_dirty}
         assert pure_ids and not (set(refs) & pure_ids), cid
 
 
@@ -1530,7 +1759,8 @@ def test_p4cbr_pure_dirty_all_units_substantive_only_passes():
     art = _b1_artifact()
     # keep only substantive translations
     art["learning_package"]["translations_by_paragraph_id"] = {
-        k: v for k, v in art["learning_package"]["translations_by_paragraph_id"].items()
+        k: v
+        for k, v in art["learning_package"]["translations_by_paragraph_id"].items()
         if k in substantive
     }
     # adjust anchors that referenced u01
@@ -1619,3 +1849,88 @@ def test_p4cd_selective_translation_gold_and_reference_artifacts():
         assert result["scored_count"] == 12
         assert result["passed_count"] == 12
         assert result["all_passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# P-5A title contract: lesson_blueprint.title_zh / subtitle_zh / tags_zh
+# (production口径: prompts/agents/daily_interpretation.yaml 26-40 +
+# schemas/internal/daily_drafts.py:140-152; tags 2-4 全中文,
+# title 8-18 字, subtitle ≤30 字)
+# ---------------------------------------------------------------------------
+
+
+def test_title_contract_validate_artifact_requires_v2_title_fields():
+    art = _b1_artifact()
+    assert sc.validate_artifact(_b1_case(), art) == []
+    for field in ("title_zh", "subtitle_zh", "tags_zh"):
+        bad = copy.deepcopy(art)
+        bad["lesson_blueprint"].pop(field)
+        errs = sc.validate_artifact(_b1_case(), bad)
+        assert any(field in e and "required" in e for e in errs), (field, errs)
+
+
+def test_title_contract_validate_artifact_flags_bad_values():
+    art = _b1_artifact()
+    blank = copy.deepcopy(art)
+    blank["lesson_blueprint"]["title_zh"] = "   "
+    assert any("title_zh" in e for e in sc.validate_artifact(_b1_case(), blank))
+
+    mixed = copy.deepcopy(art)
+    mixed["lesson_blueprint"]["tags_zh"] = ["公共卫生", "AI"]
+    errs = sc.validate_artifact(_b1_case(), mixed)
+    assert any("tags_zh" in e for e in errs), errs
+
+    few = copy.deepcopy(art)
+    few["lesson_blueprint"]["tags_zh"] = ["科技"]
+    res = g2.run_hard_gates(_b1_case(), few)
+    assert "tags_zh=1 outside 2-4" in _gate(res, "counts_in_bounds")["detail"]["violations"]
+
+
+def test_title_contract_gate_counts_in_bounds_enforces_length_bounds():
+    art = _b1_artifact()
+    res = g2.run_hard_gates(_b1_case(), art)
+    assert _gate(res, "counts_in_bounds")["passed"] is True
+
+    short = copy.deepcopy(art)
+    short["lesson_blueprint"]["title_zh"] = "新图书馆"
+    res = g2.run_hard_gates(_b1_case(), short)
+    violations = _gate(res, "counts_in_bounds")["detail"]["violations"]
+    assert any("title_zh" in v for v in violations), violations
+
+    long_sub = copy.deepcopy(art)
+    long_sub["lesson_blueprint"]["subtitle_zh"] = "字" * 31
+    res = g2.run_hard_gates(_b1_case(), long_sub)
+    violations = _gate(res, "counts_in_bounds")["detail"]["violations"]
+    assert any("subtitle_zh" in v for v in violations), violations
+
+    many_tags = copy.deepcopy(art)
+    many_tags["lesson_blueprint"]["tags_zh"] = ["一", "二", "三", "四", "五"]
+    res = g2.run_hard_gates(_b1_case(), many_tags)
+    violations = _gate(res, "counts_in_bounds")["detail"]["violations"]
+    assert any("tags_zh" in v for v in violations), violations
+
+
+def test_title_contract_surfaces_scanned_for_boilerplate():
+    case = _b1_case()
+    case["gold"]["dirty_fragments"] = ["深度解析"]
+    art = _b1_artifact()
+    art["lesson_blueprint"]["title_zh"] = "新图书馆深度解析上线"
+    res = g2.run_hard_gates(case, art)
+    gate = _gate(res, "no_boilerplate_residue")
+    assert gate["passed"] is False
+    assert "深度解析" in gate["detail"]["hits"][0] or gate["detail"]["hits"]
+
+
+def test_title_contract_placeholder_in_title_is_caught():
+    art = _b1_artifact()
+    art["lesson_blueprint"]["subtitle_zh"] = "{{subtitle}}"
+    res = g2.run_hard_gates(_b1_case(), art)
+    problems = _gate(res, "no_empty_placeholders")["detail"]["problems"]
+    assert any("placeholder" in p for p in problems), problems
+
+
+def test_title_contract_reject_run_stays_na_and_valid():
+    """Rejected runs carry no blueprint: no title requirement applies."""
+    assert sc.validate_artifact(_reject_case(), _reject_artifact()) == []
+    res = g2.run_hard_gates(_reject_case(), _reject_artifact())
+    assert _gate(res, "counts_in_bounds")["passed"] is None
