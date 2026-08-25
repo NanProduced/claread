@@ -73,7 +73,7 @@ SCORING_MAX_CANDIDATES = 10  # B-2: agreed 8-10 band shared with A-5
 ARTICLE_WORKFLOW_CONCURRENCY = 2
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
 DAILY_READER_WORKFLOW_VERSION = "2.0.0"
-DAILY_READER_SCHEMA_VERSION = "1.0.0"
+DAILY_READER_SCHEMA_VERSION = "2.0.0"
 
 
 @dataclass
@@ -474,7 +474,7 @@ async def _run_workflow_and_store(
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
-                    schema_version="1.0.0",
+                    schema_version=DAILY_READER_SCHEMA_VERSION,
                     request_id=article.url,
                     source_type="pipeline",
                     reading_goal="daily_reading",
@@ -666,7 +666,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
-                    schema_version="1.0.0",
+                    schema_version=DAILY_READER_SCHEMA_VERSION,
                     request_id=article_id,
                     source_type="retry",
                     reading_goal="daily_reading",
@@ -809,7 +809,6 @@ async def _assemble_payload(
         "cover_theme": "editorial_warm",
         "body_json": state.get("body_json", {"paragraphs": []}),
         "highlights_json": state.get("highlights_json", []),
-        "footer_analysis_json": {},
         "paragraph_notes_json": state.get("paragraph_notes_json", {}),
         "takeaways_json": state.get("takeaways_json", {}),
         "status": "draft",
@@ -884,12 +883,11 @@ async def _store_daily_reader(payload: dict) -> None:
             INSERT INTO daily_readers (
                 id, title, subtitle, original_title, subtitle_zh, source, source_url, publish_date,
                 difficulty, read_time_minutes, tags, cover_image_url, cover_theme,
-                body_json, highlights_json, footer_analysis_json, paragraph_notes_json, takeaways_json,
+                body_json, highlights_json, paragraph_notes_json, takeaways_json,
                 status, score, original_text_hash, original_text,
                 pipeline_source, pipeline_meta
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-                      $22, $23, $24)
+                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
             """,
             payload["id"],
             payload["title"],
@@ -906,7 +904,6 @@ async def _store_daily_reader(payload: dict) -> None:
             payload["cover_theme"],
             payload["body_json"],
             payload["highlights_json"],
-            payload["footer_analysis_json"],
             payload["paragraph_notes_json"],
             payload["takeaways_json"],
             payload["status"],
