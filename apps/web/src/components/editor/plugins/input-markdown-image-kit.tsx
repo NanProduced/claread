@@ -25,7 +25,7 @@
  * 见 isLoadableImageUrl；reject 项永不赋给 img.src，原始 URL 原样保留
  * 在 Plate node 与 serialize 输出中。
  */
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { KEYS, getPluginType } from "platejs";
 import {
   convertChildrenDeserialize,
@@ -43,6 +43,9 @@ import {
   type PlateElementProps,
 } from "platejs/react";
 import type { Descendant } from "platejs";
+
+import katex from "katex";
+import remarkMath from "remark-math";
 
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
@@ -313,13 +316,18 @@ function imageMarksFromDeco(deco: MdDecoration): {
  * deserialize.ts 的 preserveUnsupported 路径共用，不各自复制）。
  *
  * 在 MARKDOWN_PLUGIN_OPTIONS（非输入端默认）之上：
- * - allowedNodes 追加 "img"（默认 projection 白名单不含 img，行为不变）；
+ * - allowedNodes 追加 "img"（默认 projection 白名单不含 img，行为不变）与
+ *   math 节点 "equation"/"inline_equation"（Math-C 输入预览）；
  * - rules 追加输入端 img/p 覆盖（source_callout 规则原样保留）；
- * - remarkPlugins 追加 remarkPreserveUnsupported（footnote/task-list 降级）。
+ * - remarkPlugins 追加 remarkMath（$..$ / $$..$$）与
+ *   remarkPreserveUnsupported（footnote/task-list 降级）。
+ * Math-C 复用 Math-B 的 katex 与 fail-closed 判例；remarkMath 由
+ * @platejs/markdown 已声明的 math 规则（equation/inline_equation）承载，
+ * 无需第二套 AST。
  */
 export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
   ...MARKDOWN_PLUGIN_OPTIONS,
-  allowedNodes: [...MARKDOWN_PLUGIN_OPTIONS.allowedNodes, "img"],
+  allowedNodes: [...MARKDOWN_PLUGIN_OPTIONS.allowedNodes, "img", "equation", "inline_equation"],
   rules: {
     ...MARKDOWN_PLUGIN_OPTIONS.rules,
     img: INPUT_IMAGE_MD_RULES.img,
@@ -327,6 +335,7 @@ export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
   },
   remarkPlugins: [
     ...MARKDOWN_PLUGIN_OPTIONS.remarkPlugins,
+    remarkMath,
     remarkPreserveUnsupported,
   ],
 };
@@ -585,4 +594,133 @@ export const InputMarkdownImagePlugin = createPlatePlugin({
       },
     },
   },
+});
+
+// ---------------------------------------------------------------------------
+// Input Math Kit — Math-C 输入预览与 Content Check 共用
+// 复用 Math-B 的 katex 依赖与 fail-closed 判例；无第二套 AST。
+// Plate 类型与 @platejs/markdown 默认 math 规则一致：
+// - inline_equation (mdast inlineMath, $..$) — inline void
+// - equation (mdast math, $$..$$) — block
+// 序列化由默认规则按 texExpression ↔ value 往返，无需覆盖；
+// 仅提供渲染组件与 allowlist 接入（见 INPUT_MARKDOWN_PLUGIN_OPTIONS 上方）。
+// ---------------------------------------------------------------------------
+
+const INPUT_MATH_FALLBACK_CLASS =
+  "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
+const INPUT_MATH_DISPLAY_WRAPPER_CLASS =
+  "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+
+function InputMathInlineElement({ attributes, children, element }: PlateElementProps) {
+  const node = element as unknown as { texExpression?: unknown };
+  const latex = typeof node.texExpression === "string" ? node.texExpression : "";
+  const katexRef = useRef<HTMLSpanElement>(null);
+  let html: string | null = null;
+  let isError = false;
+  try {
+    html = katex.renderToString(latex, {
+      displayMode: false,
+      throwOnError: true,
+      strict: false,
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    isError = true;
+    html = null;
+  }
+  useLayoutEffect(() => {
+    if (isError || !html || !katexRef.current) return;
+    katexRef.current.innerHTML = html;
+  }, [html, isError]);
+  if (isError || !html) {
+    return (
+      <span
+        {...attributes}
+        data-input-math="true"
+        data-math-display="false"
+        data-math-state="error"
+        className="inline-block align-baseline"
+      >
+        <span data-input-math-fallback="true" className={INPUT_MATH_FALLBACK_CLASS}>
+          {latex}
+        </span>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <span
+      {...attributes}
+      data-input-math="true"
+      data-math-display="false"
+      data-math-state="ok"
+      className="inline-block align-baseline"
+    >
+      <span ref={katexRef} className="inline-flex align-baseline" data-input-math-content="true" />
+      {children}
+    </span>
+  );
+}
+
+function InputMathBlockElement({ attributes, children, element }: PlateElementProps) {
+  const node = element as unknown as { texExpression?: unknown };
+  const latex = typeof node.texExpression === "string" ? node.texExpression : "";
+  const katexRef = useRef<HTMLDivElement>(null);
+  let html: string | null = null;
+  let isError = false;
+  try {
+    html = katex.renderToString(latex, {
+      displayMode: true,
+      throwOnError: true,
+      strict: false,
+      trust: false,
+      output: "html",
+    });
+  } catch {
+    isError = true;
+    html = null;
+  }
+  useLayoutEffect(() => {
+    if (isError || !html || !katexRef.current) return;
+    katexRef.current.innerHTML = html;
+  }, [html, isError]);
+  if (isError || !html) {
+    return (
+      <div
+        {...attributes}
+        data-input-math="true"
+        data-math-display="true"
+        data-math-state="error"
+        className="my-3"
+      >
+        <div data-input-math-fallback="true" className={INPUT_MATH_FALLBACK_CLASS}>
+          {latex}
+        </div>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div
+      {...attributes}
+      data-input-math="true"
+      data-math-display="true"
+      data-math-state="ok"
+      className="my-3"
+    >
+      <div ref={katexRef} className={INPUT_MATH_DISPLAY_WRAPPER_CLASS} data-input-math-content="true" />
+      {children}
+    </div>
+  );
+}
+
+export const InputMarkdownMathInlinePlugin = createPlatePlugin({
+  key: "inline_equation",
+  node: { isElement: true, isInline: true, isVoid: true, component: InputMathInlineElement },
+});
+
+export const InputMarkdownMathBlockPlugin = createPlatePlugin({
+  key: "equation",
+  node: { isElement: true, component: InputMathBlockElement },
 });
