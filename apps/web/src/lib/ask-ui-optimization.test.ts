@@ -19,7 +19,8 @@ describe("Ask Claread frozen UI cleanup", () => {
     expect(panel).not.toContain(legacyProvenanceRef);
     expect(suggestions).not.toContain(legacyContextPreview);
     expect(suggestions).not.toContain("suggestion.badgeClassName");
-    expect(suggestions).not.toContain("suggestion.icon");
+    expect(suggestions).toContain("suggestion.icon");
+    expect(suggestions).toContain("empty-state-illustration-v2.png");
     expect(stories).not.toContain(legacyCitationName);
     expect(
       existsSync(resolve(ROOT, `src/components/reader/ask-chat/${legacyCitationName}.tsx`)),

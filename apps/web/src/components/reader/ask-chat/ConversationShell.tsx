@@ -127,6 +127,16 @@ export function ConversationShell({
           >["children"]
         }
       </ConversationContent>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-7 bg-gradient-to-b from-surface via-surface/80 to-transparent"
+        data-testid="ask-conversation-top-fade"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-12 bg-gradient-to-t from-surface via-surface/80 to-transparent"
+        data-testid="ask-conversation-bottom-fade"
+      />
       <FollowModeController
         followMode={followMode}
         latestUserMessageId={latestUserMessageId}

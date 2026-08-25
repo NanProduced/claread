@@ -79,8 +79,11 @@ describe("InlineCitation", () => {
     expect(screen.queryByText("文章内依据")).toBeNull();
     const toggle = screen.getByRole("button", { name: "展开完整证据片段" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toBe("展开摘录");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("button", { name: "收起完整证据片段" })).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "收起完整证据片段" }).textContent,
+    ).toBe("收起摘录");
   });
 });

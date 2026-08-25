@@ -347,9 +347,11 @@ export const AttachmentRemove = ({
           "[&>svg]:size-3",
         ],
         variant === "inline" && [
-          "size-5 rounded p-0",
-          "opacity-0 transition-opacity group-hover:opacity-100",
-          "[&>svg]:size-2.5",
+          "size-6 shrink-0 cursor-pointer rounded-full p-0",
+          "text-muted-foreground/70 opacity-50 transition-[color,background-color,opacity]",
+          "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+          "hover:bg-muted hover:text-foreground",
+          "[&>svg]:size-3",
         ],
         variant === "list" && ["size-8 shrink-0 rounded p-0", "[&>svg]:size-4"],
         className

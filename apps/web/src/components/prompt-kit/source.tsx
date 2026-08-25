@@ -77,7 +77,7 @@ export function SourceTrigger({
       <a
         aria-label={`查看网页来源 ${labelToShow}`}
         className={cn(
-          "inline-flex h-5 max-w-40 items-center gap-1 overflow-hidden rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground no-underline transition-colors duration-150 hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "inline-flex h-6 max-w-40 cursor-pointer items-center gap-1 overflow-hidden rounded-full bg-surface-raised px-2 text-xs font-medium text-muted-foreground no-underline transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           className,
         )}
         data-slot="prompt-kit-source-trigger"
@@ -110,11 +110,14 @@ export function SourceContent({
 
   return (
     <HoverCardContent
-      className={cn("w-72 max-w-[calc(100vw-2rem)] p-0 shadow-md", className)}
+      className={cn(
+        "w-72 max-w-[calc(100vw-2rem)] rounded-xl border-border/70 bg-surface p-0 shadow-md",
+        className,
+      )}
       data-slot="prompt-kit-source-content"
     >
       <a
-        className="flex flex-col gap-2 p-3 no-underline"
+        className="flex cursor-pointer flex-col gap-2 p-3 no-underline"
         href={href}
         rel="noopener noreferrer"
         target="_blank"

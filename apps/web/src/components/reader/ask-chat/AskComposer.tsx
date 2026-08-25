@@ -21,6 +21,12 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { SystemMessage } from "@/components/ui/system-message";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { userFacingErrorMessage } from "../ask/ask-error-messages";
 import { cn } from "@/lib/cn";
 import type { WebSearchModeDto } from "@/types/api/reader-ask";
@@ -82,25 +88,25 @@ function AskComposerSurface({
   const webSearchSupported = onWebSearchModeChange != null;
 
   return (
-    <PromptInput
-      onSubmit={({ text }) => {
-        const value = text.trim();
-        if (!value || sending) {
-          return;
-        }
-        textInput.clear();
-        return onSubmit(value);
-      }}
-      className="w-full"
-      inputGroupClassName="rounded-2xl border-0 bg-surface shadow-sm transition-[box-shadow] dark:bg-surface has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/20"
-    >
+    <TooltipProvider>
+      <PromptInput
+        onSubmit={({ text }) => {
+          const value = text.trim();
+          if (!value || sending) {
+            return;
+          }
+          textInput.clear();
+          return onSubmit(value);
+        }}
+        className="w-full"
+        inputGroupClassName="rounded-2xl border border-hairline bg-surface shadow-none transition-[border-color,box-shadow] dark:bg-surface has-[[data-slot=input-group-control]:focus-visible]:border-ring/60 has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/15"
+      >
       {hasContextStrip ? (
-        // Context strip is a fixed, horizontally scrollable row: chips never
-        // wrap-stack and squeeze the textarea (mobile), and no second
-        // vertical scroll owner is created. Chips are shrink-0; overflow
-        // scrolls sideways.
+        // Let compact context chips wrap as a group, matching their visual
+        // relationship instead of clipping a selected passage into a
+        // horizontal scroller.
         <PromptInputHeader
-          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto px-3 pb-1 pt-2 [scrollbar-width:none]"
+          className="w-full flex-wrap items-center gap-1.5 px-3 pb-1 pt-2"
           data-ask-context-strip="true"
         >
           {contextStrip}
@@ -125,7 +131,8 @@ function AskComposerSurface({
             >
               <PromptInputActionMenuTrigger
                 aria-label="添加其他文章"
-                className="rounded-md"
+                className="cursor-pointer rounded-md"
+                tooltip="添加其他文章"
               />
               <PromptInputActionMenuContent
                 side="top"
@@ -137,34 +144,38 @@ function AskComposerSurface({
             </PromptInputActionMenu>
           ) : null}
           {webSearchSupported ? (
-            <button
-              type="button"
-              aria-label={
-                webSearchEnabled ? "联网搜索已开启" : "联网搜索已关闭"
-              }
-              aria-pressed={webSearchEnabled}
-              data-testid="ask-composer-web-search-toggle"
-              data-state={webSearchEnabled ? "on" : "off"}
-              disabled={sending}
-              title={
-                webSearchEnabled
-                  ? "联网搜索已开启，Agent 会在需要最新信息时自行搜索"
-                  : "联网搜索已关闭"
-              }
-              onClick={() =>
-                onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
-              }
-              className={cn(
-                "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground shadow-none transition-colors",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5",
-                webSearchEnabled
-                  ? "bg-muted text-foreground"
-                  : "hover:bg-muted/50 hover:text-foreground",
-              )}
-            >
-              <Globe aria-hidden="true" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={
+                    webSearchEnabled ? "联网搜索已开启" : "联网搜索已关闭"
+                  }
+                  aria-pressed={webSearchEnabled}
+                  data-testid="ask-composer-web-search-toggle"
+                  data-state={webSearchEnabled ? "on" : "off"}
+                  disabled={sending}
+                  onClick={() =>
+                    onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
+                  }
+                  className={cn(
+                    "inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground shadow-none transition-colors",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3.5",
+                    webSearchEnabled
+                      ? "bg-muted text-foreground"
+                      : "hover:bg-muted/55 hover:text-foreground",
+                  )}
+                >
+                  <Globe aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {webSearchEnabled
+                  ? "联网搜索已开启，必要时自动搜索"
+                  : "联网搜索已关闭"}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
         </PromptInputTools>
         <PromptInputTools className="justify-end">
@@ -177,16 +188,25 @@ function AskComposerSurface({
               <PromptInputSelectTrigger
                 aria-label="切换 Ask Claread 模型"
                 size="sm"
-                className="!h-7 max-w-[9rem] truncate rounded-md px-1.5 !text-xs !font-normal text-muted-foreground shadow-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3"
+                className="!h-7 max-w-[11.5rem] cursor-pointer truncate rounded-md px-1.5 !text-xs !font-normal text-muted-foreground shadow-none hover:bg-muted/55 aria-expanded:bg-muted/55 focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3"
               >
                 <PromptInputSelectValue
                   className="truncate"
                   placeholder={modelPlaceholder ?? "选择模型"}
                 />
               </PromptInputSelectTrigger>
-              <PromptInputSelectContent position="popper" side="top" align="end" className="mb-1">
+              <PromptInputSelectContent
+                position="popper"
+                side="top"
+                align="end"
+                className="mb-1 rounded-md border-border bg-surface p-1 shadow-sm"
+              >
                 {modelOptions.map((item) => (
-                  <PromptInputSelectItem key={item.value} value={item.value}>
+                  <PromptInputSelectItem
+                    key={item.value}
+                    value={item.value}
+                    className="cursor-pointer rounded-sm py-1.5 focus:bg-muted/60 focus:text-foreground"
+                  >
                     {item.label}
                   </PromptInputSelectItem>
                 ))}
@@ -202,7 +222,8 @@ function AskComposerSurface({
           />
         </PromptInputTools>
       </PromptInputFooter>
-    </PromptInput>
+      </PromptInput>
+    </TooltipProvider>
   );
 }
 

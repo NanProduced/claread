@@ -372,6 +372,7 @@ describe("AiWorkspacePanel", () => {
     const launcher = screen.getByRole("button", { name: "打开 Ask Claread" });
     expect(container.querySelector("[data-claread-ai-mark='true']")).not.toBeNull();
     expect(container.querySelector("[data-claread-ai-mark-badge='true']")).not.toBeNull();
+    expect(launcher.getAttribute("title")).toBeNull();
 
     fireEvent.click(launcher);
     expect(onToggle).toHaveBeenCalledTimes(1);
@@ -395,7 +396,9 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    expect(screen.getByRole("heading", { name: "Test Reader" })).not.toBeNull();
+    const heading = screen.getByRole("heading", { name: "Test Reader" });
+    expect(heading).not.toBeNull();
+    expect(heading.getAttribute("title")).toBeNull();
     expect(screen.queryByText("新对话")).toBeNull();
     expect(screen.queryByText("当前对话")).toBeNull();
     expect(screen.queryByText("当前讲解方式")).toBeNull();
@@ -421,6 +424,12 @@ describe("AiWorkspacePanel", () => {
 
     expect(screen.getByText("从这篇文章开始问")).not.toBeNull();
     expect(screen.getByText("概括这篇文章的核心观点。")).not.toBeNull();
+    expect(screen.getByAltText("Ask Claread 阅读助手")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "概括这篇文章的核心观点。" })
+        .querySelector("svg"),
+    ).not.toBeNull();
     expect(screen.queryByText("继续追问这句内容")).toBeNull();
   });
 
@@ -831,6 +840,42 @@ describe("AiWorkspacePanel", () => {
         () => expect(copyButton.querySelector(".lucide-copy")).not.toBeNull(),
         { timeout: 1_500 },
       );
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
+
+  it("shows the user-message time and copies the question from its hover actions", async () => {
+    const originalClipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      mockThreadMessages([
+        createAssistantMessage({
+          id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          role: "user",
+          content_md: "请解释这段内容。",
+        }),
+      ]);
+      renderPanel();
+
+      const message = await screen.findByTestId("ask-user-message");
+      expect(within(message).getByText(/\d{2}:\d{2}/)).not.toBeNull();
+      const copyButton = within(message).getByRole("button", {
+        name: "复制内容",
+      });
+      expect(copyButton.className).toContain("hover:bg-muted/55");
+      await act(async () => {
+        fireEvent.click(copyButton);
+      });
+      expect(writeText).toHaveBeenCalledWith("请解释这段内容。");
+      expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
     } finally {
       Object.defineProperty(navigator, "clipboard", {
         configurable: true,
@@ -1615,16 +1660,25 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("当前可带入")).toBeNull();
     expect(screen.queryByText("当前")).toBeNull();
 
-    const selectionChip = screen.getByTitle(
+    const selectionChip = screen.getByLabelText(
       "自动选区：Climate change presents an existential challenge.",
     );
     fireEvent.click(selectionChip);
     expect(removeAutoSelection).not.toHaveBeenCalled();
     expect(removeAttachment).not.toHaveBeenCalled();
-    expect(selectionChip.textContent).toContain("Climate change presents an existential");
-    expect(selectionChip.textContent).toContain("…");
+    expect(
+      selectionChip.querySelector("[data-ask-selection-label]")?.textContent,
+    ).toBe("Climate change presents an existential challenge.");
+    expect(selectionChip.getAttribute("title")).toBeNull();
     expect(selectionChip.querySelector(".truncate")).not.toBeNull();
-    expect(screen.getByLabelText(/移除自动选区/)).not.toBeNull();
+    const removeSelection = screen.getByLabelText(/移除自动选区/);
+    expect(removeSelection.className).toContain("size-6");
+    expect(removeSelection.className).toContain("rounded-full");
+    expect(removeSelection.className).toContain("cursor-pointer");
+    expect(removeSelection.className).toContain("group-focus-within:opacity-100");
+    expect(
+      selectionChip.querySelector("[data-ask-selection-label]")?.className,
+    ).toContain("max-w-[13.25rem]");
 
     const textarea = screen.getByPlaceholderText("继续问这篇文章…");
     const composerEl = textarea.closest(".cursor-text");
@@ -5494,13 +5548,14 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
     expect(screen.queryByText("已定位到文章中的相关位置")).toBeNull();
 
     const triggers = screen.getAllByRole("button", { name: /查看来源/ });
-    expect(triggers.map((item) => item.textContent)).toEqual(["[1,2]", "[1]"]);
+    expect(triggers.map((item) => item.textContent)).toEqual(["[1]", "[2]", "[1]"]);
     const trigger = triggers[0];
     fireEvent.mouseEnter(trigger);
     fireEvent.click(trigger);
     await waitFor(() => {
       expect(screen.getByText("climate change impacts")).not.toBeNull();
     });
+    expect(screen.getByText("本文 · Test Reader")).not.toBeNull();
 
     const text = container.textContent ?? "";
     expect(text).not.toContain("evh_");
@@ -5814,7 +5869,7 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
     expect(screen.queryByRole("menuitem", { name: "侧边栏" })).toBeNull();
     // Capacity state remains available to assistive tech without adding
     // another text label to the icon-only header cluster.
-    const staticLabel = screen.getByTitle("当前阅读区较窄，仅支持浮窗形式");
+    const staticLabel = screen.getByLabelText("当前以浮窗展示 Ask Claread");
     expect(staticLabel.getAttribute("aria-label")).toContain("浮窗");
     expect(staticLabel.textContent).toBe("");
   });
@@ -5832,10 +5887,15 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
     });
 
     const trigger = screen.getByRole("button", { name: "选择 Ask Claread 面板形式" });
+    expect(trigger.getAttribute("title")).toBeNull();
+    expect(trigger.className).toContain("cursor-pointer");
     await userEvent.click(trigger);
 
-    expect(await screen.findByRole("menuitem", { name: "侧边栏" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "浮窗" })).not.toBeNull();
+    const sidecarItem = await screen.findByRole("menuitem", { name: "侧边栏" });
+    const floatingItem = screen.getByRole("menuitem", { name: "浮窗" });
+    expect(sidecarItem.className).toContain("cursor-pointer");
+    expect(floatingItem.getAttribute("aria-current")).toBe("true");
+    expect(floatingItem.getAttribute("data-disabled")).toBeNull();
   });
 });
 
@@ -7247,6 +7307,8 @@ describe("RR composer selection slots", () => {
     });
     expect(chip.textContent).toContain("机构记忆与政策连续性");
     expect(chip.getAttribute("aria-label")).toBe("当前文章：机构记忆与政策连续性");
+    expect(chip.getAttribute("title")).toBeNull();
+    expect(chip.className).toContain("hover:bg-surface");
     // Non-removable: no remove button inside the chip.
     expect(chip.querySelector("button")).toBeNull();
     // No "基于：当前文章" provenance — the article is implicit context.
@@ -7284,9 +7346,21 @@ describe("RR composer selection slots", () => {
     expect(markers[1]?.getAttribute("data-ask-selection-slot")).toBe("auto");
     expect(markers[2]?.getAttribute("data-ask-selection-slot")).toBe("manual");
     expect(markers[3]?.getAttribute("data-ask-selection-slot")).toBe("manual");
-    expect(strip.textContent).toContain("自动选区文本");
-    expect(strip.textContent).toContain("固定选区一");
-    expect(strip.textContent).toContain("固定选区二");
+    const selectionChips = Array.from(
+      strip.querySelectorAll<HTMLElement>("[data-ask-selection-slot]"),
+    );
+    expect(
+      selectionChips.map(
+        (chip) => chip.querySelector("[data-ask-selection-label]")?.textContent,
+      ),
+    ).toEqual(["自动选区文本", "固定选区一", "固定选区二"]);
+    for (const chip of selectionChips) {
+      expect(chip.getAttribute("title")).toBeNull();
+      expect(chip.className).toContain("hover:bg-surface");
+    }
+    expect(selectionChips[0]?.getAttribute("aria-label")).toBe(
+      "自动选区：自动选区文本",
+    );
   });
 
   it("auto and manual chips are independently removable via their slot callbacks", async () => {
@@ -7464,13 +7538,12 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     }));
   }
 
-  async function openCitationCard(citationId: string, extraCount = 0) {
+  async function openCitationCard(citationId: string) {
     await waitFor(() => {
       expect(screen.getByText("这是带引用的回答。")).not.toBeNull();
     });
-    const suffix = extraCount > 0 ? ` +${extraCount}` : "";
     fireEvent.click(
-      screen.getByLabelText(`查看来源 ${citationId}${suffix} 详情`),
+      screen.getByLabelText(`查看来源 ${citationId} 详情`),
     );
     await waitFor(() => {
       expect(screen.getByTestId(`locate-citation-${citationId}`)).not.toBeNull();
@@ -7768,7 +7841,7 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     ).toBe(false);
   });
 
-  it("navigates the current carousel citation, not always the first", async () => {
+  it("navigates the independently selected citation", async () => {
     const navigateCalls = mockThreadWithNavigate({
       messages: [
         articleCitationMessage([
@@ -7784,8 +7857,7 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     const onNavigateToArticleLocation = navigatedHostCallback();
     renderPanel({ onNavigateToArticleLocation });
 
-    await openCitationCard("cite-1", 1);
-    fireEvent.click(screen.getByTestId("inline-citation-carousel-next"));
+    await openCitationCard("cite-2");
     fireEvent.click(screen.getByTestId("locate-citation-cite-2"));
 
     await waitFor(() => {
@@ -7849,16 +7921,13 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     });
     renderPanel({ onNavigateToArticleLocation: navigatedHostCallback() });
 
-    await openCitationCard("cite-1", 1);
+    await openCitationCard("cite-1");
     const button = screen.getByTestId("locate-citation-cite-1");
     fireEvent.click(button);
     await waitFor(() => {
       expect(navigateRequestCount).toBe(1);
     });
     expect(button.hasAttribute("disabled")).toBe(true);
-    expect(
-      screen.getByTestId("locate-citation-cite-2").hasAttribute("disabled"),
-    ).toBe(true);
     fireEvent.click(screen.getByTestId("locate-citation-cite-1"));
     expect(navigateRequestCount).toBe(1);
     releaseNavigate!();

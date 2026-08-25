@@ -515,11 +515,13 @@ export function InlineCitationCarouselIndex({
 export type InlineCitationSourceProps = HTMLAttributes<HTMLDivElement> & {
   description?: string;
   children?: ReactNode;
+  label?: ReactNode;
 };
 
 export function InlineCitationSource({
   description,
   children,
+  label = "文章依据",
   className,
   ...props
 }: InlineCitationSourceProps) {
@@ -529,9 +531,7 @@ export function InlineCitationSource({
       data-slot="inline-citation-source"
       {...props}
     >
-      <span className="block text-[12px] font-medium text-ink">
-        文章依据
-      </span>
+      <span className="block text-[12px] font-medium text-ink">{label}</span>
       {description ? (
         <span
           className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground"
@@ -562,7 +562,7 @@ export function InlineCitationQuote({
       <blockquote
         className={cn(
           "mt-2 border-l border-border pl-2 text-[12.5px] leading-5 text-muted-foreground",
-          expandable && !expanded && "line-clamp-4",
+          expandable && !expanded && "line-clamp-3",
           className,
         )}
         data-slot="inline-citation-quote"
@@ -575,10 +575,10 @@ export function InlineCitationQuote({
           type="button"
           aria-expanded={expanded}
           aria-label={expanded ? "收起完整证据片段" : "展开完整证据片段"}
-          className="mt-1 text-[12px] text-muted-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-1 cursor-pointer rounded-sm text-[12px] text-muted-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "收起" : "展开"}
+          {expanded ? "收起摘录" : "展开摘录"}
         </button>
       ) : null}
     </>

@@ -124,6 +124,23 @@ describe("ConversationShell", () => {
     expect(root.className).not.toContain("rgba(");
   });
 
+  it("softens the scroll viewport edges without intercepting interaction", () => {
+    render(
+      <ConversationShell hasMessages latestUserMessageId="user-1">
+        <div>answer</div>
+      </ConversationShell>,
+    );
+
+    const topFade = screen.getByTestId("ask-conversation-top-fade");
+    const bottomFade = screen.getByTestId("ask-conversation-bottom-fade");
+    expect(topFade.getAttribute("aria-hidden")).toBe("true");
+    expect(topFade.className).toContain("bg-gradient-to-b");
+    expect(topFade.className).toContain("pointer-events-none");
+    expect(bottomFade.getAttribute("aria-hidden")).toBe("true");
+    expect(bottomFade.className).toContain("bg-gradient-to-t");
+    expect(bottomFade.className).toContain("pointer-events-none");
+  });
+
   it("renders emptyState when hasMessages is false", () => {
     render(
       <ConversationShell

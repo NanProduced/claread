@@ -1,13 +1,18 @@
 "use client";
 
 import {
+  AlignLeft,
   Check,
   Copy,
   FileText,
+  GitBranch,
+  Lightbulb,
+  PenLine,
   Quote,
   PanelRightOpen,
   PictureInPicture2,
   RotateCcw,
+  Search,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,13 +21,6 @@ import {
   InlineCitationCard,
   InlineCitationCardBody,
   InlineCitationCardTrigger,
-  InlineCitationCarousel,
-  InlineCitationCarouselContent,
-  InlineCitationCarouselHeader,
-  InlineCitationCarouselIndex,
-  InlineCitationCarouselItem,
-  InlineCitationCarouselNext,
-  InlineCitationCarouselPrev,
   InlineCitationQuote,
   InlineCitationSource,
 } from "@/components/ai-elements/inline-citation";
@@ -41,15 +39,6 @@ import {
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message";
-import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Loader } from "@/components/ui/loader";
 import {
   DropdownMenu,
@@ -58,6 +47,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SystemMessage } from "@/components/ui/system-message";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import { IconButton } from "@/components/primitives/icon-button";
 import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
@@ -103,7 +98,6 @@ import { AgenticWebSources } from "./ask/agentic-web-sources";
 import {
   createIdleAgenticActivityState,
   reduceAgenticActivityEvent,
-  type AgenticActivityOutcome,
   type AgenticActivityEvent,
   type AgenticActivityState,
 } from "./ask/agentic-activity";
@@ -411,8 +405,11 @@ function AttachmentChips({
                   }
                 : undefined
             }
-            className={cn(variant === "history" && "w-full")}
-            title={askAttachmentLabel(attachment)}
+            className={cn(
+              variant === "history" && "w-full",
+              variant === "composer" &&
+                "cursor-default border-border/60 bg-surface font-normal hover:bg-surface hover:text-foreground",
+            )}
           >
             <AttachmentPreview />
             <AttachmentInfo className={cn("text-xs", variant === "composer" ? "max-w-[12rem] sm:max-w-[15rem]" : undefined)} />
@@ -442,9 +439,8 @@ function CurrentArticleChip({ title }: { title: string }) {
           title,
           "application/vnd.claread.record",
         )}
-        className="max-w-full cursor-default !h-7 !border-border/60 !font-normal"
+        className="max-w-full cursor-default !h-7 !border-border/60 bg-surface !font-normal hover:bg-surface hover:text-foreground"
         data-ask-current-article-chip="true"
-        title={`当前文章：${title}`}
         aria-label={`当前文章：${title}`}
       >
         <AttachmentPreview fallbackIcon={<FileText className="h-3 w-3 text-muted-foreground" />} />
@@ -455,8 +451,9 @@ function CurrentArticleChip({ title }: { title: string }) {
 }
 
 /**
- * Composer chip for an auto/manual selection slot. Quote icon + truncated
- * source text; each chip is independently removable via the slot callback.
+ * Composer chip for an auto/manual selection slot. The compact label shows
+ * the selected text while the quote icon distinguishes it from the article.
+ * Each chip is independently removable via the slot callback.
  * Selection identity (dedupe/promote) is owned by the surface via the
  * anchor fingerprint — never the label.
  */
@@ -471,7 +468,6 @@ function SelectionContextChip({
 }) {
   const attachmentKey = askAttachmentKey(attachment);
   const preferredText = attachment.selectedText?.trim() || askAttachmentLabel(attachment);
-  const displayLabel = truncateAtWordBoundary(preferredText, 24);
   const slotLabel = slot === "auto" ? "自动选区" : "固定选区";
 
   return (
@@ -485,18 +481,20 @@ function SelectionContextChip({
       }}
     >
       <Attachment
-        data={sourceDocumentPart(attachmentKey, displayLabel)}
+        data={sourceDocumentPart(attachmentKey, preferredText)}
         onRemove={onRemove ? () => onRemove(attachmentKey) : undefined}
-        className="max-w-full !h-7 !border-border/60 !font-normal"
+        className="max-w-full cursor-default !h-7 !border-border/60 bg-surface !font-normal hover:bg-surface hover:text-foreground"
         data-ask-selection-slot={slot}
         onPointerDown={(event) => {
           event.preventDefault();
         }}
-        title={`${slotLabel}：${preferredText}`}
         aria-label={`${slotLabel}：${preferredText}`}
       >
         <AttachmentPreview fallbackIcon={<Quote className="h-3 w-3 text-muted-foreground" />} />
-        <AttachmentInfo className="max-w-[12rem] text-xs sm:max-w-[15rem]" />
+        <AttachmentInfo
+          className="max-w-[13.25rem] text-xs"
+          data-ask-selection-label="true"
+        />
         {onRemove ? (
           <AttachmentRemove label={`移除${slotLabel}：${preferredText}`} />
         ) : null}
@@ -602,7 +600,7 @@ function LocateCitationButton({
       aria-label="定位原文"
       disabled={disabled}
       onClick={() => onLocate(citationId)}
-      className="mt-2 inline-flex items-center rounded-md border border-border/60 px-2 py-1 text-xs leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
+      className="mt-2 inline-flex cursor-pointer items-center rounded-md border border-border/60 px-2 py-1 text-xs leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
       {pending ? "定位中…" : "定位原文"}
     </button>
@@ -625,17 +623,22 @@ function LocateCitationButton({
 function AgenticAnswerBlocks({
   blocks,
   citations,
+  articleTitle,
   onLocateCitation,
   pendingCitationId,
 }: {
   blocks: ReaderAskAgenticAnswerBlockDto[];
   citations: AgenticCitationDisplayItem[];
+  articleTitle: string;
   onLocateCitation?: (citationId: string) => void;
   pendingCitationId?: string | null;
 }) {
   const citationById = new Map(citations.map((c) => [c.citationId, c]));
+  const articleCitations = citations.filter(
+    (citation) => citation.sourceKind === "article",
+  );
   const citationNumberById = new Map(
-    citations.map((citation, index) => [citation.citationId, index + 1]),
+    articleCitations.map((citation, index) => [citation.citationId, index + 1]),
   );
 
   return (
@@ -656,83 +659,36 @@ function AgenticAnswerBlocks({
               {block.text}
             </MessageResponse>
             {blockCitations.length > 0 ? (
-              <div className="mt-1.5 inline-flex flex-wrap items-center gap-1.5">
-                <InlineCitation>
-                  <InlineCitationCard>
-                    <InlineCitationCardTrigger
-                      aria-label={`查看来源 ${blockCitations[0].citationId}${
-                        blockCitations.length > 1
-                          ? ` +${blockCitations.length - 1}`
-                          : ""
-                      } 详情`}
-                    >
-                      [{blockCitations
-                        .map((citation) => citationNumberById.get(citation.citationId))
-                        .filter((number): number is number => number != null)
-                        .join(",")}]
-                    </InlineCitationCardTrigger>
-                    <InlineCitationCardBody>
-                      {blockCitations.length === 1 ? (
-                        <>
-                          <InlineCitationSource>
-                            {blockCitations[0].snippet ? (
-                              <InlineCitationQuote>
-                                {blockCitations[0].snippet}
-                              </InlineCitationQuote>
-                            ) : null}
-                          </InlineCitationSource>
-                          {onLocateCitation ? (
-                            <div>
-                              <LocateCitationButton
-                                citationId={blockCitations[0].citationId}
-                                pending={
-                                  pendingCitationId === blockCitations[0].citationId
-                                }
-                                disabled={pendingCitationId != null}
-                                onLocate={onLocateCitation}
-                              />
-                            </div>
+              <div className="mt-0.5 inline-flex flex-wrap items-center gap-0.5">
+                {blockCitations.map((citation) => (
+                  <InlineCitation key={citation.citationId}>
+                    <InlineCitationCard>
+                      <InlineCitationCardTrigger
+                        aria-label={`查看来源 ${citation.citationId} 详情`}
+                        className="min-h-5 min-w-5 cursor-pointer rounded-sm px-0.5"
+                      >
+                        [{citationNumberById.get(citation.citationId)}]
+                      </InlineCitationCardTrigger>
+                      <InlineCitationCardBody className="rounded-xl border-border/70 bg-surface">
+                        <InlineCitationSource label={`本文 · ${articleTitle}`}>
+                          {citation.snippet ? (
+                            <InlineCitationQuote>{citation.snippet}</InlineCitationQuote>
                           ) : null}
-                        </>
-                      ) : (
-                        <InlineCitationCarousel count={blockCitations.length}>
-                          <InlineCitationCarouselHeader>
-                            <div className="flex items-center gap-1">
-                              <InlineCitationCarouselPrev data-testid="inline-citation-carousel-prev" />
-                              <InlineCitationCarouselNext data-testid="inline-citation-carousel-next" />
-                            </div>
-                            <InlineCitationCarouselIndex data-testid="inline-citation-carousel-index" />
-                          </InlineCitationCarouselHeader>
-                          <InlineCitationCarouselContent>
-                            {blockCitations.map((citation) => (
-                              <InlineCitationCarouselItem key={citation.citationId}>
-                                <InlineCitationSource>
-                                  {citation.snippet ? (
-                                    <InlineCitationQuote>
-                                      {citation.snippet}
-                                    </InlineCitationQuote>
-                                  ) : null}
-                                </InlineCitationSource>
-                                {onLocateCitation ? (
-                                  <div>
-                                    <LocateCitationButton
-                                      citationId={citation.citationId}
-                                      pending={
-                                        pendingCitationId === citation.citationId
-                                      }
-                                      disabled={pendingCitationId != null}
-                                      onLocate={onLocateCitation}
-                                    />
-                                  </div>
-                                ) : null}
-                              </InlineCitationCarouselItem>
-                            ))}
-                          </InlineCitationCarouselContent>
-                        </InlineCitationCarousel>
-                      )}
-                    </InlineCitationCardBody>
-                  </InlineCitationCard>
-                </InlineCitation>
+                        </InlineCitationSource>
+                        {onLocateCitation ? (
+                          <div>
+                            <LocateCitationButton
+                              citationId={citation.citationId}
+                              pending={pendingCitationId === citation.citationId}
+                              disabled={pendingCitationId != null}
+                              onLocate={onLocateCitation}
+                            />
+                          </div>
+                        ) : null}
+                      </InlineCitationCardBody>
+                    </InlineCitationCard>
+                  </InlineCitation>
+                ))}
               </div>
             ) : null}
           </div>
@@ -773,6 +729,7 @@ function AskPanelLoadingState({
 
 function MessageBubble({
   item,
+  articleTitle,
   onRetry,
   onResend,
   onDisableWebSearchAndResend,
@@ -784,6 +741,7 @@ function MessageBubble({
   citationNavigationPending,
 }: {
   item: AskPanelConversationItem;
+  articleTitle: string;
   onRetry: (messageId: string) => void;
   onResend?: (localAssistantId: string) => void;
   onDisableWebSearchAndResend?: (localAssistantId: string) => void;
@@ -915,6 +873,7 @@ function MessageBubble({
                           <AgenticAnswerBlocks
                             blocks={message.agentic_answer_blocks ?? []}
                             citations={agenticCitationItems}
+                            articleTitle={articleTitle}
                             onLocateCitation={
                               canLocateCitations
                                 ? (citationId) => {
@@ -1015,6 +974,7 @@ function MessageBubble({
                             <MessageAction
                               label="复制内容"
                               tooltip={copied ? "已复制" : "复制内容"}
+                              className="cursor-pointer rounded-md hover:bg-muted/55 hover:text-foreground"
                               onClick={() => void handleCopy()}
                             >
                               {copied ? (
@@ -1031,6 +991,7 @@ function MessageBubble({
                             <MessageAction
                               label="重新生成"
                               tooltip="重新生成"
+                              className="cursor-pointer rounded-md hover:bg-muted/55 hover:text-foreground"
                               onClick={() => onRetry(message.id)}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -1043,6 +1004,7 @@ function MessageBubble({
                             <MessageAction
                               label="重新发送"
                               tooltip="重新发送"
+                              className="cursor-pointer rounded-md hover:bg-muted/55 hover:text-foreground"
                               onClick={() => onResend(message.id)}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -1065,10 +1027,22 @@ function MessageBubble({
                 {message.content_md}
               </MessageResponse>
             </MessageContent>
-            <div className="flex items-center justify-end gap-2 pr-1 opacity-0 transition-opacity group-hover:opacity-70">
+            <div className="flex items-center justify-end gap-1 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <span className="text-xs text-muted-foreground">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
+              <MessageAction
+                label="复制内容"
+                tooltip={copied ? "已复制" : "复制内容"}
+                className="size-6 cursor-pointer rounded-md text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+                onClick={() => void handleCopy()}
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </MessageAction>
             </div>
           </AiMessage>
         )}
@@ -1115,14 +1089,17 @@ function StarterState({
   const baseSuggestions = [
     {
       prompt: starterContent.prompts[0],
+      icon: AlignLeft,
       entryAction: "ask_about_this" as const,
     },
     {
       prompt: starterContent.prompts[1],
+      icon: Lightbulb,
       entryAction: starterMode === "sentence" ? ("why_here" as const) : ("ask_about_this" as const),
     },
     {
       prompt: starterContent.prompts[2],
+      icon: GitBranch,
       entryAction: "ask_about_this" as const,
     },
   ];
@@ -1131,6 +1108,7 @@ function StarterState({
         ...baseSuggestions,
         {
           prompt: "查询这篇文章相关的其他资料。",
+          icon: Search,
           entryAction: "ask_about_this" as const,
           // R2.1 — signals the host to enable web search for this send.
           webSearchOverride: "allowed" as const,
@@ -1140,6 +1118,7 @@ function StarterState({
         ...baseSuggestions,
         {
           prompt: starterContent.prompts[3],
+          icon: PenLine,
           entryAction: "ask_about_this" as const,
         },
       ];
@@ -2813,18 +2792,24 @@ export function AiWorkspacePanel({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className={cn(`ai-workspace-launcher ai-workspace-launcher--${presentation}`, workspaceLauncherClassName, "inline-flex")}
-        onClick={onToggle}
-        aria-label="打开 Ask Claread"
-        title="打开 Ask Claread"
-      >
-        <ClareadAiMark
-          size="lg"
-          className={cn("transition-transform group-hover:scale-[1.035]", readerTransitionStandard)}
-        />
-      </button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className={cn(`ai-workspace-launcher ai-workspace-launcher--${presentation}`, workspaceLauncherClassName, "inline-flex cursor-pointer")}
+              onClick={onToggle}
+              aria-label="打开 Ask Claread"
+            >
+              <ClareadAiMark
+                size="lg"
+                className={cn("transition-transform group-hover:scale-[1.035]", readerTransitionStandard)}
+              />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left">打开 Ask Claread</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     );
   }
 
@@ -2847,8 +2832,9 @@ export function AiWorkspacePanel({
           : "relative flex h-full w-full flex-col overflow-hidden bg-surface",
       )}
     >
-      <div className="ai-workspace-panel__header bg-surface">
-        <div className="flex items-center justify-between gap-3">
+      <TooltipProvider>
+        <div className="ai-workspace-panel__header bg-surface">
+          <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-1.5">
             <ClareadAiMark
               size="sm"
@@ -2857,35 +2843,49 @@ export function AiWorkspacePanel({
               markClassName="!size-4"
             />
             <div className="min-w-0">
-              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} title={panelTitle} className="truncate text-sm font-medium text-ink outline-none">{panelTitle}</h2>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-sm font-medium text-ink outline-none">{panelTitle}</h2>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{panelTitle}</TooltipContent>
+              </Tooltip>
               <div aria-live="polite" role="status" className="sr-only" data-testid="ai-workspace-live-announcement">{liveAnnouncement}</div>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {onChangeSurface && hasSidecarCapacity ? (
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="ai-workspace-panel__surface-trigger inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
-                    aria-label="选择 Ask Claread 面板形式"
-                    title="选择面板形式"
-                  >
-                    {isFloatingSurface ? (
-                      <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
-                    ) : (
-                      <PanelRightOpen aria-hidden="true" className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" sideOffset={6} className="min-w-36">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="ai-workspace-panel__surface-trigger inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted/55 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+                        aria-label="选择 Ask Claread 面板形式"
+                      >
+                        {isFloatingSurface ? (
+                          <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
+                        ) : (
+                          <PanelRightOpen aria-hidden="true" className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>面板形式</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent
+                  align="end"
+                  sideOffset={6}
+                  className="min-w-32 rounded-md border-border bg-surface p-1 shadow-sm"
+                >
                   {([
                     ["sidecar", "侧边栏", PanelRightOpen],
                     ["floating", "浮窗", PictureInPicture2],
                   ] as const).map(([nextSurface, label, Icon]) => (
                     <DropdownMenuItem
                       key={nextSurface}
-                      disabled={surface === nextSurface}
+                      aria-current={surface === nextSurface ? "true" : undefined}
+                      className="cursor-pointer rounded-sm py-1.5 focus:bg-muted/60 focus:text-foreground data-[disabled]:cursor-default"
                       onSelect={() => {
                         if (surface === nextSurface) {
                           return;
@@ -2902,38 +2902,53 @@ export function AiWorkspacePanel({
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : onChangeSurface && !hasSidecarCapacity ? (
-              <span
-                aria-label="当前以浮窗展示 Ask Claread"
-                className="inline-flex h-7 w-7 cursor-default items-center justify-center rounded-md text-muted-foreground/70"
-                title="当前阅读区较窄，仅支持浮窗形式"
-              >
-                <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
-              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    aria-label="当前以浮窗展示 Ask Claread"
+                    className="inline-flex h-7 w-7 cursor-default items-center justify-center rounded-md text-muted-foreground/70"
+                  >
+                    <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>当前阅读区较窄，仅支持浮窗形式</TooltipContent>
+              </Tooltip>
             ) : null}
-            <IconButton
-              variant="quiet"
-              size="sm"
-              className="h-7 w-7"
-              onClick={() => {
-                void handleResetConversation();
-              }}
-              disabled={loading || sending || !activeThreadId}
-              aria-label="重新开始"
-            >
-              <RotateCcw aria-hidden="true" className="h-4 w-4" />
-            </IconButton>
-            <IconButton
-              variant="quiet"
-              size="sm"
-              className="h-7 w-7"
-              onClick={onToggle}
-              aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 Ask Claread"}
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </IconButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  variant="quiet"
+                  size="sm"
+                  className="h-7 w-7 cursor-pointer !rounded-md"
+                  onClick={() => {
+                    void handleResetConversation();
+                  }}
+                  disabled={loading || sending || !activeThreadId}
+                  aria-label="重新开始"
+                >
+                  <RotateCcw aria-hidden="true" className="h-4 w-4" />
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>重新开始</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton
+                  variant="quiet"
+                  size="sm"
+                  className="h-7 w-7 cursor-pointer !rounded-md"
+                  onClick={onToggle}
+                  aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 Ask Claread"}
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>{isFloatingSurface ? "关闭" : "收起"}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
-      </div>
+        </div>
+      </TooltipProvider>
 
       {capacityDowngradeNotice ? (
         <div
@@ -2947,7 +2962,7 @@ export function AiWorkspacePanel({
               type="button"
               onClick={onDismissCapacityDowngradeNotice}
               aria-label="关闭说明"
-              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+              className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-muted/55 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
             >
               <X aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
@@ -3018,6 +3033,7 @@ export function AiWorkspacePanel({
               <MessageBubble
                 key={item.id}
                 item={item}
+                articleTitle={currentArticleChipTitle}
                 onRetry={handleRetry}
                 onResend={handleResend}
                 onDisableWebSearchAndResend={handleDisableWebSearchAndResend}

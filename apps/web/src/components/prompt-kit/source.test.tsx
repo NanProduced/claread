@@ -29,6 +29,9 @@ describe("WebSources", () => {
 
     const trigger = screen.getByRole("link", { name: "查看网页来源 example.com" });
     expect(trigger.getAttribute("href")).toBe("https://example.com/research");
+    expect(trigger.className).toContain("h-6");
+    expect(trigger.className).toContain("cursor-pointer");
+    expect(trigger.className).toContain("bg-surface-raised");
     expect(screen.getByText("网页来源 · 1")).not.toBeNull();
   });
 
@@ -58,6 +61,11 @@ describe("WebSources", () => {
     expect((await screen.findByTestId("web-source-published-at")).textContent).toBe(
       "发布于 2026-07-20",
     );
+    const sourceCard = document.querySelector<HTMLElement>(
+      '[data-slot="prompt-kit-source-content"]',
+    );
+    expect(sourceCard?.className).toContain("rounded-xl");
+    expect(sourceCard?.className).toContain("bg-surface");
     const retrievedAt = await screen.findByTestId("web-source-retrieved-at");
     expect(retrievedAt.tagName).toBe("TIME");
     expect(retrievedAt.getAttribute("dateTime")).toBe("2026-07-29T08:30:00+00:00");

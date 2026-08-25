@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AskComposer } from "./AskComposer";
+
+afterEach(cleanup);
 
 describe("AskComposer web search toggle", () => {
   it("renders one quiet compact composer surface", () => {
@@ -20,13 +22,16 @@ describe("AskComposer web search toggle", () => {
 
     const surface = container.querySelector('[data-slot="input-group"]');
     expect(surface?.className).toContain("rounded-2xl");
-    expect(surface?.className).toContain("border-0");
+    expect(surface?.className).toContain("border-hairline");
+    expect(surface?.className).not.toContain("border-0");
     expect(surface?.className).toContain("bg-surface");
-    expect(surface?.className).toContain("shadow-sm");
+    expect(surface?.className).toContain("shadow-none");
     expect(container.querySelector("form")?.className).not.toContain("bg-muted/30");
-    expect(container.querySelector("[data-ask-context-strip]")?.className).not.toContain(
-      "border-b",
-    );
+    const contextStrip = container.querySelector("[data-ask-context-strip]");
+    expect(contextStrip?.className).not.toContain("border-b");
+    expect(contextStrip?.className).toContain("flex-wrap");
+    expect(contextStrip?.className).not.toContain("flex-nowrap");
+    expect(contextStrip?.className).not.toContain("overflow-x-auto");
     expect(container.querySelector("[data-ask-composer-textarea]")?.className).toContain(
       "min-h-14",
     );
@@ -50,6 +55,8 @@ describe("AskComposer web search toggle", () => {
     const toggle = screen.getByRole("button", { name: "联网搜索已关闭" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(toggle.textContent).toBe("");
+    expect(toggle.getAttribute("title")).toBeNull();
+    expect(toggle.className).toContain("cursor-pointer");
 
     fireEvent.click(toggle);
     expect(onWebSearchModeChange).toHaveBeenCalledWith("allowed");
@@ -125,7 +132,8 @@ describe("AskComposer web search toggle", () => {
     expect(modelTrigger.className).toContain("!h-7");
     expect(modelTrigger.className).toContain("!text-xs");
     expect(modelTrigger.className).toContain("!font-normal");
-    expect(modelTrigger.className).toContain("max-w-[9rem]");
+    expect(modelTrigger.className).toContain("max-w-[11.5rem]");
+    expect(modelTrigger.className).toContain("cursor-pointer");
     expect(modelTrigger.className).not.toContain("opacity-0");
     expect(container.querySelector("[data-ask-composer-textarea]")?.className).toContain(
       "!text-sm",
