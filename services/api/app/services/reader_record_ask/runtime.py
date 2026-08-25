@@ -175,6 +175,10 @@ async def run_reading_record_ask(
     memory_manager_enabled: bool = False,
     memory_compactor: Any | None = None,
     memory_settings: Any | None = None,
+    # Optional async loader returning the active
+    # StableDocumentQueryService projection. ``None`` (default) keeps the
+    # assembly path byte-identical to the pre-feature behavior.
+    stable_document_loader: Any | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -250,6 +254,7 @@ async def run_reading_record_ask(
             _emit_memory_event if memory_manager_enabled else None
         ),
         memory_settings=memory_settings,
+        stable_document_loader=stable_document_loader,
     )
 
     try:

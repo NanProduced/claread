@@ -1598,6 +1598,10 @@ async def _run_agentic_turn(
     # Production passes ``None`` (the real ``record_invocation_keyed_usage_event``
     # against the shared pool).
     usage_event_recorder: UsageEventRecorder | None = None,
+    # Optional loader for the active
+    # StableDocumentQueryService projection; forwarded into the Ask runtime.
+    # ``None`` keeps behavior identical (no supplemental typed context).
+    stable_document_loader: Any | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -1725,6 +1729,7 @@ async def _run_agentic_turn(
             memory_manager_enabled=memory_enabled,
             memory_compactor=memory_compactor,
             memory_settings=memory_settings if memory_enabled else None,
+            stable_document_loader=stable_document_loader,
         )
     )
 
@@ -2638,6 +2643,21 @@ async def stream_agentic_thread_message(
             expected_base_id=base_id,
         )
 
+    # Wire the supplemental typed-context loader
+    # only when an active stable document resolved. The loader reuses
+    # ``StableDocumentQueryService.load_active_stable_document`` — no new
+    # SQL, no second document-read chain. ``None`` keeps behavior identical.
+    wired_typed_loader: Any | None = None
+    if auto_wire_dependencies and resolved_stable_id is not None:
+        from app.services.reader_record_ask.typed_supplemental_context import (
+            build_typed_supplemental_loader,
+        )
+
+        wired_typed_loader = build_typed_supplemental_loader(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+        )
+
     effective_web_search_mode: WebSearchMode = (
         "allowed"
         if (
@@ -3036,6 +3056,7 @@ async def stream_agentic_thread_message(
             execution_snapshot=execution_snapshot,
             model_option_key=model_option_key,
             usage_event_recorder=usage_event_recorder,
+            stable_document_loader=wired_typed_loader,
         ):
             yield chunk
             # ASK-TURN-LIFECYCLE mark terminal-emitted as soon as the

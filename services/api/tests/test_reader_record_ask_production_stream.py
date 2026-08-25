@@ -413,8 +413,12 @@ async def test_stable_document_loaded_into_envelope() -> None:
     repo = _FakeRepo()
     captured: dict = {}
 
+    async def _typed_loader() -> object:
+        return object()
+
     async def _run(**kwargs):
         captured["envelope"] = kwargs["envelope"]
+        captured["stable_document_loader"] = kwargs["stable_document_loader"]
         return ReadingRecordAskRunResult(
             final_text="ok",
             finalized=FinalizedAskResult(
@@ -425,10 +429,17 @@ async def test_stable_document_loaded_into_envelope() -> None:
             ),
         )
 
-    with patch(
-        "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
-        new_callable=AsyncMock,
-        return_value=_DOC,
+    with (
+        patch(
+            "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+            new_callable=AsyncMock,
+            return_value=_DOC,
+        ),
+        patch(
+            "app.services.reader_record_ask.typed_supplemental_context."
+            "build_typed_supplemental_loader",
+            return_value=_typed_loader,
+        ),
     ):
         async for _ in stream_agentic_thread_message(
             user_id=_USER,
@@ -445,6 +456,7 @@ async def test_stable_document_loaded_into_envelope() -> None:
         ):
             pass
     assert captured["envelope"].stable_document_id == _DOC
+    assert captured["stable_document_loader"] is _typed_loader
 
 
 @pytest.mark.asyncio

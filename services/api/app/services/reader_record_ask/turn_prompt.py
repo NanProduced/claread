@@ -89,6 +89,11 @@ class TurnFramePromptCapability:
     selection_untrusted: str = ""
     baseline_untrusted: str = ""
     map_untrusted: str = ""
+    # Supplemental typed context body (verbatim
+    # math LaTeX + structural image metadata). Already charged to the
+    # shared ``baseline`` account by the caller before minting; excluded
+    # from the request_frame trusted surface. Empty when absent.
+    typed_untrusted: str = ""
     # R1A: memory block body already charged to the ``memory`` account
     # (may be "" when no snapshot was injected). Excluded from the
     # request_frame trusted surface so it does not double-charge.
@@ -171,11 +176,13 @@ def compose_production_user_prompt(
     map_prompt: ArticleMapPromptCapability | None,
     memory_section: str = "",
     recent_history_section: str = "",
-) -> tuple[str, str, str, str, str, str]:
+    typed_context_section: str = "",
+) -> tuple[str, str, str, str, str, str, str]:
     """Compose the production user prompt; return bodies for equality checks.
 
     Returns ``(user_prompt, selection_untrusted, baseline_untrusted,
-    map_untrusted, memory_untrusted, recent_history_untrusted)``.
+    map_untrusted, memory_untrusted, recent_history_untrusted,
+    typed_untrusted)``.
     The user question is preserved **exactly** (no strip / truncate / rewrite).
 
     R1A: ``memory_section`` is the pre-rendered memory block text (already
@@ -183,6 +190,13 @@ def compose_production_user_prompt(
     after the handles block and before selection/baseline/map sections.
     The full ``memory_section`` is returned as ``memory_untrusted`` so
     the caller can exclude it from the request_frame trusted surface.
+
+    ``typed_context_section`` is the pre-rendered
+    supplemental typed context text (already charged to the shared
+    ``baseline`` account by the caller). It is injected after the map
+    section and before the coverage block; empty string injects nothing
+    and keeps the composed prompt byte-identical to the pre-feature
+    assembly.
     """
     if not isinstance(user_question, str):
         raise TypeError("user_question must be str")
@@ -217,6 +231,7 @@ def compose_production_user_prompt(
         f"{selection_section}"
         f"{baseline_section}"
         f"{map_section}"
+        f"{typed_context_section}"
         f"{coverage_block}"
         f"{_QUESTION_HEADER}\n"
         f"{user_question}\n"
@@ -228,6 +243,7 @@ def compose_production_user_prompt(
         map_untrusted,
         memory_section,
         recent_history_section,
+        typed_context_section,
     )
 
 
@@ -239,6 +255,7 @@ def _trusted_user_frame(
     map_untrusted: str,
     memory_untrusted: str = "",
     recent_history_untrusted: str = "",
+    typed_untrusted: str = "",
 ) -> str:
     """User prompt with untrusted bodies removed (chrome retained)."""
     trusted = user_prompt
@@ -249,6 +266,8 @@ def _trusted_user_frame(
         trusted = trusted.replace(baseline_untrusted, "", 1)
     if map_untrusted:
         trusted = trusted.replace(map_untrusted, "", 1)
+    if typed_untrusted:
+        trusted = trusted.replace(typed_untrusted, "", 1)
     if memory_untrusted:
         trusted = trusted.replace(memory_untrusted, "", 1)
     if recent_history_untrusted:
@@ -325,6 +344,7 @@ def mint_turn_frame_prompt_capability(
     baseline_prompt: BaselinePromptCapability | None = None,
     map_prompt: ArticleMapPromptCapability | None = None,
     charge: bool = True,
+    typed_context_section: str = "",
     memory_snapshot: Any = None,
     recent_history_view: RenderedModelView | None = None,
 ) -> TurnFramePromptCapability:
@@ -358,7 +378,7 @@ def mint_turn_frame_prompt_capability(
     recent_section = recent_view.text if recent_view is not None else ""
 
     coverage_block = _coverage_block(is_complete=baseline_is_complete)
-    user_prompt, sel_u, base_u, map_u, mem_u, recent_u = (
+    user_prompt, sel_u, base_u, map_u, mem_u, recent_u, typed_u = (
         compose_production_user_prompt(
             projection_json=projection_json,
             handles_block=handles_block,
@@ -369,6 +389,7 @@ def mint_turn_frame_prompt_capability(
             map_prompt=map_prompt,
             memory_section=memory_section,
             recent_history_section=recent_section,
+            typed_context_section=typed_context_section,
         )
     )
     trusted_user = _trusted_user_frame(
@@ -378,6 +399,7 @@ def mint_turn_frame_prompt_capability(
         map_untrusted=map_u,
         memory_untrusted=mem_u,
         recent_history_untrusted=recent_u,
+        typed_untrusted=typed_u,
     )
     if system_instructions:
         request_frame_text = system_instructions + "\n" + trusted_user
@@ -449,6 +471,7 @@ def mint_turn_frame_prompt_capability(
         selection_untrusted=sel_u,
         baseline_untrusted=base_u,
         map_untrusted=map_u,
+        typed_untrusted=typed_u,
         memory_untrusted=mem_u,
         recent_history_untrusted=recent_u,
     )

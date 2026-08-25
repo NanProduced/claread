@@ -28,6 +28,7 @@ import asyncio
 import datetime as _datetime
 import hmac
 import json
+import logging
 import secrets as _secrets
 import time
 import unicodedata
@@ -133,6 +134,11 @@ from app.services.reader_record_ask.turn_prompt import (
     mint_turn_frame_prompt_capability,
     render_handles_listing,
 )
+from app.services.reader_record_ask.typed_supplemental_context import (
+    TypedSupplementalContextIdentityError,
+    assemble_typed_supplemental_view,
+    build_typed_supplemental_context,
+)
 from app.services.reader_record_ask.web_evidence_registry import (
     WebEvidenceRegistry,
 )
@@ -155,6 +161,8 @@ from app.services.reader_record_ask.web_search_port import (
     WebSearchBackend,
     WebSearchResult,
 )
+
+logger = logging.getLogger(__name__)
 
 # Default search call limit (mirrors legacy executor).
 DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS = 1
@@ -353,6 +361,10 @@ class _OuterTxnReceipt:
     # when no memory snapshot was injected (flag off / empty thread).
     memory_charge: int = 0
     recent_history_charge: int = 0
+    # Registry-free typed-context chars charged to the shared
+    # baseline account; refunded as plain chars on outer rollback. ``0``
+    # when no typed section was injected (loader unset / absent / no fit).
+    typed_context_charge: int = 0
     # Server-only map cursor issue markers from this assembly (parallel to
     # issued cursors). Outer rollback uses
     # ``ledger.rollback_transition_by_marker`` only — never raw token pop.
@@ -401,6 +413,12 @@ class TurnCoordinator:
         memory_compactor: Any | None = None,
         memory_event_sink: Callable[[Any], None] | None = None,
         memory_settings: Any | None = None,
+        # Optional async loader returning the
+        # active StableDocumentQueryService projection for this record.
+        # ``None`` (default) disables supplemental typed context entirely
+        # (zero behavioral drift). Loader I/O failure is fail-soft absent;
+        # projection/envelope identity mismatch fails closed.
+        stable_document_loader: Callable[[], Any] | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
@@ -432,6 +450,9 @@ class TurnCoordinator:
         self.memory_compactor = memory_compactor
         self.memory_event_sink = memory_event_sink
         self.memory_settings = memory_settings
+        # See the constructor contract. Never invoked when
+        # ``None``; the coordinator owns the fail-soft/fail-closed split.
+        self._stable_document_loader = stable_document_loader
         self._recent_history_view: RenderedModelView | None = None
         if evidence_registry is not None:
             if evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
@@ -813,6 +834,13 @@ class TurnCoordinator:
         # ``_commit_assembly`` can inject it without I/O.
         memory_snapshot = await self._load_memory_snapshot()
 
+        # Load the stable-document projection once
+        # before the outer commit (pure I/O). ``None`` when no loader is
+        # wired (zero drift) or loader I/O failed (fail-soft absent — the
+        # context is supplemental); identity mismatch fails closed inside
+        # ``_commit_assembly``.
+        typed_projection = await self._load_typed_supplemental_projection()
+
         # ---- outer commit (selection → baseline → map → request_frame) ----
         receipt = _OuterTxnReceipt()
         try:
@@ -822,6 +850,7 @@ class TurnCoordinator:
                 receipt=receipt,
                 memory_snapshot=memory_snapshot,
                 recent_history_view=self._recent_history_view,
+                typed_projection=typed_projection,
             )
         except ModelViewBudgetError as exc:
             self._rollback_outer(receipt)
@@ -916,6 +945,7 @@ class TurnCoordinator:
         receipt: _OuterTxnReceipt,
         memory_snapshot: Any = None,
         recent_history_view: RenderedModelView | None = None,
+        typed_projection: Any = None,
     ) -> TurnAssembly:
         envelope = self.envelope
         fp = envelope.envelope_fingerprint
@@ -1030,6 +1060,34 @@ class TurnCoordinator:
             receipt.map_issue_markers = map_result.issue_markers
             self._map_expander = map_result.expander
 
+        # 3b) Supplemental typed context (optional).
+        # Identity mismatch between the loaded projection and the turn
+        # envelope fail-closes the whole turn (rollback + non-runnable
+        # assembly). Budget exhaustion is fail-soft absent (supplemental).
+        typed_section = ""
+        if typed_projection is not None:
+            try:
+                typed_payload = build_typed_supplemental_context(
+                    projection=typed_projection,
+                    envelope=envelope,
+                    units=scope.units,
+                )
+            except TypedSupplementalContextIdentityError:
+                self._rollback_outer(receipt)
+                return self._fail_closed_assembly(
+                    baseline_status="document_scope_unavailable",
+                    reason=(
+                        "supplemental typed context stable-document identity "
+                        "mismatch (fail-closed)"
+                    ),
+                )
+            typed_section, typed_charge = assemble_typed_supplemental_view(
+                typed_payload,
+                budget=self.budget,
+                renderer=self.renderer,
+            )
+            receipt.typed_context_charge = typed_charge
+
         # 4) Projection (turn_id server-minted; same value everywhere).
         sel_view = selection.selection
         map_present = map_result.is_ok and map_result.entry_count > 0
@@ -1107,6 +1165,10 @@ class TurnCoordinator:
                 baseline_prompt=baseline_prompt,
                 map_prompt=map_prompt,
                 charge=True,
+                # Pre-rendered typed section text, already
+                # charged to the shared baseline account above. Empty string
+                # injects nothing (byte-identical prompt).
+                typed_context_section=typed_section,
                 # R1A: forward the thread-memory snapshot. When None
                 # (flag off or empty thread) the prompt builder skips
                 # memory injection — behavior equals today.
@@ -1236,6 +1298,21 @@ class TurnCoordinator:
                 except Exception:  # noqa: BLE001
                     unproven.append("map_refund")
 
+        # 2b) Registry-free typed-context chars on the shared
+        # baseline account; refund before the baseline-inject rollback so
+        # both plain-char refunds see consistent spend levels.
+        if receipt.typed_context_charge > 0:
+            try:
+                spent = self.budget.spent("baseline")
+                if spent >= receipt.typed_context_charge:
+                    self.budget._refund_chars(  # noqa: SLF001
+                        "baseline", receipt.typed_context_charge
+                    )
+                elif spent > 0:
+                    unproven.append("typed_context_refund")
+            except Exception:  # noqa: BLE001
+                unproven.append("typed_context_refund")
+
         # 3) Baseline.
         if receipt.baseline_result is not None and receipt.baseline_result.status == "injected":
             try:
@@ -1279,6 +1356,27 @@ class TurnCoordinator:
         if unproven:
             # Prefer the first unproven domain; never embed markers/tokens.
             raise RuntimeError(f"turn_assembly_rollback_failed code={unproven[0]}") from None
+
+    async def _load_typed_supplemental_projection(self) -> Any | None:
+        """Load the stable-document projection for supplemental typed context.
+
+        ``None`` when no loader is wired (feature off — zero I/O, zero
+        drift). Loader I/O failure is fail-soft absent (logged, never
+        raised): this context is supplemental. Identity enforcement is
+        NOT done here — the builder fails closed on mismatch inside the
+        outer commit.
+        """
+        loader = self._stable_document_loader
+        if loader is None:
+            return None
+        try:
+            return await loader()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "Supplemental typed context projection load failed: %s",
+                type(exc).__name__,
+            )
+            return None
 
     async def _load_document_scope(self) -> DocumentScopeSnapshot | None:
         try:
