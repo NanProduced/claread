@@ -457,6 +457,7 @@ async def _run_workflow_and_store(
                 "topic_interest": score.topic_interest,
                 "structure_clarity": score.structure_clarity,
                 "cultural_value": score.cultural_value,
+                "learning_fit": score.learning_fit,
             },
         },
     }

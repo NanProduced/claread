@@ -1,7 +1,13 @@
 """Scoring layer for Daily Reader article pipeline.
 
-Evaluates candidate articles using LLM-based 4-dimension scoring,
-CEFR difficulty estimation, and deduplication.
+Evaluates candidate articles using LLM-based 5-dimension scoring
+(language_richness / topic_interest / structure_clarity / cultural_value /
+learning_fit), CEFR difficulty estimation, and deduplication.
+
+The scoring prompt lives inline in ``_build_scoring_prompt`` (outside
+prompts/registry.yaml). Its revisions are tracked by
+``SCORING_PROMPT_VERSION`` and recorded on every usage event plus the
+LangSmith root metadata, so ``prompt_version`` provenance is complete.
 """
 
 from __future__ import annotations
@@ -40,6 +46,10 @@ SCORE_THRESHOLD = 7.0
 HEURISTIC_THRESHOLD = 6.0
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
 DAILY_READER_WORKFLOW_VERSION = "2.0.0"
+# Inline scoring prompt revision: 1.0.0 = pre-P-5A four-dimension prompt
+# (unrecorded), 1.1.0 = adds the learning_fit dimension. Bump whenever
+# _build_scoring_prompt changes.
+SCORING_PROMPT_VERSION = "1.1.0"
 
 
 @dataclass
@@ -51,6 +61,7 @@ class ArticleScore:
     topic_interest: float = 0.0
     structure_clarity: float = 0.0
     cultural_value: float = 0.0
+    learning_fit: float = 0.0
 
 
 def filter_by_word_count(articles: list[DiscoveredArticle]) -> list[DiscoveredArticle]:
@@ -68,6 +79,8 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
         "article_title": article.title[:80],
         "article_source": article.source,
         "article_word_count": article.word_count,
+        # provenance for the inline scoring prompt (outside registry.yaml)
+        "scoring_prompt_version": SCORING_PROMPT_VERSION,
     }
     try:
         from app.config.settings import get_settings
@@ -118,6 +131,7 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
             "workflow_name": "daily_reader",
             "workflow_version": "2.0.0",
             "node": "scoring",
+            "scoring_prompt_version": SCORING_PROMPT_VERSION,
             "article_title": article.title[:80],
             "article_source": article.source,
             "article_word_count": article.word_count,
@@ -174,6 +188,17 @@ async def score_article(article: DiscoveredArticle) -> ArticleScore | None:
         return heuristic_score(article)
 
 
+def _overall_score(output: _ScoringOutput) -> float:
+    """Five-dimension mean (P-5A: learning_fit added to the four dims)."""
+    return (
+        output.language_richness
+        + output.topic_interest
+        + output.structure_clarity
+        + output.cultural_value
+        + output.learning_fit
+    ) / 5.0
+
+
 @traceable(name="daily_scoring_llm_call", run_type="llm")
 async def _score_article_llm_span(
     *,
@@ -201,12 +226,7 @@ async def _score_article_llm_span(
     output = result.output
     usage = extract_run_usage(result)
 
-    overall = (
-        output.language_richness
-        + output.topic_interest
-        + output.structure_clarity
-        + output.cultural_value
-    ) / 4.0
+    overall = _overall_score(output)
 
     return {
         "output": ArticleScore(
@@ -217,6 +237,7 @@ async def _score_article_llm_span(
             topic_interest=output.topic_interest,
             structure_clarity=output.structure_clarity,
             cultural_value=output.cultural_value,
+            learning_fit=output.learning_fit,
         ),
         "usage_metadata": usage,
     }
@@ -297,6 +318,10 @@ def heuristic_score(article: DiscoveredArticle) -> ArticleScore:
         score=min(round(score, 1), 10.0),
         difficulty=difficulty,
         tags=article.tags,
+        # ponytail: degraded path has no semantic signal — neutral 6.0 keeps
+        # fallback candidates visible in score_details without inflating the
+        # overall score; revisit once a real heuristic for fit exists.
+        learning_fit=6.0,
     )
 
 
@@ -316,6 +341,8 @@ Score each dimension from 1-10:
 - topic_interest: General readability and interest level for a broad audience
 - structure_clarity: Suitability for close reading (clear structure, logical flow)
 - cultural_value: Knowledge/cultural insight value for Chinese learners
+- learning_fit: 评估文章的英语学习适配性：可迁移语言密度、篇幅适配、教学价值；\
+过易或低适配文章不得高分
 
 Also provide:
 - difficulty: CEFR level (A2, B1, B2, C1)
@@ -329,5 +356,11 @@ class _ScoringOutput(BaseModel):
     topic_interest: float = Field(description="Topic interest score 1-10")
     structure_clarity: float = Field(description="Structure clarity score 1-10")
     cultural_value: float = Field(description="Cultural value score 1-10")
+    learning_fit: float = Field(
+        description=(
+            "English-learning fit 1-10: transferable language density, length "
+            "suitability, teaching value; too-easy or low-fit articles must not score high"
+        )
+    )
     difficulty: str = Field(description="CEFR level: A2, B1, B2, C1")
     tags: list[str] = Field(default_factory=list, description="2-4 topic tags")
