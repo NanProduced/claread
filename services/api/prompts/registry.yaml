@@ -1,4 +1,4 @@
-version: "0.0.9"
+version: "0.0.10"
 agents:
   reader_layer_vocabulary:
     file: agents/reader_layer_vocabulary.yaml
@@ -24,3 +24,13 @@ agents:
     file: agents/daily_review.yaml
   daily_refinement:
     file: agents/daily_refinement.yaml
+  daily_blueprint:
+    file: agents/daily_blueprint.yaml
+  daily_language_support:
+    file: agents/daily_language_support.yaml
+  daily_translation:
+    file: agents/daily_translation.yaml
+  daily_semantic_review:
+    file: agents/daily_semantic_review.yaml
+  daily_teaching_refinement:
+    file: agents/daily_teaching_refinement.yaml

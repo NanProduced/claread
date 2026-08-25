@@ -16,6 +16,11 @@ from app.services.prompting.daily_prompt_strategy import (
     build_paragraph_notes_strategy,
     build_quality_review_strategy,
     build_refinement_strategy,
+    build_teaching_blueprint_strategy,
+    build_teaching_language_support_strategy,
+    build_teaching_refinement_strategy,
+    build_teaching_semantic_review_strategy,
+    build_teaching_translation_strategy,
     build_vocab_highlight_strategy,
 )
 from app.services.prompting.prompt_composer import render_prompt_sections
@@ -42,6 +47,11 @@ _DAILY_AGENTS = (
     "daily_interpretation",
     "daily_review",
     "daily_refinement",
+    "daily_blueprint",
+    "daily_language_support",
+    "daily_translation",
+    "daily_semantic_review",
+    "daily_teaching_refinement",
 )
 
 
@@ -72,6 +82,11 @@ def _build_daily_preview(
         "daily_interpretation": build_close_reading_takeaways_strategy,
         "daily_review": build_quality_review_strategy,
         "daily_refinement": build_refinement_strategy,
+        "daily_blueprint": build_teaching_blueprint_strategy,
+        "daily_language_support": build_teaching_language_support_strategy,
+        "daily_translation": build_teaching_translation_strategy,
+        "daily_semantic_review": build_teaching_semantic_review_strategy,
+        "daily_teaching_refinement": build_teaching_refinement_strategy,
     }
     builder = strategy_builders.get(agent_type)
     if builder is None:

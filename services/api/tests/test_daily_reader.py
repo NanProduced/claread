@@ -28,10 +28,11 @@ MOCK_ARTICLE_ROW = {
     "tags": ["science", "technology"],
     "cover_image_url": "https://cdn.example.com/cover.jpg",
     "cover_theme": "editorial_warm",
-    "body_json": {"paragraphs": [{"text": "Hello world"}]},
-    "highlights_json": [{"text": "key point"}],
-    "paragraph_notes_json": {"article_summary": "test summary", "notes": []},
-    "takeaways_json": {"article_takeaway": "test takeaway"},
+    "body_json": {"paragraphs": [{"id": "u01", "text": "Hello world"}]},
+    "lesson_v2": {
+        "lesson_blueprint": {"article_type": "news_report", "title_zh": "测试标题"},
+        "learning_package": {"language_targets": []},
+    },
 }
 
 MOCK_LIST_ROW = {
@@ -128,7 +129,12 @@ class TestArticleDetail:
         data = response.json()
         assert data["id"] == "daily_2026_04_28_001"
         assert data["title"] == "Test Article"
-        assert "body" in data
+        # P-5B v2 payload shape (lesson_blueprint + learning_package +
+        # reading_units); zero projection: no v1 body/highlights fields.
+        assert data["lesson_blueprint"]["article_type"] == "news_report"
+        assert data["reading_units"][0]["id"] == "u01"
+        assert "body" not in data
+        assert "highlights" not in data
         # A-3: pre-A-3 rows have no zh headline fields — must not crash.
         assert data["original_title"] is None
         assert data["subtitle_zh"] is None

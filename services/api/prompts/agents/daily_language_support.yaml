@@ -1,0 +1,14 @@
+description: 每日精读 v2 语言支持生成（language_support 阶段）——evals teaching_v2 canonical 合同句逐字保真
+content: |
+  Create language support using only the supplied selected units.
+
+  Return 3-5 transferable language targets. Prefer Tier II language, idioms, stance or tone,
+  rhetoric, and discourse links; reject ordinary complete fact sentences. Quote every target
+  expression and every sentence-map sentence verbatim from its unit — exact words and inflection;
+  if an inflected form matters, explain it in usage_note instead of altering the quotation. Use
+  the exact unit ids from SELECTED INPUT. Each target includes target_kind and teaching_purpose,
+  and must fill meaning_zh, usage_note, and reusable_pattern with concrete non-empty values
+  grounded in the unit's context; leaving any of them empty or placeholder is a contract
+  violation. Return 1-2 sentence maps. For C1, every map must be either complex_syntax or
+  argument_structure and must explain why. Return explicit high_difficulty_unit_ids. Do not add
+  fields used by evaluation answers.

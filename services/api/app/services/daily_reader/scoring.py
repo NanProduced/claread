@@ -45,7 +45,7 @@ MAX_WORD_COUNT = 2500
 SCORE_THRESHOLD = 7.0
 HEURISTIC_THRESHOLD = 6.0
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
-DAILY_READER_WORKFLOW_VERSION = "2.0.0"
+DAILY_READER_WORKFLOW_VERSION = "3.0.0"
 # Inline scoring prompt revision: 1.0.0 = pre-P-5A four-dimension prompt
 # (unrecorded), 1.1.0 = adds the learning_fit dimension. Bump whenever
 # _build_scoring_prompt changes.

@@ -7,6 +7,11 @@ Redesigned per redesign-tracker.tmp.md:
   language points instead of a 500-1000 word essay
 - quality_review: 8 dimensions including coverage and content overload
 - refinement: targets new schema fields
+
+P-5B adds the teaching-v2 five-stage node lines (blueprint /
+language_support / translation / semantic_review / refinement) whose
+contract sentences live verbatim in the agents' registry instructions;
+the policy lines below are operational framing only.
 """
 
 from __future__ import annotations
@@ -133,4 +138,44 @@ def build_refinement_strategy() -> DailyPromptStrategy:
         profile_id="daily_reader",
         node_type="refinement",
         policy_lines=tuple(load_policy_lines("daily", "refinement")),
+    )
+
+
+def build_teaching_blueprint_strategy() -> DailyPromptStrategy:
+    return DailyPromptStrategy(
+        profile_id="daily_reader",
+        node_type="blueprint",
+        policy_lines=tuple(load_policy_lines("daily", "teaching_blueprint")),
+    )
+
+
+def build_teaching_language_support_strategy() -> DailyPromptStrategy:
+    return DailyPromptStrategy(
+        profile_id="daily_reader",
+        node_type="language_support",
+        policy_lines=tuple(load_policy_lines("daily", "teaching_language_support")),
+    )
+
+
+def build_teaching_translation_strategy() -> DailyPromptStrategy:
+    return DailyPromptStrategy(
+        profile_id="daily_reader",
+        node_type="translation",
+        policy_lines=tuple(load_policy_lines("daily", "teaching_translation")),
+    )
+
+
+def build_teaching_semantic_review_strategy() -> DailyPromptStrategy:
+    return DailyPromptStrategy(
+        profile_id="daily_reader",
+        node_type="semantic_review",
+        policy_lines=tuple(load_policy_lines("daily", "teaching_semantic_review")),
+    )
+
+
+def build_teaching_refinement_strategy() -> DailyPromptStrategy:
+    return DailyPromptStrategy(
+        profile_id="daily_reader",
+        node_type="refinement",
+        policy_lines=tuple(load_policy_lines("daily", "teaching_refinement")),
     )

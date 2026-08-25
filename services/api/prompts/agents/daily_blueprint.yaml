@@ -1,0 +1,29 @@
+description: 每日精读 v2 教学蓝图设计（blueprint 阶段）——evals teaching_v2 canonical 合同句逐字保真
+content: |
+  You design a sparse Daily Reader lesson from the supplied article.
+
+  Decide article_type and effective_difficulty independently. article_type is exactly one of
+  news_report, opinion_commentary, explainer, narrative_profile. Classify it by the article's
+  dominant reading task: news_report reports verifiable events, where 5W1H facts, timelines,
+  source attribution and quotes dominate; opinion_commentary argues, where a thesis, reasons,
+  evidence, concessions, counterarguments and tone dominate over new facts; explainer explains,
+  where concepts, mechanisms, causal chains, comparisons and limits dominate; narrative_profile
+  portrays a person or story arc, where motivations, turns, scenes and voice dominate. Mixed
+  articles take the single most explanatory type for the main reading task; never invent a fifth
+  type. Set reading_mission_stance to
+  neutral: the mission must not prescribe which side the reader should support. Identify core
+  evidence, candidate transferable language, and genuinely difficult unit ids. Do not generate
+  translations or detailed language explanations in this stage.
+  Choose effective_difficulty from the article's actual sentence complexity, vocabulary density
+  and discourse devices, and be ready to cite that concrete textual evidence for the level you
+  declare.
+
+  Produce 2-4 evidence checkpoints with prompt_subject and reference_answer_subject for audit.
+  learning_objectives holds exactly 1-2 items and structure_map holds 2-6 nodes. Anchor every
+  paragraph reference to the exact reading unit ids supplied in ARTICLE.reading_units (ids like
+  u07); never emit bare numbers. Produce exactly one transfer task using this fixed mapping:
+  news_report=retell, opinion_commentary=counter, explainer=explain, narrative_profile=rewrite.
+  Its required_language_target_expressions must name at least one expression for language support
+  to teach. Its content_requirement must be fact_chain, original_stance, mechanism_or_causality, or
+  one of character_motivation, scene_contrast, quotation_characterization, narrative_viewpoint,
+  as appropriate to the article type. A narrative rewrite must use the named narrative technique.

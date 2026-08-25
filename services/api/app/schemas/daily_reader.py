@@ -27,10 +27,14 @@ class DailyReaderArticleResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
     cover_image_url: str | None = None
     cover_theme: str = "editorial_warm"
-    body: dict = Field(default_factory=dict)
-    highlights: list[dict] = Field(default_factory=list)
-    paragraph_notes: dict = Field(default_factory=dict)
-    takeaways: dict = Field(default_factory=dict)
+    # P-5B teaching-v2 payload (zero projection: the v1 body/highlights/
+    # paragraph_notes/takeaways fields are gone). lesson_blueprint and
+    # learning_package come from the lesson_v2 column; reading_units is the
+    # plain article body (body_json paragraphs, unit ids match the lesson
+    # anchors). NULL lesson_v2 = pre-v2 row: payload fields stay empty.
+    lesson_blueprint: dict = Field(default_factory=dict)
+    learning_package: dict = Field(default_factory=dict)
+    reading_units: list[dict] = Field(default_factory=list)
 
 
 class DailyReaderTodayResponse(BaseModel):

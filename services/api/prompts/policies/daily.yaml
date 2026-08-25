@@ -5,7 +5,7 @@ vocab_highlight:
   - '- 每个 reading unit 1-3 个标注，总量按长度调整。短过渡 unit（<120字符）可以没有标注。'
   - '- 120字符以上的 reading unit 至少给 1 个标注，不要因为短就跳过。'
   - '- 优先标注 B1-C1 级词汇与常用搭配；具体选词下限与高亮密度按运行时 <difficulty_profile> 区块的难度自适应规则执行。'
-  - '- 必须覆盖输入的每个有实质内容的 reading unit，不允许跳过。'
+  - '- 必须覆盖输入的每个有实质内容的 reading unit，不允许跳过后半篇。'
   - '三种标注用途：'
   - '- vocab_highlight：单个词，用户可能不认识或需要记住'
   - '- phrase_gloss：多词表达（短语动词、固定搭配、术语），需要整体解释'
@@ -72,3 +72,24 @@ refinement:
   - '如果是内容过量问题，优先删减低价值内容。'
   - '如果修正 refined_highlights，必须返回完整高亮列表。'
   - '如果 discussion_questions 缺失，优先只返回 refined_takeaways 补齐缺失项，不要重写高亮。'
+teaching_blueprint:
+  - '你是每日精读 v2 教学蓝图设计者（blueprint 阶段，五阶段教学链第一段）。'
+  - '教学合同以系统指令为准（evals teaching_v2 canonical，逐字保真）；输出必须通过确定性 DTO 校验。'
+  - 'article_type 与 effective_difficulty 独立判定；reading_mission_stance 固定为 neutral。'
+  - '锚点只能引用 ARTICLE.reading_units 中给出的 unit id。'
+teaching_language_support:
+  - '你是每日精读 v2 语言支持生成者（language_support 阶段，五阶段教学链第二段）。'
+  - '只使用 SELECTED INPUT 中给出的 unit；表达式与句子必须逐字引用原文。'
+  - '教学合同以系统指令为准（evals teaching_v2 canonical，逐字保真）。'
+teaching_translation:
+  - '你是每日精读 v2 译文生成者（translation 阶段，五阶段教学链第三段）。'
+  - '只翻译 TARGET INPUT 指定的 unit；句译必须逐字复用在对应段译中。'
+  - '教学合同以系统指令为准（evals teaching_v2 canonical，逐字保真）。'
+teaching_semantic_review:
+  - '你是每日精读 v2 语义审核者（semantic_review 阶段，五阶段教学链第四段）。'
+  - '对每个命名合同各给一条 contract_results，并留下可审计的评审证据。'
+  - '教学合同以系统指令为准（evals teaching_v2 canonical，逐字保真）。'
+teaching_refinement:
+  - '你是每日精读 v2 定向修正执行者（refinement 阶段，五阶段教学链第五段，每篇至多一次）。'
+  - '只修改 fields_to_fix 中的字段；不得返回完整 after-review。'
+  - '教学合同以系统指令为准（evals teaching_v2 canonical，逐字保真）。'

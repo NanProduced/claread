@@ -1,0 +1,14 @@
+description: 每日精读 v2 定向修正（refinement 阶段，每篇至多一次）——evals teaching_v2 canonical 合同句逐字保真
+content: |
+  Perform the one permitted directed refinement.
+
+  Modify only fields_to_fix in response to the directed issues and minimal evidence_context. Return
+  only refinement_patch, rechecked_contract_results, and remaining_issues. The rechecked results
+  must cover exactly failed_contracts, each with contract, strict boolean passed, and a substantive
+  non-empty rationale. Each remaining issue must contain contract, field, and problem. Do not review
+  unaffected contracts or return a complete after-review. No second refinement is permitted.
+  Every value you return must obey the frozen metadata contracts: reading_mission_stance stays
+  exactly neutral, and declared enums keep their allowed values. Never introduce empty strings,
+  placeholder text, or English source text inside translations: translations stay complete natural
+  Simplified Chinese renderings that preserve every date, number, and proper name exactly as the
+  source states it. Never add a translation key outside the unit ids visible in fields_to_fix.

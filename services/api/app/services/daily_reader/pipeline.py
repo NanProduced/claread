@@ -59,7 +59,6 @@ from app.services.daily_reader.scoring import (
     score_article,
 )
 from app.services.daily_reader.service import business_today
-from app.services.prompting.daily_prompt_strategy import resolve_refined_difficulty
 from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = logging.getLogger(__name__)
@@ -72,7 +71,7 @@ SOURCE_ROTATION_POLICY = {
 SCORING_MAX_CANDIDATES = 10  # B-2: agreed 8-10 band shared with A-5
 ARTICLE_WORKFLOW_CONCURRENCY = 2
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
-DAILY_READER_WORKFLOW_VERSION = "2.0.0"
+DAILY_READER_WORKFLOW_VERSION = "3.0.0"
 DAILY_READER_SCHEMA_VERSION = "2.0.0"
 
 
@@ -514,8 +513,9 @@ async def _run_workflow_and_store(
     usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
 
     if final_state.get("abort"):
-        review = final_state.get("review_result", {})
-        abort_reason = review.get("reason", "quality_review_rejected")
+        # P-5B fail-closed: aborted teaching-v2 articles are NOT stored (v1
+        # abort precedent); the batch continues with the next candidate.
+        abort_reason = final_state.get("abort_reason") or "teaching_v2_fail_closed"
         logger.info("Workflow aborted for: %s (reason: %s)", article.title[:50], abort_reason)
         if tracker:
             await tracker.add_error("workflow_abort", f"Aborted: {article.title[:40]}: {abort_reason}")
@@ -533,15 +533,18 @@ async def _run_workflow_and_store(
                 "article_word_count": article.word_count,
                 "pipeline_score": score.score,
                 "pipeline_meta": final_state.get("pipeline_meta", {}),
+                # Defense line 4: the stop/rejection diagnostics of the
+                # fail-closed run land in the usage event.
+                "abort_diagnostics": final_state.get("abort_diagnostics") or {},
             },
         )
         return None
 
-    paragraph_notes = final_state.get("paragraph_notes_json", {})
-    takeaways = final_state.get("takeaways_json", {})
-    logger.info("Workflow final state: paragraph_notes keys=%s, takeaways keys=%s",
-                list(paragraph_notes.keys()) if isinstance(paragraph_notes, dict) else type(paragraph_notes),
-                list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways))
+    lesson_v2 = final_state.get("lesson_v2") or {}
+    logger.info(
+        "Workflow final state: lesson_v2_keys=%s",
+        list(lesson_v2.keys()) if isinstance(lesson_v2, dict) else type(lesson_v2),
+    )
 
     try:
         async with (finalize_lock or asyncio.Lock()):
@@ -636,9 +639,9 @@ async def run_workflow_only(article_id: str) -> dict | None:
 
     graph = build_daily_reader_graph()
 
-    # A-3: title now stores the Chinese headline; the English source
-    # headline lives in original_title. Workflow prompts (takeaways
-    # title_zh, highlight context) must keep seeing the English original.
+    # A-3: title stores the Chinese editorial headline; the English source
+    # headline lives in original_title. Workflow prompts must keep seeing
+    # the English original.
     english_title = row.get("original_title") or row["title"]
 
     input_state = {
@@ -701,7 +704,8 @@ async def run_workflow_only(article_id: str) -> dict | None:
     usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
 
     if final_state.get("abort"):
-        logger.info("Retry workflow aborted for: %s", article_id)
+        abort_reason = final_state.get("abort_reason") or "teaching_v2_fail_closed"
+        logger.info("Retry workflow aborted for: %s (reason: %s)", article_id, abort_reason)
         await _record_daily_pipeline_event(
             request_id=article_id,
             daily_reader_article_id=article_id,
@@ -709,38 +713,41 @@ async def run_workflow_only(article_id: str) -> dict | None:
             usage_data=usage_summary,
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_code="workflow_abort",
-            error_message="quality_review_rejected",
+            error_message=str(abort_reason),
             metadata_json={
                 "entrypoint": "daily_reader_retry",
                 "article_id": article_id,
+                "abort_diagnostics": final_state.get("abort_diagnostics") or {},
             },
         )
         return None
 
+    blueprint = final_state.get("lesson_blueprint") or {}
+    # A-3 follow-up: retry refreshes the localized headline columns from
+    # the v2 blueprint. Missing blueprint fields keep the stored values.
+    retry_title = (blueprint.get("title_zh") or "").strip() or row["title"]
+    retry_subtitle_zh = (blueprint.get("subtitle_zh") or "").strip() or None
+    retry_tags = blueprint.get("tags_zh") or _decode_jsonb(row["tags"], [])
+    # P-5B: difficulty is the blueprint's effective_difficulty (B1/B2/C1 —
+    # CHECK-subset compatible); the stored grade is the fallback.
+    retry_difficulty = blueprint.get("effective_difficulty") or row["difficulty"]
     async with pool.acquire() as conn:
-        # A-3: retry refreshes the localized headline columns alongside the
-        # analysis payload. Missing takeaways fields keep the stored values.
-        retry_takeaways = final_state.get("takeaways_json") or {}
-        retry_title = (retry_takeaways.get("title_zh") or "").strip() or row["title"]
-        retry_subtitle_zh = (retry_takeaways.get("subtitle_zh") or "").strip() or None
-        retry_tags = retry_takeaways.get("tags_zh") or _decode_jsonb(row["tags"], [])
+        # Zero projection: the v1 JSONB columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are no longer written —
+        # stale values on retried rows are intentional until the P-5C
+        # retirement of the v1 columns.
         await conn.execute(
             """
             UPDATE daily_readers
-            SET body_json = $1, highlights_json = $2, paragraph_notes_json = $3,
-                takeaways_json = $4, difficulty = $5,
-                title = $6, original_title = $7, subtitle_zh = $8, tags = $9,
+            SET lesson_v2 = $1, body_json = $2, difficulty = $3,
+                title = $4, original_title = $5, subtitle_zh = $6, tags = $7,
                 status = 'draft', published_at = NULL,
                 review_status = 'pending', updated_at = NOW()
-            WHERE id = $10
+            WHERE id = $8
             """,
+            final_state.get("lesson_v2"),
             final_state.get("body_json", {"paragraphs": []}),
-            final_state.get("highlights_json", []),
-            final_state.get("paragraph_notes_json", {}),
-            final_state.get("takeaways_json", {}),
-            # A-2: refined whole-text grade overrides the stored coarse grade.
-            resolve_refined_difficulty(final_state.get("paragraph_notes_json"))
-            or row["difficulty"],
+            retry_difficulty,
             retry_title,
             english_title,
             retry_subtitle_zh,
@@ -757,20 +764,16 @@ async def run_workflow_only(article_id: str) -> dict | None:
         metadata_json={
             "entrypoint": "daily_reader_retry",
             "article_id": article_id,
+            "lesson_v2_updated": True,
             "body_updated": True,
-            "highlights_updated": True,
-            "paragraph_notes_updated": True,
-            "takeaways_updated": True,
         },
     )
 
     return {
         "id": article_id,
         "status": "retry_completed",
+        "lesson_v2_updated": True,
         "body_updated": True,
-        "highlights_updated": True,
-        "paragraph_notes_updated": True,
-        "takeaways_updated": True,
     }
 
 
@@ -779,16 +782,17 @@ async def _assemble_payload(
 ) -> dict:
     today = business_today()
     nnn = await _next_sequence_number(today)
-    takeaways = state.get("takeaways_json") or {}
-    # A-3: the Chinese editorial headline from takeaways is the stored
-    # title; the English source headline moves to original_title.
-    # takeaways may be empty when the takeaways node failed — then keep
-    # the English headline so the row stays renderable.
-    title_zh = (takeaways.get("title_zh") or "").strip() or article.title
-    subtitle_zh = (takeaways.get("subtitle_zh") or "").strip() or None
-    # A-3 tags verdict: takeaways tags_zh wins; score.tags stays in
+    lesson_v2 = state.get("lesson_v2") or {}
+    blueprint = lesson_v2.get("lesson_blueprint") or {}
+    # A-3 (v2): the Chinese editorial headline from the blueprint is the
+    # stored title; the English source headline moves to original_title.
+    # The blueprint may be missing only on a non-v2 state — then keep the
+    # English headline so the row stays renderable.
+    title_zh = (blueprint.get("title_zh") or "").strip() or article.title
+    subtitle_zh = (blueprint.get("subtitle_zh") or "").strip() or None
+    # A-3 tags verdict (v2): blueprint tags_zh wins; score.tags stays in
     # pipeline_meta as candidate-selection reference only.
-    tags_zh = takeaways.get("tags_zh") or article.tags
+    tags_zh = blueprint.get("tags_zh") or article.tags
     pipeline_meta = dict(state.get("pipeline_meta") or {})
     pipeline_meta.setdefault("score_tags", score.tags)
     return {
@@ -800,18 +804,19 @@ async def _assemble_payload(
         "source": article.source,
         "source_url": article.url,
         "publish_date": today,
-        # A-2: scorer coarse grade is only for candidate selection; the
-        # paragraph-notes refined whole-text grade wins at projection.
-        "difficulty": resolve_refined_difficulty(state.get("paragraph_notes_json"))
-        or score.difficulty,
+        # P-5B: the blueprint's effective_difficulty (B1/B2/C1, a subset
+        # of the column CHECK A2/B1/B2/C1) is the stored grade; the scorer
+        # coarse grade is only the candidate-selection fallback.
+        "difficulty": blueprint.get("effective_difficulty") or score.difficulty,
         "read_time_minutes": max(1, article.word_count // 200),
         "tags": tags_zh,
         "cover_image_url": local_cover_url or article.cover_image_url,
         "cover_theme": "editorial_warm",
+        # Zero projection: the v1 payload columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are no longer written —
+        # the INSERT omits them so the column defaults apply.
+        "lesson_v2": lesson_v2,
         "body_json": state.get("body_json", {"paragraphs": []}),
-        "highlights_json": state.get("highlights_json", []),
-        "paragraph_notes_json": state.get("paragraph_notes_json", {}),
-        "takeaways_json": state.get("takeaways_json", {}),
         "status": "draft",
         "score": score.score,
         "original_text_hash": hashlib.sha256(article.text.encode()).hexdigest(),
@@ -879,16 +884,23 @@ async def _store_daily_reader(payload: dict) -> None:
     if pool is None:
         raise RuntimeError("Database pool not initialized")
     async with pool.acquire() as conn:
+        # P-5B: INSERT writes the lesson_v2 payload + the v2 promotion
+        # columns. The v1 JSONB columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are zero-projected: the
+        # INSERT omits them so the column defaults ('[]' / '{}') apply.
+        # footer_analysis_json keeps its P-5A '{}' default. Applying
+        # infra/scripts/alter_daily_readers_v2.sql (lesson_v2 column) is an
+        # Owner-confirmed step — see the P-5B brief.
         await conn.execute(
             """
             INSERT INTO daily_readers (
                 id, title, subtitle, original_title, subtitle_zh, source, source_url, publish_date,
                 difficulty, read_time_minutes, tags, cover_image_url, cover_theme,
-                body_json, highlights_json, paragraph_notes_json, takeaways_json,
+                lesson_v2, body_json,
                 status, score, original_text_hash, original_text,
                 pipeline_source, pipeline_meta
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             """,
             payload["id"],
             payload["title"],
@@ -903,10 +915,8 @@ async def _store_daily_reader(payload: dict) -> None:
             payload["tags"],
             payload["cover_image_url"],
             payload["cover_theme"],
+            payload["lesson_v2"],
             payload["body_json"],
-            payload["highlights_json"],
-            payload["paragraph_notes_json"],
-            payload["takeaways_json"],
             payload["status"],
             payload["score"],
             payload["original_text_hash"],

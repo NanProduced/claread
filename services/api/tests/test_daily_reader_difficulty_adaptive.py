@@ -16,7 +16,6 @@ from app.agents.daily_interpretation_agent import (
 from app.agents.daily_review_agent import DailyReviewAgentDeps, build_daily_review_prompt
 from app.agents.daily_vocab_agent import DailyVocabAgentDeps, build_daily_vocab_prompt
 from app.schemas.internal.daily_drafts import ParagraphNotesDraft
-from app.services.daily_reader.workflow import _effective_difficulty
 from app.services.prompting.daily_prompt_strategy import (
     normalize_daily_difficulty,
     resolve_refined_difficulty,
@@ -178,15 +177,6 @@ class TestRefinedDifficulty:
         assert resolve_refined_difficulty({}) is None
         assert resolve_refined_difficulty(None) is None
 
-    def test_effective_difficulty_prefers_refined(self):
-        state = {
-            "difficulty": "B2",
-            "paragraph_notes_json": {"refined_difficulty": "C1"},
-        }
-        assert _effective_difficulty(state) == "C1"
-
-    def test_effective_difficulty_falls_back_to_scorer_grade(self):
-        state = {"difficulty": "B1", "paragraph_notes_json": {}}
-        assert _effective_difficulty(state) == "B1"
-        state = {"difficulty": "B1", "paragraph_notes_json": {"refined_difficulty": "nonsense"}}
-        assert _effective_difficulty(state) == "B1"
+    # P-5B: _effective_difficulty (v1 paragraph-notes re-grading) retired
+    # with the v1 nodes — the v2 stored difficulty is the blueprint's
+    # effective_difficulty (covered by test_daily_reader_zh_title.py).
