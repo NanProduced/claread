@@ -148,6 +148,10 @@ ARTICLE_SOURCES = {
         "show_fields": "headline,standfirst,thumbnail,wordcount,body,byline",
         "wordcount_range": (500, 2000),
         "page_size": 5,
+        # P-5 probe: guim CDN serves API thumbnails at most at 1000px width
+        # ({140,500,1000} probed), so this source's cover floor is relaxed;
+        # every other source keeps MIN_COVER_WIDTH=1200.
+        "min_cover_width": 1000,
     },
     "bbc": {
         "type": "rss",
