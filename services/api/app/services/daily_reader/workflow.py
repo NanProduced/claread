@@ -1072,15 +1072,31 @@ def daily_projection_node(state: DailyReaderState) -> dict:
         failed_gates = sorted(
             name for name, result in gates["gates"].items() if result["passed"] is False
         )
+        diagnostics = {
+            "failed_gates": failed_gates,
+            "passed_count": gates["passed_count"],
+            "scored_count": gates["scored_count"],
+        }
+        artifact["run_meta"]["outcome"] = "draft_with_verdict"
+        artifact["run_meta"]["quality"] = {
+            "abort_reason": "teaching_v2_hard_gates_failed",
+            "verdict": review.get("verdict") if isinstance(review, dict) else None,
+            "failed_gates": failed_gates,
+            "failed_contracts": [
+                item.get("contract")
+                for item in ((review or {}).get("contract_results") or [])
+                if isinstance(item, dict) and not item.get("passed") and item.get("contract")
+            ],
+        }
+        body_json = {
+            "paragraphs": [
+                {"id": unit.get("id"), "text": unit.get("text")} for unit in reading_units
+            ]
+        }
         return {
-            **_abort(
-                "teaching_v2_hard_gates_failed",
-                {
-                    "failed_gates": failed_gates,
-                    "passed_count": gates["passed_count"],
-                    "scored_count": gates["scored_count"],
-                },
-            ),
+            **_abort("teaching_v2_hard_gates_failed", diagnostics),
+            "lesson_v2": artifact,
+            "body_json": body_json,
             "usage_summary": usage_summary,
         }
     artifact["run_meta"]["hard_gates"] = {

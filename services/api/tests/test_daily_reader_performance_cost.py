@@ -209,13 +209,26 @@ async def test_aborted_workflow_records_usage_snapshot_and_diagnostics() -> None
             "app.services.daily_reader.pipeline._record_daily_pipeline_event",
             new=record_event,
         ),
+        patch(
+            "app.services.daily_reader.pipeline._store_daily_reader",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.daily_reader.pipeline._next_sequence_number",
+            new=AsyncMock(return_value=1),
+        ),
+        patch(
+            "app.services.daily_reader.pipeline.process_article_covers",
+            new=AsyncMock(return_value=SimpleNamespace(cover_url=None, image_blocks=[], meta={})),
+        ),
     ):
         result = await _run_workflow_and_store(
             article,
             ArticleScore(score=8.0, difficulty="B2", tags=["topic"]),
         )
 
-    assert result is None
+    assert result is not None
+    assert result["status"] == "draft"
     assert record_event.await_args.kwargs["usage_data"] == {
         "available": True,
         "per_agent": {
@@ -233,7 +246,7 @@ async def test_aborted_workflow_records_usage_snapshot_and_diagnostics() -> None
     # defense line 4: stop diagnostics land in the usage event
     metadata = record_event.await_args.kwargs["metadata_json"]
     assert metadata["abort_diagnostics"]["failed_gates"] == ["anchors_resolve"]
-    assert record_event.await_args.kwargs["error_message"] == "teaching_v2_hard_gates_failed"
+    assert metadata["abort_reason"] == "teaching_v2_hard_gates_failed"
 
 
 # ---------------------------------------------------------------------------

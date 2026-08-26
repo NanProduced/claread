@@ -89,6 +89,85 @@ ALERT_ZERO_OUTPUT = "zero_output"
 ALERT_WORKFLOW_FAILURE = "workflow_failure"
 ALERT_ALL_CANDIDATES_FILTERED = "all_candidates_filtered"
 
+QUALITY_DRAFT_ABORT_REASONS = frozenset(
+    {
+        "teaching_v2_hard_gates_failed",
+        "teaching_v2_after_review_fail",
+        "frozen_derivation_field",
+    }
+)
+_ABORT_EVIDENCE_RATIONALE_MAX = 400
+_ABORT_EVIDENCE_ISSUE_MAX = 8
+
+
+def stores_quality_abort_as_draft(reason: str | None) -> bool:
+    return (reason or "") in QUALITY_DRAFT_ABORT_REASONS
+
+
+def build_abort_error_evidence(state: dict) -> dict:
+    """Structured abort payload for pipeline_runs.errors jsonb (no schema change)."""
+    review = state.get("semantic_review_result") or {}
+    if not isinstance(review, dict):
+        review = {}
+    refinement = state.get("refinement_result") or {}
+    if not isinstance(refinement, dict):
+        refinement = {}
+    failed_contracts = [
+        item.get("contract")
+        for item in (review.get("contract_results") or [])
+        if isinstance(item, dict) and not item.get("passed") and item.get("contract")
+    ]
+    issues: list[dict] = []
+    for issue in (review.get("issues") or [])[:_ABORT_EVIDENCE_ISSUE_MAX]:
+        if not isinstance(issue, dict):
+            continue
+        rationale = str(issue.get("rationale") or "")
+        problem = str(issue.get("problem") or "")
+        issues.append(
+            {
+                "contract": issue.get("contract"),
+                "field": issue.get("field"),
+                "problem": problem[:_ABORT_EVIDENCE_RATIONALE_MAX],
+                "rationale": rationale[:_ABORT_EVIDENCE_RATIONALE_MAX],
+            }
+        )
+    rejection = refinement.get("rejection") if isinstance(refinement.get("rejection"), dict) else {}
+    usage = state.get("usage_summary") or {}
+    aggregate = usage.get("aggregate") if isinstance(usage, dict) else None
+    return {
+        "verdict": review.get("verdict"),
+        "failed_contracts": failed_contracts[:8],
+        "issues": issues,
+        "rejection_violations": list(rejection.get("violations") or [])[:8],
+        "usage": aggregate,
+        "abort_diagnostics": state.get("abort_diagnostics") or {},
+    }
+
+
+def _stamp_draft_verdict(artifact: dict, state: dict) -> dict:
+    evidence = build_abort_error_evidence(state)
+    run_meta = dict(artifact.get("run_meta") or {})
+    run_meta["outcome"] = "draft_with_verdict"
+    run_meta["quality"] = {
+        "abort_reason": state.get("abort_reason"),
+        "verdict": evidence["verdict"],
+        "failed_gates": list((state.get("abort_diagnostics") or {}).get("failed_gates") or []),
+        "failed_contracts": evidence["failed_contracts"],
+    }
+    artifact["run_meta"] = run_meta
+    return artifact
+
+
+def _lesson_v2_from_state(state: dict) -> dict:
+    artifact = {
+        "case_id": state.get("source_url") or "",
+        "lesson_blueprint": state.get("lesson_blueprint") or {},
+        "learning_package": state.get("learning_package") or {},
+        "source_assets": {"source_caption": ""},
+        "run_meta": {},
+    }
+    return _stamp_draft_verdict(artifact, state)
+
 
 def collect_pipeline_alert_reasons(result: PipelineResult) -> list[str]:
     reasons: list[str] = []
@@ -140,7 +219,9 @@ async def emit_pipeline_alerts(
         )
 
 
-def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dict[str, dict[str, str]]]:
+def _resolve_daily_workflow_model_metadata() -> tuple[
+    dict[str, str | None], dict[str, dict[str, str]]
+]:
     settings = get_settings()
     selection = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
     resolved_models: dict[str, dict[str, str]] = {}
@@ -230,6 +311,7 @@ async def run_daily_pipeline(
     # Layer 2: Extraction (concurrent for RSS-sourced articles)
     if tracker:
         await tracker.update_stage("extraction", candidates_found=len(candidates))
+
     async def _extract_one(article: DiscoveredArticle) -> None:
         if article.needs_extraction:
             extraction = await extract_with_trafilatura(article.url)
@@ -275,19 +357,27 @@ async def run_daily_pipeline(
 
     # Heuristic pre-filter: only LLM-score articles that pass heuristic threshold
     from app.services.daily_reader.scoring import HEURISTIC_THRESHOLD, heuristic_score
+
     pre_filtered: list[DiscoveredArticle] = []
     for a in candidates:
         h_score = heuristic_score(a)
         if h_score.score >= HEURISTIC_THRESHOLD:
             pre_filtered.append(a)
-    logger.info("Pipeline heuristic pre-filter: %d / %d articles passed (threshold=%.1f)",
-                len(pre_filtered), len(candidates), HEURISTIC_THRESHOLD)
+    logger.info(
+        "Pipeline heuristic pre-filter: %d / %d articles passed (threshold=%.1f)",
+        len(pre_filtered),
+        len(candidates),
+        HEURISTIC_THRESHOLD,
+    )
 
     if len(pre_filtered) > SCORING_MAX_CANDIDATES:
         pre_filtered.sort(key=lambda a: heuristic_score(a).score, reverse=True)
         pre_filtered = pre_filtered[:SCORING_MAX_CANDIDATES]
-        logger.info("Pipeline scoring cap: trimmed to %d candidates (SCORING_MAX_CANDIDATES=%d)",
-                     len(pre_filtered), SCORING_MAX_CANDIDATES)
+        logger.info(
+            "Pipeline scoring cap: trimmed to %d candidates (SCORING_MAX_CANDIDATES=%d)",
+            len(pre_filtered),
+            SCORING_MAX_CANDIDATES,
+        )
 
     # Layer 3: AI Scoring (concurrent, capped)
     if tracker:
@@ -468,9 +558,7 @@ async def _run_workflow_and_store(
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(
-                    WORKFLOW_NAME, surface="daily_reader_pipeline"
-                ),
+                "tags": build_workflow_root_tags(WORKFLOW_NAME, surface="daily_reader_pipeline"),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
@@ -513,32 +601,44 @@ async def _run_workflow_and_store(
     usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
 
     if final_state.get("abort"):
-        # P-5B fail-closed: aborted teaching-v2 articles are NOT stored (v1
-        # abort precedent); the batch continues with the next candidate.
         abort_reason = final_state.get("abort_reason") or "teaching_v2_fail_closed"
         logger.info("Workflow aborted for: %s (reason: %s)", article.title[:50], abort_reason)
+        final_state = {**final_state, "usage_summary": usage_summary}
+        evidence = build_abort_error_evidence(final_state)
         if tracker:
-            await tracker.add_error("workflow_abort", f"Aborted: {article.title[:40]}: {abort_reason}")
-        await _record_daily_pipeline_event(
-            request_id=article.url,
-            status=STATUS_SKIPPED,
-            usage_data=usage_summary,
-            latency_ms=int((perf_counter() - started_at) * 1000),
-            error_code="workflow_abort",
-            error_message=str(abort_reason),
-            metadata_json={
-                "entrypoint": "daily_reader_pipeline",
-                "article_title": article.title[:80],
-                "article_source": article.source,
-                "article_word_count": article.word_count,
-                "pipeline_score": score.score,
-                "pipeline_meta": final_state.get("pipeline_meta", {}),
-                # Defense line 4: the stop/rejection diagnostics of the
-                # fail-closed run land in the usage event.
-                "abort_diagnostics": final_state.get("abort_diagnostics") or {},
-            },
-        )
-        return None
+            await tracker.add_error(
+                "workflow_abort",
+                f"Aborted: {article.title[:40]}: {abort_reason}",
+                evidence=evidence,
+            )
+        if not stores_quality_abort_as_draft(abort_reason):
+            await _record_daily_pipeline_event(
+                request_id=article.url,
+                status=STATUS_SKIPPED,
+                usage_data=usage_summary,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                error_code="workflow_abort",
+                error_message=str(abort_reason),
+                metadata_json={
+                    "entrypoint": "daily_reader_pipeline",
+                    "article_title": article.title[:80],
+                    "article_source": article.source,
+                    "article_word_count": article.word_count,
+                    "pipeline_score": score.score,
+                    "pipeline_meta": final_state.get("pipeline_meta", {}),
+                    "abort_diagnostics": final_state.get("abort_diagnostics") or {},
+                    "abort_evidence": evidence,
+                },
+            )
+            return None
+        if not final_state.get("lesson_v2"):
+            final_state["lesson_v2"] = _lesson_v2_from_state(final_state)
+            units = final_state.get("reading_units") or []
+            final_state["body_json"] = {
+                "paragraphs": [{"id": unit.get("id"), "text": unit.get("text")} for unit in units]
+            }
+        else:
+            _stamp_draft_verdict(final_state["lesson_v2"], final_state)
 
     lesson_v2 = final_state.get("lesson_v2") or {}
     logger.info(
@@ -547,7 +647,7 @@ async def _run_workflow_and_store(
     )
 
     try:
-        async with (finalize_lock or asyncio.Lock()):
+        async with finalize_lock or asyncio.Lock():
             if tracker:
                 await tracker.update_stage("cover_download")
             # B-1: multi-candidate validation + LLM selection + storage. Never
@@ -603,6 +703,8 @@ async def _run_workflow_and_store(
             "pipeline_score": score.score,
             "stored_article_id": payload["id"],
             "stored_status": payload["status"],
+            "abort_reason": final_state.get("abort_reason"),
+            "abort_diagnostics": final_state.get("abort_diagnostics") or {},
         },
     )
     logger.info("Article stored: %s (cover=%s)", article.title[:50], bool(cover_outcome.cover_url))
@@ -664,9 +766,7 @@ async def run_workflow_only(article_id: str) -> dict | None:
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(
-                    WORKFLOW_NAME, surface="daily_reader_pipeline"
-                ),
+                "tags": build_workflow_root_tags(WORKFLOW_NAME, surface="daily_reader_pipeline"),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,

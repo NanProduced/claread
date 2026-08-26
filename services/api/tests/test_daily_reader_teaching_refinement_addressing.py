@@ -91,6 +91,39 @@ def test_high_difficulty_unit_ids_is_frozen_derivation_field() -> None:
     assert raw == "learning_package.high_difficulty_unit_ids"
 
 
+def test_r7_language_targets_index_2_paragraph_id_frozen_at_issue_precheck() -> None:
+    """R7: review named the nested freeze path; issue pre-check must catch it."""
+    package = _package()
+    package["language_targets"] = [
+        {"paragraph_id": "u01", "meaning_zh": "一", "usage_note": "一"},
+        {"paragraph_id": "u01", "meaning_zh": "二", "usage_note": "二"},
+        {"paragraph_id": "u02", "meaning_zh": "三", "usage_note": "三"},
+    ]
+    field = "learning_package.language_targets[2].paragraph_id"
+    fields, code, raw = collect_fields_to_fix([_issue(field)], package, _blueprint())
+    assert fields == {}
+    assert code == "frozen_derivation_field"
+    assert raw == field
+
+
+def test_r7_language_targets_index_without_leaf_is_frozen_like_patch() -> None:
+    """R7 gap: `language_targets[2]` has no ident after the root, so the
+    issue pre-check treated it as a content field; the patch then mutated
+    `paragraph_id` and P-4I rejected. Same freeze loc as the patch check.
+    """
+    package = _package()
+    package["language_targets"] = [
+        {"paragraph_id": "u01", "meaning_zh": "一", "usage_note": "一"},
+        {"paragraph_id": "u01", "meaning_zh": "二", "usage_note": "二"},
+        {"paragraph_id": "u02", "meaning_zh": "三", "usage_note": "三"},
+    ]
+    field = "learning_package.language_targets[2]"
+    fields, code, raw = collect_fields_to_fix([_issue(field)], package, _blueprint())
+    assert fields == {}
+    assert code == "frozen_derivation_field"
+    assert raw == field
+
+
 def test_nested_paragraph_id_and_evidence_ids_are_frozen() -> None:
     for field in (
         "language_targets[0].paragraph_id",

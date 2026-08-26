@@ -69,15 +69,40 @@ def _path_after_prefix(raw_field: str) -> str:
     return raw_field
 
 
-def is_frozen_derivation_path(raw_field: str) -> bool:
-    idents = _IDENT_RE.findall(_path_after_prefix(raw_field))
+def derivation_freeze_loc(raw_field: str) -> tuple[str, ...] | None:
+    """Normalize an issue/patch path to a freeze loc, or None if content.
+
+    Nested parents (`language_targets`, `sentence_maps`,
+    `comprehension_checkpoints`) freeze when the path names a frozen
+    attribute *or* stops at the parent/item (R7: `language_targets[2]`
+    has no ident after the root, then the patch mutated `paragraph_id`).
+    A content leaf (`meaning_zh`) is not a freeze.
+    """
+    path = _path_after_prefix(raw_field)
+    idents = _IDENT_RE.findall(path)
     if not idents:
-        return False
+        return None
     root = idents[0]
     if root in FROZEN_TOP_LEVEL_FIELDS:
-        return True
+        return (root,)
     nested = FROZEN_NESTED_ATTRS.get(root)
-    return bool(nested) and any(ident in nested for ident in idents[1:])
+    if not nested:
+        return None
+    tails = idents[1:]
+    frozen_tails = tuple(ident for ident in tails if ident in nested)
+    if frozen_tails:
+        return (root, *frozen_tails)
+    # `language_targets[2]` has no ident after the root (the index is
+    # digits). Treat that item path as freeze-closed; a bare parent
+    # (`language_targets`) remains a content field for whole-list patches
+    # that do not touch frozen attrs.
+    if not tails and re.search(r"\[\d+\]", path):
+        return (root, *sorted(nested))
+    return None
+
+
+def is_frozen_derivation_path(raw_field: str) -> bool:
+    return derivation_freeze_loc(raw_field) is not None
 
 
 def collect_fields_to_fix(
@@ -158,11 +183,12 @@ def preapply_patch_violations(
         nested = FROZEN_NESTED_ATTRS.get(key)
         current = package[key] if key in package else blueprint[key]
         if nested and _nested_projection(current, nested) != _nested_projection(patch[key], nested):
+            loc = derivation_freeze_loc(f"{key}.{next(iter(sorted(nested)))}")
             violations.append(
                 {
                     "container": container_name,
                     "error_type": "frozen_derivation_field",
-                    "loc": [key, *sorted(nested)],
+                    "loc": list(loc) if loc else [key, *sorted(nested)],
                 }
             )
     return violations
