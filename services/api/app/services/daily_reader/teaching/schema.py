@@ -29,10 +29,10 @@ CHECKPOINT_SKILLS = (
 TRANSFER_TASK_KINDS = ("retell", "rewrite", "counter", "explain")
 UNIT_ID_RE = re.compile(r"^u\d{2,3}$")
 
-# P-5A title contract (production口径 daily_interpretation.yaml 26-40 +
-# internal CloseReadingTakeaways): title_zh 8-18 字, subtitle_zh ≤30 字,
-# tags_zh = 2-4 个全中文标签. Length bounds are enforced by the
-# counts_in_bounds gate; shape/purity checks live here.
+# P-5A title contract (blueprint title_zh/subtitle_zh/tags_zh):
+# title_zh 8-18 字, subtitle_zh ≤30 字, tags_zh = 2-4 个全中文标签.
+# Length bounds are enforced by the counts_in_bounds gate; shape/purity
+# checks live here.
 TITLE_ZH_MIN_LEN = 8
 TITLE_ZH_MAX_LEN = 18
 SUBTITLE_ZH_MAX_LEN = 30

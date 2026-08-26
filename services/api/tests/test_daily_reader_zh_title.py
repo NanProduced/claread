@@ -1,8 +1,8 @@
 """A-3: Chinese headline / original_title / subtitle_zh / tags_zh.
 
-Covers: takeaways schema validation, _assemble_payload projection,
-retry UPDATE coverage, and the incremental migration script
-(reentrant up, old-row backfill, down).
+Covers: blueprint title promotion via _assemble_payload, retry UPDATE
+coverage, and the incremental migration script (reentrant up, old-row
+backfill, down).
 """
 
 from __future__ import annotations
@@ -13,9 +13,7 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from pydantic import ValidationError
 
-from app.schemas.internal.daily_drafts import CloseReadingTakeaways
 from app.services.daily_reader.discovery import DiscoveredArticle
 from app.services.daily_reader.pipeline import _assemble_payload, run_workflow_only
 from app.services.daily_reader.scoring import ArticleScore
@@ -44,18 +42,6 @@ def _blueprint_dict(**overrides) -> dict:
     return base
 
 
-def _takeaways_dict(**overrides) -> dict:
-    base = {
-        "title_zh": "蜂群衰退下的静默危机",
-        "subtitle_zh": "野生蜂数量下滑正改变传粉格局",
-        "tags_zh": ["生态", "农业"],
-        "article_takeaway": "一句话总结",
-        "discussion_questions": ["Q1?", "Q2?"],
-    }
-    base.update(overrides)
-    return base
-
-
 def _article() -> DiscoveredArticle:
     return DiscoveredArticle(
         title="Bumblebees in decline, scientists warn",
@@ -70,32 +56,6 @@ def _article() -> DiscoveredArticle:
 
 def _score() -> ArticleScore:
     return ArticleScore(score=8.0, difficulty="B2", tags=["news", "science"])
-
-
-class TestTakeawaysSchema:
-    def test_zh_fields_required(self) -> None:
-        data = _takeaways_dict()
-        for key in ("title_zh", "subtitle_zh", "tags_zh"):
-            missing = {k: v for k, v in data.items() if k != key}
-            with pytest.raises(ValidationError):
-                CloseReadingTakeaways(**missing)
-
-    def test_zh_fields_accepted(self) -> None:
-        takeaways = CloseReadingTakeaways(**_takeaways_dict())
-        assert takeaways.title_zh == "蜂群衰退下的静默危机"
-        assert takeaways.subtitle_zh == "野生蜂数量下滑正改变传粉格局"
-        assert takeaways.tags_zh == ["生态", "农业"]
-
-    def test_title_zh_rejects_blank(self) -> None:
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(title_zh="   "))
-
-    def test_tags_zh_bounds(self) -> None:
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(tags_zh=["只有一个"]))
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(tags_zh=["一", "二", "三", "四", "五"]))
-        assert CloseReadingTakeaways(**_takeaways_dict(tags_zh=["一", "二", "三", "四"]))
 
 
 @pytest.mark.anyio

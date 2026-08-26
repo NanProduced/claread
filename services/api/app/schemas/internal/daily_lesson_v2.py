@@ -59,8 +59,8 @@ class StructureNodeDraft(BaseModel):
 class BlueprintDraft(BaseModel):
     article_type: Literal[*TRANSFER_TASK_KIND_BY_ARTICLE_TYPE]
     effective_difficulty: Literal[*DIFFICULTIES]
-    # P-5A title contract (mirrors CloseReadingTakeaways: 刊物级中文标题,
-    # 一句话副题, 2-4 个全中文标签); length bounds stay with the gates.
+    # P-5A title contract (刊物级中文标题, 一句话副题, 2-4 个全中文标签);
+    # length bounds stay with the gates.
     title_zh: str = Field(min_length=1)
     subtitle_zh: str = Field(min_length=1)
     tags_zh: list[str] = Field(min_length=2, max_length=4)

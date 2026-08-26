@@ -63,7 +63,7 @@ def test_instruction_override_uses_current_reader_agents() -> None:
         variant_id="instruction-variant",
         instructions={
             "reader_layer_grammar_bundle": "Variant grammar instructions.",
-            "daily_vocab": "Variant Daily Reader instructions.",
+            "daily_blueprint": "Variant Daily Reader instructions.",
         },
     )
 
@@ -73,7 +73,7 @@ def test_instruction_override_uses_current_reader_agents() -> None:
             load_agent_instructions("reader_layer_grammar_bundle")
             == "Variant grammar instructions."
         )
-        assert load_agent_instructions("daily_vocab") == "Variant Daily Reader instructions."
+        assert load_agent_instructions("daily_blueprint") == "Variant Daily Reader instructions."
 
     assert load_agent_instructions("reader_layer_grammar_bundle") == baseline
 

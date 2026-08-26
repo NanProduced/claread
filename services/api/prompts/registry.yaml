@@ -1,4 +1,4 @@
-version: "0.0.10"
+version: "0.0.11"
 agents:
   reader_layer_vocabulary:
     file: agents/reader_layer_vocabulary.yaml
@@ -14,16 +14,6 @@ agents:
     file: agents/dict_context_explain.yaml
   dict_missing_fallback:
     file: agents/dict_missing_fallback.yaml
-  daily_vocab:
-    file: agents/daily_vocab.yaml
-  daily_footer:
-    file: agents/daily_footer.yaml
-  daily_interpretation:
-    file: agents/daily_interpretation.yaml
-  daily_review:
-    file: agents/daily_review.yaml
-  daily_refinement:
-    file: agents/daily_refinement.yaml
   daily_blueprint:
     file: agents/daily_blueprint.yaml
   daily_language_support:

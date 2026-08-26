@@ -486,7 +486,7 @@ def test_registry_instructions_are_verbatim_prefix_of_canonical_prompts():
 def test_registry_version_bumped_for_teaching_v2_prompts():
     from app.services.prompting.prompt_loader import get_prompt_version
 
-    assert get_prompt_version() == "0.0.10"
+    assert get_prompt_version() == "0.0.11"
 
 
 def test_semantic_review_contracts_frozen():

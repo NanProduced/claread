@@ -440,59 +440,28 @@ class TestReadingUnitDensity:
 
 
 class TestPromptPolicyNoOldWording:
-    """Prompt and policy files must not contain old 'every raw paragraph
-    must be covered' wording. They should use reading unit semantics."""
+    """Teaching-v2 prompts must not revive v1 'every raw paragraph must
+    be covered' wording; they address reading_units."""
 
-    def test_daily_review_yaml_no_old_paragraph_wording(self):
+    def test_daily_policy_and_teaching_prompts_use_units_not_raw_paragraphs(self):
         from pathlib import Path
-        review_path = Path(__file__).parent.parent / "prompts" / "agents" / "daily_review.yaml"
-        content = review_path.read_text(encoding="utf-8")
-        assert "每段是否都有完整的 note" not in content
-        assert "每段 1-3 个" not in content
-        assert "paragraph_notes_completeness" not in content
-        assert "reading unit" in content
-
-    def test_daily_refinement_yaml_no_old_wording(self):
-        from pathlib import Path
-        refine_path = Path(__file__).parent.parent / "prompts" / "agents" / "daily_refinement.yaml"
-        content = refine_path.read_text(encoding="utf-8")
-        assert "优先为未覆盖段落补充高亮" not in content
-        assert "reading unit" in content
-
-    def test_daily_policy_yaml_no_old_paragraph_wording(self):
-        from pathlib import Path
-        policy_path = Path(__file__).parent.parent / "prompts" / "policies" / "daily.yaml"
-        content = policy_path.read_text(encoding="utf-8")
-        assert "必须覆盖输入的每一段" not in content
-        assert "不允许跳过任何段落" not in content
-        assert "每个段落都必须有对应的 note" not in content
-        assert "reading unit" in content
-
-    def test_daily_footer_yaml_no_old_paragraph_wording(self):
-        from pathlib import Path
-        footer_path = Path(__file__).parent.parent / "prompts" / "agents" / "daily_footer.yaml"
-        content = footer_path.read_text(encoding="utf-8")
-        assert "每个段落都必须有对应的 note" not in content
-        assert "不允许遗漏" not in content
-        assert "段落透读" not in content
-        assert "reading unit" in content
-
-    def test_daily_vocab_yaml_no_old_paragraph_wording(self):
-        from pathlib import Path
-        vocab_path = Path(__file__).parent.parent / "prompts" / "agents" / "daily_vocab.yaml"
-        content = vocab_path.read_text(encoding="utf-8")
-        assert "必须覆盖输入的每一段" not in content
-        assert "不允许跳过任何段落" not in content
-        assert "每段 1-3 个" not in content
-        assert "reading unit" in content
-
-    def test_daily_vocab_agent_no_old_paragraph_wording(self):
-        from pathlib import Path
-        agent_path = Path(__file__).parent.parent / "app" / "agents" / "daily_vocab_agent.py"
-        content = agent_path.read_text(encoding="utf-8")
-        assert "每一段都生成标注" not in content
-        assert "不要遗漏任何段落" not in content
-        assert "reading unit" in content
+        prompts_root = Path(__file__).parent.parent / "prompts"
+        old = (
+            "必须覆盖输入的每一段",
+            "不允许跳过任何段落",
+            "每个段落都必须有对应的 note",
+            "每段是否都有完整的 note",
+            "优先为未覆盖段落补充高亮",
+            "段落透读",
+        )
+        files = [
+            prompts_root / "policies" / "daily.yaml",
+            *sorted((prompts_root / "agents").glob("daily_*.yaml")),
+        ]
+        contents = "\n".join(path.read_text(encoding="utf-8") for path in files)
+        for phrase in old:
+            assert phrase not in contents, phrase
+        assert "reading_units" in contents
 
 
 MOCK_DRAFT_ROW = {
