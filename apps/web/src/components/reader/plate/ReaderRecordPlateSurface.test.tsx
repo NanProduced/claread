@@ -9137,7 +9137,7 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     const { container: c1 } = render(<ReaderRecordPlateSurface snapshot={snapshotLoading} />);
     expect(c1.querySelector('[data-image-state="loading"]')).not.toBeNull();
     const img = c1.querySelector('[data-reader-image="true"] img');
-    expect(img?.getAttribute("loading")).toBe("lazy");
+    expect(img?.getAttribute("loading")).toBeNull();
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
