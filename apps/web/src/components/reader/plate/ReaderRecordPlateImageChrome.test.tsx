@@ -151,6 +151,18 @@ describe("Reader image caption (F5)", () => {
   });
 });
 
+describe("Reader image native load (hidden+lazy deadlock repair)", () => {
+  it("unloaded image may stay hidden but must not use loading=lazy", () => {
+    // The img is display:none until onLoad fires; Chromium never fetches a
+    // lazy image with no layout box, so hidden+lazy deadlocks at 图片加载中….
+    // Hiding before load is allowed; lazy loading is not.
+    const { container } = render(<Harness value={imgValue("native load alt")} />);
+    const img = container.querySelector('[data-reader-image="true"] img');
+    expect(img).not.toBeNull();
+    expect((img as HTMLImageElement).getAttribute("loading")).not.toBe("lazy");
+  });
+});
+
 describe("Reader display math flat centered wrapper (F4/F7)", () => {
   it("wrapper keeps my-3 centering and overflow, drops card chrome", () => {
     const { container } = render(<Harness value={mathDisplayValue()} />);

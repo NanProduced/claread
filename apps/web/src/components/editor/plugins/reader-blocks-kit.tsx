@@ -554,7 +554,6 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           src={effectiveUrl as string}
           alt={altText}
           title={title}
-          loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
           onLoad={() => setLoadState("loaded")}
