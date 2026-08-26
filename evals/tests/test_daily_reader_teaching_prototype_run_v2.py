@@ -2019,6 +2019,77 @@ def test_semantic_review_prompt_declares_field_address_formats(runner):
     assert "learning_package." in flat
     assert "blueprint." in flat
     assert "bare container name" in flat
+    assert "frozen at refinement" in flat
+    assert "top-level field ownership" in flat
+    assert "blueprint only:" in flat
+    assert "learning_package only:" in flat
+    assert "both containers" in flat
+
+
+def test_frozen_derivation_field_skips_refinement_and_continues_batch(
+    runner, eval_settings, tmp_path
+):
+    settings, selection = eval_settings
+    queue = _Queue(
+        [
+            blueprint_payload(),
+            language_support_payload(),
+            translation_payload(),
+            review_payload("FAIL", "difficulty_fit"),
+            *pass_queue(),
+        ]
+    )
+    queue.items[3]["issues"] = [_issue("difficulty_fit", "blueprint.effective_difficulty")]
+    probe = _Probe()
+    out_dir = tmp_path / "frozen"
+    report = runner.run_batch(
+        [mini_case(), mini_case("syn-p4e-002")],
+        settings,
+        selection,
+        _offline_transport_factory(queue, probe),
+        out_dir,
+    )
+    first, second = report["cases"]
+    assert report["status"] == "completed"
+    assert first["outcome"] == "quality_fail_continue"
+    assert first["stop_reason"] is None
+    assert probe.requests == 4 + 4
+    assert second["outcome"] == "completed"
+    evidence = json.loads(
+        (out_dir / "syn-p4e-001" / "stop-evidence.json").read_text(encoding="utf-8")
+    )
+    assert evidence["kind"] == "frozen_derivation_field"
+    assert evidence["field"] == "blueprint.effective_difficulty"
+
+
+def test_patch_changing_language_target_paragraph_id_is_frozen_and_restored(
+    runner, eval_settings, tmp_path
+):
+    targets = language_support_payload()["language_targets"]
+    patched = json.loads(json.dumps(targets))
+    patched[0]["paragraph_id"] = "u01"
+    case, probe, _, _ = _run_refinement_addressing(
+        runner,
+        eval_settings,
+        tmp_path,
+        issues=[_issue("language_target_value", "learning_package.language_targets")],
+        patch={"language_targets": patched},
+        tag="frozen-nested-patch",
+    )
+    assert case["outcome"] == "quality_fail_continue"
+    assert probe.requests == 5
+    restored = [
+        item["paragraph_id"] for item in case["artifact"]["learning_package"]["language_targets"]
+    ]
+    assert restored == [item["paragraph_id"] for item in targets]
+    evidence = json.loads(
+        (tmp_path / "frozen-nested-patch" / "syn-p4e-001" / "review-evidence.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert evidence["refinement"]["rejection"]["violations"][0]["error_type"] == (
+        "frozen_derivation_field"
+    )
 
 
 # ---------------------------------------------------------------------------

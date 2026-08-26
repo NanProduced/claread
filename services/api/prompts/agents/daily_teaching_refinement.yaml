@@ -12,3 +12,5 @@ content: |
   placeholder text, or English source text inside translations: translations stay complete natural
   Simplified Chinese renderings that preserve every date, number, and proper name exactly as the
   source states it. Never add a translation key outside the unit ids visible in fields_to_fix.
+  Never change frozen derivation inputs: effective_difficulty, high_difficulty_unit_ids,
+  evidence_paragraph_ids, language_targets.paragraph_id, or sentence_maps.paragraph_id.

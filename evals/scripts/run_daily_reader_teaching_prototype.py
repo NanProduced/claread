@@ -53,6 +53,10 @@ from app.llm.types import (  # noqa: E402
     RouteModelSelection,
     RunModelSettings,
 )
+from app.services.daily_reader.teaching.refinement_addressing import (  # noqa: E402
+    collect_fields_to_fix,
+    preapply_patch_violations,
+)
 from pydantic import BaseModel, Field, ValidationError, model_validator  # noqa: E402
 from pydantic_ai import Agent  # noqa: E402
 from pydantic_ai.models import Model  # noqa: E402
@@ -867,139 +871,113 @@ def run_case(
         fields_to_fix: dict[str, Any] = {}
         patch: dict[str, Any] = {}
         refine_output: dict[str, Any] | None = None
+        frozen_derivation_field: str | None = None
         if review_evidence["verdict"] == "FAIL":
-            for issue in review_evidence["issues"]:
-                # Finite field-addressing rule: an explicit container prefix
-                # selects its object exclusively; unprefixed paths fall back to
-                # package-then-blueprint. The root is the name before the first
-                # "." or "[". The raw path still reaches the refinement prompt
-                # verbatim; anything unaddressable stays fail-closed at zero
-                # provider cost.
-                raw_field = str(issue.get("field", ""))
-                prefix, dot, rest = raw_field.partition(".")
-
-                def root_of(text: str) -> str:
-                    return re.split(r"[.\[]", text, maxsplit=1)[0]
-
-                if dot and prefix == "learning_package":
-                    container, top_field = package_obj, root_of(rest)
-                elif dot and prefix in ("blueprint", "lesson_blueprint"):
-                    container, top_field = blueprint_obj, root_of(rest)
-                else:
-                    top_field = root_of(raw_field)
-                    if top_field in package_obj:
-                        container = package_obj
-                    elif top_field in blueprint_obj:
-                        container = blueprint_obj
-                    else:
-                        container = None
-                if container is None or top_field not in container:
-                    stop(f"refinement_field_unknown:{raw_field}")
-                if top_field in fields_to_fix:
-                    continue
-                fields_to_fix[top_field] = json.loads(json.dumps(container[top_field]))
-            evidence_context = {
-                "failed_contracts": [
-                    result["contract"]
-                    for result in review_evidence["contract_results"]
-                    if not result["passed"]
-                ]
-            }
-            refine_prompt = build_refinement_prompt(
-                review_evidence, fields_to_fix, evidence_context
+            fields_to_fix, addressing_error, addressing_field = collect_fields_to_fix(
+                review_evidence["issues"], package_obj, blueprint_obj
             )
-            refine_output = dispatch(refine_spec, refine_prompt)
-            assert refine_output is not None
-            patch = refine_output["refinement_patch"]
-            # F-I1 (Owner ruling, brief-p4f6 §6.1): patch violations no longer
-            # stop the batch. The patch is rejected, both containers are
-            # restored to their serialized pre-patch image, the refinement
-            # call's usage stays booked, and the case lands as
-            # quality_fail_continue with a FAIL after-review. Violation values
-            # never reach the artifact either way — fail-closed only moved the
-            # disposition point.
-            violations: list[dict[str, Any]] = []
-            for key in sorted(patch):
-                if key not in package_obj and key not in blueprint_obj:
-                    violations.append(
-                        {"container": None, "error_type": "unknown_target", "loc": [key]}
-                    )
-                elif key not in fields_to_fix:
-                    container_name = "learning_package" if key in package_obj else "blueprint"
-                    violations.append(
-                        {
-                            "container": container_name,
-                            "error_type": "outside_allowlist",
-                            "loc": [key],
-                        }
-                    )
-            if not violations:
-                pre_blueprint = json.loads(json.dumps(blueprint_obj))
-                pre_package = json.loads(json.dumps(package_obj))
-                for key, value in patch.items():
-                    if key in package_obj:
-                        _apply_patch(package_obj, {key: value})
-                    elif key in blueprint_obj:
-                        _apply_patch(blueprint_obj, {key: value})
-                try:
-                    BlueprintDraft.model_validate(blueprint_obj)
-                except ValidationError as exc:
-                    err = exc.errors()[0]
-                    violations.append(
-                        {
-                            "container": "blueprint",
-                            "error_type": err.get("type"),
-                            "loc": [str(part) for part in err.get("loc", [])],
-                        }
-                    )
-                try:
-                    LanguageSupportDraft.model_validate(
-                        {
-                            "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
-                            "language_targets": package_obj["language_targets"],
-                            "sentence_maps": package_obj["sentence_maps"],
-                        }
-                    )
-                except ValidationError as exc:
-                    err = exc.errors()[0]
-                    violations.append(
-                        {
-                            "container": "learning_package",
-                            "error_type": err.get("type"),
-                            "loc": [str(part) for part in err.get("loc", [])],
-                        }
-                    )
-                invalid_translations = sorted(
-                    pid
-                    for pid, value in package_obj["translations_by_paragraph_id"].items()
-                    if not isinstance(value, str) or not value.strip()
-                )
-                if invalid_translations:
-                    violations.append(
-                        {
-                            "container": "learning_package",
-                            "error_type": "invalid_translation_value",
-                            "loc": invalid_translations[:5],
-                        }
-                    )
-                if violations:
-                    # Restore from the serialized pre-image: byte-faithful,
-                    # never a reconstruction.
-                    blueprint_obj.clear()
-                    blueprint_obj.update(pre_blueprint)
-                    package_obj.clear()
-                    package_obj.update(pre_package)
-            refinement_count = 1
-            patch_rejected = bool(violations)
-            if patch_rejected:
+            if addressing_error == "refinement_field_unknown":
+                stop(f"refinement_field_unknown:{addressing_field}")
+            if addressing_error == "frozen_derivation_field":
+                frozen_derivation_field = addressing_field
                 _persist_case_event(
                     case_dir,
                     {
-                        "kind": "patch_rejected",
-                        "violations": violations,
-                        "restored_fields": sorted(patch),
+                        "kind": "frozen_derivation_field",
+                        "field": addressing_field,
                     },
                 )
+            else:
+                evidence_context = {
+                    "failed_contracts": [
+                        result["contract"]
+                        for result in review_evidence["contract_results"]
+                        if not result["passed"]
+                    ]
+                }
+                refine_prompt = build_refinement_prompt(
+                    review_evidence, fields_to_fix, evidence_context
+                )
+                refine_output = dispatch(refine_spec, refine_prompt)
+                assert refine_output is not None
+                patch = refine_output["refinement_patch"]
+                # F-I1 (Owner ruling, brief-p4f6 §6.1): patch violations no longer
+                # stop the batch. The patch is rejected, both containers are
+                # restored to their serialized pre-patch image, the refinement
+                # call's usage stays booked, and the case lands as
+                # quality_fail_continue with a FAIL after-review. Violation values
+                # never reach the artifact either way — fail-closed only moved the
+                # disposition point.
+                violations = preapply_patch_violations(
+                    patch, package_obj, blueprint_obj, fields_to_fix
+                )
+                if not violations:
+                    pre_blueprint = json.loads(json.dumps(blueprint_obj))
+                    pre_package = json.loads(json.dumps(package_obj))
+                    for key, value in patch.items():
+                        if key in package_obj:
+                            _apply_patch(package_obj, {key: value})
+                        elif key in blueprint_obj:
+                            _apply_patch(blueprint_obj, {key: value})
+                    try:
+                        BlueprintDraft.model_validate(blueprint_obj)
+                    except ValidationError as exc:
+                        err = exc.errors()[0]
+                        violations.append(
+                            {
+                                "container": "blueprint",
+                                "error_type": err.get("type"),
+                                "loc": [str(part) for part in err.get("loc", [])],
+                            }
+                        )
+                    try:
+                        LanguageSupportDraft.model_validate(
+                            {
+                                "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
+                                "language_targets": package_obj["language_targets"],
+                                "sentence_maps": package_obj["sentence_maps"],
+                            }
+                        )
+                    except ValidationError as exc:
+                        err = exc.errors()[0]
+                        violations.append(
+                            {
+                                "container": "learning_package",
+                                "error_type": err.get("type"),
+                                "loc": [str(part) for part in err.get("loc", [])],
+                            }
+                        )
+                    invalid_translations = sorted(
+                        pid
+                        for pid, value in package_obj["translations_by_paragraph_id"].items()
+                        if not isinstance(value, str) or not value.strip()
+                    )
+                    if invalid_translations:
+                        violations.append(
+                            {
+                                "container": "learning_package",
+                                "error_type": "invalid_translation_value",
+                                "loc": invalid_translations[:5],
+                            }
+                        )
+                    if violations:
+                        # Restore from the serialized pre-image: byte-faithful,
+                        # never a reconstruction.
+                        blueprint_obj.clear()
+                        blueprint_obj.update(pre_blueprint)
+                        package_obj.clear()
+                        package_obj.update(pre_package)
+                refinement_count = 1
+                patch_rejected = bool(violations)
+                if patch_rejected:
+                    _persist_case_event(
+                        case_dir,
+                        {
+                            "kind": "patch_rejected",
+                            "violations": violations,
+                            "restored_fields": sorted(patch),
+                        },
+                    )
 
         if refinement_count:
             # Non-gold deterministic replay only — gold hard gates never feed
@@ -1168,7 +1146,12 @@ def run_case(
             refinement_evidence is not None
             and refinement_evidence["review_after_refinement"]["verdict"] == "FAIL"
         )
-        quality_fail = identity_mismatch or not gates["all_passed"] or after_fail
+        quality_fail = (
+            identity_mismatch
+            or not gates["all_passed"]
+            or after_fail
+            or frozen_derivation_field is not None
+        )
         return {
             "case_id": view["case_id"],
             "outcome": "quality_fail_continue" if quality_fail else "completed",

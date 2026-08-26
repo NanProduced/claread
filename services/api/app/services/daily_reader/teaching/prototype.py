@@ -18,6 +18,9 @@ from app.services.daily_reader.teaching.contract import (  # noqa: F401
     TRANSFER_TASK_KIND_BY_ARTICLE_TYPE,
     validate_teaching_contract,
 )
+from app.services.daily_reader.teaching.refinement_addressing import (
+    REVIEW_FROZEN_DERIVATION_CONTRACT,
+)
 
 _FORBIDDEN_GENERATION_KEYS = {
     "gold",
@@ -153,7 +156,8 @@ def build_semantic_review_prompt(
         "semantic_review_contracts": SEMANTIC_REVIEW_CONTRACTS,
     }
     _assert_generation_safe(payload)
-    return """Audit the lesson and persist substantive review evidence.
+    return (
+        """Audit the lesson and persist substantive review evidence.
 
 Check factual fidelity, checkpoint subject consistency, evidence anchors, difficulty fit,
 translation selection, transfer mapping and content, repeated teaching points, language-target
@@ -175,11 +179,16 @@ value, and mission neutrality. Return one contract_results item for every named 
         the declared level misfits the article's actual vocabulary and syntax.
         reading_mission_neutrality fails only when the mission text itself prescribes which side
         the reader must take; contested subject matter alone is not a neutrality violation.
+"""
+        + REVIEW_FROZEN_DERIVATION_CONTRACT
+        + """
 checked_contracts, if emitted, is only the ordered list derived from contract_results; never
 replace the audit with a bare verdict or name list.
 
 REVIEW INPUT:
-""" + _stable_json(payload)
+"""
+        + _stable_json(payload)
+    )
 
 
 def build_refinement_prompt(
@@ -221,6 +230,8 @@ exactly neutral, and declared enums keep their allowed values. Never introduce e
 placeholder text, or English source text inside translations: translations stay complete natural
 Simplified Chinese renderings that preserve every date, number, and proper name exactly as the
 source states it. Never add a translation key outside the unit ids visible in fields_to_fix.
+Never change frozen derivation inputs: effective_difficulty, high_difficulty_unit_ids,
+evidence_paragraph_ids, language_targets.paragraph_id, or sentence_maps.paragraph_id.
 
 DIRECTED INPUT:
 """ + _stable_json(payload)

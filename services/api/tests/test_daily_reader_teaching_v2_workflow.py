@@ -384,6 +384,63 @@ async def test_refinement_field_unknown_fails_closed():
     assert result["abort_diagnostics"]["field"] == "learning_package.nope_missing_field"
 
 
+@pytest.mark.anyio
+async def test_frozen_derivation_field_aborts_before_refinement_llm():
+    state = _package_state()
+    review = make_review_fail("difficulty_fit").model_dump()
+    review["issues"] = [
+        {
+            "contract": "difficulty_fit",
+            "field": "blueprint.effective_difficulty",
+            "problem": "declared level misfits the syntax.",
+        }
+    ]
+    state["semantic_review_result"] = review
+
+    async def should_not_run(**_kwargs):
+        raise AssertionError("refinement LLM must not run for frozen derivation fields")
+
+    with patch(f"{WORKFLOW_MODULE}._run_teaching_refinement_llm_span", new=should_not_run):
+        result = await refinement_node(state)
+
+    assert result["abort"] is True
+    assert result["abort_reason"] == "frozen_derivation_field"
+    assert result["abort_diagnostics"]["field"] == "blueprint.effective_difficulty"
+    assert "lesson_v2" not in result
+
+
+@pytest.mark.anyio
+async def test_patch_changing_derivation_nested_field_is_rejected_and_restored():
+    state = _package_state()
+    state["semantic_review_result"] = make_review_fail().model_dump()
+    original_ids = [
+        target["paragraph_id"] for target in state["learning_package"]["language_targets"]
+    ]
+
+    async def rogue_paragraph_id(**_kwargs):
+        output = make_refinement().model_dump()
+        patched = output["refinement_patch"]["language_targets"]
+        patched[0]["paragraph_id"] = "u03"
+        output["refinement_patch"] = {"language_targets": patched}
+        return {
+            "output": make_refinement().__class__.model_validate(output),
+            "usage_metadata": make_usage("refinement"),
+        }
+
+    with patch(f"{WORKFLOW_MODULE}._run_teaching_refinement_llm_span", new=rogue_paragraph_id):
+        result = await refinement_node(state)
+
+    assert result["abort"] is True
+    assert result["abort_reason"] == "teaching_v2_after_review_fail"
+    assert result["abort_diagnostics"]["patch_rejected"] is True
+    rejection = result["refinement_result"]["rejection"]
+    assert rejection["violations"][0]["error_type"] == "frozen_derivation_field"
+    restored_ids = [
+        target["paragraph_id"] for target in result["learning_package"]["language_targets"]
+    ]
+    assert restored_ids == original_ids
+
+
 # ---------------------------------------------------------------------------
 # Defense line 4: stop diagnostics
 # ---------------------------------------------------------------------------

@@ -92,6 +92,10 @@ from app.services.daily_reader.teaching.prototype import (
     make_review_evidence,
     validate_teaching_contract,
 )
+from app.services.daily_reader.teaching.refinement_addressing import (
+    collect_fields_to_fix,
+    preapply_patch_violations,
+)
 from app.services.daily_reader.teaching.schema import validate_artifact
 
 logger = logging.getLogger(__name__)
@@ -729,10 +733,6 @@ def _apply_patch(container: dict[str, Any], patch: dict[str, Any]) -> None:
             container[key] = value
 
 
-def _root_of(text: str) -> str:
-    return re.split(r"[.\[]", text, maxsplit=1)[0]
-
-
 async def refinement_node(state: DailyReaderState) -> dict:
     blueprint = state.get("lesson_blueprint") or {}
     package = state.get("learning_package") or {}
@@ -741,34 +741,23 @@ async def refinement_node(state: DailyReaderState) -> dict:
 
     run_usage = RunUsage()
     try:
-        # Finite field-addressing rule (P-4E): an explicit container prefix
-        # selects its object exclusively; unprefixed paths fall back to
-        # package-then-blueprint. Unaddressable fields stay fail-closed.
-        fields_to_fix: dict[str, Any] = {}
-        for issue in review.get("issues", []):
-            raw_field = str(issue.get("field", ""))
-            prefix, dot, rest = raw_field.partition(".")
-            if dot and prefix == "learning_package":
-                container, top_field = package, _root_of(rest)
-            elif dot and prefix in ("blueprint", "lesson_blueprint"):
-                container, top_field = blueprint, _root_of(rest)
-            else:
-                top_field = _root_of(raw_field)
-                if top_field in package:
-                    container = package
-                elif top_field in blueprint:
-                    container = blueprint
-                else:
-                    container = None
-            if container is None or top_field not in container:
-                updates = _abort("refinement_field_unknown", {"field": raw_field})
-                usage = _metadata_from_owned_usage(run_usage)
-                if usage:
-                    updates["refinement_usage"] = usage
-                return updates
-            if top_field in fields_to_fix:
-                continue
-            fields_to_fix[top_field] = json.loads(json.dumps(container[top_field]))
+        # Finite field-addressing rule (P-4E) plus frozen derivation-input
+        # pre-check (P-5D-R3): shared with the evals runner.
+        fields_to_fix, addressing_error, addressing_field = collect_fields_to_fix(
+            review.get("issues", []), package, blueprint
+        )
+        if addressing_error == "refinement_field_unknown":
+            updates = _abort("refinement_field_unknown", {"field": addressing_field})
+            usage = _metadata_from_owned_usage(run_usage)
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
+        if addressing_error == "frozen_derivation_field":
+            updates = _abort("frozen_derivation_field", {"field": addressing_field})
+            usage = _metadata_from_owned_usage(run_usage)
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
         if not fields_to_fix:
             return _abort("refinement_fields_empty")
 
@@ -804,15 +793,7 @@ async def refinement_node(state: DailyReaderState) -> dict:
         # patch is rejected, both containers are restored to their serialized
         # pre-patch image, the refinement call's usage stays booked, and the
         # article lands fail-closed with a FAIL after-review.
-        violations: list[dict[str, Any]] = []
-        for key in sorted(patch):
-            if key not in package and key not in blueprint:
-                violations.append({"container": None, "error_type": "unknown_target", "loc": [key]})
-            elif key not in fields_to_fix:
-                container_name = "learning_package" if key in package else "blueprint"
-                violations.append(
-                    {"container": container_name, "error_type": "outside_allowlist", "loc": [key]}
-                )
+        violations = preapply_patch_violations(patch, package, blueprint, fields_to_fix)
         if not violations:
             pre_blueprint = json.loads(json.dumps(blueprint))
             pre_package = json.loads(json.dumps(package))
