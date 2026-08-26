@@ -609,7 +609,7 @@ export const InputMarkdownImagePlugin = createPlatePlugin({
 const INPUT_MATH_FALLBACK_CLASS =
   "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
 const INPUT_MATH_DISPLAY_WRAPPER_CLASS =
-  "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+  "my-3 block w-full overflow-x-auto text-center";
 
 function InputMathInlineElement({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as { texExpression?: unknown };

@@ -14,7 +14,9 @@ import * as React from "react";
 import { createContext, useContext } from "react";
 import {
   BookOpenText,
+  Check,
   ChevronDown,
+  Copy,
   Flag,
   MessageCircleQuestion,
   MessageSquareQuote,
@@ -70,6 +72,10 @@ import {
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import katex from "katex";
 import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
+import {
+  readerCodeTokenClassName,
+  useReaderCodeHighlight,
+} from "@/components/editor/plugins/reader-code-highlight";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { isSafeCalloutEmoji } from "@/lib/source-callout/source-callout-display-icon";
@@ -345,6 +351,10 @@ const READER_IMAGE_PLACEHOLDER_CLASS =
   "inline-flex max-w-full min-h-[4.5rem] flex-col items-start gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 align-top text-sm text-ink-soft";
 const READER_IMAGE_BUTTON_CLASS =
   "rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised";
+// Notion-style chrome noise reduction: buttons reveal on hover / keyboard focus
+// (same pattern as sidebar-rail), never fully removed for accessibility.
+const READER_IMAGE_BUTTON_REVEAL_CLASS =
+  "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100";
 
 function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderImageElement;
@@ -442,7 +452,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
 
   const editChrome = canEdit ? (
     <span {...copyExcludeProps} className="mt-1 flex flex-wrap items-center gap-1">
-      <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
+      <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} onClick={handleEdit}>
         修改链接
       </button>
     </span>
@@ -458,7 +468,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         aria-label="图片覆盖地址"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        className="w-full rounded border border-hairline bg-white px-2 py-1 text-xs font-mono"
+        className="w-full rounded border border-hairline bg-surface px-2 py-1 text-xs font-mono"
         placeholder="输入图片链接"
       />
       {error ? <span className="text-rose-600">{error}</span> : null}
@@ -486,7 +496,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         data-reader-image="true"
         data-reader-image-kind={positionKind}
         data-image-state="unsafe"
-        className="inline-block max-w-full align-top"
+        className="group inline-block max-w-full align-top"
       >
         <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS}>
           <span className="font-medium text-ink">链接不安全</span>
@@ -507,12 +517,12 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         data-reader-image="true"
         data-reader-image-kind={positionKind}
         data-image-state="load_failed"
-        className="inline-block max-w-full align-top"
+        className="group inline-block max-w-full align-top"
       >
         <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS} data-image-state="load_failed">
           <span className="break-all">{altText || "图片加载失败"}</span>
           <span className="flex items-center gap-2">
-            <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+            <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} onClick={copyLink}>
               复制链接
             </button>
           </span>
@@ -530,7 +540,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
       data-reader-image="true"
       data-reader-image-kind={positionKind}
       data-image-state={loadState === "loaded" ? "loaded" : "loading"}
-      className="inline-block max-w-full align-top"
+      className="group inline-block max-w-full align-top"
     >
       <span {...copyExcludeProps} className="inline-flex max-w-full flex-col items-start gap-1 align-top">
         {loadState === "loading" ? (
@@ -551,8 +561,13 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           onError={() => setLoadState("failed")}
           className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
         />
+        {loadState === "loaded" && altText ? (
+          <span data-reader-image-caption="true" className="text-xs leading-snug text-ink-soft">
+            {altText}
+          </span>
+        ) : null}
         {loadState === "loaded" ? (
-          <button type="button" className={READER_IMAGE_BUTTON_CLASS} {...copyExcludeProps} onClick={copyLink}>
+          <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} {...copyExcludeProps} onClick={copyLink}>
             复制链接
           </button>
         ) : null}
@@ -599,7 +614,7 @@ export const ReaderImageBlockPlugin = createPlatePlugin({
 
 const READER_MATH_FALLBACK_CLASS =
   "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
-const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-3 block w-full overflow-x-auto text-center";
 
 function ReaderMathInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderMathInlineElement;
@@ -1636,6 +1651,27 @@ function ReaderStableListItemComponent({
   );
 }
 
+// obs-01b-e F2: 代码块工具区（语言 badge + 复制按钮）hover / focus-visible
+// 才显示（Notion 式 chrome 收敛，与图片块 READER_IMAGE_BUTTON_REVEAL_CLASS 同款）。
+const READER_CODE_TOOLBAR_REVEAL_CLASS =
+  "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";
+const READER_CODE_COPY_FEEDBACK_MS = 1600;
+
+/** 从 Plate element 的 text leaf 拼出代码原文（复制与高亮共用，不改文档模型）。 */
+function readerCodeBlockPlainText(element: unknown): string {
+  const children = (element as { children?: unknown } | null)?.children;
+  if (!Array.isArray(children)) {
+    return "";
+  }
+  return children
+    .map((child) =>
+      typeof (child as { text?: unknown })?.text === "string"
+        ? (child as { text: string }).text
+        : "",
+    )
+    .join("");
+}
+
 function ReaderStableCodeBlockComponent({
   children,
   element,
@@ -1643,13 +1679,46 @@ function ReaderStableCodeBlockComponent({
 }: PlateElementProps) {
   const data = (element as unknown as ReaderCodeBlockElement).data;
   const language = data?.language ?? null;
+  const codeText = readerCodeBlockPlainText(element);
+  const tokens = useReaderCodeHighlight(codeText, language);
+  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "error">(
+    "idle",
+  );
+  const copyResetTimeoutRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = React.useCallback(() => {
+    void (async () => {
+      let next: "copied" | "error";
+      try {
+        await navigator.clipboard.writeText(codeText);
+        next = "copied";
+      } catch {
+        next = "error";
+      }
+      setCopyState(next);
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCopyState("idle");
+      }, READER_CODE_COPY_FEEDBACK_MS);
+    })();
+  }, [codeText]);
 
   return (
     <pre
       {...attributes}
-      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40${
-        language ? " relative" : ""
-      } ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-code-block relative group overflow-x-auto ${
+        attributes?.className ?? ""
+      }`.trim()}
       {...readerRecordNavigableNodeAttrs({
         nodeKind: "code_block",
         unitId: data?.unitId,
@@ -1661,16 +1730,70 @@ function ReaderStableCodeBlockComponent({
       data-reader-record-markdown-node="code_block"
       data-language={language ?? undefined}
     >
-      {language ? (
-        <span
-          data-testid="code-language-badge"
-          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground/70"
+      <span
+        data-testid="code-toolbar"
+        className={`absolute right-3 top-2 font-sans text-[0.7rem] ${READER_CODE_TOOLBAR_REVEAL_CLASS}`}
+        {...copyExcludeProps}
+      >
+        {language ? (
+          <span
+            data-testid="code-language-badge"
+            className="font-medium uppercase tracking-wide text-muted-foreground/70"
+            {...copyExcludeProps}
+          >
+            {language}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          data-testid="code-copy-button"
+          aria-label="复制代码"
+          title="复制代码"
+          onClick={(event) => {
+            event.stopPropagation();
+            handleCopy();
+          }}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-muted-foreground/80 transition-colors hover:bg-surface-raised hover:text-ink"
           {...copyExcludeProps}
         >
-          {language}
-        </span>
-      ) : null}
-      <code className={language ? "block pt-6" : undefined}>{children}</code>
+          {copyState === "copied" ? (
+            <Check size={12} aria-hidden="true" />
+          ) : (
+            <Copy size={12} aria-hidden="true" />
+          )}
+          <span data-testid="code-copy-status" aria-live="polite">
+            {copyState === "copied"
+              ? "已复制"
+              : copyState === "error"
+                ? "复制失败"
+                : "复制"}
+          </span>
+        </button>
+      </span>
+      <code className={language ? "block pt-6" : undefined}>
+        {tokens ? (
+          <>
+            {tokens.map((line, lineIndex) => (
+              <React.Fragment key={lineIndex}>
+                {lineIndex > 0 ? "\n" : null}
+                {line.map((token, tokenIndex) => (
+                  <span
+                    key={tokenIndex}
+                    className={readerCodeTokenClassName(token.color)}
+                  >
+                    {token.content}
+                  </span>
+                ))}
+              </React.Fragment>
+            ))}
+            {/* 对齐 slate 纯文本渲染的尾部行为：以 \n 结尾的代码块会多渲染
+             * 一个换行，保持高亮前后 textContent 完全一致（selection/copy 不变）。 */}
+            {codeText.endsWith("\n") ? "\n" : null}
+          </>
+        ) : (
+          children
+        )}
+      </code>
     </pre>
   );
 }
@@ -2107,7 +2230,7 @@ function ReaderMarkdownCodeBlockComponent({
   return (
     <pre
       {...attributes}
-      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40 ${
+      className={`reader-record-plate-markdown-code-block overflow-x-auto ${
         attributes?.className ?? ""
       }`.trim()}
       data-reader-record-markdown-node={type}
