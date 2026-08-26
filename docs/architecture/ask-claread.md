@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-08-08
+- 日期：2026-08-26
 - 适用范围：Claread Web Reader 内当前 Ask Claread 模块（`services/api/app/services/reader_record_ask/`）
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
@@ -55,6 +55,14 @@ route (reader_record_ask.py)
 - 索引生命周期存于 `reader_article_rag_index_runs`（`planned|queued|indexing|indexed|failed|superseded`，只存 truth-layer hash 与 chunk_count，不存 chunk 文本；每文档唯一 active 索引）。
 - 路由：`GET /reader/records/{record_id}/article-rag-index/status`、`POST .../ensure`。
 - 检索结果为 typed 状态（`not_ready / not_indexed / indexing / unavailable / empty`），经 `article_rag_model_view.py` 清洗后才进入 model view。
+
+## Supplemental typed context
+
+- `typed_supplemental_context.py` 从当前 active stable document 投影（复用 `StableDocumentQueryService.load_active_stable_document` 单一文档读取链；production stream 在 auto-wire 且 stable document 已解析时装配 loader）读取 `math_blocks` / `inline_math` / `inline_images` 与 standalone image block 的结构 payload，渲染为一个 untrusted、fenced、非 citation 的补充数据 section，注入 production user prompt（map section 之后、coverage block 之前）。
+- 数学公式逐字 LaTeX 保真；图片仅暴露 alt/title 与 block locator，raw/effective URL 不进入 item，不做 OCR/视觉理解；typed provenance 不 mint evidence handle，也不产生 `PublicCitation`。
+- 身份 fence fail-closed：record / generation / base / base content hash / stable document 与 turn envelope 不匹配时整轮 fail-closed（rollback + non-runnable assembly）；loader I/O 失败 fail-soft absent（section 缺席，不影响本轮）。
+- 确定性硬上限 24 items / 4000 chars（约束完整渲染 section），截断显式记录于 payload 与 section；优先级 selection hit -> visible range -> source order。该 section 计入共享 `baseline` 预算账户，无新增预算账户。
+- 输出安全：reasoning projection 对 server fence tag（`<transcript_data role="data" not_instructions="true">`，平衡配对）与 scaffold header 行做确定性删除；finalizer 与 thinking transport 的 answer 通道（流式 delta、canonical answer、completed DTO）确定性删除 canonical mint 形状（`evh_` + 32 位小写 hex）的内部 evidence handle——删除而非替换为 citation 形标记，块文本全为 handle 时按 `invalid_citations` fail-closed；c1/c2 citation 映射不受影响。
 
 ## Web search
 
