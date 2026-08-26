@@ -345,6 +345,10 @@ const READER_IMAGE_PLACEHOLDER_CLASS =
   "inline-flex max-w-full min-h-[4.5rem] flex-col items-start gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 align-top text-sm text-ink-soft";
 const READER_IMAGE_BUTTON_CLASS =
   "rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised";
+// Notion-style chrome noise reduction: buttons reveal on hover / keyboard focus
+// (same pattern as sidebar-rail), never fully removed for accessibility.
+const READER_IMAGE_BUTTON_REVEAL_CLASS =
+  "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100";
 
 function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderImageElement;
@@ -442,7 +446,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
 
   const editChrome = canEdit ? (
     <span {...copyExcludeProps} className="mt-1 flex flex-wrap items-center gap-1">
-      <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
+      <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} onClick={handleEdit}>
         修改链接
       </button>
     </span>
@@ -458,7 +462,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         aria-label="图片覆盖地址"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        className="w-full rounded border border-hairline bg-white px-2 py-1 text-xs font-mono"
+        className="w-full rounded border border-hairline bg-surface px-2 py-1 text-xs font-mono"
         placeholder="输入图片链接"
       />
       {error ? <span className="text-rose-600">{error}</span> : null}
@@ -486,7 +490,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         data-reader-image="true"
         data-reader-image-kind={positionKind}
         data-image-state="unsafe"
-        className="inline-block max-w-full align-top"
+        className="group inline-block max-w-full align-top"
       >
         <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS}>
           <span className="font-medium text-ink">链接不安全</span>
@@ -507,12 +511,12 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         data-reader-image="true"
         data-reader-image-kind={positionKind}
         data-image-state="load_failed"
-        className="inline-block max-w-full align-top"
+        className="group inline-block max-w-full align-top"
       >
         <span {...copyExcludeProps} className={READER_IMAGE_PLACEHOLDER_CLASS} data-image-state="load_failed">
           <span className="break-all">{altText || "图片加载失败"}</span>
           <span className="flex items-center gap-2">
-            <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
+            <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} onClick={copyLink}>
               复制链接
             </button>
           </span>
@@ -530,7 +534,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
       data-reader-image="true"
       data-reader-image-kind={positionKind}
       data-image-state={loadState === "loaded" ? "loaded" : "loading"}
-      className="inline-block max-w-full align-top"
+      className="group inline-block max-w-full align-top"
     >
       <span {...copyExcludeProps} className="inline-flex max-w-full flex-col items-start gap-1 align-top">
         {loadState === "loading" ? (
@@ -551,8 +555,13 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
           onError={() => setLoadState("failed")}
           className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
         />
+        {loadState === "loaded" && altText ? (
+          <span data-reader-image-caption="true" className="text-xs leading-snug text-ink-soft">
+            {altText}
+          </span>
+        ) : null}
         {loadState === "loaded" ? (
-          <button type="button" className={READER_IMAGE_BUTTON_CLASS} {...copyExcludeProps} onClick={copyLink}>
+          <button type="button" className={`${READER_IMAGE_BUTTON_CLASS} ${READER_IMAGE_BUTTON_REVEAL_CLASS}`} {...copyExcludeProps} onClick={copyLink}>
             复制链接
           </button>
         ) : null}
@@ -599,7 +608,7 @@ export const ReaderImageBlockPlugin = createPlatePlugin({
 
 const READER_MATH_FALLBACK_CLASS =
   "inline-flex max-w-full items-center rounded border border-hairline/60 bg-surface-raised/40 px-1.5 py-0.5 font-mono text-xs text-ink-soft break-all";
-const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-2 block w-full overflow-x-auto rounded-lg bg-surface-raised/30 px-3 py-2 text-center";
+const READER_MATH_DISPLAY_WRAPPER_CLASS = "my-3 block w-full overflow-x-auto text-center";
 
 function ReaderMathInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderMathInlineElement;
