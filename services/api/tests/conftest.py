@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -180,3 +182,28 @@ def fail_on_real_llm_attempts(monkeypatch: pytest.MonkeyPatch, request):
         "Mock the LLM boundary or run an explicit integration test with "
         f"CLAREAD_ALLOW_REAL_LLM_TESTS=1. Attempts: {details}"
     )
+
+
+# ---------------------------------------------------------------------------
+# app.* logger propagation isolation for caplog
+# ---------------------------------------------------------------------------
+
+# app.main runs setup_logging() at import time, which attaches console/file
+# handlers to the "app" logger tree and disables its propagation to the root
+# logger. pytest imports every test module in one process during collection,
+# so once ANY test module imports app.main, every later caplog assertion on
+# app.* loggers would silently capture nothing (caplog captures through a
+# root-logger handler). Re-enable propagation for the duration of each test
+# and restore the production-configured state afterwards; production logging
+# semantics stay untouched outside the test run.
+_PROPAGATION_ISOLATED_LOGGERS = ("app",)
+
+
+@pytest.fixture(autouse=True)
+def _app_logger_propagation_for_caplog() -> Iterator[None]:
+    saved = {name: logging.getLogger(name).propagate for name in _PROPAGATION_ISOLATED_LOGGERS}
+    for name in _PROPAGATION_ISOLATED_LOGGERS:
+        logging.getLogger(name).propagate = True
+    yield
+    for name, propagate in saved.items():
+        logging.getLogger(name).propagate = propagate
