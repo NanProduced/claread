@@ -1,4 +1,4 @@
-"""G2d-A 冻结图片 source URL override service/repository。
+"""冻结图片 source URL override service/repository。
 
 dedicated persistence（``stable_image_source_overrides``，B1 七列表）+
 PUT/DELETE 写路径。复用 reader_notes 的 mutation+event 模板：
@@ -6,7 +6,7 @@ PUT/DELETE 写路径。复用 reader_notes 的 mutation+event 模板：
 upsert / exact locator 硬删 → ``build_representation_payload`` →
 ``publish_event_in_transaction``（数据变更与事件同一事务）。
 
-存储输入边界（F5 冻结）：raw override 逐字保存，唯一写入层拒绝 U+0000
+存储输入边界：raw override 逐字保存，唯一写入层拒绝 U+0000
 （由 ``app.schemas.reader_image_overrides`` 在到达数据库前确定性 422）；
 loadability 只在 snapshot 投影派生，绝不回写。
 """
@@ -50,7 +50,7 @@ class _OverrideWriteTarget:
     payload: dict[str, Any]
 
 
-# F3 冻结：两条显式 partial-index conflict SQL，service 按
+# 两条显式 partial-index conflict SQL，service 按
 # ``inline_ordinal is None`` 二选一；不存在能同时命中两个 partial
 # unique index 的无 predicate 通用 ON CONFLICT。
 _UPSERT_STANDALONE_SQL = """

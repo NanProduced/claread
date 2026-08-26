@@ -1,12 +1,11 @@
-"""G2d-A · 冻结后图片 source URL override 的 PUT/DELETE API 与持久化合同测试。
+"""冻结后图片 source URL override 的 PUT/DELETE API 与持久化合同测试。
 
 设计依据：
-- tmp/reader-markdown-optimization/g2d-image-url-override-storage-api-design.md
-  （B1 表结构、§8.1/§8.2 状态矩阵、§9 API 合同、§10 双 partial upsert、
-  §13 R1-R26）
-- 冻结合同 g2a-image-representation-contract.md §7.4/§8.2/§10.1。
+- 图片 override 存储 API 设计（B1 表结构、§8.1/§8.2 状态矩阵、§9 API 合同、
+  §10 双 partial upsert、§13 R1-R26）
+- 冻结图片表示合同 §7.4/§8.2/§10.1。
 
-观察 seam（任务书 §4 批准）：HTTP interface、
+观察 seam：HTTP interface、
 ArticleReadyPersistenceService.load_snapshot、build_reader_plate_snapshot、
 build_representation_payload/reader_events、PostgreSQL constraint（仅 R18）、
 直接 DB 读取（守恒证明）。

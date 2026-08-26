@@ -1,6 +1,6 @@
-"""G2d-A 图片 source URL override 的请求/响应 DTO。
+"""图片 source URL override 的请求/响应 DTO。
 
-输入边界（F5 冻结）：``url`` 无长度上限、不 trim、不校验 scheme、
+输入边界：``url`` 无长度上限、不 trim、不校验 scheme、
 不调用 loadability validator；唯一写入层拒绝是 U+0000（PostgreSQL text
 不能存储），必须在到达 asyncpg/数据库之前以确定性 422 拒绝。
 

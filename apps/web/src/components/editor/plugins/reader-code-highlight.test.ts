@@ -1,5 +1,5 @@
 /**
- * reader-code-highlight 模块单元测试（obs-01b-e F1）：
+ * reader-code-highlight 模块单元测试：
  * - 语言解析：大小写不敏感、空白容错、未知语言 fail-closed。
  * - readerCodeToTokens：未知语言 / null 返回 null（高亮失败回退纯文本）。
  * - 已知语言（python）返回可渲染 tokens，且逐字还原源文本。

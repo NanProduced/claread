@@ -2688,7 +2688,7 @@ export function ReaderRecordPlateSurface({
   // it into pendingRestoreRef for the rAF re-anchor validation.
   const generation = snapshot.record.generation;
   const baseId = snapshot.base.base_id;
-  // G2D-B: frozen image override locator (per-snapshot stable document)
+  // Frozen image override locator (per-snapshot stable document)
   const stableDocumentId =
     typeof snapshot.base.stable_document_id === "string" &&
     snapshot.base.stable_document_id.length > 0

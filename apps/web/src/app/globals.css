@@ -2502,7 +2502,7 @@ select {
   line-height: 1.55;
 }
 
-/* obs-01b-e F1: 语法高亮 token 角色 — 低对比暖系，色值走主题 token，
+/* 语法高亮 token 角色 — 低对比暖系，色值走主题 token，
  * 深浅模式自适应；未命中角色的 token 继承正文墨色。 */
 .reader-record-plate-markdown-code-block .reader-record-plate-code-token--keyword {
   color: var(--grammar-violet);

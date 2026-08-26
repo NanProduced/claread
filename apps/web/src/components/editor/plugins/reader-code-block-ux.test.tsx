@@ -1,12 +1,12 @@
 /**
  * @vitest-environment jsdom
  *
- * Reader 正文代码块体验（obs-01b-e）：
- * - F1 语法高亮：渲染层 token spans（shiki codeToTokens），文本逐字不变，
+ * Reader 正文代码块体验：
+ * - 语法高亮：渲染层 token spans（shiki codeToTokens），文本逐字不变，
  *   禁止 dangerouslySetInnerHTML / innerHTML，未知语言 / 高亮失败 fail-closed。
- * - F2 复制交互：hover / focus-visible 工具区（语言 badge + 复制按钮），
+ * - 复制交互：hover / focus-visible 工具区（语言 badge + 复制按钮），
  *   clipboard 写代码原文，成功 / 失败轻反馈，chrome 均 copy-exclude。
- * - F3 容器排版：padding / radius / 暖色底（surface-raised 系）落在
+ * - 容器排版：padding / radius / 暖色底（surface-raised 系）落在
  *   globals.css 的 reader-record-plate-markdown-code-block 区段。
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -170,7 +170,7 @@ afterEach(() => {
 });
 
 describe("ReaderStableCodeBlockComponent code UX", () => {
-  describe("F1 syntax highlight (rendering layer)", () => {
+  describe("syntax highlight (rendering layer)", () => {
     it("renders plain text on first paint, then highlighted token spans with verbatim text", async () => {
       const { container } = renderCodeBlock(PYTHON_CODE, "python");
       const code = getCode(container);
@@ -277,7 +277,7 @@ describe("ReaderStableCodeBlockComponent code UX", () => {
     });
   });
 
-  describe("F2 copy toolbar", () => {
+  describe("copy toolbar", () => {
     it("renders a hover/focus-visible toolbar with language badge and copy button, copy-excluded", async () => {
       const { container } = renderCodeBlock(PYTHON_CODE, "python");
       const pre = getPre(container);
@@ -364,7 +364,7 @@ describe("ReaderStableCodeBlockComponent code UX", () => {
     });
   });
 
-  describe("F3 container typography (globals.css)", () => {
+  describe("container typography (globals.css)", () => {
     it("styles the code block container per the warm paper baseline", () => {
       const css = readWebSource("src/app/globals.css");
       const ruleMatch = css.match(

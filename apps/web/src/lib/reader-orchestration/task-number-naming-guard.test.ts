@@ -1,4 +1,3 @@
-// task-history: TEST-GOVERNANCE-GATE-A-SAFE-REBUILD-R1 / G0
 /**
  * Syntax-aware task-history governance for tracked TypeScript sources.
  *
@@ -490,14 +489,11 @@ describe("Syntax-aware task-history governance", () => {
 
   it("parses every tracked TypeScript source with TypeScript 5.9.3", () => {
     expect(ts.version).toBe("5.9.3");
-    // Ratchet count: 732 tracked sources at 2a0039df + 8 new TS/TSX
-    // files from the Wave 10 lifecycle UI work = 740; + 5 new TS/TSX
-    // files from the progressive-analysis merge (analysis progress
-    // control + wire contracts) = 745; - 4 files removed on disk by the
-    // provider-reasoning cleanup (LearnerReasoningPanel +
-    // learner-reasoning, deletions pending in the worktree) = 743.
-    // Bump this number whenever tracked TypeScript files are added.
-    expect(TYPESCRIPT_PATHS).toHaveLength(743);
+    // Ratchet count: tracked TS/TSX/JS/JSX/MJS sources under the expected
+    // roots that exist on disk, measured at runtime via git ls-files.
+    // Bump this number whenever tracked TypeScript files are added or
+    // removed (re-measure with the guard run, never hand-count).
+    expect(TYPESCRIPT_PATHS).toHaveLength(758);
     expect(PARSE_RESULTS.length).toBeGreaterThan(0);
     expect(
       PARSE_RESULTS.flatMap((result) =>

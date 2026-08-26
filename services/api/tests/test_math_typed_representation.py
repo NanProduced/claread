@@ -1,7 +1,6 @@
-"""Math-A typed representation + analysis exclusion（MD Math-A RED→GREEN）。
+"""Typed math representation + analysis exclusion 合同测试。
 
-合同来源：``math-markdown-representation-diagnosis.md`` §5/§6（Owner M-1/M-2
-已于 2026-08-24 拍板，OWNER pending=0）。本文件锁定：
+合同来源：结构化数学表示合同 §5/§6。本文件锁定：
 
 1. inline ``$..$`` / 行内 ``$$..$$`` → owning block payload ``inline_math``
    entry = ``{"latex": <内层源码逐字>, "display": <markup=="$$">,
@@ -14,7 +13,7 @@
    canonical/units/jobs/RAG（freeze plan 只聚合 main_reading）。
 3. gate 检测切换 parser-aware：fenced code 与 inline code span 内的
    ``$..$``/``$$..$$`` 不再强制 Candidate；真实 math 与货币 ``$5...$10``
-   维持现行 candidate 结果（M-1/M-2 裁决）。
+   维持现行 candidate 结果。
 4. tree 投影守恒：payload 数学字段原样透传，fresh/reload 两次投影逐字节
    相等，text 字段不吸收公式源码。
 """
@@ -301,7 +300,7 @@ def test_tree_projection_conserves_math_payload_byte_identically() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. gate parser-aware detection（M-1/M-2 裁决落地）
+# 6. gate parser-aware detection
 # ---------------------------------------------------------------------------
 
 
@@ -336,7 +335,7 @@ def test_gate_currency_pair_keeps_current_candidate_behavior() -> None:
         "price schedule distributed yesterday morning."
     )
     result = _evaluate("markdown_file", text)
-    # M-2(c)：货币启发式保持现状 —— 继续 candidate review。
+    # 货币启发式保持现状 —— 继续 candidate review。
     assert result.outcome == "candidate_document_required"
     assert "document_block_degraded" in result.flags
 
@@ -369,7 +368,7 @@ def test_gate_escaped_pair_math_still_requires_candidate(snippet: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. F1/F2 窄返修（review 2026-08-24）：blockquote 内 standalone $$ 块 +
+# 7. blockquote 内 standalone $$ 块 +
 #    _extract_inline_text 的 math_inline_double skip
 # ---------------------------------------------------------------------------
 
@@ -424,7 +423,7 @@ def test_footnote_inline_double_dollar_math_not_leaked_into_text() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. F3/F4 窄返修（review 2026-08-24 第二轮）：footnote 定义内 standalone
+# 8. footnote 定义内 standalone
 #    $$ 块接线 + blockquote 多行 $$ 的 "> " 前缀 de-quote + list_item 内
 #    standalone $$ 续行缩进去除
 # ---------------------------------------------------------------------------

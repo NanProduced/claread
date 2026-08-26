@@ -9552,7 +9552,7 @@ describe("G3b Reader image safe surface Slice B RED", () => {
   });
 });
 
-describe("G2D-B frozen image URL editor", () => {
+describe("frozen image URL editor", () => {
   function wgNode2(overrides: Partial<ReaderStableDocumentBlockNodeDto>): ReaderStableDocumentBlockNodeDto {
     return {
       block_id: "block",

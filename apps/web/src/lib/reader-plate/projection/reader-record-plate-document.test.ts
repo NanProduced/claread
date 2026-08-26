@@ -4621,7 +4621,7 @@ describe("G3b Reader image tree projection Slice A - standalone and inline RED",
   });
 });
 
-describe("G2D-B image override_url projection", () => {
+describe("image override_url projection", () => {
   function localTreeNode(
     overrides: Partial<ReaderStableDocumentBlockNodeDto>,
   ): ReaderStableDocumentBlockNodeDto {

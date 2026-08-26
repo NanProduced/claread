@@ -325,7 +325,7 @@ const copyExcludeProps = {
   "data-reader-record-copy-exclude": "true",
 } as const;
 
-// G2D-B: frozen image URL override — minimal context, no media framework
+// Frozen image URL override — minimal context, no media framework
 export interface ReaderFrozenImageOverrideLocator {
   blockId: string;
   inlineOrdinal: number | null;
@@ -607,7 +607,7 @@ export const ReaderImageBlockPlugin = createPlatePlugin({
 
 // ---------------------------------------------------------------------------
 // Reader math (inline + block) — KaTeX, fail-closed, chrome excluded
-// Mirrors G3b image surface: math rendering product is void inline + block
+// Mirrors the reader image surface: math rendering product is void inline + block
 // wrapper, excluded from copy/selection/word count via same contracts.
 // ---------------------------------------------------------------------------
 
@@ -1650,7 +1650,7 @@ function ReaderStableListItemComponent({
   );
 }
 
-// obs-01b-e F2: 代码块工具区（语言 badge + 复制按钮）hover / focus-visible
+// 代码块工具区（语言 badge + 复制按钮）hover / focus-visible
 // 才显示（Notion 式 chrome 收敛，与图片块 READER_IMAGE_BUTTON_REVEAL_CLASS 同款）。
 const READER_CODE_TOOLBAR_REVEAL_CLASS =
   "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";

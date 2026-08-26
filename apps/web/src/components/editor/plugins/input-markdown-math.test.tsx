@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
- * Math-C 输入预览与 Content Check 一致性 RED 矩阵
- * R-9: $E=mc^2$ / $a*b*c$ / \|A-B\|_F^2 round-trip verbatim
+ * 输入预览与 Content Check 的一致性矩阵
+ * $E=mc^2$ / $a*b*c$ / \|A-B\|_F^2 round-trip verbatim
  */
 import { act, cleanup, render } from "@testing-library/react";
 import React, { createRef } from "react";
@@ -40,7 +40,7 @@ function createMathEditor() {
   return createPlateEditor({ plugins: markdownTextInputPlugins });
 }
 
-describe("Math-C 输入预览 math 渲染 (plate deserializer + KaTeX)", () => {
+describe("输入预览 math 渲染 (plate deserializer + KaTeX)", () => {
   it("$a*b*c$ 在输入预览中渲染为 KaTeX 且保留 * 活性字符", async () => {
     const { ref, editorEl } = renderMathEditor({ initialValue: "before $a*b*c$ after" });
     await act(async () => { await Promise.resolve(); });
@@ -126,7 +126,7 @@ describe("Math-C 输入预览 math 渲染 (plate deserializer + KaTeX)", () => {
   });
 });
 
-describe("Math-C deserializer 能力（INPUT_MARKDOWN_PLUGIN_OPTIONS）", () => {
+describe("输入端 deserializer 能力（INPUT_MARKDOWN_PLUGIN_OPTIONS）", () => {
   it("INPUT options 包含 remark-math 与 equation 允许节点", () => {
     expect(INPUT_MARKDOWN_PLUGIN_OPTIONS.allowedNodes).toContain("equation");
     expect(INPUT_MARKDOWN_PLUGIN_OPTIONS.allowedNodes).toContain("inline_equation");

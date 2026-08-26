@@ -1509,7 +1509,7 @@ export interface ReaderStableDocumentResponseDto {
 }
 
 // ---------------------------------------------------------------------------
-// G2D-B: Reader image source overrides (PUT + DELETE, no GET)
+// Reader image source overrides (PUT + DELETE, no GET)
 // ---------------------------------------------------------------------------
 
 export interface ReaderImageSourceOverrideUpsertRequestDto {

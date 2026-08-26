@@ -99,7 +99,7 @@ export type ReaderPlateBffError = {
     // Section-translation fence conflict (409 from upstream).
     | "section_translation_conflict"
     | "analysis_section_conflict"
-    // G2D-B image override: stable document superseded mid-edit (409 from
+    // Image override: stable document superseded mid-edit (409 from
     // upstream ``stable_document_not_active``).
     | "image_source_override_conflict";
   message: string;
@@ -1585,7 +1585,7 @@ export async function submitReaderAnalysisSectionRequestFromWeb(
 }
 
 // ---------------------------------------------------------------------------
-// G2D-B: Reader image source overrides (PUT + DELETE via BFF)
+// Reader image source overrides (PUT + DELETE via BFF)
 // ---------------------------------------------------------------------------
 
 export type ReaderImageSourceOverrideWriteResult =

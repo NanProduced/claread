@@ -324,7 +324,7 @@ export function submitUpstreamReaderAnalysisSectionRequest(
 }
 
 // ---------------------------------------------------------------------------
-// G2D-B: Reader image source overrides
+// Reader image source overrides
 // ---------------------------------------------------------------------------
 
 export function putUpstreamReaderImageSourceOverride(

@@ -123,7 +123,7 @@ class LoadedReaderSnapshotFacts:
     annotation_diagnostics_readback: AnnotationDiagnosticsReadback
     user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
     ask_supplements: tuple[ReaderSnapshotAskSupplement, ...] = ()
-    # G2d-A：active Stable Document id（无 Stable Document 的 legacy/
+    # active Stable Document id（无 Stable Document 的 legacy/
     # synthetic record 为 None）与该文档的 frozen image source URL
     # override overlay（locator = (block_id, inline_ordinal|None) → raw
     # 原串；不 trim、不解析、不调用 validator，投影时才派生 effective_url）。
@@ -1270,7 +1270,7 @@ class ReaderOrchestrationRepository:
             record_id,
             record_generation,
         )
-        # G2d-A：active document 唯一 id（全部行同一 d.id）+ 同事务
+        # active document 唯一 id（全部行同一 d.id）+ 同事务
         # readonly override overlay。按 stable_document_id 绑定 →
         # superseded 旧文档的行天然不进入新 active 文档快照。
         stable_document_id_value: str | None = (

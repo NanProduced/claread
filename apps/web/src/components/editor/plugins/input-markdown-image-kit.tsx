@@ -263,7 +263,7 @@ const INPUT_IMAGE_MD_RULES = {
       // 结构性空文本转成 U+200B 输出，污染提交的 markdown，并破坏后端
       // standalone/inline 图片分类语义（ZWSP 不是 CommonMark 空白）。
       // 其余行为（空段 ZWSP 占位 / 换行拆 break / 尾部 break → <br />）
-      // 委托 defaultRules.p.serialize——G1P-A-R1 review 已证
+      // 委托 defaultRules.p.serialize——已证
       // buildRules(editor).p.serialize === defaultRules.p.serialize 且
       // 委托输出与原复制实现逐字节一致。
       const children = node.children ?? [];
@@ -283,7 +283,7 @@ const INPUT_IMAGE_MD_RULES = {
           })
         : children;
       // defaultRules.p / .serialize 类型为 Nullable（运行时必有，
-      // G1P-A-R1 review 已证 buildRules(editor).p.serialize ===
+      // 已证 buildRules(editor).p.serialize ===
       // defaultRules.p.serialize）。
       const stockSerialize = defaultRules.p?.serialize as (
         node: Record<string, unknown>,
@@ -317,11 +317,11 @@ function imageMarksFromDeco(deco: MdDecoration): {
  *
  * 在 MARKDOWN_PLUGIN_OPTIONS（非输入端默认）之上：
  * - allowedNodes 追加 "img"（默认 projection 白名单不含 img，行为不变）与
- *   math 节点 "equation"/"inline_equation"（Math-C 输入预览）；
+ *   math 节点 "equation"/"inline_equation"（输入预览渲染）；
  * - rules 追加输入端 img/p 覆盖（source_callout 规则原样保留）；
  * - remarkPlugins 追加 remarkMath（$..$ / $$..$$）与
  *   remarkPreserveUnsupported（footnote/task-list 降级）。
- * Math-C 复用 Math-B 的 katex 与 fail-closed 判例；remarkMath 由
+ * 输入预览复用编辑端 katex 依赖与 fail-closed 判例；remarkMath 由
  * @platejs/markdown 已声明的 math 规则（equation/inline_equation）承载，
  * 无需第二套 AST。
  */
@@ -365,7 +365,7 @@ const IMAGE_BUTTON_CLASS =
  * - 原生 `<img loading="lazy" decoding="async" referrerPolicy="no-referrer">`，
  *   不用 next/image。
  *
- * Slate void 合同（G1P-A-R2）：必须渲染 {children}（void 内层 text
+ * Slate void 合同：必须渲染 {children}（void 内层 text
  * leaf）。slate 的 Editor.point/range 把选区 points 解析到该 leaf，
  * slate-react 的 toDOMPoint 靠它定位 DOM（未渲染时 throw，selection-sync
  * 吞错后 removeAllRanges → tf.select/reveal 的选区静默失效）。渲染后
@@ -577,7 +577,7 @@ export const InputMarkdownImagePlugin = createPlatePlugin({
           element: HTMLElement;
           type: string;
         }) => {
-          // G1P-B-A-R2：Plate 静态规则会以 class="slate-img" 命中任意元素；
+          // Plate 静态规则会以 class="slate-img" 命中任意元素；
           // 非 IMG 不认领，回退子节点遍历，避免可见内容被空 typed img 替换。
           if (element.nodeName !== "IMG") return undefined;
           const src = element.getAttribute("src");
@@ -597,8 +597,8 @@ export const InputMarkdownImagePlugin = createPlatePlugin({
 });
 
 // ---------------------------------------------------------------------------
-// Input Math Kit — Math-C 输入预览与 Content Check 共用
-// 复用 Math-B 的 katex 依赖与 fail-closed 判例；无第二套 AST。
+// Input Math Kit — 输入预览与 Content Check 共用
+// 复用编辑端 katex 依赖与 fail-closed 判例；无第二套 AST。
 // Plate 类型与 @platejs/markdown 默认 math 规则一致：
 // - inline_equation (mdast inlineMath, $..$) — inline void
 // - equation (mdast math, $$..$$) — block

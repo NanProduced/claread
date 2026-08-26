@@ -535,7 +535,7 @@ class TestRepresentationPayloadValidator:
 
 
     # ------------------------------------------------------------------
-    # G2d-A: image_overrides section allowlist contract
+    # image_overrides section allowlist contract
     # ------------------------------------------------------------------
     @pytest.mark.parametrize("operation", ["upsert", "delete"])
     def test_build_valid_image_overrides_operations(self, operation: str) -> None:

@@ -596,7 +596,7 @@ def _extract_inline_text(token: Token) -> str:
             "del_open", "del_close",
             "footnote_ref",
             "image",
-            # Math-A：公式源码不进任何容器 flatten 文本（typed payload 承载）。
+            # 公式源码不进任何容器 flatten 文本（typed payload 承载）。
             "math_inline",
             "math_inline_double",
             "math_block",
@@ -635,7 +635,7 @@ _IMAGE_ONLY_TABLE_CELL_POLICY: dict[str, Any] = {
     "rag_eligible": False,
 }
 
-# Math-A（math-markdown-representation-diagnosis.md §5，Owner M-1/M-2 已拍板）：
+# 数学表示合同（诊断 §5）：
 # 纯公式容器的显式 metadata_only policy——LaTeX 源不进 canonical text、
 # reading units、T/V/G/S job targets 或 RAG plan（freeze plan 只聚合
 # main_reading 块），位点与源码由 payload ``inline_math`` / ``math_blocks``
@@ -648,11 +648,11 @@ _MATH_ONLY_PARAGRAPH_POLICY: dict[str, Any] = {
 
 
 def _math_inline_entry(token: Token, before_utf16: int) -> dict[str, Any]:
-    """One ``inline_math`` array entry（Math-A）。
+    """One ``inline_math`` array entry。
 
     ``latex`` 是定界符之间的内层源码**逐字**——dollarmath token 化之后
     内容不再参与 emphasis / escape 解析，因此 ``$a*b*c$`` 与 ``\\|A-B\\|``
-    全字符保真（诊断文档 RED #4/#5）。``display`` 取自 markup（``$$`` →
+    全字符保真。``display`` 取自 markup（``$$`` →
     True）；``before_utf16`` 相对所属 block 最终投影文本，语义与
     ``inline_images.before_utf16`` 完全一致。
     """
@@ -666,7 +666,7 @@ def _math_inline_entry(token: Token, before_utf16: int) -> dict[str, Any]:
 def _math_only_container_override(
     entries: list[dict[str, Any]],
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """纯公式容器的 Math-A 归一：返回 ``(text_content, payload_addition,
+    """纯公式容器的归一：返回 ``(text_content, payload_addition,
     interpretation_policy)``。
 
     容器保留原 block_type（paragraph/heading/list_item/blockquote/
@@ -688,7 +688,7 @@ def _math_only_container_override(
     )
 
 
-# Math-A 窄返修（F4）：blockquote 内多行 ``$$..$$`` 的 math_block content
+# blockquote 内多行 ``$$..$$`` 的 math_block content
 # 是 dollarmath 对 state.src 的切片，中间行带入 blockquote 的 ``> `` 前缀。
 # 逐行去掉开头可选空白后的 ``> `` / ``>``；单行形态 content 本就干净，
 # 本替换对其幂等。仅对位于 blockquote 内的 token 调用（顶层 content 无
@@ -697,7 +697,7 @@ _BLOCKQUOTE_QUOTE_PREFIX_RE = re.compile(r"(?m)^[ \t]*>[ \t]?")
 
 
 def _dequote_blockquote_math_latex(content: str) -> str:
-    """blockquote 内 math_block latex 的确定性 de-quote（F4）。"""
+    """blockquote 内 math_block latex 的确定性 de-quote。"""
     return _BLOCKQUOTE_QUOTE_PREFIX_RE.sub("", content)
 
 
@@ -721,11 +721,11 @@ def _dedent_nested_math_latex(content: str) -> str:
 
 
 def parse_result_has_typed_math(result: MarkdownParseResult) -> bool:
-    """True 当任一 parsed block 携带 typed math payload（Math-A）。
+    """True 当任一 parsed block 携带 typed math payload。
 
     gate 用作 parser-aware 数学信号：fenced code 与 inline code span 被
-    tokenizer 天然排除（M-2a/M-2b），真实 math（含货币 ``$5..$10`` 的
-    dollarmath 命中）保持 True（M-1/M-2c 维持现行 Candidate 路由）。
+    tokenizer 天然排除，真实 math（含货币 ``$5..$10`` 的
+    dollarmath 命中）保持 True（维持现行 Candidate 路由）。
     """
     for block in result.blocks:
         payload = block.payload_json
@@ -1443,7 +1443,7 @@ def _process_inline_with_marks(
                 )
             pending_image_separator = True
         elif ctype in ("math_inline", "math_inline_double"):
-            # Math-A：公式 token 不贡献文本、不参与 emphasis / escape；
+            # 公式 token 不贡献文本、不参与 emphasis / escape；
             # 记录 typed entry 并沿用 image 的 U+0020 分隔判例。
             # ``math_inline_double`` = 行内 ``$$..$$``（display 语义）。
             if inline_math is not None:
@@ -2146,7 +2146,7 @@ class MarkdownSourceParser:
             .enable("table")
             .enable("strikethrough")
             .use(footnote_plugin)
-            # Math-A（math-markdown-representation-diagnosis.md §5）：dollarmath
+            # dollarmath（数学表示合同 §5）：
             # 让 ``$..$`` / 行内与独立 ``$$..$$`` 成为 ``math_inline`` /
             # ``math_inline_double`` / ``math_block`` token——内容为定界符
             # 之间的内层源码逐字（不参与 emphasis / escape 解析），fenced
@@ -2877,7 +2877,7 @@ class MarkdownSourceParser:
                 # Flat path: ordinary blockquote — aggregate inline content
                 # into a single block (no regression for quotations).
                 bq_inlines: list[Token] = []
-                # Math-A 窄返修（F1）：dollarmath 把 blockquote 内 standalone
+                # dollarmath 把 blockquote 内 standalone
                 # ``$$..$$`` 产出为 blockquote 的直接子 ``math_block`` token
                 # （不经 paragraph_open/inline），latex 逐字（content）入
                 # payload ``math_blocks``，按源序。
@@ -2887,7 +2887,7 @@ class MarkdownSourceParser:
                     if tokens[j].type == "inline":
                         bq_inlines.append(tokens[j])
                     elif tokens[j].type == "math_block":
-                        # F4：blockquote 内多行 $$ 的 content 经确定性
+                        # blockquote 内多行 $$ 的 content 经确定性
                         # de-quote 去除中间行 "> " 前缀。
                         bq_block_math.append(
                             {
@@ -2980,12 +2980,12 @@ class MarkdownSourceParser:
                     flat_bq_payload["inline_marks"] = bq_marks
                 if bq_inline_images:
                     flat_bq_payload["inline_images"] = bq_inline_images
-                # Math-A：公式 entry 进 owning-block payload；纯公式容器
+                # 公式 entry 进 owning-block payload；纯公式容器
                 # （无可见文本）退化为 metadata_only 容器。
                 if bq_inline_math:
                     flat_bq_payload["inline_math"] = bq_inline_math
                 bq_math_policy: dict[str, Any] | None = None
-                # F1：无可见文本且仅有 math（inline 或块级）→ 既有
+                # 无可见文本且仅有 math（inline 或块级）→ 既有
                 # _math_only_container_override 归一；混排保持 main_reading
                 # 默认、仅记录 math_blocks。
                 if not bq_text.strip() and (bq_inline_math or bq_block_math):
@@ -3153,7 +3153,7 @@ class MarkdownSourceParser:
                     cell_payload["inline_marks"] = cell_marks
                 if cell_inline_images:
                     cell_payload["inline_images"] = cell_inline_images
-                # Math-A：cell 内公式 entry；纯公式 cell（无可见文本且非
+                # cell 内公式 entry；纯公式 cell（无可见文本且非
                 # image-only）退化为 metadata_only 容器。
                 if cell_inline_math:
                     cell_payload["inline_math"] = cell_inline_math
@@ -3236,7 +3236,7 @@ class MarkdownSourceParser:
                     heading_payload["inline_marks"] = heading_marks
                 if heading_inline_images:
                     heading_payload["inline_images"] = heading_inline_images
-                # Math-A：公式 entry；纯公式标题退化为 metadata_only 容器。
+                # 公式 entry；纯公式标题退化为 metadata_only 容器。
                 if heading_inline_math:
                     heading_payload["inline_math"] = heading_inline_math
                     if not heading_text.strip():
@@ -3262,7 +3262,7 @@ class MarkdownSourceParser:
                 i = j + 1
                 continue
 
-            # --- Math-A: standalone $$..$$ display block ---
+            # --- standalone $$..$$ display block ---
             # dollarmath 把独立成段的 ``$$..$$`` 产出为块级 ``math_block``
             # token（content 为定界符之间源码逐字）。保留 paragraph 容器 +
             # 显式 metadata_only policy：LaTeX 不进 canonical/units/jobs/
@@ -3270,7 +3270,7 @@ class MarkdownSourceParser:
             if token_type == "math_block":
                 math_latex = token.content
                 if token.level > 0:
-                    # Math-A 窄返修：list_item 等缩进容器内的 math_block
+                    # list_item 等缩进容器内的 math_block
                     # 不被容器 walker 消费、落到本 handler，content 带入
                     # 续行缩进；确定性去公共 margin。顶层 token
                     # （level == 0）content 无污染，逐字保真不触碰。
@@ -3341,7 +3341,7 @@ class MarkdownSourceParser:
                         inline_images=para_inline_images,
                         inline_math=para_inline_math,
                     )
-                    # Math-A：纯公式段落 → metadata_only 容器（text_content
+                    # 纯公式段落 → metadata_only 容器（text_content
                     # 为 LaTeX 源回退展示；freeze plan 不聚合 metadata_only，
                     # 公式不进 canonical/units/jobs/RAG）。
                     if not para_text.strip() and para_inline_math:
@@ -3629,7 +3629,7 @@ class MarkdownSourceParser:
                     li_payload["inline_marks"] = li_marks
                 if li_inline_images:
                     li_payload["inline_images"] = li_inline_images
-                # Math-A：公式 entry；纯公式 item 退化为 metadata_only 容器。
+                # 公式 entry；纯公式 item 退化为 metadata_only 容器。
                 if li_inline_math:
                     li_payload["inline_math"] = li_inline_math
                     if not li_text.strip():
@@ -3668,7 +3668,7 @@ class MarkdownSourceParser:
                 # Find paragraph inside footnote for source_range and text
                 fn_src_range: SourceRange | None = None
                 fn_text = ""
-                # Math-A 窄返修（F3）：dollarmath 把 footnote 定义内
+                # dollarmath 把 footnote 定义内
                 # standalone ``$$..$$`` 产出为 footnote 块直接子
                 # ``math_block`` token（不经 paragraph），latex 逐字入
                 # payload ``math_blocks``，按源序；纯公式 footnote 退化

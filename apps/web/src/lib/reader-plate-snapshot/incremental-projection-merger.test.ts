@@ -2511,7 +2511,7 @@ describe("mergeIncrementalProjection", () => {
     });
   });
 
-  describe("G2D-B image_overrides", () => {
+  describe("image_overrides", () => {
     it("image_overrides upsert must fallback_full_reload with image_overrides_requires_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });

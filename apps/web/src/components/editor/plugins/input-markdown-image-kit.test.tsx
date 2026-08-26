@@ -353,7 +353,7 @@ describe("INPUT_MARKDOWN_PLUGIN_OPTIONS round-trip 矩阵", () => {
     },
     { name: "em wrapped", md: "*![a](u)*", expected: "*![a](u)*" },
     { name: "delete wrapped", md: "~~![a](u)~~", expected: "~~![a](u)~~" },
-    // G1P-A-R2 补强：semantic destination 边界（语法层归一，语义层保真）
+    // 补强：semantic destination 边界（语法层归一，语义层保真）
     {
       name: "angle raw space destination",
       md: "![a](<a b.png>)",
@@ -637,7 +637,7 @@ describe("InputMarkdownImagePlugin HTML deserializer（G1P-B-A）", () => {
     expect(editor.children).toHaveLength(1);
   });
 
-  it("非 IMG 元素带 class=\"slate-img\" 不被认领为图片：可见文本保留、无 typed img（G1P-B-A-R2）", () => {
+  it("非 IMG 元素带 class=\"slate-img\" 不被认领为图片：可见文本保留、无 typed img", () => {
     const fragment = deserializePreparedHtml(
       `<div class="slate-img">keep me</div>`,
     );
@@ -647,7 +647,7 @@ describe("InputMarkdownImagePlugin HTML deserializer（G1P-B-A）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G1P-A-R2 · RED 1：void children 渲染合同（Slate text leaf 必须进入 DOM）
+// void children 渲染合同（Slate text leaf 必须进入 DOM）
 //
 // slate 的 Editor.point/range 把选区 points 解析到 void 内层 text leaf
 // （Node.first/last）；slate-react 的 toDOMPoint 对该 leaf 调 toDOMNode，
@@ -670,7 +670,7 @@ function findImgPath(editor: {
   return null;
 }
 
-describe("InputImageElement void DOM 合同（children 渲染与选区，G1P-A-R2）", () => {
+describe("InputImageElement void DOM 合同（children 渲染与选区）", () => {
   it("图片 element 渲染 Slate text leaf（ZeroWidth），且只渲染一次", () => {
     const { container } = renderInputImage("https://example.com/a.png", "alt");
     const wrapper = container.querySelector("[data-image-input]");
@@ -724,10 +724,10 @@ describe("InputImageElement void DOM 合同（children 渲染与选区，G1P-A-R
 });
 
 // ---------------------------------------------------------------------------
-// G1P-A-R2 · RED 3：Clipboard rejected Promise 不产生 unhandled rejection
+// Clipboard rejected Promise 不产生 unhandled rejection
 // ---------------------------------------------------------------------------
 
-describe("复制链接的 Clipboard rejection（G1P-A-R2）", () => {
+describe("复制链接的 Clipboard rejection", () => {
   it("writeText 拒绝时不产生 unhandled rejection；占位与修改入口仍在；不重试", async () => {
     // 注：不使用 vi.fn——vitest 的 mock 机制会 attach then（异步结果跟踪），
     // 把 rejected promise 标记为 handled，吞掉 unhandledRejection 信号；
@@ -773,10 +773,10 @@ describe("复制链接的 Clipboard rejection（G1P-A-R2）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G1P-A-R2 · RED 2（渲染层）：reference-style unsafe destination
+// reference-style unsafe destination（渲染层）
 // ---------------------------------------------------------------------------
 
-describe("reference-style unsafe destination（渲染层，G1P-A-R2）", () => {
+describe("reference-style unsafe destination（渲染层）", () => {
   it("unsafe 引用图片：typed img 保留原 URL，永不进入 img.src", async () => {
     const md = "![a][x]\n\n[x]: javascript:alert(1)";
     const deserializer = createPlateEditor({

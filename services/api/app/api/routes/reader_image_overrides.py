@@ -1,8 +1,8 @@
-"""G2d-A 冻结图片 source URL override 的 PUT/DELETE 路由。
+"""冻结图片 source URL override 的 PUT/DELETE 路由。
 
-API 最终形状 = PUT + DELETE（O-D1-B REJECTED_FOR_V1，无 GET override
+API 最终形状 = PUT + DELETE（有意推迟 GET override
 endpoint；raw override 的读取通道是 snapshot tree 的 ``override_url``
-字段，O-D1-A）。错误映射沿用 404 collapse 惯例（T16）。
+字段）。错误映射沿用 404 collapse 惯例。
 """
 
 from __future__ import annotations

@@ -861,7 +861,7 @@ describe("classifyReaderEvent — unknown event types fail-safe", () => {
 // Constants audit
 // ---------------------------------------------------------------------------
 
-describe("G2D-B image_overrides classifier", () => {
+describe("image_overrides classifier", () => {
   it("reloads on valid image_overrides upsert with matching fence", () => {
     const result = classifyReaderEvent(
       makeEvent({

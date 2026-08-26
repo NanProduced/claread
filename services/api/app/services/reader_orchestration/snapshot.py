@@ -111,7 +111,7 @@ def build_reader_plate_snapshot(
             builder_version=build_result.base.builder_version,
             segmenter_version=build_result.base.segmenter_version,
             text_length_utf16=build_result.base.content_utf16_length,
-            # G2d-A：真实 persisted path 必传 active Stable Document id；
+            # 真实 persisted path 必传 active Stable Document id；
             # synthetic/profiler path 保持 None 兼容（登记为
             # TECHNICAL_COMPATIBILITY_ADAPTATION）。
             stable_document_id=stable_document_id,
@@ -452,7 +452,7 @@ def _project_image_effective_urls(
     """§7.4 snapshot 投影：standalone image payload 与 owning block
     ``inline_images`` 数组项各附加 ``effective_url``（loadability 派生）。
 
-    G2d-A（O-D1-A）：override 行存在时（``key in overrides``，空串也算存在）
+    Override 行存在时（``key in overrides``，空串也算存在）
     ``effective_url`` 改从 raw override 原文派生且附加 ``override_url`` 原串；
     非法 override 不回退 ``source_url``。standalone key = ``(block_id, None)``，
     inline key = ``(block_id, list index)``。

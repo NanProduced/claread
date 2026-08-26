@@ -2333,7 +2333,7 @@ describe("submitReaderAnalysisSectionRequestFromWeb", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G2D-B-R2: image source override PUT/DELETE share one closed error mapper.
+// Image source override PUT/DELETE share one closed error mapper.
 // The upstream envelope (`{ok,code,message}` service errors and FastAPI
 // `{detail:[...]}` schema rejections) must never reach the browser verbatim;
 // copy is chosen only from the controlled ``body.code`` plus HTTP status.

@@ -1,9 +1,9 @@
 /**
  * Reader image chrome noise reduction + display math flat wrapper.
  *
- * F5: 复制链接/修改链接 reveal on hover / keyboard focus (group + focus-within,
+ * 复制链接/修改链接 reveal on hover / keyboard focus (group + focus-within,
  * same pattern as sidebar-rail); caption shows alt text only when non-empty and
- * the image loaded. F4/F7: display math wrapper is flat centered (my-3, no card).
+ * the image loaded. Display math wrapper is flat centered (my-3, no card).
  */
 /** @vitest-environment jsdom */
 
@@ -101,7 +101,7 @@ async function renderLoadedImage(altText: string) {
 
 afterEach(cleanup);
 
-describe("Reader image chrome hover-reveal (F5)", () => {
+describe("Reader image chrome hover-reveal", () => {
   it("复制链接 reveals on group-hover / focus-within / focus-visible", async () => {
     await renderLoadedImage("chart alt");
     const btn = screen.getByRole("button", { name: "复制链接" });
@@ -121,7 +121,7 @@ describe("Reader image chrome hover-reveal (F5)", () => {
   });
 });
 
-describe("Reader image caption (F5)", () => {
+describe("Reader image caption", () => {
   it("shows alt caption under loaded image", async () => {
     const container = await renderLoadedImage("A chart of results");
     const caption = container.querySelector('[data-reader-image-caption="true"]');
@@ -163,7 +163,7 @@ describe("Reader image native load (hidden+lazy deadlock repair)", () => {
   });
 });
 
-describe("Reader display math flat centered wrapper (F4/F7)", () => {
+describe("Reader display math flat centered wrapper", () => {
   it("wrapper keeps my-3 centering and overflow, drops card chrome", () => {
     const { container } = render(<Harness value={mathDisplayValue()} />);
     const wrapper = container.querySelector('[data-reader-math-content="true"]');

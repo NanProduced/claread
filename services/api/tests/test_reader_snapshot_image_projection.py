@@ -644,7 +644,7 @@ async def test_image_tree_survives_fresh_and_reloaded_snapshots(
 
 
 # ---------------------------------------------------------------------------
-# F. G2d-A · image_source_overrides 纯内存投影 tracer（O-D1-A §8.2.2）
+# F. image_source_overrides 纯内存投影 tracer
 #
 # seam：build_reader_plate_snapshot(image_source_overrides=...) 的
 # standalone key = (block_id, None)，inline key = (block_id, ordinal)。

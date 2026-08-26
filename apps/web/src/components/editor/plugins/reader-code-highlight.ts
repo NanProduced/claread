@@ -1,5 +1,5 @@
 /**
- * Reader 代码块语法高亮 — 纯呈现层（obs-01b-e F1）。
+ * Reader 代码块语法高亮 — 纯呈现层。
  *
  * 约束：
  * - shiki core + JavaScript regex engine，文法按语言懒加载；shiki 本体与

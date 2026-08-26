@@ -53,7 +53,7 @@ _MODELINE_PATTERN = re.compile(r"#\s*vim:\s*set|#\s*-\*-\s*coding|//\s*-\*-")
 # 方括号、普通 prose 中的 ``\(2019)``）不再识别为数学公式。数学判定
 # 要求**成对边界**（``\[`` 与 ``\]``、``\(`` 与 ``\)`` 配对）且内容
 # 像公式（含 LaTeX 命令、``=``/``^``/``{``/``}`` 或数字-运算符-数字）。
-# Math-A（M-2 拍板）：``$..$`` / ``$$..$$`` 检测切换为 parser-aware——
+# ``$..$`` / ``$$..$$`` 检测为 parser-aware——
 # dollarmath token 化天然排除 fenced code 与 inline code span；货币
 # ``$5..$10`` 仍被 dollarmath 命中（行为保持现状）。raw ``$`` 正则删除；
 # escaped 成对形态无 parser 插件，维持 raw 扫描（已知边界：fence 内的
@@ -507,12 +507,12 @@ def _measure_text(text: str) -> _TextMetrics:
 
 
 def _has_math_syntax(text: str, *, parse_result: MarkdownParseResult) -> bool:
-    """数学公式判定（Math-A parser-aware + L2 escaped 成对启发式）。
+    """数学公式判定（parser-aware typed payload + L2 escaped 成对启发式）。
 
     - ``$...$`` / ``$$...$$``：由 parser 的 typed math payload 判定
       （dollarmath token 化）。fenced code 与 inline code span 被
-      tokenizer 天然排除（M-2a/M-2b 拍板）；货币 ``$5..$10`` 仍被命中
-      （M-2c 维持现行 Candidate 结果）。
+      tokenizer 天然排除；货币 ``$5..$10`` 仍被命中
+      （维持现行 Candidate 结果）。
     - ``\\(...\\)`` / ``\\[...\\]``：无 parser 插件，维持 L2 规则——必须
       成对出现且内部内容像公式。单独的 ``\\[Video]`` 转义方括号、
       ``\\(2019)`` 引用、未成对的 ``\\(`` 不误判。
@@ -540,10 +540,10 @@ def _detect_markdown_complexity(
     # Derive structural flags from the parser adapter instead of raw-text
     # regex. The parser is the single source of truth for block structure
     # (tables, footnotes, raw HTML, unclosed fences); math detection is
-    # parser-aware since Math-A（typed payload 信号 + escaped 成对启发式，
-    # fenced code 与 inline code span 不再误判）. Images are typed
-    # representation since G2a-A and never count as structure risk（O-1：
-    # 图片存在不路由 candidate，纯图/零正文仍由正文资格规则拒绝）.
+    # parser-aware since the typed payload 信号 + escaped 成对启发式，
+    # fenced code 与 inline code span 不再误判）. Images use the typed
+    # representation and never count as structure risk（图片存在不路由
+    # candidate，纯图/零正文仍由正文资格规则拒绝）.
     block_types = {block.block_type for block in parse_result.blocks}
     warning_codes = {warning.code for warning in parse_result.warnings}
 
