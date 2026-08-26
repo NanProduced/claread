@@ -43,6 +43,18 @@ SEMANTIC_REVIEW_CONTRACTS = (
     "reading_mission_neutrality",
 )
 
+REVIEW_FROZEN_FIELD_MARKING_THRESHOLD = (
+    "A frozen-field issue rejects the whole lesson, so mark those fields only for severe mismatch. "
+    "Do not mark effective_difficulty for a one-band difference (B1 vs B2, or B2 vs C1) when the "
+    "article stays readable at the declared level. Mark difficulty only for a two-band misplace "
+    "(B1 as C1, or C1 as B1) or when the declared level clearly contradicts the article's "
+    "vocabulary and syntax; cite concrete textual evidence. Mark checkpoint "
+    "evidence_paragraph_ids only when a key fact in reference_answer is not supported by the "
+    "already-anchored units; a sufficient but non-optimal anchor is not a mark. Apply the same "
+    "severe-mismatch bar to high_difficulty_unit_ids, language_targets.*.paragraph_id, and "
+    "sentence_maps.*.paragraph_id. Do not relax marking standards for non-frozen content fields."
+)
+
 
 def _assert_generation_safe(value: Any) -> None:
     if isinstance(value, Mapping):
@@ -77,10 +89,12 @@ neutral: the mission must not prescribe which side the reader should support. Id
 evidence, candidate transferable language, and genuinely difficult unit ids. Do not generate
 translations or detailed language explanations in this stage.
 Choose effective_difficulty from the article's actual sentence complexity, vocabulary density
-and discourse devices, and be ready to cite that concrete textual evidence for the level you
-declare.
+and discourse devices. For the declared level, cite at least one concrete textual evidence
+item at each of three layers: vocabulary, syntax, and discourse.
 
 Produce 2-4 evidence checkpoints with prompt_subject and reference_answer_subject for audit.
+Each checkpoint's evidence_paragraph_ids must satisfy this self-check: every key fact in
+reference_answer can be read directly from the anchored units.
 learning_objectives holds exactly 1-2 items and structure_map holds 2-6 nodes. Anchor every
 paragraph reference to the exact reading unit ids supplied in ARTICLE.reading_units (ids like
 u07); never emit bare numbers. Produce exactly one transfer task using this fixed mapping:
@@ -181,6 +195,8 @@ value, and mission neutrality. Return one contract_results item for every named 
         the reader must take; contested subject matter alone is not a neutrality violation.
 """
         + REVIEW_FROZEN_DERIVATION_CONTRACT
+        + " "
+        + REVIEW_FROZEN_FIELD_MARKING_THRESHOLD
         + """
 checked_contracts, if emitted, is only the ordered list derived from contract_results; never
 replace the audit with a bare verdict or name list.

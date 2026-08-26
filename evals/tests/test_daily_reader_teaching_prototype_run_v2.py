@@ -2024,6 +2024,9 @@ def test_semantic_review_prompt_declares_field_address_formats(runner):
     assert "blueprint only:" in flat
     assert "learning_package only:" in flat
     assert "both containers" in flat
+    assert "only for severe mismatch" in flat
+    assert "one-band difference" in flat
+    assert "already-anchored units" in flat
 
 
 def test_frozen_derivation_field_skips_refinement_and_continues_batch(

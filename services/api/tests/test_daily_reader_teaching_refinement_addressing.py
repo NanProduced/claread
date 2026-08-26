@@ -5,7 +5,10 @@ from __future__ import annotations
 import inspect
 
 from app.schemas.internal.daily_lesson_v2 import BlueprintDraft
-from app.services.daily_reader.teaching.prototype import build_semantic_review_prompt
+from app.services.daily_reader.teaching.prototype import (
+    build_blueprint_prompt,
+    build_semantic_review_prompt,
+)
 from app.services.daily_reader.teaching.refinement_addressing import (
     BLUEPRINT_ONLY_FIELDS,
     DUAL_CONTAINER_FIELDS,
@@ -160,6 +163,33 @@ def test_ownership_table_matches_blueprint_and_package_keys() -> None:
         "transfer_task",
         "translations_by_paragraph_id",
     }
+
+
+def test_review_prompt_declares_frozen_field_marking_threshold() -> None:
+    prompt = build_semantic_review_prompt("body.", _blueprint(), _package(), {})
+    registry = load_agent_instructions("daily_semantic_review")
+    for hay in (prompt, registry):
+        flat = " ".join(hay.casefold().split())
+        assert "only for severe mismatch" in flat
+        assert "one-band difference" in flat
+        assert "two-band misplace" in flat
+        assert "already-anchored units" in flat
+        assert "sufficient but non-optimal" in flat
+        assert "do not relax marking" in flat
+
+
+def test_blueprint_prompt_and_registry_require_three_layer_difficulty_evidence() -> None:
+    article = {
+        "title": "Synthetic",
+        "source": "offline",
+        "reading_units": [{"id": "u01", "text": "Hello."}],
+    }
+    prompt = build_blueprint_prompt(article)
+    registry = load_agent_instructions("daily_blueprint")
+    for hay in (prompt, registry):
+        flat = " ".join(hay.casefold().split())
+        assert "vocabulary, syntax, and discourse" in flat
+        assert "read directly from the anchored units" in flat
 
 
 def test_review_prompt_and_registry_declare_frozen_fields_and_ownership() -> None:

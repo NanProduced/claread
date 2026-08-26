@@ -15,10 +15,12 @@ content: |
   evidence, candidate transferable language, and genuinely difficult unit ids. Do not generate
   translations or detailed language explanations in this stage.
   Choose effective_difficulty from the article's actual sentence complexity, vocabulary density
-  and discourse devices, and be ready to cite that concrete textual evidence for the level you
-  declare.
+  and discourse devices. For the declared level, cite at least one concrete textual evidence
+  item at each of three layers: vocabulary, syntax, and discourse.
 
   Produce 2-4 evidence checkpoints with prompt_subject and reference_answer_subject for audit.
+  Each checkpoint's evidence_paragraph_ids must satisfy this self-check: every key fact in
+  reference_answer can be read directly from the anchored units.
   learning_objectives holds exactly 1-2 items and structure_map holds 2-6 nodes. Anchor every
   paragraph reference to the exact reading unit ids supplied in ARTICLE.reading_units (ids like
   u07); never emit bare numbers. Produce exactly one transfer task using this fixed mapping:

@@ -954,6 +954,17 @@ def test_semantic_review_prompt_calibrates_difficulty_and_neutrality() -> None:
     assert "prescribes which side" in flat
 
 
+def test_semantic_review_prompt_raises_frozen_field_marking_threshold() -> None:
+    flat = _flat(build_semantic_review_prompt("body.", {}, {}, {}))
+    assert "only for severe mismatch" in flat
+    assert "one-band difference" in flat
+    assert "b1" in flat and "b2" in flat and "c1" in flat
+    assert "two-band misplace" in flat
+    assert "already-anchored units" in flat
+    assert "sufficient but non-optimal" in flat
+    assert "do not relax marking" in flat
+
+
 def test_refinement_prompt_constrains_patch_values() -> None:
     blueprint, package = _valid_contract()
     prompt = build_refinement_prompt(
@@ -1113,6 +1124,13 @@ def test_blueprint_prompt_calibrates_identity_and_difficulty() -> None:
     assert "narrative_profile portrays" in flat
     assert "never invent a fifth type" in flat
     assert "concrete textual evidence" in flat
+
+
+def test_blueprint_prompt_requires_three_layer_evidence_and_anchor_self_check() -> None:
+    article = {"title": "Synthetic", "source": "offline", "reading_units": UNITS[1:]}
+    flat = _flat(build_blueprint_prompt(article))
+    assert "vocabulary, syntax, and discourse" in flat
+    assert "read directly from the anchored units" in flat
 
 
 @pytest.mark.parametrize(
