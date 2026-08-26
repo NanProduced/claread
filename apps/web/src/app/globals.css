@@ -2483,9 +2483,38 @@ select {
 
 .reader-record-plate-markdown-code-block {
   margin-block: 0.45rem 0;
-  padding: 0.5rem 0.62rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 10px;
+  /* 暖纸面：surface-raised 掺入少量 vocab-amber，对齐 Notion 暖调代码底。 */
+  background-color: color-mix(in srgb, var(--surface-raised) 96%, var(--vocab-amber) 4%);
   font-size: calc(var(--reader-record-note-body-size) * 0.9);
   line-height: 1.55;
+}
+
+/* obs-01b-e F1: 语法高亮 token 角色 — 低对比暖系，色值走主题 token，
+ * 深浅模式自适应；未命中角色的 token 继承正文墨色。 */
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--keyword {
+  color: var(--grammar-violet);
+}
+
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--string {
+  color: var(--vocab-amber);
+}
+
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--function {
+  color: var(--context-blue);
+}
+
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--type {
+  color: var(--phrase-lavender);
+}
+
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--constant {
+  color: var(--structure-green);
+}
+
+.reader-record-plate-markdown-code-block .reader-record-plate-code-token--comment {
+  color: color-mix(in srgb, var(--ink) 58%, transparent);
 }
 
 .reader-record-plate-markdown table {

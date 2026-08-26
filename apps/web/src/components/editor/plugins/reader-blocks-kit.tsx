@@ -14,7 +14,9 @@ import * as React from "react";
 import { createContext, useContext } from "react";
 import {
   BookOpenText,
+  Check,
   ChevronDown,
+  Copy,
   Flag,
   MessageCircleQuestion,
   MessageSquareQuote,
@@ -70,6 +72,10 @@ import {
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import katex from "katex";
 import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
+import {
+  readerCodeTokenClassName,
+  useReaderCodeHighlight,
+} from "@/components/editor/plugins/reader-code-highlight";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { isSafeCalloutEmoji } from "@/lib/source-callout/source-callout-display-icon";
@@ -1645,6 +1651,27 @@ function ReaderStableListItemComponent({
   );
 }
 
+// obs-01b-e F2: 代码块工具区（语言 badge + 复制按钮）hover / focus-visible
+// 才显示（Notion 式 chrome 收敛，与图片块 READER_IMAGE_BUTTON_REVEAL_CLASS 同款）。
+const READER_CODE_TOOLBAR_REVEAL_CLASS =
+  "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";
+const READER_CODE_COPY_FEEDBACK_MS = 1600;
+
+/** 从 Plate element 的 text leaf 拼出代码原文（复制与高亮共用，不改文档模型）。 */
+function readerCodeBlockPlainText(element: unknown): string {
+  const children = (element as { children?: unknown } | null)?.children;
+  if (!Array.isArray(children)) {
+    return "";
+  }
+  return children
+    .map((child) =>
+      typeof (child as { text?: unknown })?.text === "string"
+        ? (child as { text: string }).text
+        : "",
+    )
+    .join("");
+}
+
 function ReaderStableCodeBlockComponent({
   children,
   element,
@@ -1652,13 +1679,46 @@ function ReaderStableCodeBlockComponent({
 }: PlateElementProps) {
   const data = (element as unknown as ReaderCodeBlockElement).data;
   const language = data?.language ?? null;
+  const codeText = readerCodeBlockPlainText(element);
+  const tokens = useReaderCodeHighlight(codeText, language);
+  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "error">(
+    "idle",
+  );
+  const copyResetTimeoutRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = React.useCallback(() => {
+    void (async () => {
+      let next: "copied" | "error";
+      try {
+        await navigator.clipboard.writeText(codeText);
+        next = "copied";
+      } catch {
+        next = "error";
+      }
+      setCopyState(next);
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCopyState("idle");
+      }, READER_CODE_COPY_FEEDBACK_MS);
+    })();
+  }, [codeText]);
 
   return (
     <pre
       {...attributes}
-      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40${
-        language ? " relative" : ""
-      } ${attributes?.className ?? ""}`.trim()}
+      className={`reader-record-plate-markdown-code-block relative group overflow-x-auto ${
+        attributes?.className ?? ""
+      }`.trim()}
       {...readerRecordNavigableNodeAttrs({
         nodeKind: "code_block",
         unitId: data?.unitId,
@@ -1670,16 +1730,70 @@ function ReaderStableCodeBlockComponent({
       data-reader-record-markdown-node="code_block"
       data-language={language ?? undefined}
     >
-      {language ? (
-        <span
-          data-testid="code-language-badge"
-          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground/70"
+      <span
+        data-testid="code-toolbar"
+        className={`absolute right-3 top-2 font-sans text-[0.7rem] ${READER_CODE_TOOLBAR_REVEAL_CLASS}`}
+        {...copyExcludeProps}
+      >
+        {language ? (
+          <span
+            data-testid="code-language-badge"
+            className="font-medium uppercase tracking-wide text-muted-foreground/70"
+            {...copyExcludeProps}
+          >
+            {language}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          data-testid="code-copy-button"
+          aria-label="复制代码"
+          title="复制代码"
+          onClick={(event) => {
+            event.stopPropagation();
+            handleCopy();
+          }}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-muted-foreground/80 transition-colors hover:bg-surface-raised hover:text-ink"
           {...copyExcludeProps}
         >
-          {language}
-        </span>
-      ) : null}
-      <code className={language ? "block pt-6" : undefined}>{children}</code>
+          {copyState === "copied" ? (
+            <Check size={12} aria-hidden="true" />
+          ) : (
+            <Copy size={12} aria-hidden="true" />
+          )}
+          <span data-testid="code-copy-status" aria-live="polite">
+            {copyState === "copied"
+              ? "已复制"
+              : copyState === "error"
+                ? "复制失败"
+                : "复制"}
+          </span>
+        </button>
+      </span>
+      <code className={language ? "block pt-6" : undefined}>
+        {tokens ? (
+          <>
+            {tokens.map((line, lineIndex) => (
+              <React.Fragment key={lineIndex}>
+                {lineIndex > 0 ? "\n" : null}
+                {line.map((token, tokenIndex) => (
+                  <span
+                    key={tokenIndex}
+                    className={readerCodeTokenClassName(token.color)}
+                  >
+                    {token.content}
+                  </span>
+                ))}
+              </React.Fragment>
+            ))}
+            {/* 对齐 slate 纯文本渲染的尾部行为：以 \n 结尾的代码块会多渲染
+             * 一个换行，保持高亮前后 textContent 完全一致（selection/copy 不变）。 */}
+            {codeText.endsWith("\n") ? "\n" : null}
+          </>
+        ) : (
+          children
+        )}
+      </code>
     </pre>
   );
 }
@@ -2116,7 +2230,7 @@ function ReaderMarkdownCodeBlockComponent({
   return (
     <pre
       {...attributes}
-      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40 ${
+      className={`reader-record-plate-markdown-code-block overflow-x-auto ${
         attributes?.className ?? ""
       }`.trim()}
       data-reader-record-markdown-node={type}
