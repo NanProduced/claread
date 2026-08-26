@@ -27,6 +27,7 @@ from app.schemas.internal.daily_lesson_v2 import (
     TranslationDraft,
 )
 from app.services.daily_reader.teaching.prototype import (
+    SEMANTIC_REVIEW_CONTRACTS,
     _stable_json,
     _validate_review_evidence,
 )
@@ -124,6 +125,11 @@ def build_daily_semantic_review_prompt(deps: DailySemanticReviewAgentDeps) -> st
         # Daily discovery accepts at most 2,500 English words; 20k chars
         # normally exposes the full article while bounding review cost.
         "original_text": deps.original_text[:MAX_REVIEW_ORIGINAL_TEXT_CHARS],
+        # P-5D-R1: the canonical builder supplies the exact contract-name list
+        # in the user payload; without it the model invents contract names and
+        # every review DTO validation fails ("each semantic contract exactly
+        # once"). Single-sourced from the shared module — never a copy.
+        "semantic_review_contracts": SEMANTIC_REVIEW_CONTRACTS,
     }
     return _render_stage_prompt(deps.prompt_strategy, "REVIEW INPUT:", payload)
 
