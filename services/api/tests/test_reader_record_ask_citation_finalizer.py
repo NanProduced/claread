@@ -268,6 +268,210 @@ async def test_public_completed_dto_no_evh() -> None:
     assert restricted[0]["handle_id"].startswith("evh_")
 
 
+@pytest.mark.asyncio
+async def test_finalizer_deletes_internal_handle_echoed_into_block_text() -> None:
+    """A model echoing an internal evidence handle INTO block text
+    (instead of the structured evidence_handles field) must never leak it
+    into the public answer, the persisted completed DTO, or cold recovery.
+    The handle is DELETED — never a citation-shaped marker without
+    provenance — while the normal c1/c2 citation mapping is untouched."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    fp = _fp()
+    registry = EvidenceRegistry(fp)
+    h1 = _register_article_obs(registry, snippet="first")
+    envelope = SimpleNamespace(
+        envelope_fingerprint=fp,
+        reading_record_id=uuid4(),
+        base_id=uuid4(),
+        record_generation=1,
+        stable_document_id=None,
+    )
+    leaked = "evh_" + "9f" * 16
+    validated = ValidatedAnswerBlocks(
+        blocks=(
+            AnswerBlockDraft(
+                text=f"Article claim cites {leaked} inline.",
+                basis="article",
+                article_scope="evidence_bounded",
+                evidence_handles=(h1,),
+            ),
+            AnswerBlockDraft(
+                text="General claim.",
+                basis="general",
+                article_scope=None,
+                evidence_handles=(),
+            ),
+        ),
+        knowledge_mode="mixed",
+    )
+    result = await finalize_agent_answer(
+        envelope=envelope,  # type: ignore[arg-type]
+        registry=registry,
+        fence=StaticGenerationFence(live_generation=1),
+        response_kind="grounded_answer",
+        validated_answer_blocks=validated,
+    )
+    assert result.status == "ok"
+    assert leaked not in result.answer_text
+    assert result.answer_blocks[0].text == "Article claim cites  inline."
+    # No pseudo-citation marker is minted for the unresolved handle.
+    assert "〔引用〕" not in result.answer_text
+    # Normal public citation mapping ([1][2] → c1/c2) is untouched.
+    assert result.answer_blocks[0].citation_ids == ["c1"]
+    assert result.answer_blocks[1].citation_ids == []
+    assert result.public_citations[0].citation_id == "c1"
+    # Internal bindings still carry the real handles for audit.
+    assert result.citation_bindings[0].handle_id == h1
+    blob = json.dumps(
+        [b.model_dump(mode="json") for b in result.answer_blocks], ensure_ascii=False
+    )
+    assert "evh_" not in blob
+
+    # The public completed DTO (SSE + persistence + cold recovery surface)
+    # inherits the redacted text.
+    run_result = ReadingRecordAskRunResult(
+        final_text=result.answer_text,
+        finalized=result,
+    )
+    completed = build_completed_dto(
+        run_result=run_result,
+        message_id="msg-1",
+        thread_id="thread-1",
+        turn_run_id="turn-1",
+        envelope=envelope,  # type: ignore[arg-type]
+    )
+    completed_blob = json.dumps(completed.model_dump(mode="json"), ensure_ascii=False)
+    assert leaked not in completed_blob
+    assert "〔引用〕" not in completed_blob
+    assert completed.answer_text == "Article claim cites  inline.\n\nGeneral claim."
+
+
+@pytest.mark.asyncio
+async def test_finalizer_deletes_internal_handle_from_clarification_text() -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    fp = _fp()
+    registry = EvidenceRegistry(fp)
+    envelope = SimpleNamespace(
+        envelope_fingerprint=fp,
+        reading_record_id=uuid4(),
+        base_id=uuid4(),
+        record_generation=1,
+        stable_document_id=None,
+    )
+    leaked = "evh_" + "9f" * 16
+    result = await finalize_agent_answer(
+        envelope=envelope,  # type: ignore[arg-type]
+        registry=registry,
+        fence=StaticGenerationFence(live_generation=1),
+        response_kind="clarification",
+        clarification_text=f"需要确认引用 {leaked} 吗？",
+    )
+    assert result.status == "ok"
+    assert leaked not in result.answer_text
+    assert "〔引用〕" not in result.answer_text
+    assert result.answer_blocks[0].text == "需要确认引用  吗？"
+
+
+@pytest.mark.asyncio
+async def test_finalizer_handle_only_block_text_fails_closed() -> None:
+    """A block whose entire text is internal handles must not complete:
+    no empty public block, no pseudo-citation output."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    fp = _fp()
+    registry = EvidenceRegistry(fp)
+    envelope = SimpleNamespace(
+        envelope_fingerprint=fp,
+        reading_record_id=uuid4(),
+        base_id=uuid4(),
+        record_generation=1,
+        stable_document_id=None,
+    )
+    validated = ValidatedAnswerBlocks(
+        blocks=(
+            AnswerBlockDraft(
+                text="evh_" + "9f" * 16,
+                basis="general",
+                article_scope=None,
+                evidence_handles=(),
+            ),
+        ),
+        knowledge_mode="mixed",
+    )
+    result = await finalize_agent_answer(
+        envelope=envelope,  # type: ignore[arg-type]
+        registry=registry,
+        fence=StaticGenerationFence(live_generation=1),
+        response_kind="grounded_answer",
+        validated_answer_blocks=validated,
+    )
+    assert result.status == "invalid_citations"
+    assert result.answer_blocks == ()
+    assert result.public_citations == ()
+
+
+@pytest.mark.parametrize(
+    ("hex_len", "kept"),
+    [
+        (8, True),  # evh_deadbeef — ordinary literal, preserved
+        (31, True),
+        (33, True),
+        (64, True),
+        (32, False),  # exact canonical mint shape → deleted
+    ],
+)
+def test_finalizer_mint_shape_precision(hex_len: int, kept: bool) -> None:
+    """Only the canonical mint shape (evh_ + exactly 32 lowercase hex,
+    per evidence.py) is gated; other runs are ordinary text."""
+    from app.services.reader_record_ask.finalizer import (
+        redact_public_answer_text,
+    )
+
+    run = "evh_" + "de" * (hex_len // 2) + ("f" if hex_len % 2 else "")
+    text = f"value {run} here"
+    out = redact_public_answer_text(text)
+    if kept:
+        assert out == text
+    else:
+        assert run not in out
+        assert out == "value  here"
+
+
+def test_finalizer_uppercase_hex_is_not_a_mint_handle() -> None:
+    from app.services.reader_record_ask.finalizer import (
+        redact_public_answer_text,
+    )
+
+    run = "evh_" + "DEADBEEF" * 4
+    text = f"value {run} here"
+    assert redact_public_answer_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "evh_" + "a" * 32 + "A",
+        "evh_" + "a" * 32 + "g",
+        "evh_" + "a" * 32 + "_",
+        "xevh_" + "a" * 32,
+        "_evh_" + "a" * 32,
+    ],
+)
+def test_finalizer_preserves_noncanonical_identifier_boundaries(literal: str) -> None:
+    """A canonical-looking substring inside a larger identifier is ordinary text."""
+    from app.services.reader_record_ask.finalizer import (
+        redact_public_answer_text,
+    )
+
+    text = f"value {literal} here"
+    assert redact_public_answer_text(text) == text
+
+
 def test_citation_navigation_fence() -> None:
     restricted = [
         {

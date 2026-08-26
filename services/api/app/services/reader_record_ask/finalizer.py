@@ -8,6 +8,7 @@ layer; this module never writes SSE or DB rows.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -61,6 +62,31 @@ ResponseKind = Literal[
 SourceStatus = Literal["article_source_unavailable"]
 
 SOURCE_UNAVAILABLE_ANSWER_TEXT = "无法在当前文章中可靠定位原文。"
+
+# Deterministic host-side gate for public answer surfaces. A model
+# echoing a server-minted internal evidence handle into answer text
+# (instead of the structured ``evidence_handles`` field) must never
+# reach the visible answer. The pattern is the canonical mint shape —
+# ``evh_`` + exactly 32 lowercase hex, mirroring the server contract in
+# ``evidence.py`` — so shorter, longer, or uppercase runs are ordinary
+# text (code snippets, docs, article literals) and survive untouched.
+# The handle is DELETED, never replaced by a citation-shaped marker: an
+# unresolved internal handle must not masquerade as a public citation
+# with no provenance (public citations are minted only from registered
+# evidence via the c1/c2 mapping below).
+_PUBLIC_EVIDENCE_HANDLE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])evh_[0-9a-f]{32}(?![A-Za-z0-9_])"
+)
+
+
+def redact_public_answer_text(text: str) -> str:
+    """Delete internal evidence handles from public answer text.
+
+    Pure and idempotent: deletion never creates a new match. A non-empty
+    input stays non-empty unless it was nothing but handles — callers
+    fail closed on that pathological case.
+    """
+    return _PUBLIC_EVIDENCE_HANDLE_RE.sub("", text)
 
 
 class PublicAnswerBlock(BaseModel):
@@ -354,7 +380,7 @@ async def finalize_agent_answer(
                 envelope_fingerprint=fp,
                 response_kind=response_kind,
             )
-        text = (clarification_text or "").strip()
+        text = redact_public_answer_text((clarification_text or "").strip())
         if not text:
             return FinalizedAskResult(
                 status="invalid_citations",
@@ -518,9 +544,22 @@ async def finalize_agent_answer(
 
     public_blocks: list[PublicAnswerBlock] = []
     for block in validated_answer_blocks.blocks:
+        redacted_text = redact_public_answer_text(block.text)
+        if not redacted_text:
+            # Fail closed: the block text was nothing but internal
+            # handles. Never emit an empty public block.
+            return FinalizedAskResult(
+                status="invalid_citations",
+                reason=(
+                    "answer block text is empty after internal handle "
+                    "redaction"
+                ),
+                envelope_fingerprint=fp,
+                response_kind=response_kind,
+            )
         if block.basis == "general":
             public_blocks.append(
-                PublicAnswerBlock(text=block.text, citation_ids=[])
+                PublicAnswerBlock(text=redacted_text, citation_ids=[])
             )
             continue
         # article + web share the same citation-id mapping flow.
@@ -537,7 +576,7 @@ async def finalize_agent_answer(
                 response_kind=response_kind,
             )
         public_blocks.append(
-            PublicAnswerBlock(text=block.text, citation_ids=citation_ids)
+            PublicAnswerBlock(text=redacted_text, citation_ids=citation_ids)
         )
 
     answer_text = "\n\n".join(block.text for block in public_blocks)

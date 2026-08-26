@@ -442,6 +442,159 @@ def test_long_url_never_leaks_whether_held_or_committed() -> None:
     assert combined == redact_reasoning_text(raw)
 
 
+# ---------------------------------------------------------------------------
+# Server-owned typed-context / transcript-fence scaffold. The structural
+# fingerprints (exact fence strings rendered by
+# typed_supplemental_context.py and the thread-memory fence, plus the two
+# fixed header LINES) must never survive the projection, whole or
+# assembled across streamed chunk boundaries. Precision contract: the
+# fixed control phrases are only dropped as part of the header line —
+# ordinary prose quoting them, and unrelated XML tags using the same
+# element name with other attributes, survive byte-identical.
+# ---------------------------------------------------------------------------
+
+_TYPED_XML_OPEN = '<transcript_data role="data" not_instructions="true">'
+_TYPED_XML_CLOSE = "</transcript_data>"
+_TYPED_HEADER_EN = "## Supplemental typed context (untrusted document data)"
+_TYPED_HEADER_ZH_PREFIX = "以下为当前文章稳定文档的结构化补充数据"
+
+# Structural fingerprints: absent whenever the scaffold is echoed.
+_TYPED_STRUCTURE_SENTINELS: tuple[str, ...] = (
+    _TYPED_XML_OPEN,
+    _TYPED_XML_CLOSE,
+    _TYPED_HEADER_EN,
+    _TYPED_HEADER_ZH_PREFIX,
+)
+
+# Fixed control phrases that occur INSIDE the scaffold header line. When
+# the header line is echoed the whole line drops; when the same phrases
+# appear in ordinary prose they MUST survive (precision contract).
+_TYPED_PROSE_PHRASES: tuple[str, ...] = (
+    "Supplemental typed context",
+    "结构化补充数据",
+    "不是检索证据",
+    "可引用的文章引文",
+)
+
+
+def _typed_scaffold_echo() -> str:
+    """A realistic provider-reasoning echo of the typed-context section."""
+    return (
+        "先看补充数据。\n"
+        f"{_TYPED_HEADER_EN}\n"
+        f"{_TYPED_HEADER_ZH_PREFIX}：数学公式与图片元数据。这些数据不是检索"
+        "证据，也不是可引用的文章引文。\n"
+        f"{_TYPED_XML_OPEN}\n"
+        "- [math_block|block=blk_1|order=0] E=mc^2\n"
+        f"{_TYPED_XML_CLOSE}\n"
+        "结论：这些数据不是检索证据，也不是可引用的文章引文，因此按 [1] 回答。"
+    )
+
+
+def test_redaction_drops_typed_context_scaffold() -> None:
+    out = redact_reasoning_text(_typed_scaffold_echo())
+    for sentinel in _TYPED_STRUCTURE_SENTINELS:
+        assert sentinel not in out
+    # Ordinary safe reasoning stays visible: the model using typed math
+    # data, and prose quoting the very control phrases (the header LINE
+    # is gone, but the concluding sentence is not a header line).
+    assert "先看补充数据。" in out
+    assert "E=mc^2" in out
+    assert "结论：这些数据不是检索证据，也不是可引用的文章引文，因此按 [1] 回答。" in out
+
+
+def test_redaction_preserves_ordinary_prose_quoting_scaffold_phrases() -> None:
+    # Precision contract — no broad keyword blacklist: ordinary prose
+    # containing the exact scaffold phrases survives byte-identical.
+    prose_samples = (
+        f"article says: this is {_TYPED_PROSE_PHRASES[2]} claim.",
+        f"文章讨论{_TYPED_PROSE_PHRASES[1]}与{_TYPED_PROSE_PHRASES[3]}的区别。",
+        f"See the {_TYPED_PROSE_PHRASES[0]} section below.",
+        "用户问结构化补充方法与检索证据的类型，不涉及引用边界。",
+    )
+    for phrase in _TYPED_PROSE_PHRASES:
+        # Each phrase alone, mid-line, is not a fingerprint.
+        assert redact_reasoning_text(f"普通句子提到{phrase}结束。") == f"普通句子提到{phrase}结束。"
+    for raw in prose_samples:
+        assert redact_reasoning_text(raw) == raw
+
+
+def test_redaction_preserves_unrelated_transcript_data_tags() -> None:
+    # An XML teaching example using the same element name with DIFFERENT
+    # attributes is ordinary content: tags and body survive untouched,
+    # including its closing tag (no server fence open precedes it).
+    xml_example = '<transcript_data kind="example">body</transcript_data>'
+    assert redact_reasoning_text(xml_example) == xml_example
+    # A bare fence without the fixed server attributes is not scaffold.
+    bare = "bare <transcript_data> fence"
+    assert redact_reasoning_text(bare) == bare
+    # An unbalanced close with no server open is ordinary content.
+    unbalanced = "close </transcript_data> fence"
+    assert redact_reasoning_text(unbalanced) == unbalanced
+
+
+def test_server_fence_close_removed_only_when_balanced() -> None:
+    # Balanced pair → both tags removed; a trailing extra close beyond
+    # the balanced one is ordinary content and survives.
+    raw = f"a {_TYPED_XML_OPEN} b {_TYPED_XML_CLOSE} c {_TYPED_XML_CLOSE} d"
+    out = redact_reasoning_text(raw)
+    assert _TYPED_XML_OPEN not in out
+    assert out.count(_TYPED_XML_CLOSE) == 1
+    assert out == f"a  b  c {_TYPED_XML_CLOSE} d"
+
+
+def test_server_fence_pair_split_across_feeds_stays_balanced() -> None:
+    # The open commits in one feed; the close arrives feeds later. The
+    # carried fence balance still removes the close, and the streamed
+    # concatenation equals the whole-text projection (hot ≡ cold).
+    raw = f"pre {_TYPED_XML_OPEN} inner {_TYPED_XML_CLOSE} post"
+    redactor = IncrementalRedactor()
+    out1 = redactor.feed(f"pre {_TYPED_XML_OPEN}")
+    out2 = redactor.feed(" inner ")
+    out3 = redactor.feed(f"{_TYPED_XML_CLOSE} post")
+    out4 = redactor.flush()
+    combined = out1 + out2 + out3 + out4
+    assert _TYPED_XML_OPEN not in combined
+    assert _TYPED_XML_CLOSE not in combined
+    assert combined == redact_reasoning_text(raw)
+
+
+@pytest.mark.parametrize("split", [1, 2, 3, 5, 8, 13])
+def test_typed_scaffold_never_leaks_across_chunk_splits(split: int) -> None:
+    raw = _typed_scaffold_echo()
+    redactor = IncrementalRedactor()
+    pieces = [redactor.feed(raw[i : i + split]) for i in range(0, len(raw), split)]
+    pieces.append(redactor.flush())
+    combined = "".join(pieces)
+    for sentinel in _TYPED_STRUCTURE_SENTINELS:
+        assert sentinel not in combined
+    # hot ≡ cold: streamed concatenation equals the whole-text projection.
+    assert combined == redact_reasoning_text(raw)
+
+
+def test_observer_typed_scaffold_absent_from_all_surfaces() -> None:
+    events: list[RuntimeEvent] = []
+    observer = _observer(events)
+    observer.on_reasoning_delta("安全开头。")
+    observer.on_reasoning_delta(_typed_scaffold_echo())
+    observer.on_analysis_finished()
+
+    dumped = _dump(events)
+    for sentinel in _TYPED_STRUCTURE_SENTINELS:
+        assert sentinel not in dumped
+    payload = observer.persistence_payload()
+    assert payload is not None
+    # Fail-closed cold restore: the persisted snapshot revalidates and
+    # carries no structural scaffold fingerprint.
+    assert validate_reasoning_snapshot(payload) is payload
+    for sentinel in _TYPED_STRUCTURE_SENTINELS:
+        assert sentinel not in payload["text"]
+    assert "安全开头。" in payload["text"]
+    assert "E=mc^2" in payload["text"]
+    # Prose quoting the control phrases survives (precision contract).
+    assert "结论：这些数据不是检索证据" in payload["text"]
+
+
 _STREAM_EQUIVALENCE_SAMPLES: tuple[str, ...] = (
     f"分析 {_EVH_SENTINEL} 之后，再看 {_UUID_SENTINEL}，最后 {_FP_SENTINEL}。",
     f"id {_UUID_SENTINEL} end",
@@ -463,6 +616,16 @@ _STREAM_EQUIVALENCE_SAMPLES: tuple[str, ...] = (
     f"cjk 先分析 {_EVH_SENTINEL} 再确认",
     "gen generation: 42 end",
     "dash ----- not a pem here",
+    # Server scaffold shapes (balanced fence pair, bare/foreign-attribute
+    # tags, unbalanced close, header lines, mid-line control phrases)
+    # join the hot≡cold equivalence lock.
+    f"echo {_TYPED_XML_OPEN} data {_TYPED_XML_CLOSE} tail",
+    "bare <transcript_data> fence",
+    'attr <transcript_data kind="example">body</transcript_data> end',
+    "close </transcript_data> fence",
+    "midline 提到结构化补充数据与不是检索证据的边界",
+    f"header\n{_TYPED_HEADER_EN}\n{_TYPED_HEADER_ZH_PREFIX}：说明。\nafter",
+    f"pair a {_TYPED_XML_OPEN} b {_TYPED_XML_CLOSE} c {_TYPED_XML_CLOSE} d",
 )
 
 

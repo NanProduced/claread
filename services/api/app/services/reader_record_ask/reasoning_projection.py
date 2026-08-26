@@ -142,6 +142,18 @@ _REDACTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "",
     ),
+    # Server-owned typed-context scaffold header lines (exact chrome
+    # rendered by typed_supplemental_context.py): whole-line drop,
+    # newline excluded. Line-anchored exact prefixes only — the fixed
+    # control phrases ("结构化补充数据", "不是检索证据", …) are NOT
+    # matched mid-line: ordinary prose quoting them survives untouched.
+    (
+        re.compile(
+            r"(?m:^(?:## Supplemental typed context|"
+            r"以下为当前文章稳定文档的结构化补充数据)[^\n]*)"
+        ),
+        "",
+    ),
     # Provider raw wrapper artifacts (opening and closing think tags).
     (re.compile(r"(?i:<\/?\|?\s*think(?:ing)?\s*\|?>)"), ""),
     (
@@ -187,11 +199,14 @@ _HARD_BLOCK_RE = re.compile(
 )
 
 # Final-flush only: a trailing unterminated line that begins with a known
-# system-instruction marker is dropped too (mid-stream such lines are held
-# back by the ambiguous-tail logic until their newline resolves them).
+# system-instruction or typed-context scaffold marker is dropped too
+# (mid-stream such lines are held back by the ambiguous-tail logic until
+# their newline resolves them).
 _TRAILING_MARKER_LINE_RE = re.compile(
     r"(?m:^(?:You are Claread|## Answer correctness|## Tools|"
-    r"## Evidence|## Output contract|SYSTEM:|<system>)[^\n]*\Z)"
+    r"## Evidence|## Output contract|SYSTEM:|<system>|"
+    r"## Supplemental typed context|以下为当前文章稳定文档的结构化补充数据)"
+    r"[^\n]*\Z)"
 )
 
 # Line-start markers that may begin a droppable instruction line. The
@@ -205,7 +220,11 @@ _SYSTEM_LINE_PREFIXES: tuple[str, ...] = (
     "## Output contract",
     "SYSTEM:",
     "<system>",
+    # Server scaffold header lines (typed supplemental context chrome).
+    "## Supplemental typed context",
+    "以下为当前文章稳定文档的结构化补充数据",
 )
+
 
 # PEM block opener / terminator used by the streaming state machine. The
 # label is captured so a region is only closed by the END whose label
@@ -306,7 +325,9 @@ def _remove_pem_regions(text: str) -> str:
 #    complete an evh_ handle, sk- key, Bearer token, identity key, UUID,
 #    or a <think>/reasoning_content wrapper);
 #  - an in-progress URL, email (post-@), or identity key[:=]value;
-#  - a dash progression that could still become ``-----BEGIN …``.
+#  - a dash progression that could still become ``-----BEGIN …``;
+#  - an in-progress ``transcript_data`` fence tag (tag word plus
+#    not-yet-closed attributes).
 _WORD_TAIL_RE = re.compile(r"[A-Za-z0-9._%+-]*\Z")
 _SPECIAL_TAIL_RE = re.compile(
     r"(?:"
@@ -329,6 +350,13 @@ _SPECIAL_TAIL_RE = re.compile(
     r"|(?i:reasoning_content(?:\s*[:=]\s*\"?)?)"
     # Trailing angle-bracket fragment that could become a wrapper tag.
     r"|<[^>\n]{0,15}"
+    # In-progress transcript-fence tag: the complete tag word plus any
+    # attributes not yet closed by ``>``. Shorter leading fragments are
+    # covered by ``<[^>\n]{0,15}`` above (the tag word completes exactly
+    # at that alternative's 16-char limit). Holds ANY attribute form so
+    # the exact server open is never released in pieces across chunks;
+    # non-server tags are merely released one feed later, unchanged.
+    r"|</?transcript_data[^>\n]*"
     # Dash progression toward a PEM BEGIN opener (including the closing
     # dash run after the key label, e.g. ``-----BEGIN K-----``).
     r"|-{1,5}"
@@ -354,20 +382,65 @@ def redact_reasoning_text(text: str, *, final: bool = False) -> str:
     hard_block = _HARD_BLOCK_RE.search(text)
     if hard_block is not None:
         text = text[: hard_block.start()]
-    projected = _redact_block(text)
+    projected, _depth = _redact_block(text)
     if final:
         projected = _TRAILING_MARKER_LINE_RE.sub("", projected)
     return projected
 
 
-def _redact_block(block: str) -> str:
-    # PEM regions first (strict label pairing); a regex cannot pair labels.
+# Server-owned transcript-data fence: the exact open/close strings that
+# wrap model-visible untrusted data (typed supplemental context and the
+# thread-memory fence share this shape). Only the open with the FULL
+# fixed attribute string is a server fingerprint — an XML teaching
+# example using the same element name with other attributes is ordinary
+# content.
+_SERVER_FENCE_OPEN = '<transcript_data role="data" not_instructions="true">'
+_SERVER_FENCE_CLOSE = "</transcript_data>"
+
+
+def _strip_server_fence_tags(text: str, depth: int) -> tuple[str, int]:
+    """Remove server fence tags; return ``(text, new_depth)``.
+
+    The exact open tag is always removed and increments the depth. The
+    exact close tag is removed only while a server open is unresolved
+    (``depth > 0``); an unbalanced close is ordinary content (e.g. an
+    XML example echoing the same element name) and is kept verbatim.
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        open_at = text.find(_SERVER_FENCE_OPEN, i)
+        close_at = text.find(_SERVER_FENCE_CLOSE, i)
+        if open_at == -1 and close_at == -1:
+            out.append(text[i:])
+            return "".join(out), depth
+        if close_at == -1 or (open_at != -1 and open_at < close_at):
+            out.append(text[i:open_at])
+            i = open_at + len(_SERVER_FENCE_OPEN)
+            depth += 1
+            continue
+        out.append(text[i:close_at])
+        if depth > 0:
+            depth -= 1
+        else:
+            out.append(_SERVER_FENCE_CLOSE)
+        i = close_at + len(_SERVER_FENCE_CLOSE)
+
+
+def _redact_block(block: str, fence_depth: int = 0) -> tuple[str, int]:
+    """Project one block; return ``(projected, fence_depth_after)``.
+
+    Server fence tags first (balanced pairing — a regex cannot pair
+    open/close), then PEM regions (strict label pairing), then the
+    pattern rules.
+    """
+    block, fence_depth = _strip_server_fence_tags(block, fence_depth)
     block = _remove_pem_regions(block)
     for pattern, replacement in _REDACTION_RULES:
         if not block:
-            return ""
+            return "", fence_depth
         block = pattern.sub(replacement, block)
-    return block
+    return block, fence_depth
 
 
 class IncrementalRedactor:
@@ -398,6 +471,11 @@ class IncrementalRedactor:
         self._pem_label: str | None = None
         self._pem_discarded: int = 0
         self._sealed: bool = False
+        # Carried server-fence balance across committed regions: a close
+        # tag may arrive feeds after its open committed. The depth is a
+        # pure function of the committed raw prefix, so streamed releases
+        # still concatenate to the whole-text projection for any chunking.
+        self._fence_depth: int = 0
 
     @property
     def blocked(self) -> bool:
@@ -427,17 +505,34 @@ class IncrementalRedactor:
             return ""
         if not self._pending:
             return ""
-        out = redact_reasoning_text(self._pending, final=True)
+        out = self._project(self._pending, final=True)
         self._pending = ""
         return out
 
     # -- normal state ------------------------------------------------------
 
+    def _project(self, text: str, *, final: bool = False) -> str:
+        """Project one committed region with the carried fence depth.
+
+        Mirrors :func:`redact_reasoning_text` but threads the server-
+        fence balance through ``self._fence_depth`` so a close tag split
+        into a later commit than its open is still removed.
+        """
+        if not text:
+            return ""
+        hard_block = _HARD_BLOCK_RE.search(text)
+        if hard_block is not None:
+            text = text[: hard_block.start()]
+        projected, self._fence_depth = _redact_block(text, self._fence_depth)
+        if final:
+            projected = _TRAILING_MARKER_LINE_RE.sub("", projected)
+        return projected
+
     def _feed_normal(self, chunk: str) -> str:
         self._pending += chunk
         hard_block = _HARD_BLOCK_RE.search(self._pending)
         if hard_block is not None:
-            released = redact_reasoning_text(self._pending[: hard_block.start()])
+            released = self._project(self._pending[: hard_block.start()])
             self._seal()
             return released
         # A BEGIN whose matching END has not arrived yet opens a discard
@@ -447,7 +542,7 @@ class IncrementalRedactor:
         unterminated = _first_unterminated_pem(self._pending)
         if unterminated is not None:
             begin_start, body_start, label = unterminated
-            released = redact_reasoning_text(self._pending[:begin_start])
+            released = self._project(self._pending[:begin_start])
             body = self._pending[body_start:]
             self._in_pem = True
             self._pem_label = label
@@ -473,7 +568,7 @@ class IncrementalRedactor:
         if tail_start == 0:
             return ""
         committed, self._pending = self._pending[:tail_start], self._pending[tail_start:]
-        return redact_reasoning_text(committed)
+        return self._project(committed)
 
     def _ambiguous_tail_start(self, text: str) -> int:
         """Start offset of the minimal trailing region still ambiguous."""
@@ -543,6 +638,7 @@ class IncrementalRedactor:
         self._pending = ""
         self._in_pem = False
         self._pem_label = None
+        self._fence_depth = 0
 
 
 @dataclass

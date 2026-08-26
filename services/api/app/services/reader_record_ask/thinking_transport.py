@@ -35,6 +35,7 @@ deprecated and its inheritance changed).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -57,6 +58,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_core import from_json
 
 from app.observability.workflow_tracing import build_usage_metadata
+from app.services.reader_record_ask.finalizer import redact_public_answer_text
 from app.services.reader_record_ask.grounding_validator import (
     AgentAnswerDraftOutput,
 )
@@ -232,6 +234,15 @@ class ThinkingPartLifecycle:
         return None
 
 
+# Trailing region that could still complete a server-minted internal
+# evidence handle — a prefix of ``evh_`` itself or ``evh_`` followed by a
+# (still growing) lowercase-hex run, mirroring the canonical mint shape.
+# Held back at the answer-delta exit so a handle split across streamed
+# chunks is never released in pieces; a completed handle is deleted by
+# the shared deterministic gate (``redact_public_answer_text``).
+_ANSWER_HANDLE_TAIL_RE = re.compile(r"e(?:v(?:h(?:_[0-9a-f]*)?)?)?\Z")
+
+
 class _AnswerTextStreamer:
     """Incremental answer-block text streamer (ASK-TURN-LIFECYCLE).
 
@@ -251,6 +262,14 @@ class _AnswerTextStreamer:
     is reconstructed incrementally rather than recomputed. The
     ``from_json`` parse remains O(buffer) but is executed in Rust
     (pydantic_core) and is fast enough for 30K answers at ~4K chunks.
+
+    Handle-safety gate: every emitted delta passes one deterministic
+    gate before leaving the streamer. The gate holds the minimal
+    trailing region that could still complete an ``evh_<32 hex>``
+    handle (cross-chunk assembly safety) and deletes any completed
+    handle — the SAME rule the finalizer applies to the canonical
+    answer, so the streamed preview and the persisted/cold-restored
+    answer agree.
     """
 
     def __init__(self) -> None:
@@ -269,6 +288,13 @@ class _AnswerTextStreamer:
         # Clarification mode: single-block shortcut. When True, the
         # answer is ``clarification_text`` (not ``answer_blocks``).
         self._is_clarification: bool = False
+        # Handle-safety gate state: trailing region held back because it
+        # could still complete an evidence handle.
+        self._held_tail: str = ""
+        # Raw character immediately before ``_held_tail`` / the next
+        # delta. The whole-text gate uses it to decide whether ``evh_`` is
+        # a standalone token or part of a larger identifier.
+        self._raw_left_context: str = ""
 
     def reset(self) -> None:
         """Drop the buffer at a model-response boundary (tool result)."""
@@ -277,6 +303,10 @@ class _AnswerTextStreamer:
         self._emitted_block_texts = []
         self._last_block_emitted_len = 0
         self._is_clarification = False
+        # The held tail belongs to the discarded generation; the client
+        # clears the provisional preview on preview_reset anyway.
+        self._held_tail = ""
+        self._raw_left_context = ""
 
     def feed(self, text: str) -> str | None:
         """Append a streamed chunk; return newly resolved block text.
@@ -300,7 +330,7 @@ class _AnswerTextStreamer:
             clarification_text = parsed.get("clarification_text")
             if not isinstance(clarification_text, str):
                 return None
-            return self._emit_clarification(clarification_text)
+            return self._filter_handle_safety(self._emit_clarification(clarification_text))
 
         blocks = parsed.get("answer_blocks")
         if not isinstance(blocks, list):
@@ -314,7 +344,42 @@ class _AnswerTextStreamer:
                 block_texts.append(block["text"])
         if not block_texts:
             return None
-        return self._emit_blocks(block_texts)
+        return self._filter_handle_safety(self._emit_blocks(block_texts))
+
+    def flush(self) -> str | None:
+        """Provider input ended: release the held tail (gated).
+
+        A tail that resolved into a complete mint-shaped handle is
+        deleted exactly like the canonical answer; an incomplete or
+        non-mint trailing fragment (e.g. a word ending in "e") passes
+        through unchanged so the streamed preview keeps full fidelity.
+        """
+        if not self._held_tail:
+            return None
+        held, self._held_tail = self._held_tail, ""
+        projected = self._redact_with_left_context(held)
+        self._raw_left_context = ""
+        return projected or None
+
+    def _filter_handle_safety(self, delta: str | None) -> str | None:
+        """One deterministic gate pass over an emitted delta."""
+        if not delta:
+            return delta
+        text = self._held_tail + delta
+        self._held_tail = ""
+        tail = _ANSWER_HANDLE_TAIL_RE.search(text)
+        hold_from = tail.start() if tail is not None else len(text)
+        self._held_tail = text[hold_from:]
+        projected = self._redact_with_left_context(text[:hold_from])
+        if hold_from:
+            self._raw_left_context = text[hold_from - 1]
+        return projected or None
+
+    def _redact_with_left_context(self, text: str) -> str:
+        if not self._raw_left_context:
+            return redact_public_answer_text(text)
+        projected = redact_public_answer_text(self._raw_left_context + text)
+        return projected[1:]
 
     def _emit_clarification(self, text: str) -> str | None:
         """Single-block clarification: emit delta beyond what we've sent."""
@@ -680,6 +745,15 @@ async def run_agent_with_thinking_transport(
 
             if analysis_started:
                 _finish_analysis()
+
+            # The streamer gate may still hold a trailing region (a
+            # benign tail, or an unresolved handle-shaped run). Emit it
+            # now — gated through the same deterministic rule — so the
+            # final preview frame matches the canonical answer the
+            # finalizer will project.
+            tail_delta = answer_streamer.flush()
+            if tail_delta:
+                _emit_answer_delta(tail_delta)
 
         # The agent run returned: publish the complete usage snapshot
         # BEFORE post-run output validation can raise, so a typed

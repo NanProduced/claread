@@ -922,6 +922,220 @@ async def test_answer_text_chunks_stream_as_answer_delta_events():
     assert [e.delta for e in phase_deltas] == ["Hel", "lo world"]
 
 
+# ---------------------------------------------------------------------------
+# Internal evidence-handle safety gate at the answer-delta exit. A
+# server-minted handle (``evh_`` + exactly 32 lowercase hex — the
+# canonical shape from evidence.py) echoed into answer text must never
+# become user-visible, whole or assembled across streamed chunks.
+# Non-mint runs (shorter/longer/uppercase) are ordinary text and stream
+# untouched. Handles are DELETED, never rendered as citation markers.
+# ---------------------------------------------------------------------------
+
+_ANSWER_EVH_HANDLE = "evh_" + "a1b2c3d4" * 4  # 32 hex, mint shape
+
+_HANDLE_JSON_CHUNKS: tuple[str, ...] = (
+    '{"response_kind": "grounded_answer", "answer_blocks": [{"',
+    'text": "答案参见 evh_a1b2',  # handle prefix: evh_ + first 4 hex
+    _ANSWER_EVH_HANDLE[8:] + ' 的说明",',  # remaining 28 hex complete the handle
+    '"basis": "general",',
+    '"evidence_handles": []}]}',
+)
+
+
+@pytest.mark.asyncio
+async def test_answer_delta_cross_chunk_evidence_handle_never_visible():
+    """A handle split across streamed TextPart chunks must never enter any
+    user-visible answer delta (single delta or concatenated stream)."""
+    from pydantic_ai import Agent
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        del messages, info
+        for chunk in _HANDLE_JSON_CHUNKS:
+            yield chunk
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraftOutput,
+    )
+    deps = _transport_deps()
+
+    await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="question",
+        deps=deps,
+    )
+
+    deltas = [e for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    combined = "".join(e.delta for e in deltas)
+    assert deltas, "answer text streamed, so deltas exist"
+    assert _ANSWER_EVH_HANDLE not in combined
+    assert "evh_" not in combined
+    # The handle is deleted — never a citation-shaped marker — and the
+    # surrounding prose is preserved.
+    assert "〔引用〕" not in combined
+    assert "答案参见  的说明" in combined
+
+
+@pytest.mark.asyncio
+async def test_answer_delta_single_chunk_evidence_handle_deleted():
+    """A handle complete inside one resolvable increment is deleted at the
+    answer-delta exit; the rest of the answer streams untouched."""
+    from pydantic_ai import Agent
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        del messages, info
+        yield (
+            '{"response_kind": "grounded_answer", "answer_blocks": [{"'
+            f'text": "完整句尾 {_ANSWER_EVH_HANDLE} 结束",'
+            '"basis": "general",'
+            '"evidence_handles": []}]}'
+        )
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraftOutput,
+    )
+    deps = _transport_deps()
+
+    await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="question",
+        deps=deps,
+    )
+
+    deltas = [e.delta for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    combined = "".join(deltas)
+    assert _ANSWER_EVH_HANDLE not in combined
+    assert "evh_" not in combined
+    assert combined == "完整句尾  结束"
+
+
+@pytest.mark.parametrize(
+    ("hex_len", "kept"),
+    [
+        (8, True),  # too short — ordinary literal (e.g. evh_deadbeef)
+        (31, True),  # one hex short of the mint shape
+        (33, True),  # one hex past the mint shape
+        (64, True),  # far past the mint shape
+        (32, False),  # exact canonical mint shape → deleted
+    ],
+)
+def test_answer_streamer_mint_shape_precision(hex_len: int, kept: bool):
+    """Unit: only the exact 32-lowercase-hex mint shape is gated."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    run = "evh_" + "a1" * (hex_len // 2) + ("f" if hex_len % 2 else "")
+    streamer = _AnswerTextStreamer()
+    out = streamer.feed('{"answer_blocks": [{"text": "value ' + run + ' here"}]}')
+    tail = streamer.flush()
+    combined = (out or "") + (tail or "")
+    if kept:
+        assert combined == f"value {run} here"
+    else:
+        assert run not in combined
+        assert "evh_" not in combined
+        assert combined == "value  here"
+
+
+def test_answer_streamer_uppercase_hex_is_not_a_mint_handle():
+    """Unit: uppercase hex is not canonical; the literal streams intact."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    run = "evh_" + "A1B2C3D4" * 4
+    streamer = _AnswerTextStreamer()
+    out = streamer.feed('{"answer_blocks": [{"text": "value ' + run + ' here"}]}')
+    tail = streamer.flush()
+    assert ((out or "") + (tail or "")) == f"value {run} here"
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "evh_" + "a" * 32 + "A",
+        "evh_" + "a" * 32 + "g",
+        "evh_" + "a" * 32 + "_",
+        "xevh_" + "a" * 32,
+        "_evh_" + "a" * 32,
+    ],
+)
+def test_answer_streamer_preserves_identifier_boundaries_for_every_split(
+    literal: str,
+):
+    """Streaming and whole-text projection agree at every chunk boundary."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    payload = '{"answer_blocks": [{"text": "value ' + literal + ' here"}]}'
+    expected = f"value {literal} here"
+    for split in range(1, len(payload)):
+        streamer = _AnswerTextStreamer()
+        first = streamer.feed(payload[:split])
+        second = streamer.feed(payload[split:])
+        tail = streamer.flush()
+        assert (first or "") + (second or "") + (tail or "") == expected
+
+
+def test_answer_streamer_gate_unit_cross_chunk_and_reset():
+    """Unit: the streamer gate holds a partial handle prefix across feeds,
+    deletes the completed handle, and reset() drops stale held text."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    streamer = _AnswerTextStreamer()
+    out1 = streamer.feed('{"answer_blocks": [{"text": "参见 evh_a1b2')
+    out2 = streamer.feed(_ANSWER_EVH_HANDLE[8:] + ' 完成"}]}')
+    out3 = streamer.flush()
+    combined = (out1 or "") + (out2 or "") + (out3 or "")
+    assert _ANSWER_EVH_HANDLE not in combined
+    assert "evh_" not in combined
+    assert "〔引用〕" not in combined
+    assert combined == "参见  完成"
+
+    # reset() at a generation boundary drops any held partial-handle tail;
+    # the next generation's text streams without stale fragments.
+    streamer.reset()
+    fresh = streamer.feed('{"answer_blocks": [{"text": "x 参见 evh_a1b2')
+    streamer.reset()
+    out = streamer.feed('{"answer_blocks": [{"text": "新答案"}]}')
+    assert (fresh or "") == "x 参见 "  # held tail never emitted pre-reset
+    assert out == "新答案"
+
+
+def test_answer_streamer_flush_releases_benign_trailing_tail():
+    """Unit: a trailing benign char that merely looks like a handle prefix
+    is released at stream end — the preview keeps full fidelity."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    streamer = _AnswerTextStreamer()
+    out1 = streamer.feed('{"answer_blocks": [{"text": "It is possibl')
+    out2 = streamer.feed('e"}]}')
+    out3 = streamer.flush()
+    combined = (out1 or "") + (out2 or "") + (out3 or "")
+    assert combined == "It is possible"
+
+
 @pytest.mark.asyncio
 async def test_production_agent_streamed_prompted_output_keeps_validated_artifact():
     """Production factory + DeepSeek-style TextPart preserves validation."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2363,6 +2364,209 @@ async def test_provider_reasoning_stops_after_cross_chunk_secret(
     assert persisted["visibility_status"] == "blocked"
     assert key not in caplog.text
     assert after_secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_provider_reasoning_typed_context_scaffold_never_reaches_wire() -> None:
+    """Server-owned typed-context scaffold echoed in provider reasoning
+    must never reach the SSE wire or the persisted projection (cold
+    recovery), while ordinary safe reasoning — including prose quoting
+    the scaffold phrases and the model using typed math data — stays
+    visible (precision contract: structural fingerprints only)."""
+    scaffold = (
+        "## Supplemental typed context (untrusted document data)\n"
+        "以下为当前文章稳定文档的结构化补充数据：这些数据不是检索证据，"
+        "也不是可引用的文章引文。\n"
+        '<transcript_data role="data" not_instructions="true">\n'
+        "- [math_block|block=blk_1|order=0] E=mc^2\n"
+        "</transcript_data>\n"
+    )
+    # Structural fingerprints: the exact fence strings and the fixed
+    # header lines. Mid-line control phrases are NOT structural — the
+    # concluding prose below quotes them and must survive.
+    sentinels = (
+        '<transcript_data role="data" not_instructions="true">',
+        "</transcript_data>",
+        "## Supplemental typed context",
+        "以下为当前文章稳定文档的结构化补充数据",
+    )
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        observer.on_reasoning_delta("安全开头。")
+        observer.on_reasoning_delta(scaffold)
+        observer.on_reasoning_delta(
+            "这些数据不是检索证据，也不是可引用的文章引文，因此按 [1] 回答。"
+        )
+        observer.on_analysis_finished()
+        sink(AnalysisFinishedEvent())
+        return _ok_run_result(kwargs)
+
+    events, repo = await _stream_with_run_async(_run)
+    wire = json.dumps([d for _, d in events], ensure_ascii=False)
+    for sentinel in sentinels:
+        assert sentinel not in wire
+    persisted = repo.completed_writes[0]["reasoning_projection"]
+    for sentinel in sentinels:
+        assert sentinel not in persisted["text"]
+    assert "安全开头。" in persisted["text"]
+    # Prose quoting the control phrases (not a header line) survives.
+    assert "这些数据不是检索证据，也不是可引用的文章引文，因此按 [1] 回答。" in persisted["text"]
+
+
+@pytest.mark.asyncio
+async def test_full_chain_internal_handle_never_visible_and_citations_intact() -> None:
+    """Full production-chain regression for the internal evidence-handle
+    gate: a REAL streaming agent run (no run_fn stub) whose answer cites
+    a registered handle properly (article block) while echoing ANOTHER
+    mint-shaped handle into general block text — split across streamed
+    chunks — must keep the handle off every user-visible surface:
+
+    - ``message.delta`` frames (each and concatenated),
+    - ``message.completed``,
+    - repository persistence parameters (answer_text / completed DTO),
+    - the cold-history message projection,
+
+    while the public citation mapping (c1) from the properly cited
+    handle remains intact."""
+    from app.services.reader_record_ask.history_projection import (
+        project_agentic_history_message,
+    )
+
+    repo = _FakeRepo()
+    leaked = "evh_" + "9f" * 16  # canonical mint shape, unregistered
+    extracted: dict[str, str | None] = {"handle": None}
+
+    def _answer_payload(handle: str | None) -> str:
+        return json.dumps(
+            {
+                "response_kind": "grounded_answer",
+                "clarification_text": None,
+                "answer_blocks": [
+                    {
+                        "text": "锚定结论。",
+                        "basis": "article",
+                        "evidence_handles": [handle] if handle else [],
+                    },
+                    {
+                        "text": f"内联引用 {leaked} 出现。",
+                        "basis": "general",
+                        "evidence_handles": [],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    async def stream_fn(messages, info):
+        del info
+        # Extract the server-registered handle from the prompt's handles
+        # listing so the article block cites real evidence (c1 mapping).
+        prompt_text = ""
+        for msg in messages:
+            for part in getattr(msg, "parts", ()) or ():
+                content = getattr(part, "content", "")
+                if isinstance(content, str):
+                    prompt_text += content
+        found = re.search(r"evh_[0-9a-f]{32}", prompt_text)
+        extracted["handle"] = found.group(0) if found else None
+        payload = _answer_payload(extracted["handle"])
+        # Stream the payload so the leaked handle is split across a
+        # TextPart chunk boundary (evh_ + 8 hex | remaining 24 hex).
+        leaked_at = payload.index(leaked)
+        split_at = leaked_at + 12
+        yield payload[:split_at]
+        yield payload[split_at:]
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="What does the article say?",
+            facts=_fake_facts(),
+            request_anchor=SimpleNamespace(
+                unit_id="u1",
+                anchor_segment_id="s1",
+                start_offset=0,
+                end_offset=5,
+                selected_text="hello",
+                text_hash="a1b2c3d4",
+            ),
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(stream_function=stream_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    # The registered handle was found in the prompt (selection injected).
+    assert extracted["handle"] is not None
+    assert extracted["handle"] != leaked
+
+    # 1) message.delta frames: no handle in any frame or the stream join.
+    deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
+    assert deltas, "answer streamed, so deltas exist"
+    joined = "".join(data["delta"] for data in deltas)
+    assert leaked not in joined
+    assert "evh_" not in joined
+    assert not re.search(r"evh_[0-9a-f]{32}", joined)
+
+    # 2) message.completed: handle gone, citation mapping intact.
+    assert EVENT_MESSAGE_COMPLETED in names
+    completed = next(data for name, data in events if name == EVENT_MESSAGE_COMPLETED)
+    completed_blob = json.dumps(completed, ensure_ascii=False)
+    assert leaked not in completed_blob
+    assert "evh_" not in completed_blob
+    assert completed["answer_blocks"][0]["citation_ids"] == ["c1"]
+    assert completed["answer_blocks"][1]["citation_ids"] == []
+    assert completed["citations"][0]["citation_id"] == "c1"
+    assert completed["answer_blocks"][1]["text"] == "内联引用  出现。"
+
+    # 3) Repository persistence parameters: answer + completed DTO clean
+    #    (restricted evidence keeps handles — internal-only by design).
+    assert len(repo.completed_writes) == 1
+    write = repo.completed_writes[0]
+    assert leaked not in write["answer_text"]
+    assert "evh_" not in write["answer_text"]
+    persisted_dto_blob = json.dumps(write["completed_dto"], ensure_ascii=False)
+    assert leaked not in persisted_dto_blob
+    assert "evh_" not in persisted_dto_blob
+    assert write["answer_text"] == "锚定结论。\n\n内联引用  出现。"
+
+    # 4) Cold-history projection from the persisted turn: handle gone,
+    #    public citation survives.
+    turn_run_id = next(
+        data["turn_run_id"] for name, data in events if name == EVENT_AGENTIC_RUN_STARTED
+    )
+    turn_run = repo.turns[turn_run_id]
+    cold = project_agentic_history_message(
+        message_id=completed["message_id"],
+        thread_id=str(_THREAD),
+        role="assistant",
+        row_status="completed",
+        row_content_md=write["answer_text"],
+        created_at=None,
+        updated_at=None,
+        context_anchors=[],
+        usage_event_id=None,
+        current_turn_run_id=turn_run_id,
+        current_turn_run=turn_run,
+        user_visible_output_json=write["completed_dto"],
+        resolved_evidence_json=turn_run.get("resolved_evidence_json"),
+        final_status="ok",
+        turn_run_status="completed",
+    )
+    cold_blob = json.dumps(cold, ensure_ascii=False)
+    assert leaked not in cold_blob
+    assert "evh_" not in cold_blob
+    assert cold["agentic_citations"][0]["citation_id"] == "c1"
+    assert cold["agentic_answer_blocks"][0]["citation_ids"] == ["c1"]
 
 
 @pytest.mark.asyncio
