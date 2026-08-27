@@ -50,6 +50,40 @@ function mathBlockEntry(latex: string, display: boolean): Record<string, unknown
   return { latex, display };
 }
 
+function imageInlineEntry(
+  sourceUrl: string,
+  altText: string,
+  before: number,
+): Record<string, unknown> {
+  return {
+    source_url: sourceUrl,
+    alt_text: altText,
+    title: null,
+    before_utf16: before,
+    effective_url: sourceUrl,
+  };
+}
+
+function stripStableBlockIds(snapshot: ReaderPlateSnapshotDto): void {
+  for (const unit of snapshot.value) {
+    for (const child of unit.children) {
+      if (child.type === "reader_source_block") {
+        delete (child as { stableBlockId?: string }).stableBlockId;
+      }
+    }
+  }
+}
+
+function inlineTrace(
+  children: Array<{ type?: string; text?: string; data?: Record<string, unknown> }>,
+): string[] {
+  return children.map((child) => {
+    if (child.type === "math") return `math:${String(child.data?.latex ?? "")}`;
+    if (child.type === "image") return `image:${String(child.data?.altText ?? "")}`;
+    return `text:${child.text ?? ""}`;
+  });
+}
+
 function makeMathSnapshot(
   specs: Array<{ unitId: string; text: string; stableType: string; stableId: string; parent?: string | null }>,
   tree: ReaderStableDocumentBlockNodeDto[],
@@ -319,13 +353,7 @@ describe("Reader math tree projection — inline Math", () => {
         }),
       ],
     );
-    for (const unit of snapshot.value) {
-      for (const child of unit.children) {
-        if (child.type === "reader_source_block") {
-          delete (child as { stableBlockId?: string }).stableBlockId;
-        }
-      }
-    }
+    stripStableBlockIds(snapshot);
 
     const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
     const maths = collectMathNodes(doc);
@@ -345,6 +373,106 @@ describe("Reader math tree projection — inline Math", () => {
       child.type === "math" ? `math:${child.data?.latex}` : `text:${child.text}`,
     );
     expect(types).toEqual(["text:The speed ", "math:s = vt", "text: is linear."]);
+  });
+
+  it("canonical gap keeps second-unit inline math at the exact before_utf16 hole", () => {
+    const unit1 = "First sentence.";
+    const unit2 = "The speed  is linear.";
+    const gap = 2;
+    const mathLocal = "The speed ".length;
+    const mathBefore = unit1.length + gap + mathLocal;
+    const snapshot = makeMathSnapshot(
+      [
+        { unitId: "u1", text: unit1, stableType: "paragraph", stableId: "sent_a" },
+        { unitId: "u2", text: unit2, stableType: "paragraph", stableId: "sent_b" },
+      ],
+      [
+        wgNode({
+          block_id: "b_mixed",
+          block_type: "paragraph",
+          canonical_text_start_utf16: 0,
+          canonical_text_end_utf16: unit1.length + gap + unit2.length,
+          payload: {
+            inline_math: [mathInlineEntry("s = vt", false, mathBefore)],
+          },
+        }),
+      ],
+    );
+    stripStableBlockIds(snapshot);
+
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const secondPara = doc.children.find((block) => {
+      if ((block as { type?: string }).type !== "paragraph") return false;
+      const text = (block as { children: Array<{ text?: string }> }).children
+        .filter((child) => typeof child.text === "string")
+        .map((child) => child.text)
+        .join("");
+      return text.includes("The speed") || text.includes("is linear.");
+    }) as { children: Array<{ type?: string; text?: string; data?: Record<string, unknown> }> };
+    expect(secondPara).toBeDefined();
+    expect(inlineTrace(secondPara.children)).toEqual([
+      "text:The speed ",
+      "math:s = vt",
+      "text: is linear.",
+    ]);
+  });
+
+  it("sentence-split paragraph keeps inline image, math, and prose in before_utf16 order", () => {
+    const unit1 = "See  then  continue.";
+    const unit2 = "Extra sentence keeps the split.";
+    const snapshot = makeMathSnapshot(
+      [
+        { unitId: "u1", text: unit1, stableType: "paragraph", stableId: "sent_a" },
+        { unitId: "u2", text: unit2, stableType: "paragraph", stableId: "sent_b" },
+      ],
+      [
+        wgNode({
+          block_id: "b_mixed",
+          block_type: "paragraph",
+          canonical_text_start_utf16: 0,
+          canonical_text_end_utf16: unit1.length + 2 + unit2.length,
+          payload: {
+            inline_images: [
+              imageInlineEntry("https://example.com/fig.png", "fig", "See ".length),
+            ],
+            inline_math: [mathInlineEntry("s = vt", false, "See  then ".length)],
+          },
+        }),
+      ],
+    );
+    stripStableBlockIds(snapshot);
+
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const firstPara = doc.children.find((block) => {
+      if ((block as { type?: string }).type !== "paragraph") return false;
+      const text = (block as { children: Array<{ text?: string }> }).children
+        .filter((child) => typeof child.text === "string")
+        .map((child) => child.text)
+        .join("");
+      return text.includes("See") || text.includes("continue.");
+    }) as { children: Array<{ type?: string; text?: string; data?: Record<string, unknown> }> };
+    expect(firstPara).toBeDefined();
+    expect(inlineTrace(firstPara.children)).toEqual([
+      "text:See ",
+      "image:fig",
+      "text: then ",
+      "math:s = vt",
+      "text: continue.",
+    ]);
+    const secondText = (
+      doc.children.find((block) => {
+        if ((block as { type?: string }).type !== "paragraph") return false;
+        const text = (block as { children: Array<{ text?: string }> }).children
+          .filter((child) => typeof child.text === "string")
+          .map((child) => child.text)
+          .join("");
+        return text === unit2;
+      }) as { children: Array<{ text?: string }> } | undefined
+    )?.children
+      .filter((child) => typeof child.text === "string")
+      .map((child) => child.text)
+      .join("");
+    expect(secondText).toBe(unit2);
   });
 
   it("heading, list_item, blockquote, table_cell carrying inline_math", () => {

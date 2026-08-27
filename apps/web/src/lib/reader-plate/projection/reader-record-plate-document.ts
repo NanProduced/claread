@@ -3162,78 +3162,10 @@ function splitLeavesAtOffsets(
   return out;
 }
 
-function enrichInlineImagesForBlock(
-  block: ReaderRecordPlateBlock,
-  placements: Array<{
-    entry: Record<string, unknown>;
-    ordinal: number;
-    localBefore: number;
-  }>,
-  owningId: string,
-  parentStableBlockId: string | null,
-): void {
-  if (
-    block.type !== "paragraph" &&
-    block.type !== "heading" &&
-    block.type !== "list_item" &&
-    block.type !== "markdown_blockquote" &&
-    block.type !== "table_cell"
-  ) {
-    return;
-  }
-  const textLeaves = block.children.filter(isTextLeaf);
-  const textLength = textLeaves.reduce((length, leaf) => length + leaf.text.length, 0);
-  const valid = placements
-    .filter(
-      ({ entry, localBefore }) =>
-        Number.isInteger(localBefore) &&
-        localBefore >= 0 &&
-        localBefore <= textLength &&
-        typeof entry.source_url === "string" &&
-        typeof entry.alt_text === "string",
-    )
-    .sort(
-      (a, b) => a.localBefore - b.localBefore || a.ordinal - b.ordinal,
-    );
-  if (valid.length === 0) return;
-  const offsets = valid.map(({ localBefore }) => localBefore);
-  const splitLeaves = splitLeavesAtOffsets(textLeaves, offsets);
-  const byOffset = new Map<number, ReaderRecordPlateImageBlock[]>();
-  for (const v of valid) {
-    const before = v.localBefore;
-    const img = makeInlineImageBlock(v.entry, owningId, parentStableBlockId, v.ordinal);
-    if (!img) continue;
-    const arr = byOffset.get(before) ?? [];
-    arr.push(img);
-    byOffset.set(before, arr);
-  }
-  const sortedOffsets = [...byOffset.keys()].sort((a, b) => a - b);
-  const leafOffsets: Array<{ leaf: ReaderRecordPlateTextLeaf; start: number; end: number }> = [];
-  let cum2 = 0;
-  for (const leaf of splitLeaves) {
-    const len = leaf.text.length;
-    leafOffsets.push({ leaf, start: cum2, end: cum2 + len });
-    cum2 += len;
-  }
-  const finalChildren: Array<ReaderRecordPlateTextLeaf | ReaderRecordPlateImageBlock> = [];
-  let leafIdx = 0;
-  for (const off of sortedOffsets) {
-    while (leafIdx < leafOffsets.length && leafOffsets[leafIdx].end <= off) {
-      finalChildren.push(leafOffsets[leafIdx].leaf);
-      leafIdx += 1;
-    }
-    const imgs = byOffset.get(off) ?? [];
-    finalChildren.push(...imgs);
-  }
-  while (leafIdx < leafOffsets.length) {
-    finalChildren.push(leafOffsets[leafIdx].leaf);
-    leafIdx += 1;
-  }
-  if (splitLeaves.length === 0 && valid.length > 0) {
-    block.children = sortedOffsets.flatMap((off) => byOffset.get(off) ?? []);
-    return;
-  }
-  block.children = finalChildren;
+function hostTextLength(block: ReaderRecordPlateBlock): number {
+  return block.children
+    .filter(isTextLeaf)
+    .reduce((sum, leaf) => sum + leaf.text.length, 0);
 }
 
 function makeInlineMathBlock(
@@ -3289,48 +3221,72 @@ function makeBlockMathBlock(
   };
 }
 
-function enrichInlineMathForBlock(
+type InlinePayloadPlacement = {
+  kind: "image" | "math";
+  entry: Record<string, unknown>;
+  ordinal: number;
+  localBefore: number;
+  seq: number;
+};
+
+function enrichInlinePayloadsForBlock(
   block: ReaderRecordPlateBlock,
-  placements: Array<{
-    entry: Record<string, unknown>;
-    ordinal: number;
-    localBefore: number;
-  }>,
+  placements: InlinePayloadPlacement[],
   owningId: string,
   parentStableBlockId: string | null,
 ): void {
-  if (
-    block.type !== "paragraph" &&
-    block.type !== "heading" &&
-    block.type !== "list_item" &&
-    block.type !== "markdown_blockquote" &&
-    block.type !== "table_cell"
-  ) {
-    return;
-  }
+  if (!isInlineHostBlock(block)) return;
   const textLeaves = block.children.filter(isTextLeaf);
   const textLength = textLeaves.reduce((length, leaf) => length + leaf.text.length, 0);
   const valid = placements
-    .filter(
-      ({ entry, localBefore }) =>
-        Number.isInteger(localBefore) &&
-        localBefore >= 0 &&
-        localBefore <= textLength &&
-        typeof entry.latex === "string" &&
-        typeof entry.display === "boolean",
-    )
-    .sort((a, b) => a.localBefore - b.localBefore || a.ordinal - b.ordinal);
+    .filter((placement) => {
+      if (
+        !Number.isInteger(placement.localBefore) ||
+        placement.localBefore < 0 ||
+        placement.localBefore > textLength
+      ) {
+        return false;
+      }
+      if (placement.kind === "image") {
+        return (
+          typeof placement.entry.source_url === "string" &&
+          typeof placement.entry.alt_text === "string"
+        );
+      }
+      return (
+        typeof placement.entry.latex === "string" &&
+        typeof placement.entry.display === "boolean"
+      );
+    })
+    .sort(
+      (a, b) => a.localBefore - b.localBefore || a.seq - b.seq || a.ordinal - b.ordinal,
+    );
   if (valid.length === 0) return;
-  const offsets = valid.map(({ localBefore }) => localBefore);
+  const offsets = valid.map((placement) => placement.localBefore);
   const splitLeaves = splitLeavesAtOffsets(textLeaves, offsets);
-  const byOffset = new Map<number, ReaderRecordPlateMathBlock[]>();
-  for (const v of valid) {
-    const before = v.localBefore;
-    const math = makeInlineMathBlock(v.entry, owningId, parentStableBlockId, v.ordinal);
-    if (!math) continue;
-    const arr = byOffset.get(before) ?? [];
-    arr.push(math);
-    byOffset.set(before, arr);
+  const byOffset = new Map<
+    number,
+    Array<ReaderRecordPlateImageBlock | ReaderRecordPlateMathBlock>
+  >();
+  for (const placement of valid) {
+    const node =
+      placement.kind === "image"
+        ? makeInlineImageBlock(
+            placement.entry,
+            owningId,
+            parentStableBlockId,
+            placement.ordinal,
+          )
+        : makeInlineMathBlock(
+            placement.entry,
+            owningId,
+            parentStableBlockId,
+            placement.ordinal,
+          );
+    if (!node) continue;
+    const arr = byOffset.get(placement.localBefore) ?? [];
+    arr.push(node);
+    byOffset.set(placement.localBefore, arr);
   }
   const sortedOffsets = [...byOffset.keys()].sort((a, b) => a - b);
   const leafOffsets: Array<{ leaf: ReaderRecordPlateTextLeaf; start: number; end: number }> = [];
@@ -3340,15 +3296,16 @@ function enrichInlineMathForBlock(
     leafOffsets.push({ leaf, start: cum2, end: cum2 + len });
     cum2 += len;
   }
-  const finalChildren: Array<ReaderRecordPlateTextLeaf | ReaderRecordPlateMathBlock | ReaderRecordPlateImageBlock> = [];
+  const finalChildren: Array<
+    ReaderRecordPlateTextLeaf | ReaderRecordPlateMathBlock | ReaderRecordPlateImageBlock
+  > = [];
   let leafIdx = 0;
   for (const off of sortedOffsets) {
     while (leafIdx < leafOffsets.length && leafOffsets[leafIdx].end <= off) {
       finalChildren.push(leafOffsets[leafIdx].leaf);
       leafIdx += 1;
     }
-    const maths = byOffset.get(off) ?? [];
-    finalChildren.push(...maths);
+    finalChildren.push(...(byOffset.get(off) ?? []));
   }
   while (leafIdx < leafOffsets.length) {
     finalChildren.push(leafOffsets[leafIdx].leaf);
@@ -3461,6 +3418,53 @@ function findHostsByCanonicalRange(
   });
 }
 
+function resolveInlineHosts(
+  children: ReaderRecordPlateBlock[],
+  owningId: string,
+  owningNode: ReaderStableDocumentBlockNodeDto | undefined,
+): ReaderRecordPlateBlock[] {
+  const targets: ReaderRecordPlateBlock[] = [];
+  findBlocksByStableId(children, owningId, targets);
+  const hosts = targets.filter(isInlineHostBlock);
+  if (hosts.length > 0) return hosts;
+  return owningNode ? findHostsByCanonicalRange(children, owningNode) : [];
+}
+
+function owningCanonicalOrigin(
+  owningNode: ReaderStableDocumentBlockNodeDto | undefined,
+  hosts: ReaderRecordPlateBlock[],
+): number | null {
+  if (typeof owningNode?.canonical_text_start_utf16 === "number") {
+    return owningNode.canonical_text_start_utf16;
+  }
+  let min: number | null = null;
+  for (const host of hosts) {
+    const range = blockBaseRange(host);
+    if (!range) continue;
+    min = min === null ? range.startUtf16 : Math.min(min, range.startUtf16);
+  }
+  return min;
+}
+
+function localBeforeOnHost(
+  before: number,
+  host: ReaderRecordPlateBlock,
+  origin: number | null,
+): number | null {
+  const textLen = hostTextLength(host);
+  const range = blockBaseRange(host);
+  if (origin !== null && range) {
+    const abs = origin + before;
+    if (abs < range.startUtf16 || abs > range.endUtf16) return null;
+    const local = abs - range.startUtf16;
+    if (!Number.isInteger(local) || local < 0 || local > textLen) return null;
+    return local;
+  }
+  if (range) return null;
+  if (before < 0 || before > textLen) return null;
+  return before;
+}
+
 function findBlocksByStableId(
   blocks: ReaderRecordPlateBlock[],
   stableId: string,
@@ -3514,154 +3518,74 @@ function mergeRootBlocks(
   return groups.flatMap((g) => g.blocks);
 }
 
-function injectImages(
+function injectInlinePayloads(
   children: ReaderRecordPlateBlock[],
   tree: ReaderStableDocumentBlockNodeDto[],
 ): ReaderRecordPlateBlock[] {
-  const inlineById = new Map<string, unknown[]>();
+  const imagesById = new Map<string, unknown[]>();
+  const mathById = new Map<string, unknown[]>();
   const nodeById = new Map<string, ReaderStableDocumentBlockNodeDto>();
   const walkCollect = (list: ReaderStableDocumentBlockNodeDto[]) => {
     for (const n of list) {
       nodeById.set(n.block_id, n);
-      const inline = n.payload["inline_images"];
-      if (Array.isArray(inline)) inlineById.set(n.block_id, inline);
+      const images = n.payload["inline_images"];
+      if (Array.isArray(images) && images.length > 0) imagesById.set(n.block_id, images);
+      const maths = n.payload["inline_math"];
+      if (Array.isArray(maths) && maths.length > 0) mathById.set(n.block_id, maths);
       if (n.children?.length) walkCollect(n.children);
     }
   };
   walkCollect(tree);
 
-  for (const [owningId, rawEntries] of inlineById.entries()) {
-    const targets: ReaderRecordPlateBlock[] = [];
-    findBlocksByStableId(children, owningId, targets);
+  const owningIds = new Set<string>([...imagesById.keys(), ...mathById.keys()]);
+  for (const owningId of owningIds) {
     const owningNode = nodeById.get(owningId);
     const parentStableBlockId = owningNode?.parent_block_id ?? null;
-    let inlineTargets = targets.filter(isInlineHostBlock);
-    if (inlineTargets.length === 0 && owningNode) {
-      inlineTargets = findHostsByCanonicalRange(children, owningNode);
-    }
-    if (inlineTargets.length === 0) continue;
-
-    const lengths = inlineTargets.map((target) =>
-      target.children.filter(isTextLeaf).reduce((sum, leaf) => sum + leaf.text.length, 0),
-    );
-    const totalLength = lengths.reduce((sum, length) => sum + length, 0);
-    const placements = inlineTargets.map(() => [] as Array<{
-      entry: Record<string, unknown>;
-      ordinal: number;
-      localBefore: number;
-    }>);
-
-    rawEntries.forEach((raw, ordinal) => {
-      if (!raw || typeof raw !== "object") return;
-      const entry = raw as Record<string, unknown>;
-      const before = entry["before_utf16"];
-      if (
-        typeof before !== "number" ||
-        !Number.isInteger(before) ||
-        before < 0 ||
-        before > totalLength ||
-        typeof entry["source_url"] !== "string" ||
-        typeof entry["alt_text"] !== "string"
-      ) {
-        return;
-      }
-      let start = 0;
-      for (let index = 0; index < inlineTargets.length; index += 1) {
-        const end = start + lengths[index];
-        if (before < end || (index === inlineTargets.length - 1 && before <= end)) {
-          placements[index].push({
-            entry,
-            ordinal,
-            localBefore: before - start,
-          });
+    const hosts = resolveInlineHosts(children, owningId, owningNode);
+    if (hosts.length === 0) continue;
+    const origin = owningCanonicalOrigin(owningNode, hosts);
+    const perHost = hosts.map(() => [] as InlinePayloadPlacement[]);
+    let seq = 0;
+    const takeEntries = (
+      rawEntries: unknown[] | undefined,
+      kind: InlinePayloadPlacement["kind"],
+    ) => {
+      if (!rawEntries) return;
+      rawEntries.forEach((raw, ordinal) => {
+        if (!raw || typeof raw !== "object") return;
+        const entry = raw as Record<string, unknown>;
+        const before = entry["before_utf16"];
+        if (typeof before !== "number" || !Number.isInteger(before) || before < 0) {
           return;
         }
-        start = end;
-      }
-    });
-
-    inlineTargets.forEach((target, index) => {
-      enrichInlineImagesForBlock(
-        target,
-        placements[index],
-        owningId,
-        parentStableBlockId,
-      );
-    });
-  }
-  return children;
-}
-
-function injectInlineMath(
-  children: ReaderRecordPlateBlock[],
-  tree: ReaderStableDocumentBlockNodeDto[],
-): ReaderRecordPlateBlock[] {
-  const inlineById = new Map<string, unknown[]>();
-  const nodeById = new Map<string, ReaderStableDocumentBlockNodeDto>();
-  const walkCollect = (list: ReaderStableDocumentBlockNodeDto[]) => {
-    for (const n of list) {
-      nodeById.set(n.block_id, n);
-      const inline = n.payload["inline_math"];
-      if (Array.isArray(inline)) inlineById.set(n.block_id, inline);
-      if (n.children?.length) walkCollect(n.children);
-    }
-  };
-  walkCollect(tree);
-
-  for (const [owningId, rawEntries] of inlineById.entries()) {
-    const targets: ReaderRecordPlateBlock[] = [];
-    findBlocksByStableId(children, owningId, targets);
-    const owningNode = nodeById.get(owningId);
-    const parentStableBlockId = owningNode?.parent_block_id ?? null;
-    let inlineTargets = targets.filter(isInlineHostBlock);
-    if (inlineTargets.length === 0 && owningNode) {
-      inlineTargets = findHostsByCanonicalRange(children, owningNode);
-    }
-    if (inlineTargets.length === 0) continue;
-
-    const lengths = inlineTargets.map((target) =>
-      target.children.filter(isTextLeaf).reduce((sum, leaf) => sum + leaf.text.length, 0),
-    );
-    const totalLength = lengths.reduce((sum, length) => sum + length, 0);
-    const placements = inlineTargets.map(() => [] as Array<{
-      entry: Record<string, unknown>;
-      ordinal: number;
-      localBefore: number;
-    }>);
-
-    rawEntries.forEach((raw, ordinal) => {
-      if (!raw || typeof raw !== "object") return;
-      const entry = raw as Record<string, unknown>;
-      const before = entry["before_utf16"];
-      if (
-        typeof before !== "number" ||
-        !Number.isInteger(before) ||
-        before < 0 ||
-        before > totalLength ||
-        typeof entry["latex"] !== "string" ||
-        typeof entry["display"] !== "boolean"
-      ) {
-        return;
-      }
-      let start = 0;
-      for (let index = 0; index < inlineTargets.length; index += 1) {
-        const end = start + lengths[index];
-        if (before < end || (index === inlineTargets.length - 1 && before <= end)) {
-          placements[index].push({
-            entry,
-            ordinal,
-            localBefore: before - start,
-          });
+        if (kind === "image") {
+          if (typeof entry["source_url"] !== "string" || typeof entry["alt_text"] !== "string") {
+            return;
+          }
+        } else if (typeof entry["latex"] !== "string" || typeof entry["display"] !== "boolean") {
           return;
         }
-        start = end;
-      }
-    });
-
-    inlineTargets.forEach((target, index) => {
-      enrichInlineMathForBlock(
-        target,
-        placements[index],
+        for (let index = 0; index < hosts.length; index += 1) {
+          const localBefore = localBeforeOnHost(before, hosts[index], origin);
+          if (localBefore === null) continue;
+          perHost[index].push({
+            kind,
+            entry,
+            ordinal,
+            localBefore,
+            seq,
+          });
+          seq += 1;
+          return;
+        }
+      });
+    };
+    takeEntries(imagesById.get(owningId), "image");
+    takeEntries(mathById.get(owningId), "math");
+    hosts.forEach((host, index) => {
+      enrichInlinePayloadsForBlock(
+        host,
+        perHost[index],
         owningId,
         parentStableBlockId,
       );
@@ -3762,8 +3686,7 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
     : groupStableWrapperBlocks(flatChildren);
   let children = baseChildren;
   if (snapshot.stable_document_tree?.length) {
-    children = injectImages(children, snapshot.stable_document_tree);
-    children = injectInlineMath(children, snapshot.stable_document_tree);
+    children = injectInlinePayloads(children, snapshot.stable_document_tree);
     children = injectBlockMath(children, snapshot.stable_document_tree);
   }
 

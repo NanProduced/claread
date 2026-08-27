@@ -4234,7 +4234,7 @@ describe("G3b Reader image tree projection Slice A - standalone and inline RED",
 
   it.each([
     { beforeUtf16: 1, targetParagraphId: "paragraph:s1", expectedText: ["a", "bc"] },
-    { beforeUtf16: 4, targetParagraphId: "paragraph:s2", expectedText: ["d", "ef"] },
+    { beforeUtf16: 6, targetParagraphId: "paragraph:s2", expectedText: ["d", "ef"] },
   ])(
     "same stable block with two spans places before_utf16=$beforeUtf16 exactly once",
     ({ beforeUtf16, targetParagraphId, expectedText }) => {
@@ -4333,7 +4333,7 @@ describe("G3b Reader image tree projection Slice A - standalone and inline RED",
                   "https://example.com/range.png",
                   "range",
                   null,
-                  4,
+                  6,
                   "https://example.com/range.png",
                 ),
               ],
