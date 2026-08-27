@@ -38,10 +38,10 @@ const FALLBACK_OG_IMAGE = "/brand/claread-horizontal-bilingual.png";
 
 function articleDescription(article: DailyReaderArticle): string {
   const raw =
+    article.subtitleZh ||
     article.subtitle ||
-    article.footerAnalysis.articleTakeaway ||
-    article.footerAnalysis.summary ||
-    "每天一篇英文精读：原文、译文与逐段解析。";
+    article.postReadSummary ||
+    "每天一篇英文精读：原文、译文与教学化解析。";
   return raw.length > 150 ? `${raw.slice(0, 149)}…` : raw;
 }
 
@@ -113,9 +113,7 @@ function PublicationHeader({ isSignedIn }: { isSignedIn: boolean }) {
 }
 
 function ArticleCover({ article }: { article: DailyReaderArticle }) {
-  const image = article.body.images?.find((item) => item.role === "cover");
-  const imageUrl = image?.url || article.coverImageUrl;
-  const caption = image?.captionZh || image?.sourceCaption;
+  const imageUrl = article.coverImageUrl;
 
   if (!imageUrl) return null;
 
@@ -123,23 +121,16 @@ function ArticleCover({ article }: { article: DailyReaderArticle }) {
     <figure className="mx-auto mt-10 max-w-6xl px-5 sm:px-8">
       <div
         role="img"
-        aria-label={caption || `${article.title} 配图`}
+        aria-label={`${article.title} 配图`}
         className="aspect-[var(--dr-ratio-hero)] bg-[var(--dr-paper-raised)] bg-cover bg-center grayscale-[0.12] contrast-[0.94] saturate-[0.82]"
         style={{ backgroundImage: `url("${imageUrl}")` }}
       />
-      {caption ? (
-        <figcaption className="dr-font-zh mt-2 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
-          {caption}
-        </figcaption>
-      ) : null}
     </figure>
   );
 }
 
 function ArticleOpener({ article }: { article: DailyReaderArticle }) {
-  const hasCover = Boolean(
-    article.coverImageUrl || article.body.images?.some((image) => image.role === "cover"),
-  );
+  const hasCover = Boolean(article.coverImageUrl);
   const originalTitle = article.originalTitle && article.originalTitle !== article.title
     ? article.originalTitle
     : null;
@@ -196,6 +187,13 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
 
 /* ---------- Editorial Byline ---------- */
 
+const ARTICLE_TYPE_LABEL: Record<string, string> = {
+  news_report: "新闻报道",
+  opinion_commentary: "评论",
+  explainer: "解释",
+  narrative_profile: "特写",
+};
+
 function ArticleByline({ article }: { article: DailyReaderArticle }) {
   return (
     <div className="dr-font-ui flex flex-wrap items-center justify-between gap-4 border-b border-[color:var(--dr-rule)] pb-5">
@@ -207,6 +205,12 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
         <span>{article.readTimeMinutes} 分钟阅读</span>
         <span aria-hidden="true">·</span>
         <span>{article.difficulty}</span>
+        {article.articleType ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>{ARTICLE_TYPE_LABEL[article.articleType] ?? article.articleType}</span>
+          </>
+        ) : null}
       </div>
       <div className="flex items-center gap-1">
         <a
@@ -224,208 +228,33 @@ function ArticleByline({ article }: { article: DailyReaderArticle }) {
   );
 }
 
-/* ---------- Pre-reading Guide ---------- */
+/* ---------- Reading Mission（v2 阅读任务卡） ---------- */
 
-function PreReadingGuide({ article }: { article: DailyReaderArticle }) {
-  if (!article.preReadingGuide) return null;
+function ReadingMissionCard({ article }: { article: DailyReaderArticle }) {
+  if (!article.mission) return null;
 
   return (
     <section className="mt-12 border-y border-[color:var(--dr-rule)] py-8">
       <h2 className="dr-font-mono mb-4 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]">
-        读前导引 · BEFORE YOU READ
+        阅读任务 · MISSION
       </h2>
-      {article.preReadingGuide.overview ? (
-        <p className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-          {article.preReadingGuide.overview}
-        </p>
-      ) : null}
-      {article.preReadingGuide.questions.length > 0 ? (
+      <p className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
+        {article.mission.reading}
+      </p>
+      {article.mission.objectives.length > 0 ? (
         <ol className="mt-5 flex flex-col gap-3">
-          {article.preReadingGuide.questions.map((question, index) => (
-            <li key={question} className="flex gap-3">
+          {article.mission.objectives.map((objective, index) => (
+            <li key={objective} className="flex gap-3">
               <span className="dr-font-mono shrink-0 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]">
                 {String(index + 1).padStart(2, "0")}
               </span>
               <span className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                {question}
+                {objective}
               </span>
             </li>
           ))}
         </ol>
       ) : null}
-    </section>
-  );
-}
-
-/* ---------- Footer Analysis ---------- */
-
-function FooterAnalysis({ article }: { article: DailyReaderArticle }) {
-  const analysis = article.footerAnalysis;
-  const hasAnalysis =
-    analysis.articleTakeaway ||
-    analysis.keyExpressions.length > 0 ||
-    (analysis.writingMoves && analysis.writingMoves.length > 0) ||
-    (analysis.sentenceNotes && analysis.sentenceNotes.length > 0) ||
-    analysis.discussionQuestions.length > 0;
-
-  if (!hasAnalysis) {
-    return null;
-  }
-
-  const sectionTitleClass =
-    "dr-font-zh text-[length:var(--dr-type-zh-size)] font-semibold leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink)]";
-  const sectionCountClass =
-    "dr-font-mono ml-2 align-middle text-[length:var(--dr-type-mono-size)] font-normal leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)]";
-  const analysisLabelClass =
-    "dr-font-zh text-[length:var(--dr-type-caption-size)] font-semibold leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]";
-
-  return (
-    <section className="relative mt-20 border-t border-[color:var(--dr-rule)] pt-12">
-      <div className="mb-12 flex items-center gap-4">
-        <h2 className="dr-font-zh text-[length:var(--dr-type-headline-size)] font-normal leading-[var(--dr-type-headline-lh)] text-[color:var(--dr-ink-zh)]">
-          今日精读收束
-        </h2>
-        <span aria-hidden="true" className="h-px flex-1 bg-[var(--dr-rule)]" />
-      </div>
-
-      {analysis.articleTakeaway ? (
-        <div className="border-t border-[color:var(--dr-rule)] pt-4">
-          <p className={analysisLabelClass}>本篇要点</p>
-          <p className="dr-font-zh mt-3 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-            {analysis.articleTakeaway}
-          </p>
-        </div>
-      ) : null}
-
-      <div className="mx-auto mt-16 space-y-16">
-        {analysis.writingMoves && analysis.writingMoves.length > 0 ? (
-          <div>
-            <h3 className={`${sectionTitleClass} mb-6`}>
-              写作借鉴
-              <span className={sectionCountClass}>{analysis.writingMoves.length}</span>
-            </h3>
-            <div className="space-y-10">
-              {analysis.writingMoves.map((move, i) => (
-                <div key={`wm-${i}`} className="relative pl-8">
-                  <span className="dr-font-mono absolute left-0 top-0 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)]">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="dr-font-zh inline-block text-[length:var(--dr-type-caption-size)] font-semibold leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-accent)]">
-                    {move.moveType}
-                  </span>
-                  <p className={`${analysisLabelClass} mt-4`}>原文例句</p>
-                  <p className="dr-font-en mt-2 text-[length:var(--dr-type-body-size)] italic leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
-                    &ldquo;{move.anchor}&rdquo;
-                  </p>
-                  <p className={`${analysisLabelClass} mt-4`}>为什么值得借</p>
-                  <p className="dr-font-zh mt-3 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                    {move.explanation}
-                  </p>
-                  {move.reusablePattern ? (
-                    <div className="mt-4 border-t border-[color:var(--dr-rule)] pt-3">
-                      <p className={analysisLabelClass}>
-                        可借句式
-                      </p>
-                      <p className="dr-font-en mt-1 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink)]">
-                        {move.reusablePattern}
-                      </p>
-                    </div>
-                  ) : null}
-                  {i < analysis.writingMoves!.length - 1 && (
-                    <div className="mt-10 h-px bg-[var(--dr-rule)]" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {analysis.sentenceNotes && analysis.sentenceNotes.length > 0 ? (
-          <div className="border-t border-[color:var(--dr-rule)] pt-12">
-            <h3 className={`${sectionTitleClass} mb-6`}>
-              长难句
-              <span className={sectionCountClass}>{analysis.sentenceNotes.length}</span>
-            </h3>
-            <div className="space-y-9">
-              {analysis.sentenceNotes.map((note, index) => (
-                <div key={`sn-${index}`}>
-                  <p className={analysisLabelClass}>原句</p>
-                  <p className="dr-font-en text-[length:var(--dr-type-body-size)] leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
-                    {note.sentence}
-                  </p>
-                  <p className={`${analysisLabelClass} mt-4`}>译文</p>
-                  <p className="dr-font-zh mt-3 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                    {note.translation}
-                  </p>
-                  {note.breakdown ? (
-                    <div className="mt-4 border-t border-[color:var(--dr-rule)] pt-3">
-                      <p className={analysisLabelClass}>结构拆解</p>
-                      <p className="dr-font-zh mt-2 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-meta)]">
-                        {note.breakdown}
-                      </p>
-                    </div>
-                  ) : null}
-                  {note.takeaway ? (
-                    <div className="mt-4 border-t border-[color:var(--dr-rule)] pt-3">
-                      <p className={analysisLabelClass}>学习点</p>
-                      <p className="dr-font-zh mt-1 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                        {note.takeaway}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {analysis.keyExpressions.length > 0 ? (
-          <div className="border-t border-[color:var(--dr-rule)] pt-12">
-            <h3 className={`${sectionTitleClass} mb-6`}>
-              关键表达
-              <span className={sectionCountClass}>{analysis.keyExpressions.length}</span>
-            </h3>
-            <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
-              {analysis.keyExpressions.map((item, i) => (
-                <div key={`ke-${i}`}>
-                  <p className="dr-font-en text-[length:var(--dr-type-body-size)] font-semibold leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
-                    {item.expression}
-                  </p>
-                  <p className="dr-font-zh mt-1 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                    {item.gloss}
-                  </p>
-                  {item.usageNote ? (
-                    <p className="dr-font-zh mt-2 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
-                      {item.usageNote}
-                    </p>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {analysis.discussionQuestions.length > 0 ? (
-          <div className="border-t border-[color:var(--dr-rule)] pt-12">
-            <h3 className={`${sectionTitleClass} mb-6`}>
-              讨论问题
-              <span className={sectionCountClass}>{analysis.discussionQuestions.length}</span>
-            </h3>
-            <div className="space-y-4">
-              {analysis.discussionQuestions.map((question, i) => (
-                <div key={`dq-${i}`} className="flex gap-3">
-                  <span className="dr-font-mono mt-1 shrink-0 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]">
-                    Q{String(i + 1).padStart(2, "0")}
-                  </span>
-                  <p className="dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
-                    {question}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
     </section>
   );
 }
@@ -471,14 +300,11 @@ export default async function DailyArticlePage({ params, searchParams }: DailyAr
         <ArticleOpener article={article} />
 
         <div className="mx-auto max-w-[680px] px-5 sm:px-8 lg:px-0">
-          {/* Pre-reading guide */}
-          <PreReadingGuide article={article} />
+          {/* Reading mission */}
+          <ReadingMissionCard article={article} />
 
           {/* Body */}
           <DailyArticleBody article={article} />
-
-          {/* Footer analysis */}
-          <FooterAnalysis article={article} />
 
           {/* Source */}
           <section className="mt-16 border-t border-[color:var(--dr-rule)] pt-8">
@@ -501,7 +327,7 @@ export default async function DailyArticlePage({ params, searchParams }: DailyAr
           {/* Bottom actions — 单一主行动（P2-11：删除与主 CTA 同 href 的「收藏」） */}
           <div className="mt-12 border-t border-[color:var(--dr-rule)] pt-8">
             <p className="dr-font-zh max-w-[34rem] text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-meta)]">
-              保存这篇精读，把逐段导读、译文与表达解析带进你的阅读记录。
+              保存这篇精读，把译文、语言精讲与自测任务带进你的阅读记录。
             </p>
             <DailyArticleSaveButton
               articleId={article.id}

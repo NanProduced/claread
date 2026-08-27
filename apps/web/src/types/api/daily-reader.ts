@@ -1,10 +1,18 @@
+/**
+ * Daily Reader API DTO（teaching-v2 形状）。
+ *
+ * 服务端 `DailyReaderArticleResponse`：标量列 + lesson_blueprint +
+ * learning_package + reading_units。v1 的 body/highlights/paragraph_notes/
+ * takeaways 已退役，客户端不得再消费（零投影决策）。
+ */
+
 export interface DailyReaderArticleDto {
   id: string;
   title: string;
   subtitle: string | null;
-  /** A-3: 英文原题（caption 级展示）；旧文章可能缺失。 */
+  /** 英文原题（caption 级展示）；pre-v2 行可能缺失。 */
   original_title?: string | null;
-  /** A-3: 中文副标题；旧文章可能缺失。 */
+  /** 中文副标题（blueprint 产出并提升到列）。 */
   subtitle_zh?: string | null;
   source: string;
   source_url: string;
@@ -14,103 +22,84 @@ export interface DailyReaderArticleDto {
   tags: string[];
   cover_image_url: string | null;
   cover_theme: string;
-  body: DailyReaderBodyDto;
-  highlights: DailyReaderHighlightDto[];
-  paragraph_notes?: DailyReaderParagraphNotesDto | null;
-  takeaways?: DailyReaderTakeawaysDto | null;
+  /** v2 教学蓝图；pre-v2 行为 {}。 */
+  lesson_blueprint: LessonBlueprintDto;
+  /** v2 学习包；pre-v2 行为 {}。 */
+  learning_package: LearningPackageDto;
+  /** 正文单元（id 与 lesson 锚点一致）；pre-v2 行为 []。 */
+  reading_units: DailyReaderReadingUnitDto[];
 }
 
-export interface DailyReaderBodyDto {
-  paragraphs?: DailyReaderParagraphDto[];
-  /** B-1: curated news images (1 cover + 0-1 inline); rendering is Track C. */
-  images?: DailyReaderImageBlockDto[];
-}
-
-export interface DailyReaderImageBlockDto {
-  id: string;
-  role: "cover" | "inline";
-  url: string;
-  width?: number | null;
-  height?: number | null;
-  /** Layout slot decided by the pipeline rule engine (surface brief §4). */
-  layout: "full-bleed" | "two-third" | "half-float";
-  /** Chinese caption grounded in article title + text (LLM-generated). */
-  caption_zh?: string | null;
-  /** Original caption / photo credit, preserved verbatim. */
-  source_caption?: string | null;
-}
-
-export interface DailyReaderParagraphDto {
+export interface DailyReaderReadingUnitDto {
   id: string;
   text: string;
-  highlights?: DailyReaderHighlightDto[];
-  reading_note?: DailyReaderParagraphNoteDto | null;
 }
 
-export interface DailyReaderHighlightDto {
-  id: string;
-  type: "vocab_highlight" | "phrase_gloss" | "context_gloss";
-  text: string;
-  gloss: string;
-  paragraph_id: string;
-  start: number;
-  end: number;
-  detail?: {
-    phonetic?: string;
-    pos?: string;
-    context_explanation?: string;
-  } | null;
-}
-
-export interface DailyReaderParagraphNotesDto {
-  article_summary?: string;
-  reading_focus?: string[] | string;
-  notes?: DailyReaderParagraphNoteDto[];
-}
-
-export interface DailyReaderParagraphNoteDto {
-  paragraph_id: string;
-  focus_question?: string;
-  micro_summary?: string;
-  translation?: string;
-}
-
-export interface DailyReaderTakeawaysDto {
-  article_takeaway?: string;
-  /** A-3: 中文主标题（已由 pipeline 落库为 title 列）；旧文章缺失。 */
+export interface LessonBlueprintDto {
+  article_type?: string;
+  effective_difficulty?: string;
   title_zh?: string;
-  /** A-3: 中文副标题；旧文章缺失。 */
   subtitle_zh?: string;
-  /** A-3: 全中文主题标签（已由 pipeline 落库为 tags 列）；旧文章缺失。 */
   tags_zh?: string[];
-  key_expressions?: DailyReaderTakeawayExpressionDto[];
-  sentence_notes?: DailyReaderSentenceNoteDto[];
-  writing_moves?: DailyReaderWritingMoveDto[];
-  discussion_questions?: string[];
+  reading_mission?: string;
+  reading_mission_stance?: string;
+  learning_objectives?: string[];
+  structure_map?: LessonStructureNodeDto[];
+  selected_paragraph_ids?: string[];
+  comprehension_checkpoints?: ComprehensionCheckpointDto[];
+  transfer_task?: TransferTaskDto;
 }
 
-export interface DailyReaderTakeawayExpressionDto {
+export interface LessonStructureNodeDto {
+  label: string;
+  function: string;
+  paragraph_ids: string[];
+}
+
+export interface ComprehensionCheckpointDto {
+  skill: string;
+  prompt: string;
+  prompt_subject?: string;
+  reference_answer: string;
+  reference_answer_subject?: string;
+  evidence_paragraph_ids?: string[];
+  answer_evidence_paragraph_ids?: string[];
+}
+
+export interface TransferTaskDto {
+  task_kind: string;
+  prompt: string;
+  scaffold?: string;
+  reference_points?: string[];
+  content_requirement?: string;
+}
+
+export interface LearningPackageDto {
+  language_targets?: LanguageTargetDto[];
+  sentence_maps?: SentenceMapDto[];
+  translations_by_paragraph_id?: Record<string, string>;
+  comprehension_checkpoints?: ComprehensionCheckpointDto[];
+  transfer_task?: TransferTaskDto;
+  post_read_summary?: string;
+  high_difficulty_unit_ids?: string[];
+}
+
+export interface LanguageTargetDto {
   expression: string;
-  paragraph_id?: string;
-  gloss: string;
-  context_sentence: string;
-  usage_note?: string;
+  paragraph_id: string;
+  target_kind?: string;
+  teaching_purpose?: string;
+  meaning_zh: string;
+  usage_note: string;
+  reusable_pattern: string;
 }
 
-export interface DailyReaderSentenceNoteDto {
+export interface SentenceMapDto {
   sentence: string;
-  paragraph_id?: string;
+  paragraph_id: string;
   translation: string;
-  breakdown: string;
-  takeaway: string;
-}
-
-export interface DailyReaderWritingMoveDto {
-  anchor: string;
-  paragraph_id?: string;
-  move_type: string;
-  explanation: string;
-  reusable_pattern?: string | null;
+  complexity_kind?: "complex_syntax" | "argument_structure" | null;
+  teaching_purpose?: string;
 }
 
 export interface DailyReaderTodayResponseDto {
@@ -121,9 +110,7 @@ export interface DailyReaderListItemDto {
   id: string;
   title: string;
   subtitle: string | null;
-  /** A-3: 英文原题（caption 级展示）；旧文章可能缺失。 */
   original_title?: string | null;
-  /** A-3: 中文副标题；旧文章可能缺失。 */
   subtitle_zh?: string | null;
   source: string;
   publish_date: string;

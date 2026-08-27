@@ -1,273 +1,290 @@
-"use client";
-
-import Image from "next/image";
-import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { cn } from "@/lib/cn";
 import type {
   DailyReaderArticle,
-  DailyReaderHighlight,
-  DailyReaderImageBlock,
+  DailyReaderCheckpoint,
+  DailyReaderLanguageTarget,
+  DailyReaderReadingUnit,
+  DailyReaderSentenceMap,
+  DailyReaderTransferTask,
 } from "@/types/view/DailyReaderVm";
-import { ReadingNoteExpander, TranslationExpander } from "./EditorialExpanders";
-import { InteractiveHighlight } from "./InteractiveHighlight";
 
-const READER_MODE_STORAGE_KEY = "claread.daily.reader-mode";
-const READER_MODE_EVENT = "claread:daily-reader-mode-change";
-let inMemoryLearningMode = false;
+/* ---------- 排版基元（C-2 token 语法，mono 小标签 + 细 rule） ---------- */
 
-function subscribeToReaderMode(onStoreChange: () => void) {
-  window.addEventListener(READER_MODE_EVENT, onStoreChange);
-  window.addEventListener("storage", onStoreChange);
-  return () => {
-    window.removeEventListener(READER_MODE_EVENT, onStoreChange);
-    window.removeEventListener("storage", onStoreChange);
-  };
-}
+const monoLabel =
+  "dr-font-mono text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)]";
+const monoAccent =
+  "dr-font-mono text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]";
+const zhBody =
+  "dr-font-zh text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]";
+const zhMeta =
+  "dr-font-zh text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]";
+const enBody =
+  "dr-font-en text-[length:var(--dr-type-body-size)] leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]";
 
-function getReaderModeSnapshot() {
-  try {
-    inMemoryLearningMode =
-      window.localStorage.getItem(READER_MODE_STORAGE_KEY) === "learning";
-  } catch {
-    // Fall back to the current-tab value when storage is blocked.
-  }
-  return inMemoryLearningMode;
-}
-
-function setReaderMode(learningMode: boolean) {
-  inMemoryLearningMode = learningMode;
-  try {
-    window.localStorage.setItem(READER_MODE_STORAGE_KEY, learningMode ? "learning" : "browse");
-  } catch {
-    // The custom event still keeps this visit usable when storage is blocked.
-  }
-  window.dispatchEvent(new Event(READER_MODE_EVENT));
-}
-
-function renderHighlightedText(
-  text: string,
-  highlights: DailyReaderHighlight[],
-  activeHighlightId: string | null,
-  onActivate: (highlight: DailyReaderHighlight) => void,
-): ReactNode {
-  const ranges = highlights
-    .filter(
-      (highlight) =>
-        highlight.start >= 0 && highlight.end > highlight.start && highlight.end <= text.length,
-    )
-    .sort((a, b) => a.start - b.start);
-  const accepted: DailyReaderHighlight[] = [];
-
-  for (const range of ranges) {
-    const previous = accepted[accepted.length - 1];
-    if (!previous || range.start >= previous.end) accepted.push(range);
-  }
-
-  if (accepted.length === 0) return text;
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-
-  accepted.forEach((highlight) => {
-    if (highlight.start > cursor) nodes.push(text.slice(cursor, highlight.start));
-
-    nodes.push(
-      <InteractiveHighlight
-        key={highlight.id}
-        highlight={highlight}
-        isActive={activeHighlightId === highlight.id}
-        noteId={`daily-reader-note-${highlight.id}`}
-        onActivate={onActivate}
-      >
-        {text.slice(highlight.start, highlight.end)}
-      </InteractiveHighlight>,
-    );
-    cursor = highlight.end;
-  });
-
-  if (cursor < text.length) nodes.push(text.slice(cursor));
-  return nodes;
-}
-
-function AnnotationNote({ highlight }: { highlight: DailyReaderHighlight }) {
+function SectionHeading({ zh, en, count }: { zh: string; en: string; count?: number }) {
   return (
-    <aside
-      id={`daily-reader-note-${highlight.id}`}
-      role="complementary"
-      aria-label={`${highlight.text} 注释`}
-      className="dr-font-zh mt-5 border-t border-[color:var(--dr-rule)] bg-[var(--dr-paper-raised)] px-4 py-3 text-[length:var(--dr-type-caption-size)] leading-6 text-[color:var(--dr-ink-zh)] xl:absolute xl:left-[calc(100%+2.5rem)] xl:top-0 xl:mt-0 xl:w-64"
-    >
-      <p className="dr-font-en text-[length:var(--dr-type-body-size)] font-semibold leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
-        {highlight.text}
-      </p>
-      {highlight.detail?.phonetic || highlight.detail?.pos ? (
-        <p className="dr-font-mono mt-1 text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)]">
-          {[highlight.detail?.phonetic, highlight.detail?.pos].filter(Boolean).join(" · ")}
-        </p>
-      ) : null}
-      <p className="mt-2">{highlight.gloss}</p>
-      {highlight.detail?.contextExplanation ? (
-        <p className="mt-2 border-t border-[color:var(--dr-rule)] pt-2 text-[color:var(--dr-meta)]">
-          {highlight.detail.contextExplanation}
-        </p>
-      ) : null}
-    </aside>
+    <div className="mb-8 flex items-baseline gap-3 border-t border-[color:var(--dr-rule)] pt-10">
+      <h2 className="dr-font-zh text-[length:var(--dr-type-headline-size)] font-normal leading-[var(--dr-type-headline-lh)] text-[color:var(--dr-ink-zh)]">
+        {zh}
+      </h2>
+      <span className={monoLabel}>{en}</span>
+      {typeof count === "number" ? <span className={monoLabel}>{count}</span> : null}
+      <span aria-hidden="true" className="h-px flex-1 self-center bg-[var(--dr-rule)]" />
+    </div>
   );
 }
 
-const inlineImageWidth: Record<DailyReaderImageBlock["layout"], string> = {
-  "full-bleed": "w-full",
-  "two-third": "sm:w-2/3",
-  "half-float": "sm:w-1/2",
-};
+/* ---------- 正文单元：译文按需展开（零 JS，原生 details） ---------- */
 
-function InlineImage({ image }: { image: DailyReaderImageBlock }) {
-  const caption = image.captionZh || image.sourceCaption;
-
+function UnitTranslation({ translation }: { translation: string }) {
   return (
-    <figure className={cn("my-14", inlineImageWidth[image.layout])}>
-      <div className="relative aspect-[3/2] overflow-hidden bg-[var(--dr-paper-raised)]">
-        <Image
-          src={image.url}
-          alt={caption || "文章配图"}
-          fill
-          sizes="(min-width: 640px) 680px, 100vw"
-          className="object-cover grayscale-[0.12] contrast-[0.94] saturate-[0.82]"
-        />
-      </div>
-      {caption ? (
-        <figcaption className="dr-font-zh mt-2 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
-          {caption}
-        </figcaption>
-      ) : null}
-    </figure>
+    <details className="group mt-3">
+      <summary className="focus-ring inline-flex min-h-8 cursor-pointer list-none items-center gap-2 text-[color:var(--dr-meta)] transition-colors hover:text-[color:var(--dr-accent)] [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className={`${monoAccent} transition-transform group-open:rotate-45`}>
+          +
+        </span>
+        <span className={monoLabel}>译文</span>
+      </summary>
+      <p className={`${zhBody} mt-2 border-t border-[color:var(--dr-rule)] pt-3`}>{translation}</p>
+    </details>
   );
 }
 
-export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
-  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
-  const learningMode = useSyncExternalStore(
-    subscribeToReaderMode,
-    getReaderModeSnapshot,
-    () => false,
-  );
-  const inlineImage = article.body.images?.find((image) => image.role === "inline");
-  const inlineImageAfter = Math.min(2, Math.max(0, Math.floor(article.body.paragraphs.length / 3)));
-
-  if (article.body.paragraphs.length === 0) {
-    return (
-      <p className="dr-font-zh text-[length:var(--dr-type-caption-size)] leading-7 text-[color:var(--dr-meta)]">
-        这篇每日精读暂无可展示正文。请稍后再试。
-      </p>
-    );
-  }
-
-  const activeHighlight = article.body.paragraphs
-    .flatMap((paragraph) => paragraph.highlights)
-    .find((highlight) => highlight.id === activeHighlightId);
-
-  const activateHighlight = (highlight: DailyReaderHighlight) => {
-    setActiveHighlightId((current) => (current === highlight.id ? null : highlight.id));
-  };
-
-  const toggleLearningMode = () => {
-    setReaderMode(!learningMode);
-  };
-
+function SentenceMapCard({ map }: { map: DailyReaderSentenceMap }) {
   return (
-    <div className="dr-font-en mt-16 text-[length:var(--dr-type-body-size)] leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
-      <div className="dr-font-ui mb-12 flex flex-col gap-3 border-y border-[color:var(--dr-rule)] py-4 sm:flex-row sm:items-center sm:justify-between">
+    <details className="group mt-4">
+      <summary className="focus-ring inline-flex min-h-8 cursor-pointer list-none items-center gap-2 text-[color:var(--dr-meta)] transition-colors hover:text-[color:var(--dr-accent)] [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className={`${monoAccent} transition-transform group-open:rotate-45`}>
+          +
+        </span>
+        <span className={monoLabel}>长难句精讲</span>
+        {map.complexityKind ? (
+          <span className={monoLabel}>
+            {map.complexityKind === "complex_syntax" ? "复杂句法" : "论证结构"}
+          </span>
+        ) : null}
+      </summary>
+      <div className="mt-3 space-y-4 border-t border-[color:var(--dr-rule)] pt-4">
+        <p className={`${enBody} italic`}>&ldquo;{map.sentence}&rdquo;</p>
         <div>
-          <p className="text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-ink)]">
-            阅读方式
-          </p>
-          <p className="mt-1 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
-            {learningMode ? "学习模式：默认展开导读与译文" : "浏览模式：需要时逐段展开解析"}
+          <p className={monoLabel}>译文</p>
+          <p className={`${zhBody} mt-1`}>{map.translation}</p>
+        </div>
+        {map.teachingPurpose ? (
+          <div>
+            <p className={monoLabel}>拆解</p>
+            <p className={`${zhMeta} mt-1`}>{map.teachingPurpose}</p>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function ReadingUnitView({
+  unit,
+  sentenceMap,
+}: {
+  unit: DailyReaderReadingUnit;
+  sentenceMap?: DailyReaderSentenceMap;
+}) {
+  return (
+    <div className="mt-8">
+      <p className={enBody}>{unit.text}</p>
+      {unit.translation ? <UnitTranslation translation={unit.translation} /> : null}
+      {sentenceMap ? <SentenceMapCard map={sentenceMap} /> : null}
+    </div>
+  );
+}
+
+/* ---------- 文章结构提纲 ---------- */
+
+function StructureOutline({ article }: { article: DailyReaderArticle }) {
+  if (article.structureMap.length === 0) return null;
+  return (
+    <section className="mt-16">
+      <SectionHeading zh="文章结构" en="STRUCTURE" count={article.structureMap.length} />
+      <ol className="space-y-6">
+        {article.structureMap.map((node, index) => (
+          <li key={`${node.label}-${index}`} className="flex gap-4">
+            <span aria-hidden="true" className={`${monoAccent} shrink-0`}>
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <div>
+              <p className={`${zhBody} font-semibold`}>{node.label}</p>
+              <p className={`${zhMeta} mt-1`}>{node.role}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/* ---------- 语言精讲 ---------- */
+
+function LanguageTargetCard({ target }: { target: DailyReaderLanguageTarget }) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p className="dr-font-en text-[length:var(--dr-type-body-size)] font-semibold leading-[var(--dr-type-body-lh)] text-[color:var(--dr-ink)]">
+          {target.expression}
+        </p>
+        {target.targetKind ? <span className={monoLabel}>{target.targetKind}</span> : null}
+      </div>
+      <p className={`${zhBody} mt-1`}>{target.meaningZh}</p>
+      {target.usageNote ? <p className={`${zhMeta} mt-2`}>{target.usageNote}</p> : null}
+      {target.reusablePattern ? (
+        <div className="mt-3 border-t border-[color:var(--dr-rule)] pt-2">
+          <p className={monoLabel}>可复用句型</p>
+          <p className="dr-font-en mt-1 text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink)]">
+            {target.reusablePattern}
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-label="学习模式"
-          aria-checked={learningMode}
-          onClick={toggleLearningMode}
-          className="focus-ring grid min-h-11 shrink-0 grid-cols-2 border border-[color:var(--dr-rule)] text-[length:var(--dr-type-caption-size)] font-semibold"
-        >
+      ) : null}
+    </div>
+  );
+}
+
+function LanguageTargetsSection({ article }: { article: DailyReaderArticle }) {
+  if (article.languageTargets.length === 0) return null;
+  return (
+    <section className="mt-16">
+      <SectionHeading zh="语言精讲" en="LANGUAGE" count={article.languageTargets.length} />
+      <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
+        {article.languageTargets.map((target, index) => (
+          <LanguageTargetCard key={`${target.expression}-${index}`} target={target} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 证据型自测 ---------- */
+
+function CheckpointItem({
+  checkpoint,
+  index,
+}: {
+  checkpoint: DailyReaderCheckpoint;
+  index: number;
+}) {
+  return (
+    <details className="group border-t border-[color:var(--dr-rule)] py-5">
+      <summary className="focus-ring cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <div className="flex items-start gap-4">
           <span
-            className={cn(
-              "flex min-w-16 items-center justify-center px-3",
-              !learningMode
-                ? "bg-[var(--dr-ink)] text-[color:var(--dr-paper)]"
-                : "text-[color:var(--dr-meta)]",
-            )}
+            aria-hidden="true"
+            className={`${monoAccent} mt-1 shrink-0 transition-transform group-open:rotate-45`}
           >
-            浏览
+            +
           </span>
-          <span
-            className={cn(
-              "flex min-w-16 items-center justify-center px-3",
-              learningMode
-                ? "bg-[var(--dr-ink)] text-[color:var(--dr-paper)]"
-                : "text-[color:var(--dr-meta)]",
-            )}
-          >
-            学习
-          </span>
-        </button>
+          <div>
+            <span className={monoLabel}>
+              自测 {String(index + 1).padStart(2, "0")}
+              {checkpoint.skill ? ` · ${checkpoint.skill}` : ""}
+            </span>
+            <p className={`${zhBody} mt-1`}>{checkpoint.prompt}</p>
+            {checkpoint.promptSubject ? (
+              <p className="dr-font-en mt-2 text-[length:var(--dr-type-zh-size)] italic leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink)]">
+                &ldquo;{checkpoint.promptSubject}&rdquo;
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </summary>
+      <div className="mt-4 space-y-3 pl-9">
+        <div>
+          <p className={monoLabel}>参考答案</p>
+          <p className={`${zhBody} mt-1`}>{checkpoint.referenceAnswer}</p>
+        </div>
+        {checkpoint.answerSubject ? (
+          <div>
+            <p className={monoLabel}>答案落点</p>
+            <p className="dr-font-en mt-1 text-[length:var(--dr-type-zh-size)] italic leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink)]">
+              &ldquo;{checkpoint.answerSubject}&rdquo;
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function CheckpointsSection({ article }: { article: DailyReaderArticle }) {
+  if (article.checkpoints.length === 0) return null;
+  return (
+    <section className="mt-16">
+      <SectionHeading zh="证据自测" en="CHECKPOINTS" count={article.checkpoints.length} />
+      <div>
+        {article.checkpoints.map((checkpoint, index) => (
+          <CheckpointItem key={`cp-${index}`} checkpoint={checkpoint} index={index} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ---------- 迁移任务 ---------- */
+
+const TASK_KIND_LABEL: Record<string, string> = {
+  retell: "复述",
+  counter: "反驳",
+  explain: "讲解",
+  rewrite: "改写",
+};
+
+function TransferTaskSection({ task }: { task: DailyReaderTransferTask }) {
+  return (
+    <section className="mt-16">
+      <SectionHeading zh="迁移任务" en="TRANSFER" />
+      <div className="space-y-4">
+        <span className={monoAccent}>{TASK_KIND_LABEL[task.taskKind] ?? task.taskKind}</span>
+        <p className={zhBody}>{task.prompt}</p>
+        {task.scaffold ? <p className={zhMeta}>{task.scaffold}</p> : null}
+        {task.referencePoints.length > 0 ? (
+          <div className="border-t border-[color:var(--dr-rule)] pt-3">
+            <p className={monoLabel}>要点参照</p>
+            <ul className="mt-2 space-y-1">
+              {task.referencePoints.map((point, index) => (
+                <li key={`rp-${index}`} className={`${zhMeta} flex gap-2`}>
+                  <span aria-hidden="true">·</span>
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/* ---------- Body ---------- */
+
+export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
+  const sentenceMapByUnit = new Map(article.sentenceMaps.map((map) => [map.unitId, map]));
+
+  return (
+    <>
+      {/* 正文流 */}
+      <div className="mt-4">
+        {article.units.map((unit) => (
+          <ReadingUnitView key={unit.id} unit={unit} sentenceMap={sentenceMapByUnit.get(unit.id)} />
+        ))}
       </div>
 
-      {article.body.paragraphs.map((paragraph, index) => {
-        const paragraphNumber = index + 1;
-        const hasDropCap = index === 0 && /^[A-Za-z]/.test(paragraph.text);
-        const paragraphNote =
-          activeHighlight?.paragraphId === paragraph.id ? activeHighlight : undefined;
+      <StructureOutline article={article} />
+      <LanguageTargetsSection article={article} />
+      <CheckpointsSection article={article} />
+      {article.transferTask ? <TransferTaskSection task={article.transferTask} /> : null}
 
-        return (
-          <div key={paragraph.id}>
-            <section className="group relative mb-14">
-              <span className="dr-font-mono mb-2 block select-none text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-meta)] md:absolute md:-left-10 md:top-2 md:mb-0 md:w-6 md:text-right">
-                {String(paragraphNumber).padStart(2, "0")}
-              </span>
-
-              {paragraph.readingNote ? (
-                <ReadingNoteExpander
-                  key={`guide-${paragraph.id}-${learningMode}`}
-                  note={paragraph.readingNote}
-                  paragraphNumber={paragraphNumber}
-                  defaultOpen={learningMode}
-                />
-              ) : null}
-
-              <p
-                className={cn(
-                  hasDropCap &&
-                    "first-letter:float-left first-letter:mr-3 first-letter:font-normal first-letter:text-[4.2em] first-letter:leading-[0.73] first-letter:text-[color:var(--dr-ink)]",
-                )}
-              >
-                {renderHighlightedText(
-                  paragraph.text,
-                  paragraph.highlights,
-                  activeHighlightId,
-                  activateHighlight,
-                )}
-              </p>
-
-              {paragraphNote ? <AnnotationNote highlight={paragraphNote} /> : null}
-
-              {paragraph.translation ? (
-                <TranslationExpander
-                  key={`translation-${paragraph.id}-${learningMode}`}
-                  translation={paragraph.translation}
-                  paragraphNumber={paragraphNumber}
-                  defaultOpen={learningMode}
-                />
-              ) : null}
-            </section>
-
-            {inlineImage && index === inlineImageAfter ? <InlineImage image={inlineImage} /> : null}
-          </div>
-        );
-      })}
-    </div>
+      {/* 收束 */}
+      {article.postReadSummary ? (
+        <section className="mt-16 border-t border-[color:var(--dr-rule)] pt-10">
+          <p className={monoLabel}>本篇收束</p>
+          <p className={`${zhBody} mt-3`}>{article.postReadSummary}</p>
+        </section>
+      ) : null}
+    </>
   );
 }
