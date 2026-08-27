@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TARGET_COVER_WIDTH = 1280
+# guim CDN 实际可供上限（{140,500,1000}；1280 恒 403）
+GUIM_MAX_COVER_WIDTH = 1000
 MIN_COVER_WIDTH = 1200
 MAX_COVER_CANDIDATES = 6
 REASON_DOWNLOAD_FAILED = "download_failed"
@@ -82,9 +84,12 @@ def upgrade_image_url(url: str) -> str:
         )
     if "media.guim.co.uk" in url:
         # Guardian: .../0_0_5472_3648/140.jpg — trailing segment is width.
+        # guim serves at most {140,500,1000}; 1280 403s, so cap the upgrade
+        # at the CDN's actual maximum (1000), which also meets this source's
+        # relaxed min_cover_width floor.
         url = re.sub(
             r"/(\d+)(?=\.(?:jpe?g|png|webp)$)",
-            lambda m: _bump_width(m, TARGET_COVER_WIDTH),
+            lambda m: _bump_width(m, GUIM_MAX_COVER_WIDTH),
             url,
             flags=re.IGNORECASE,
         )

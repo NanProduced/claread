@@ -130,7 +130,6 @@ function ArticleCover({ article }: { article: DailyReaderArticle }) {
 }
 
 function ArticleOpener({ article }: { article: DailyReaderArticle }) {
-  const hasCover = Boolean(article.coverImageUrl);
   const originalTitle = article.originalTitle && article.originalTitle !== article.title
     ? article.originalTitle
     : null;
@@ -143,21 +142,19 @@ function ArticleOpener({ article }: { article: DailyReaderArticle }) {
           <span>{formatPublishDate(article.publishDate)}</span>
         </div>
 
-        <div
-          className={hasCover ? undefined : "border-t-2 border-[color:var(--dr-accent)] bg-[var(--dr-paper-raised)] px-5 py-8 sm:px-8"}
-        >
+        <div className="border-t-2 border-[color:var(--dr-ink)] pt-8">
           <h1 className="dr-font-zh text-balance text-[length:var(--dr-type-hero-size)] font-normal leading-[var(--dr-type-hero-lh)] tracking-[-0.018em] text-[color:var(--dr-ink-zh)]">
             {article.title}
           </h1>
 
           {originalTitle ? (
-            <p className="dr-font-en mt-5 max-w-[44rem] text-[length:var(--dr-type-deck-size)] leading-[var(--dr-type-deck-lh)] text-[color:var(--dr-ink)]">
+            <p className="dr-font-en mt-5 max-w-[44rem] text-[length:var(--dr-type-deck-size)] italic leading-[var(--dr-type-deck-lh)] text-[color:var(--dr-ink)]">
               {originalTitle}
             </p>
           ) : null}
 
           {article.subtitleZh || article.subtitle ? (
-            <p className="dr-font-zh mt-3 max-w-[42rem] text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-meta)]">
+            <p className="dr-font-zh mt-4 max-w-[42rem] text-[length:var(--dr-type-deck-size)] leading-[var(--dr-type-deck-lh)] text-[color:var(--dr-ink-zh)]">
               {article.subtitleZh || article.subtitle}
             </p>
           ) : null}

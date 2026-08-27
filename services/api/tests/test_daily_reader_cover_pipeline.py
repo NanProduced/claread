@@ -136,10 +136,15 @@ class TestUpgradeImageUrl:
         assert upgrade_image_url(url).endswith("_1280.jpg")
 
     def test_guardian_trailing_width(self):
+        # guim CDN 对 1280 恒 403，升级目标应为其实际可供上限 1000。
         url = "https://media.guim.co.uk/abcdef/0_0_5472_3648/140.jpg"
         assert upgrade_image_url(url) == (
-            "https://media.guim.co.uk/abcdef/0_0_5472_3648/1280.jpg"
+            "https://media.guim.co.uk/abcdef/0_0_5472_3648/1000.jpg"
         )
+
+    def test_guardian_trailing_width_not_downgraded(self):
+        url = "https://media.guim.co.uk/abcdef/0_0_5472_3648/1000.jpg"
+        assert upgrade_image_url(url) == url
 
     def test_npr_width_suffix_upgraded(self):
         url = "https://media.npr.org/assets/img/2026/x_wide-abc_s800.jpg"

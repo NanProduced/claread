@@ -83,13 +83,31 @@ function SentenceMapCard({ map }: { map: DailyReaderSentenceMap }) {
 function ReadingUnitView({
   unit,
   sentenceMap,
+  isFirst = false,
 }: {
   unit: DailyReaderReadingUnit;
   sentenceMap?: DailyReaderSentenceMap;
+  isFirst?: boolean;
 }) {
+  const text = unit.text;
+  const dropCap = isFirst && text.length > 0 ? text[0] : null;
+  const rest = dropCap ? text.slice(1) : text;
+
   return (
     <div className="mt-8">
-      <p className={enBody}>{unit.text}</p>
+      <p className={enBody}>
+        {dropCap ? <span className="sr-only">{text}</span> : null}
+        {dropCap ? (
+          <span aria-hidden="true">
+            <span className="dr-font-en float-left mr-3 mt-[0.08em] text-[3.4em] font-normal leading-[0.82] text-[color:var(--dr-ink)]">
+              {dropCap}
+            </span>
+            {rest}
+          </span>
+        ) : (
+          text
+        )}
+      </p>
       {unit.translation ? <UnitTranslation translation={unit.translation} /> : null}
       {sentenceMap ? <SentenceMapCard map={sentenceMap} /> : null}
     </div>
@@ -268,8 +286,13 @@ export function DailyArticleBody({ article }: { article: DailyReaderArticle }) {
     <>
       {/* 正文流 */}
       <div className="mt-4">
-        {article.units.map((unit) => (
-          <ReadingUnitView key={unit.id} unit={unit} sentenceMap={sentenceMapByUnit.get(unit.id)} />
+        {article.units.map((unit, index) => (
+          <ReadingUnitView
+            key={unit.id}
+            unit={unit}
+            sentenceMap={sentenceMapByUnit.get(unit.id)}
+            isFirst={index === 0}
+          />
         ))}
       </div>
 

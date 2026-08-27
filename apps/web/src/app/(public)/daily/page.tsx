@@ -1,6 +1,5 @@
 import { ArrowRight, LogIn } from "lucide-react";
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { ClareadStamp } from "@/components/brand/BrandMarks";
 import { PublicSiteHeader } from "@/components/layout";
@@ -51,58 +50,56 @@ function articleMeta(article: DailyReaderListItem): string {
   return `${article.readTimeMinutes} 分钟 · ${article.difficulty}`;
 }
 
-/* ---------- Lead Article (Magazine Cover) ---------- */
+/* ---------- Lead Article (Editorial A1) ---------- */
 
 function LeadArticle({ article, kicker }: { article: DailyReaderListItem; kicker: string }) {
-  const hasCover = Boolean(article.coverImageUrl);
-
   return (
-    <Link
-      href={dailyArticleRoute(article.id)}
-      className="group relative block overflow-hidden rounded-xl"
-    >
-      {/* Cover image area */}
-      <div className="daily-lead-hero relative">
-        {hasCover ? (
-          <Image
-            src={article.coverImageUrl!}
-            alt={article.title}
-            fill
-            priority
-            sizes="(max-width: 768px) 100vw, 60vw"
-            className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.02]"
-          />
-        ) : (
-          <div className="absolute inset-0 bg-surface" />
-        )}
-
-        {/* Flat ink overlay for text readability — no gradient */}
-        <div className="absolute inset-0 bg-ink/40" />
-
-        {/* Content on top of image */}
-        <div className="absolute inset-x-0 bottom-0 p-6 sm:p-8 lg:p-10">
-          <p className="text-xs font-semibold tracking-[0.18em] text-white/70">
-            {kicker} · {formatLongDate(article.publishDate)}
-          </p>
-          <h2 className="mt-3 max-w-2xl font-headline text-[clamp(1.8rem,3.5vw,2.8rem)] font-semibold leading-[1.1] tracking-normal text-white">
-            {article.title}
-          </h2>
-          {article.subtitle ? (
-            <p className="mt-3 max-w-xl text-sm leading-6 text-white/70">
-              {article.subtitle}
+    <Link href={dailyArticleRoute(article.id)} className="group block">
+      <article className="border-t-2 border-[color:var(--dr-ink)] pt-6">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:gap-12">
+          {/* 文字区 */}
+          <div>
+            <p className="dr-font-mono text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]">
+              {kicker} · {formatLongDate(article.publishDate)} · {article.source}
             </p>
-          ) : null}
-          <div className="mt-5 flex flex-wrap items-center gap-4">
-            <span className="inline-flex items-center gap-2 text-sm font-medium text-white/90 transition-colors group-hover:text-white">
-              阅读全文
-              <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </span>
-            <span className="text-xs text-white/50">
-              {article.source} · {article.difficulty} · {article.readTimeMinutes} 分钟
-            </span>
+            <h2 className="dr-font-zh mt-5 text-balance text-[length:var(--dr-type-hero-size)] font-normal leading-[var(--dr-type-hero-lh)] tracking-[-0.018em] text-[color:var(--dr-ink-zh)]">
+              {article.title}
+            </h2>
+            {article.originalTitle ? (
+              <p className="dr-font-en mt-4 max-w-[40rem] text-[length:var(--dr-type-deck-size)] leading-[var(--dr-type-deck-lh)] text-[color:var(--dr-ink)]">
+                {article.originalTitle}
+              </p>
+            ) : null}
+            {article.subtitleZh || article.subtitle ? (
+              <p className="dr-font-zh mt-3 max-w-[38rem] text-[length:var(--dr-type-zh-size)] leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-meta)]">
+                {article.subtitleZh ?? article.subtitle}
+              </p>
+            ) : null}
+            <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[color:var(--dr-rule)] pt-4">
+              <span className="dr-font-ui inline-flex items-center gap-2 text-[length:var(--dr-type-caption-size)] font-semibold text-[color:var(--dr-accent)]">
+                阅读全文
+                <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+              </span>
+              <span className="dr-font-ui text-[length:var(--dr-type-caption-size)] text-[color:var(--dr-meta)]">
+                {article.difficulty} · {article.readTimeMinutes} 分钟
+                {article.tags[0] ? ` · ${article.tags[0]}` : ""}
+              </span>
+            </div>
           </div>
+
+          {/* 图片区：有封面才是 figure，无封面不放占位块 */}
+          {article.coverImageUrl ? (
+            <figure>
+              <div
+                role="img"
+                aria-label={`${article.title} 配图`}
+                className="aspect-[var(--dr-ratio-inline)] border border-[color:var(--dr-rule)] bg-[var(--dr-paper-raised)] bg-cover bg-center grayscale-[0.12] contrast-[0.94] saturate-[0.82]"
+                style={{ backgroundImage: `url("${article.coverImageUrl}")` }}
+              />
+            </figure>
+          ) : null}
         </div>
-      </div>
+      </article>
     </Link>
   );
 }
@@ -134,27 +131,32 @@ function EmptyLeadState() {
 
 /* ---------- Article List Item ---------- */
 
-function ArticleListItem({ article }: { article: DailyReaderListItem }) {
+function ArticleListItem({ article, index }: { article: DailyReaderListItem; index: number }) {
   return (
     <Link
       key={article.id}
       href={dailyArticleRoute(article.id)}
-      className="focus-ring group block py-5 transition-colors hover:bg-surface/70"
+      className="focus-ring group block py-5"
     >
-      <div className="grid grid-cols-[4.7rem_minmax(0,1fr)_1.25rem] gap-3">
-        <p className="text-xs font-semibold leading-5 text-lens-blue">
-          {formatPublishDate(article.publishDate)}
-          <span className="mt-1 block text-muted-foreground">{article.tags[0] ?? article.difficulty}</span>
+      <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_1.25rem] gap-3">
+        <p className="dr-font-mono text-[length:var(--dr-type-mono-size)] leading-[var(--dr-type-mono-lh)] text-[color:var(--dr-accent)]">
+          {String(index + 1).padStart(2, "0")}
+          <span className="mt-1 block text-[color:var(--dr-meta)]">
+            {formatPublishDate(article.publishDate)}
+          </span>
         </p>
         <div>
-          <h3 className="font-headline text-xl font-semibold leading-snug tracking-normal text-ink">
+          <h3 className="dr-font-zh text-[length:var(--dr-type-zh-size)] font-semibold leading-[var(--dr-type-zh-lh)] text-[color:var(--dr-ink-zh)]">
             {article.title}
           </h3>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">{articleMeta(article)}</p>
+          <p className="dr-font-ui mt-2 text-[length:var(--dr-type-caption-size)] leading-[var(--dr-type-caption-lh)] text-[color:var(--dr-meta)]">
+            {article.tags[0] ? `${article.tags[0]} · ` : ""}
+            {articleMeta(article)}
+          </p>
         </div>
         <ArrowRight
           aria-hidden="true"
-          className="mt-1 h-4 w-4 text-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-lens-blue"
+          className="mt-1 h-4 w-4 text-[color:var(--dr-meta)] opacity-0 transition-all group-hover:translate-x-0.5 group-hover:text-[color:var(--dr-accent)] group-hover:opacity-100"
         />
       </div>
     </Link>
@@ -214,9 +216,9 @@ export default async function DailyReaderPage() {
                       <div className="mb-4 flex items-center justify-between gap-3">
                         <h2 className="text-sm font-semibold text-lens-blue">更多今日</h2>
                       </div>
-                      <div className="divide-y divide-hairline border-y border-hairline">
-                        {otherTodayArticles.map((article) => (
-                          <ArticleListItem key={article.id} article={article} />
+                      <div className="divide-y divide-[color:var(--dr-rule)] border-y border-[color:var(--dr-rule)]">
+                        {otherTodayArticles.map((article, index) => (
+                          <ArticleListItem key={article.id} article={article} index={index} />
                         ))}
                       </div>
                     </div>
@@ -225,9 +227,9 @@ export default async function DailyReaderPage() {
                     <h2 className="text-sm font-semibold text-ink">往期精选</h2>
                     <ClareadStamp label="READ DEEPLY" className="bg-surface/80" />
                   </div>
-                  <div className="divide-y divide-hairline border-y border-hairline">
-                    {archiveItems.length > 0 ? archiveItems.map((article) => (
-                      <ArticleListItem key={article.id} article={article} />
+                  <div className="divide-y divide-[color:var(--dr-rule)] border-y border-[color:var(--dr-rule)]">
+                    {archiveItems.length > 0 ? archiveItems.map((article, index) => (
+                      <ArticleListItem key={article.id} article={article} index={index} />
                     )) : (
                       <p className="py-5 text-sm leading-6 text-muted-foreground">
                         暂无往期内容。
