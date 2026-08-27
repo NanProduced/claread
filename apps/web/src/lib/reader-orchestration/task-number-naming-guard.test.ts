@@ -493,7 +493,7 @@ describe("Syntax-aware task-history governance", () => {
     // roots that exist on disk, measured at runtime via git ls-files.
     // Bump this number whenever tracked TypeScript files are added or
     // removed (re-measure with the guard run, never hand-count).
-    expect(TYPESCRIPT_PATHS).toHaveLength(758);
+    expect(TYPESCRIPT_PATHS).toHaveLength(756);
     expect(PARSE_RESULTS.length).toBeGreaterThan(0);
     expect(
       PARSE_RESULTS.flatMap((result) =>

@@ -18,7 +18,7 @@
  * （见 input-markdown-image-kit；G1′ 前曾降级为 generic link，导致
  * 图片性与 title 不可逆丢失）。
  *
- * reference-style image（G1P-A-R2）：`![alt][ref]` + `[ref]: url` 的
+ * reference-style image：`![alt][ref]` + `[ref]: url` 的
  * mdast imageReference / definition 都不在输入端 allowedNodes 内，会被
  * 静默丢弃。插件两遍解析：第一遍收集 definition（identifier 已由
  * parser 统一规范化为小写 + 空白折叠，ref/def 两侧一致，直接 Map 匹配；
@@ -86,7 +86,7 @@ function transform(node: MdastNode, definitions: Map<string, CollectedDefinition
   // 此处不再降级 html 节点，避免 rules.html 永远收不到 html 节点。
   // image 也不在此处降级（G1′）：mdast image 原样通过，typed image
   // 转换由输入端 Markdown options 的 img 规则完成。
-  // imageReference → 内联 image（G1P-A-R2）：resolved 时用 definition 的
+  // imageReference → 内联 image：resolved 时用 definition 的
   // url/title + 引用的 alt；unresolved 降级为可见字面 Markdown（防御
   // 分支——parser 正常已把无定义引用预解析为字面文本）。
   if (node.type === "imageReference") {

@@ -726,8 +726,8 @@ describe("Clipboard Source Negotiation", () => {
 
 // ---------------------------------------------------------------------------
 // G1P-B-A dual-MIME Layer A 边界：HTML 仍是结构 truth，只让 HTML 自身已有的
-// image/code language 不丢；plain 额外/冲突字段一律不补（O-B1 属 G1P-B-B，
-// 本轮不实现）；plain URL 永不进入 HTML img；callout fusion 不变。
+// image/code language 不丢；plain 额外/冲突字段一律不补（plain 侧独立字段
+// 补齐不在此边界）；plain URL 永不进入 HTML img；callout fusion 不变。
 // ---------------------------------------------------------------------------
 
 describe("G1P-B-A dual-MIME Layer A boundary", () => {
@@ -1277,14 +1277,14 @@ describe("G1P-B-B trust-boundary guards（Slice C）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G1P-B-B-R1 · production plain-deserializer wiring。真实 MarkdownTextInput
+// production plain-deserializer wiring。真实 MarkdownTextInput
 // 注入的 deserializeMarkdown 是默认 projection deserializer
 // （deserializeMarkdownToBlocksWithStatus(md).blocks，不产生 typed img），
 // 因此 image alt/title fusion 必须在内部分辨 input-aware plain blocks，
 // 而不是依赖调用方注入形态。
 // ---------------------------------------------------------------------------
 
-describe("G1P-B-B production plain-deserializer wiring（R1）", () => {
+describe("production plain-deserializer wiring", () => {
   it("注入默认 projection deserializer 时 image field fusion 仍建立 plan", () => {
     const html = `<p>before <img src="https://example.com/a.png"> after</p>`;
     const plain = `before ![plain-alt](https://example.com/a.png "plain-title") after`;

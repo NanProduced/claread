@@ -145,10 +145,10 @@ describe("remarkPreserveUnsupported", () => {
 });
 
 // ===========================================================================
-// G1P-A-R2 · RED 2：reference-style image（两遍解析合同）
+// reference-style image（两遍解析合同）
 //
 // 现状（RED）：imageReference 与 definition 都不在 allowedNodes 内，输入端
-// 编辑后 serialize 把引用图片整体静默丢掉（R1 review F2）。
+// 编辑后 serialize 把引用图片整体静默丢掉。
 //
 // 合同：pass 1 收集 definition（identifier 由 parser 统一规范化：小写 +
 // 空白折叠，ref/def 两侧一致，直接 Map 匹配；first-wins）；pass 2 把
@@ -156,7 +156,7 @@ describe("remarkPreserveUnsupported", () => {
 // alt 取引用），unresolved 降级为可见字面文本。不处理 linkReference。
 // ===========================================================================
 
-describe("remarkPreserveUnsupported reference-style image（插件级，G1P-A-R2）", () => {
+describe("remarkPreserveUnsupported reference-style image（插件级）", () => {
   it("resolved imageReference → image：url/title 来自 definition，alt 来自引用", () => {
     const tree = {
       type: "root",
@@ -303,10 +303,10 @@ describe("remarkPreserveUnsupported reference-style image（插件级，G1P-A-R2
 });
 
 // ---------------------------------------------------------------------------
-// G1P-A-R2 · RED 2（集成）：输入端 options 全链路 round-trip 矩阵
+// reference-style image（集成）：输入端 options 全链路 round-trip 矩阵
 // ---------------------------------------------------------------------------
 
-describe("reference-style image 输入端 round-trip（集成，G1P-A-R2）", () => {
+describe("reference-style image 输入端 round-trip（集成）", () => {
   // 引用图片需要 img 走 typed 表示：使用与生产输入端一致的
   // INPUT_MARKDOWN_PLUGIN_OPTIONS + InputMarkdownImagePlugin（serialize
   // 的 inline img 走 buildMdastNode 的 plugin 解析，生产编辑器同构组成）。

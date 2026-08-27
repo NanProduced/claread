@@ -632,7 +632,7 @@ describe("reveal 定位", () => {
     );
   });
 
-  it("reveal 命中 typed image：DOM selection 同步到图片 leaf（非仅返回 true，G1P-A-R2）", async () => {
+  it("reveal 命中 typed image：DOM selection 同步到图片 leaf（非仅返回 true）", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue("![shaded avenue](https://example.com/a.png)");
