@@ -17,6 +17,12 @@
 - 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
 - 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
+## Daily Reader teaching_v2
+
+- 评测基线：`evals/datasets/daily-reader-teaching-v2/` + `evals/rubrics/daily-reader-teaching-v2.yaml`（确定性硬闸 + 八维 Judge）。离线套件入口 `evals/tests/test_daily_reader_teaching_v2.py`。
+- 生产防线不在 evals 复制一份：`evals/claread_eval/daily_reader/teaching_v2/` 把 `services/api` 插入 `sys.path`，import `app.services.daily_reader.teaching`（schema / gates / prototype / normalize）。Gold、Judge、报告留在 evals。
+- 改硬闸或字段合同先改 `services/api/app/services/daily_reader/teaching/`，再跑 evals 教学套件。架构见 `docs/architecture/daily-reader.md`。
+
 ## 验证
 
 按任务范围优先跑对应评测或测试；没有稳定入口前，至少运行相关 Python 单测和静态检查，并在交付说明里写清未覆盖的评测缺口。

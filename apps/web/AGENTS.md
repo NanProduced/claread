@@ -51,6 +51,12 @@
 3. 真实代码落地：使用 `$impeccable` 做 production-grade 实现和打磨。
 4. 交付前检查：使用 `$ui-ux-pro-max` 做可用性、响应式和无障碍校验。
 
+## Daily Reader 页
+
+- `/daily`、`/daily/[articleId]` 消费 v2 教学 IA，不渲染 v1 逐段问答。ViewModel 顺序：阅读任务卡 → 正文流（译文按需，`details`）→ 结构提纲 → 语言精讲 → 证据自测 → 迁移任务 → 收束。落点：`src/types/view/DailyReaderVm.ts`、`src/app/(public)/daily/[articleId]/DailyArticleBody.tsx`。
+- 载荷来自 API 三字段 `lesson_blueprint` / `learning_package` / `reading_units`，经 `src/adapters/daily-reader.adapter.ts` 投影。公开页只展示已发布文章。
+- 架构见 `docs/architecture/daily-reader.md`。
+
 ## 验证
 
 Web 开发开始后，应补齐：

@@ -26,6 +26,14 @@
 - 保留 prompt version、source metadata、`reader_runtime_spans` 和 `reader_events`，方便回看和 eval。
 - 当前架构权威上下文在 `docs/architecture/reader-orchestration.md`。
 
+## Daily Reader（当前唯一 Daily 生产链）
+
+- v2 教学会话是唯一生产链：discovery → extraction → scoring（`learning_fit`，阈值 7.0）→ LangGraph 4+1（blueprint / language_support / translation / semantic_review，FAIL 才 refinement）→ `lesson_v2` JSONB。v1 节点已从 run path 删除。
+- 公开 API 三载荷：`lesson_blueprint` / `learning_package` / `reading_units`（`app/schemas/daily_reader.py`）。公开端点只见 `published`。
+- 防线单一事实源：`app/services/daily_reader/teaching/`（stdlib-only；evals 经 `sys.path` import）。DTO 在 `app/schemas/internal/daily_lesson_v2.py`。
+- 过硬闸 / review FAIL / 冻结派生 → draft + `draft_with_verdict`；schema 或传输错误 → 硬 abort 不落库（`pipeline.py`）。
+- 架构权威上下文：`docs/architecture/daily-reader.md`。
+
 ## Ask Claread（当前唯一 Ask 生产链）
 
 - 旧 Analysis Ask、Ask legacy lane 已物理删除；`reader_record_ask` agentic v2 是唯一 Ask 执行链（article-bound、可回源、可确认写入、统一审计/结算）。

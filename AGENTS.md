@@ -56,6 +56,7 @@
 - 不迁移旧脚本式 regression suite；评测路线后续用 Directus + LLM-as-a-Judge 重建。
 - 后端核心测试、小程序构建和 TypeScript 检查是当前基线验证入口。
 - 新仓库文档描述当前事实和架构决策，不记录搬迁过程细节。
+- Daily Reader 当前唯一生产链是 v2 教学会话（discovery → scoring → 4+1 workflow → `lesson_v2`）；v1 逐段问答 / 固定讨论题已退役。架构见 `docs/architecture/daily-reader.md`。
 
 # 💻 PowerShell 执行规范 （Codex\ChatGPT必须遵守）
 
