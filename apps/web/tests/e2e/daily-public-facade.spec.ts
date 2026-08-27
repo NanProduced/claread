@@ -1,5 +1,5 @@
 /**
- * C-3 每日精读门面修复验收（P0-1 级联、P0-2 空态降级、P2-11 按钮、SEO）。
+ * 每日精读公开门面验收（详情页可读性、列表空态降级、页底主行动、SEO）。
  * 依赖真实本地 FastAPI 数据（当前有已发布文章、今日为空）。
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -98,8 +98,8 @@ async function probeLocator(page: Page, locator: Locator) {
   });
 }
 
-test.describe("daily public facade (C-3)", () => {
-  test("P0-1: CTA 与来源链接在详情页可读，anchor 无同色于背景", async ({ page }) => {
+test.describe("daily public facade", () => {
+  test("CTA 与来源链接在详情页可读，anchor 无同色于背景", async ({ page }) => {
     await page.goto(DETAIL_PATH);
     await installColorProbe(page);
 
@@ -177,7 +177,7 @@ test.describe("daily public facade (C-3)", () => {
     expect((await paragraphNumber.boundingBox())?.x).toBeGreaterThanOrEqual(0);
   });
 
-  test("P0-2: 列表页今日为空时降级出头条且往期可见，无开发术语", async ({ page }) => {
+  test("列表页今日为空时降级出头条且往期可见，无开发术语", async ({ page }) => {
     await page.goto("/daily");
     await installColorProbe(page);
 
@@ -202,7 +202,7 @@ test.describe("daily public facade (C-3)", () => {
     expect(victims).toEqual([]);
   });
 
-  test("P2-11: 页底单一主行动；分享按钮有反馈", async ({ page, context }) => {
+  test("页底单一主行动；分享按钮有反馈", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.goto(DETAIL_PATH);
 

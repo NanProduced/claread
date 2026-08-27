@@ -4,7 +4,7 @@ import { Share2 } from "lucide-react";
 import { toast } from "@/components/primitives/toast";
 
 /**
- * 详情页 byline 分享按钮（C-3 P2-11）：优先 navigator.share，
+ * 详情页 byline 分享按钮：优先 navigator.share，
  * 不支持时复制当前链接；无论走哪条路径都给 toast 反馈。
  */
 export function DailyArticleShareButton({ title }: { title: string }) {
