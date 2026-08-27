@@ -377,16 +377,18 @@ const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center just
  *   显示失败占位（主文案「图片无法加载」，alt 仅作次级说明，空 alt 时给
  *   「图片加载失败」引导）+ 重新加载 / 复制链接 / 修改链接。
  * - unsafe URL：不渲染带 src 的 img（永不发起请求），显示「链接不安全」
- *   占位 + 说明 + 原始 URL 可见 + 修改链接；不提供会加载原 URL 的退路。
- *   输入面是显式编辑上下文，URL 保持可见（区别于 Reader 普通表面）。
+ *   占位 + 说明 + 修改链接；普通状态不显示 raw URL，仅点击「修改链接」
+ *   进入显式编辑面板后允许显示和编辑 URL；不提供会加载原 URL 的退路。
  * - 修改链接：冻结前本地编辑态；保存只更新当前 image node 的 URL
  *   （alt/title/顺序不变，触发正常 serialize/onChange）；取消零变化。
  *   编辑控件 contentEditable={false}，控件文本永不进入 Markdown serialize。
  * - 成功态 chrome：右上角绝对定位紧凑中性 toolbar（icon-only + Tooltip
  *   primitive，hover / focus-within 才显示），不长期显示「修改链接」。
- * - 原生 `<img loading="lazy" decoding="async" referrerPolicy="no-referrer">`，
- *   不用 next/image；alt 只用于 img alt，显式 Markdown title 作为可见
- *   caption，无 title 不自动把 alt 显示成 caption。
+ * - 原生 `<img decoding="async" referrerPolicy="no-referrer">`，不用
+ *   next/image，也不加 loading=lazy——img 在 onLoad 前是 display:none，
+ *   Chromium 不请求没有布局盒的 lazy 图片，hidden+lazy 会死锁在加载中；
+ *   alt 只用于 img alt，显式 Markdown title 作为可见 caption，无 title
+ *   不自动把 alt 显示成 caption。
  *
  * Slate void 合同：必须渲染 {children}（void 内层 text
  * leaf）。slate 的 Editor.point/range 把选区 points 解析到该 leaf，
@@ -513,7 +515,6 @@ function InputImageElement({
         <span contentEditable={false} data-image-state="unsafe" className={IMAGE_PLACEHOLDER_CLASS}>
           <span className="font-medium text-ink">链接不安全</span>
           <span className="text-[0.78rem] leading-snug">该图片链接不安全，图片未加载；可修改链接后重试。</span>
-          <span className="break-all font-mono text-[0.78rem]">{url}</span>
           <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
             修改链接
           </button>
@@ -576,7 +577,6 @@ function InputImageElement({
           data-image-state={loadState === "loaded" ? "loaded" : undefined}
           src={url}
           alt={altText}
-          loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
           onLoad={() => setLoadState("loaded")}

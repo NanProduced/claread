@@ -157,19 +157,30 @@ describe("InputImageElement trust boundary（组件渲染层）", () => {
     },
   );
 
-  it("native img 属性完整：lazy / async / no-referrer / alt；无原生 title tooltip", () => {
+  it("native img 属性完整：async / no-referrer / alt，无 lazy；无原生 title tooltip", () => {
     const { container } = renderInputImage(
       "https://example.com/a.png",
       "alt text",
       "The Title",
     );
     const img = container.querySelector("img");
-    expect(img?.getAttribute("loading")).toBe("lazy");
+    // NARROW-REPAIR 契约：移除 loading=lazy（与 Reader 一致），保留状态机
+    expect(img?.getAttribute("loading")).toBeNull();
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
     // R2 契约：移除原生 title tooltip，显式 title 只作为可见 caption
     expect(img?.getAttribute("title")).toBeNull();
+  });
+
+  it("防死锁回归：加载前隐藏的 img 不得携带 loading=lazy（真实浏览器需能发起原生请求）", () => {
+    // img 在 onLoad 前是 display:none；Chromium 不会请求没有布局盒的 lazy
+    // 图片，hidden+lazy 会死锁在「图片加载中…」。允许加载前隐藏，禁止 lazy。
+    const { container } = renderInputImage("https://example.com/a.png", "alt");
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.className).toContain("hidden");
+    expect(img?.getAttribute("loading")).not.toBe("lazy");
   });
 });
 
@@ -240,13 +251,17 @@ describe("InputImageElement 四态（§11.1）", () => {
     expect(writeText).toHaveBeenCalledWith("https://example.com/a.png");
   });
 
-  it("unsafe：不渲染 img，显示链接不安全 + 说明 + 原 URL + 修改链接，无加载退路", () => {
+  it("unsafe：不渲染 img，普通状态不显示 raw URL；进入编辑面板后才显示并可编辑", () => {
     const { container } = renderInputImage("javascript:alert(1)");
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("链接不安全");
-    // 输入面是显式编辑上下文：URL 保持可见（区别于 Reader 普通表面）
-    expect(container.textContent).toContain("javascript:alert(1)");
+    // NARROW-REPAIR 契约：普通表面不显示 raw URL（与 Reader 一致）
+    expect(container.textContent).not.toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+    // 仅点击「修改链接」进入显式编辑面板后允许显示和编辑 URL
+    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    const input = screen.getByLabelText("图片链接") as HTMLInputElement;
+    expect(input.value).toBe("javascript:alert(1)");
   });
 });
 
@@ -316,7 +331,7 @@ describe("InputImageElement 紧凑 chrome 与 caption（R2）", () => {
     expect(c2.querySelector("[data-image-caption='true']")).toBeNull();
   });
 
-  it("重新加载：重新挂载同一安全 URL，不改写", () => {
+  it("重新加载：重新挂载同一安全 URL，不改写；重挂的 img 可重新触发原生加载", () => {
     const { container } = renderInputImage("https://example.com/a.png", "alt");
     const firstImg = container.querySelector("img");
     act(() => {
@@ -329,11 +344,23 @@ describe("InputImageElement 紧凑 chrome 与 caption（R2）", () => {
     expect(retryImg).not.toBeNull();
     expect(retryImg).not.toBe(firstImg);
     expect(retryImg?.getAttribute("src")).toBe("https://example.com/a.png");
+    // 重挂的 img 不得携带 lazy（真实浏览器中隐藏的 lazy 图片不会发起请求）
+    expect(retryImg?.getAttribute("loading")).not.toBe("lazy");
     expect(
       container.querySelector("[data-image-state='loading']"),
     ).not.toBeNull();
     expect(
       container.querySelector("[data-image-state='load_failed']"),
+    ).toBeNull();
+    // 重挂的 img 是活的：其 load 事件能把组件推进 loaded（重试可恢复）
+    act(() => {
+      fireEvent(retryImg as Element, new Event("load"));
+    });
+    expect(
+      container.querySelector("[data-image-state='loaded']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[data-image-state='loading']"),
     ).toBeNull();
   });
 });
@@ -910,6 +937,7 @@ describe("reference-style unsafe destination（渲染层）", () => {
     );
     expect(container.querySelector("img[src]")).toBeNull();
     expect(container.textContent).toContain("链接不安全");
-    expect(container.textContent).toContain("javascript:alert(1)");
+    // NARROW-REPAIR 契约：普通表面不显示 raw URL（节点级上方已断言保真）
+    expect(container.textContent).not.toContain("javascript:alert(1)");
   });
 });

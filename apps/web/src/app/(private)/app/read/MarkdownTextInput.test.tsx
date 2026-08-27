@@ -806,7 +806,7 @@ describe("G1′ image round-trip（deserialize + serialize 语义保持）", () 
 });
 
 describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前 fail-closed）", () => {
-  it("safe URL：渲染真实 img（lazy/decoding/referrerPolicy），loading 占位保留", async () => {
+  it("safe URL：渲染真实 img（无 lazy/async/referrerPolicy），loading 占位保留", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue('![a](https://example.com/a.png "T")');
@@ -814,7 +814,9 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     const img = editorEl.querySelector("img");
     expect(img).not.toBeNull();
     expect(img?.getAttribute("src")).toBe("https://example.com/a.png");
-    expect(img?.getAttribute("loading")).toBe("lazy");
+    // NARROW-REPAIR 契约：移除 loading=lazy（隐藏的 lazy 图片在真实浏览器
+    // 不会发起请求，会死锁在「图片加载中…」）
+    expect(img?.getAttribute("loading")).toBeNull();
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("a");
@@ -870,24 +872,30 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     expect(editorEl.textContent).toContain("图片加载失败");
   });
 
-  it("unsafe URL：无 img[src]，显示链接不安全占位、原 URL 可见、提供修改链接", async () => {
+  it("unsafe URL：无 img[src]，普通状态不显示原 URL，进入编辑面板后才可见", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue("![a](javascript:alert(1))");
     });
     expect(editorEl.querySelector("img[src]")).toBeNull();
     expect(editorEl.textContent).toContain("链接不安全");
-    expect(editorEl.textContent).toContain("javascript:alert(1)");
+    // NARROW-REPAIR 契约：普通表面不显示 raw URL（显式编辑面板除外）
+    expect(editorEl.textContent).not.toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+    // 点击「修改链接」进入显式编辑面板后允许显示和编辑 URL
+    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    const input = screen.getByLabelText("图片链接") as HTMLInputElement;
+    expect(input.value).toBe("javascript:alert(1)");
   });
 
-  it("unsafe URL（相对路径）：同样 fail-closed，不回退相对地址", async () => {
+  it("unsafe URL（相对路径）：同样 fail-closed，不显示也不回退相对地址", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue("![a](./local.png)");
     });
     expect(editorEl.querySelector("img[src]")).toBeNull();
     expect(editorEl.textContent).toContain("链接不安全");
+    expect(editorEl.textContent).not.toContain("./local.png");
   });
 
   it("修改链接：保存只更新 URL（保留 alt/title），取消零变化", async () => {
