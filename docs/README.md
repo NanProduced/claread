@@ -39,6 +39,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 |------|------|
 | `docs/architecture/overview.md` | 架构总览与核心边界 |
 | `docs/architecture/ask-claread.md` | Ask Claread 当前正式架构说明：article-bound agent-loop runtime、turn run、受控工具与文章 RAG |
+| `docs/architecture/daily-reader.md` | Daily Reader 当前生产架构：v2 教学会话链、教学合同、五道防线与 draft-with-verdict |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力差异 |
