@@ -1,34 +1,30 @@
-"""A-5P performance, cost, and usage-observability regressions."""
+"""A-5P performance, cost, and usage-observability regressions (teaching v2)."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from daily_reader_teaching_v2_fixtures import (
+    _blueprint_span,
+    _language_support_span,
+    graph_input_state,
+    make_blueprint,
+    make_usage,
+    v2_happy_path,
+)
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from app.llm.routes import (
-    MODEL_ROUTE_DAILY_TAKEAWAYS,
-    MODEL_ROUTE_DAILY_TRANSLATION,
-)
 from app.llm.types import ResolvedModelConfig
-from app.schemas.internal.daily_drafts import (
-    CloseReadingTakeaways,
-    DailyParagraphDraft,
-    DailyRefinementDraft,
-    DailyReviewDraft,
-    DailyVocabDraft,
-    DailyVocabHighlight,
-    ParagraphNotesDraft,
-    ParagraphReadingNote,
-)
 from app.services.ai_usage import STATUS_SKIPPED, STATUS_SUCCEEDED
+from app.services.daily_reader import workflow as workflow_module
 from app.services.daily_reader.discovery import DiscoveredArticle
 from app.services.daily_reader.pipeline import (
     _run_workflow_and_store,
@@ -38,295 +34,16 @@ from app.services.daily_reader.pipeline import (
 from app.services.daily_reader.scoring import ArticleScore
 from app.services.daily_reader.workflow import (
     build_daily_reader_graph,
-    close_reading_takeaways_node,
-    highlight_by_paragraph_batches_node,
-    paragraph_guides_and_translations_node,
     refinement_node,
+    translation_node,
 )
 
-
-@pytest.mark.anyio
-async def test_graph_preserves_per_agent_usage_snapshot() -> None:
-    article = (
-        "Substantive analysis explains a complex policy choice with evidence and "
-        "context for readers who want to understand its wider consequences."
-    )
-
-    async def fake_highlight(*, deps, **_kwargs):
-        paragraph = deps.paragraphs[0]
-        text = str(paragraph["text"])
-        anchor = "Substantive"
-        start = text.index(anchor)
-        return {
-            "output": DailyVocabDraft(paragraphs=[DailyParagraphDraft(
-                paragraph_id=str(paragraph["paragraph_id"]),
-                text=text,
-                highlights=[DailyVocabHighlight(
-                    anchor=anchor,
-                    start=start,
-                    end=start + len(anchor),
-                    type="vocab_highlight",
-                    gloss="实质性的",
-                )],
-            )]),
-            "usage_metadata": {
-                "input_tokens": 10,
-                "output_tokens": 2,
-                "total_tokens": 12,
-                "model_requests": 2,
-                "tool_calls": 1,
-            },
-        }
-
-    async def fake_notes(**_kwargs):
-        return {
-            "output": ParagraphNotesDraft(
-                article_summary="文章摘要",
-                reading_focus=["关注论证方式"],
-                notes=[ParagraphReadingNote(
-                    paragraph_id="p_0",
-                    focus_question="作者如何论证？",
-                    micro_summary="作者结合证据解释政策选择。",
-                    translation="这篇分析用证据解释了一项复杂的政策选择及其广泛影响。",
-                )],
-                refined_difficulty="B2",
-            ),
-            "usage_metadata": {
-                "input_tokens": 20,
-                "output_tokens": 4,
-                "total_tokens": 24,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
-    async def fake_takeaways(**_kwargs):
-        return {
-            "output": CloseReadingTakeaways(
-                title_zh="复杂政策如何影响读者",
-                subtitle_zh="一篇以证据解释后果的分析",
-                tags_zh=["公共政策", "论证"],
-                article_takeaway="证据帮助读者理解复杂政策的后果。",
-                key_expressions=[],
-                sentence_notes=[],
-                writing_moves=[],
-                discussion_questions=["What evidence is strongest?", "What remains unclear?"],
-            ),
-            "usage_metadata": {
-                "input_tokens": 30,
-                "output_tokens": 6,
-                "total_tokens": 36,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
-    async def fake_review(**_kwargs):
-        return {
-            "output": DailyReviewDraft(passed=True, overall_score=0.95, issues=[]),
-            "usage_metadata": {
-                "input_tokens": 40,
-                "output_tokens": 8,
-                "total_tokens": 48,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
-    with (
-        patch(
-            "app.services.daily_reader.workflow._run_daily_highlight_llm_span",
-            new=fake_highlight,
-        ),
-        patch(
-            "app.services.daily_reader.workflow._run_daily_paragraph_notes_llm_span",
-            new=fake_notes,
-        ),
-        patch(
-            "app.services.daily_reader.workflow._run_daily_takeaways_llm_span",
-            new=fake_takeaways,
-        ),
-        patch("app.services.daily_reader.workflow._run_daily_review_llm_span", new=fake_review),
-    ):
-        final_state = await build_daily_reader_graph().ainvoke({
-            "original_text": article,
-            "title": "Policy analysis",
-            "difficulty": "B2",
-        })
-
-    assert final_state["usage_summary"] == {
-        "available": True,
-        "per_agent": {
-            "vocab": {
-                "input_tokens": 10,
-                "output_tokens": 2,
-                "total_tokens": 12,
-                "model_requests": 2,
-                "tool_calls": 1,
-            },
-            "paragraph_notes": {
-                "input_tokens": 20,
-                "output_tokens": 4,
-                "total_tokens": 24,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-            "takeaways": {
-                "input_tokens": 30,
-                "output_tokens": 6,
-                "total_tokens": 36,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-            "review": {
-                "input_tokens": 40,
-                "output_tokens": 8,
-                "total_tokens": 48,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        },
-        "aggregate": {
-            "input_tokens": 100,
-            "output_tokens": 20,
-            "total_tokens": 120,
-            "model_requests": 5,
-            "tool_calls": 1,
-        },
-    }
+WORKFLOW_MODULE = "app.services.daily_reader.workflow"
 
 
-@pytest.mark.anyio
-async def test_highlight_batches_are_bounded_concurrent_and_deterministic() -> None:
-    paragraphs = [
-        {
-            "paragraph_id": f"p_{index}",
-            "text": f"Token{index} " + ("substantive article context " * 6),
-        }
-        for index in range(12)
-    ]
-    active = 0
-    max_active = 0
-    call_count = 0
-
-    async def fake_highlight(*, deps, **_kwargs):
-        nonlocal active, max_active, call_count
-        call_count += 1
-        active += 1
-        max_active = max(max_active, active)
-        try:
-            # Finish the first batch last to prove merge order is input order,
-            # not task completion order.
-            await asyncio.sleep(0.02 if deps.batch_index == 0 else 0)
-            drafts = []
-            for paragraph in deps.paragraphs:
-                text = str(paragraph["text"])
-                anchor = text.split()[0]
-                drafts.append(DailyParagraphDraft(
-                    paragraph_id=str(paragraph["paragraph_id"]),
-                    text=text,
-                    highlights=[DailyVocabHighlight(
-                        anchor=anchor,
-                        start=0,
-                        end=len(anchor),
-                        type="vocab_highlight",
-                        gloss="测试释义",
-                    )],
-                ))
-            return {
-                "output": DailyVocabDraft(paragraphs=drafts),
-                "usage_metadata": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
-            }
-        finally:
-            active -= 1
-
-    with patch(
-        "app.services.daily_reader.workflow._run_daily_highlight_llm_span",
-        new=fake_highlight,
-    ):
-        result = await highlight_by_paragraph_batches_node({
-            "normalized_paragraphs": paragraphs,
-            "difficulty": "B2",
-        })
-
-    assert call_count == 2
-    assert max_active == 2
-    assert [item["paragraph_id"] for item in result["highlights_json"]] == [
-        f"p_{index}" for index in range(12)
-    ]
-    assert result["vocab_usage"] == {
-        "input_tokens": 20,
-        "output_tokens": 4,
-        "total_tokens": 24,
-        "model_requests": 0,
-        "tool_calls": 0,
-    }
-
-
-@pytest.mark.anyio
-async def test_translation_and_takeaways_use_distinct_explicit_routes() -> None:
-    routes = []
-
-    async def fake_run_agent_with_route(**kwargs):
-        routes.append((kwargs["route"], kwargs["model_selection"].preset))
-        if kwargs["route"] == MODEL_ROUTE_DAILY_TRANSLATION:
-            output = ParagraphNotesDraft(
-                article_summary="摘要",
-                reading_focus=["关注论证"],
-                notes=[ParagraphReadingNote(
-                    paragraph_id="p_0",
-                    focus_question="作者如何论证？",
-                    micro_summary="作者给出了证据。",
-                    translation="作者用证据解释了观点。",
-                )],
-                refined_difficulty="B2",
-            )
-        else:
-            output = CloseReadingTakeaways(
-                title_zh="证据如何支撑观点",
-                subtitle_zh="一篇关注论证方式的文章",
-                tags_zh=["论证", "写作"],
-                article_takeaway="证据使观点更可信。",
-                key_expressions=[],
-                sentence_notes=[],
-                writing_moves=[],
-                discussion_questions=["What works?", "What is missing?"],
-            )
-        return SimpleNamespace(output=output, usage=None)
-
-    paragraph = {
-        "paragraph_id": "p_0",
-        "text": "Evidence supports the argument with concrete examples.",
-    }
-    with (
-        patch(
-            "app.services.daily_reader.workflow.run_agent_with_route",
-            new=fake_run_agent_with_route,
-        ),
-        patch("app.services.daily_reader.workflow.get_daily_footer_agent", return_value=object()),
-        patch(
-            "app.services.daily_reader.workflow.get_daily_interpretation_agent",
-            return_value=object(),
-        ),
-    ):
-        notes = await paragraph_guides_and_translations_node({
-            "normalized_paragraphs": [paragraph],
-            "title": "Evidence",
-            "difficulty": "B2",
-            "highlights_json": [],
-        })
-        await close_reading_takeaways_node({
-            "normalized_paragraphs": [paragraph],
-            "title": "Evidence",
-            "difficulty": "B2",
-            "highlights_json": [],
-            "paragraph_notes_json": notes["paragraph_notes_json"],
-        })
-
-    assert routes == [
-        (MODEL_ROUTE_DAILY_TRANSLATION, "daily_reader"),
-        (MODEL_ROUTE_DAILY_TAKEAWAYS, "daily_reader"),
-    ]
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 def test_daily_model_preset_declares_every_daily_cost_tier() -> None:
@@ -340,6 +57,49 @@ def test_daily_model_preset_declares_every_daily_cost_tier() -> None:
         "daily_takeaways": {"profile": "workflow-deepseek-v4-pro"},
         "daily_review": {"profile": "workflow-deepseek-v4-pro"},
     }
+
+
+@pytest.mark.anyio
+async def test_graph_preserves_per_stage_usage_snapshot() -> None:
+    with v2_happy_path():
+        final_state = await build_daily_reader_graph().ainvoke(graph_input_state())
+
+    assert final_state["usage_summary"] == {
+        "available": True,
+        "per_agent": {
+            "blueprint": make_usage("blueprint"),
+            "language_support": make_usage("language_support"),
+            "translation": make_usage("translation"),
+            "semantic_review": make_usage("semantic_review"),
+        },
+        "aggregate": {
+            "input_tokens": 40,
+            "output_tokens": 8,
+            "total_tokens": 48,
+            "model_requests": 4,
+            "tool_calls": 0,
+        },
+    }
+
+
+def test_teaching_stages_use_their_declared_routes() -> None:
+    """P-4E route mapping frozen into the production spans:
+    blueprint→daily_analysis, language_support→daily_annotation,
+    translation→daily_translation, semantic_review/refinement→daily_review."""
+    source_by_span = {
+        "blueprint": inspect.getsource(workflow_module._run_blueprint_llm_span),
+        "language_support": inspect.getsource(workflow_module._run_language_support_llm_span),
+        "translation": inspect.getsource(workflow_module._run_translation_llm_span),
+        "semantic_review": inspect.getsource(workflow_module._run_semantic_review_llm_span),
+        "refinement": inspect.getsource(workflow_module._run_teaching_refinement_llm_span),
+    }
+    assert "route=MODEL_ROUTE_DAILY_ANALYSIS" in source_by_span["blueprint"]
+    assert "route=MODEL_ROUTE_DAILY_ANNOTATION" in source_by_span["language_support"]
+    assert "route=MODEL_ROUTE_DAILY_TRANSLATION" in source_by_span["translation"]
+    assert "route=MODEL_ROUTE_DAILY_REVIEW" in source_by_span["semantic_review"]
+    assert "route=MODEL_ROUTE_DAILY_REVIEW" in source_by_span["refinement"]
+    # the takeaways route (v1) must not appear anywhere in the v2 workflow
+    assert "MODEL_ROUTE_DAILY_TAKEAWAYS" not in inspect.getsource(workflow_module)
 
 
 @pytest.mark.anyio
@@ -412,7 +172,7 @@ async def test_pipeline_runs_two_articles_concurrently_but_returns_score_order()
 
 
 @pytest.mark.anyio
-async def test_aborted_workflow_records_usage_snapshot() -> None:
+async def test_aborted_workflow_records_usage_snapshot_and_diagnostics() -> None:
     article = DiscoveredArticle(
         url="https://example.test/aborted",
         title="Aborted candidate",
@@ -423,12 +183,21 @@ async def test_aborted_workflow_records_usage_snapshot() -> None:
         word_count=800,
         needs_extraction=False,
     )
-    graph = SimpleNamespace(ainvoke=AsyncMock(return_value={
-        "abort": True,
-        "review_result": {"reason": "quality_review_rejected"},
-        "vocab_usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
-        "review_usage": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
-    }))
+    graph = SimpleNamespace(
+        ainvoke=AsyncMock(
+            return_value={
+                "abort": True,
+                "abort_reason": "teaching_v2_hard_gates_failed",
+                "abort_diagnostics": {"failed_gates": ["anchors_resolve"]},
+                "blueprint_usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+                "semantic_review_usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 4,
+                    "total_tokens": 24,
+                },
+            }
+        )
+    )
     record_event = AsyncMock()
 
     with (
@@ -440,18 +209,31 @@ async def test_aborted_workflow_records_usage_snapshot() -> None:
             "app.services.daily_reader.pipeline._record_daily_pipeline_event",
             new=record_event,
         ),
+        patch(
+            "app.services.daily_reader.pipeline._store_daily_reader",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.daily_reader.pipeline._next_sequence_number",
+            new=AsyncMock(return_value=1),
+        ),
+        patch(
+            "app.services.daily_reader.pipeline.process_article_covers",
+            new=AsyncMock(return_value=SimpleNamespace(cover_url=None, image_blocks=[], meta={})),
+        ),
     ):
         result = await _run_workflow_and_store(
             article,
             ArticleScore(score=8.0, difficulty="B2", tags=["topic"]),
         )
 
-    assert result is None
+    assert result is not None
+    assert result["status"] == "draft"
     assert record_event.await_args.kwargs["usage_data"] == {
         "available": True,
         "per_agent": {
-            "vocab": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
-            "review": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
+            "blueprint": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            "semantic_review": {"input_tokens": 20, "output_tokens": 4, "total_tokens": 24},
         },
         "aggregate": {
             "input_tokens": 30,
@@ -461,6 +243,10 @@ async def test_aborted_workflow_records_usage_snapshot() -> None:
             "tool_calls": 0,
         },
     }
+    # defense line 4: stop diagnostics land in the usage event
+    metadata = record_event.await_args.kwargs["metadata_json"]
+    assert metadata["abort_diagnostics"]["failed_gates"] == ["anchors_resolve"]
+    assert metadata["abort_reason"] == "teaching_v2_hard_gates_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -502,17 +288,19 @@ def _invalid_structured_model() -> FunctionModel:
         if info.output_tools:
             tool_name = info.output_tools[0].name
             return ModelResponse(
-                parts=[ToolCallPart(
-                    tool_name=tool_name,
-                    args="definitely-not-json",
-                    tool_call_id=f"bad-{calls['n']}",
-                )],
+                parts=[
+                    ToolCallPart(
+                        tool_name=tool_name,
+                        args="definitely-not-json",
+                        tool_call_id=f"bad-{calls['n']}",
+                    )
+                ],
                 usage=usage,
                 finish_reason="stop",
                 model_name="function-model",
             )
         return ModelResponse(
-            parts=[TextPart(content='{"article_summary":')],
+            parts=[TextPart(content='{"translations":')],
             usage=usage,
             finish_reason="stop",
             model_name="function-model",
@@ -529,31 +317,37 @@ def _timeout_before_response_model() -> FunctionModel:
     return FunctionModel(model_fn)
 
 
-def _translation_node_state() -> dict:
+def _translation_stage_state() -> dict:
+    from daily_reader_teaching_v2_fixtures import (
+        READING_UNITS,
+        make_blueprint,
+        make_language_support,
+    )
+
+    blueprint = make_blueprint().model_dump()
+    language_support = make_language_support().model_dump()
     return {
-        "normalized_paragraphs": [{
-            "paragraph_id": "p_0",
-            "text": (
-                "Substantive analysis explains a complex policy choice with "
-                "evidence and context for readers who want to understand it."
-            ),
-        }],
-        "title": "Policy analysis",
-        "difficulty": "B1",
-        "highlights_json": [],
+        "original_text": "\n\n".join(unit["text"] for unit in READING_UNITS),
+        "reading_units": READING_UNITS,
+        "lesson_blueprint": blueprint,
+        "language_support": language_support,
+        "source_url": "https://example.test/x",
     }
 
 
 @pytest.mark.anyio
-async def test_translation_structured_output_failure_records_retry_usage() -> None:
+async def test_translation_structured_output_failure_aborts_with_usage() -> None:
     with patch(
         "app.llm.agent_runner.build_model_for_route",
         return_value=(_invalid_structured_model(), _fake_resolved_config("daily_translation")),
     ):
-        out = await paragraph_guides_and_translations_node(_translation_node_state())
+        out = await translation_node(_translation_stage_state())
 
-    assert out["paragraph_notes_json"] == {}
-    assert out["paragraph_notes_usage"] == _FAILED_USAGE_TOTAL
+    # v2 fail-closed: a stage that cannot produce a valid DTO aborts the run
+    assert out["abort"] is True
+    assert out["abort_reason"] == "translation_stage_failed"
+    # full retry-cap request count survives for stage attribution
+    assert out["translation_usage"] == _FAILED_USAGE_TOTAL
 
 
 @pytest.mark.anyio
@@ -565,119 +359,19 @@ async def test_pre_provider_failure_does_not_fabricate_usage() -> None:
             _fake_resolved_config("daily_translation"),
         ),
     ):
-        out = await paragraph_guides_and_translations_node(_translation_node_state())
+        out = await translation_node(_translation_stage_state())
 
-    assert out["paragraph_notes_json"] == {}
-    assert "paragraph_notes_usage" not in out
-
-
-@pytest.mark.anyio
-async def test_takeaways_structured_output_failure_records_retry_usage() -> None:
-    with patch(
-        "app.llm.agent_runner.build_model_for_route",
-        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_takeaways")),
-    ):
-        out = await close_reading_takeaways_node(_translation_node_state())
-
-    assert out["takeaways_json"] == {}
-    assert out["takeaways_usage"] == _FAILED_USAGE_TOTAL
+    assert out["abort"] is True
+    assert "translation_usage" not in out
 
 
 @pytest.mark.anyio
-async def test_failed_translation_usage_aggregates_with_refinement() -> None:
-    article = (
-        "Substantive analysis explains a complex policy choice with evidence and "
-        "context for readers who want to understand its wider consequences."
-    )
-    notes = ParagraphNotesDraft(
-        article_summary="文章摘要",
-        reading_focus=["关注论证方式"],
-        notes=[ParagraphReadingNote(
-            paragraph_id="p_0",
-            focus_question="作者如何论证？",
-            micro_summary="作者结合证据解释政策选择。",
-            translation="这篇分析用证据解释了一项复杂的政策选择及其广泛影响。",
-        )],
-        refined_difficulty="B1",
-    )
-    takeaways = CloseReadingTakeaways(
-        title_zh="复杂政策如何影响读者",
-        subtitle_zh="一篇以证据解释后果的分析",
-        tags_zh=["公共政策", "论证"],
-        article_takeaway="证据帮助读者理解复杂政策的后果。",
-        key_expressions=[],
-        sentence_notes=[],
-        writing_moves=[],
-        discussion_questions=["What evidence is strongest?", "What remains unclear?"],
-    )
-
-    async def fake_highlight(*, deps, **_kwargs):
-        paragraph = deps.paragraphs[0]
-        text = str(paragraph["text"])
-        anchor = "Substantive"
-        start = text.index(anchor)
-        return {
-            "output": DailyVocabDraft(paragraphs=[DailyParagraphDraft(
-                paragraph_id=str(paragraph["paragraph_id"]),
-                text=text,
-                highlights=[DailyVocabHighlight(
-                    anchor=anchor,
-                    start=start,
-                    end=start + len(anchor),
-                    type="vocab_highlight",
-                    gloss="实质性的",
-                )],
-            )]),
-            "usage_metadata": {
-                "input_tokens": 10,
-                "output_tokens": 2,
-                "total_tokens": 12,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
-    async def fake_takeaways(**_kwargs):
-        return {
-            "output": takeaways,
-            "usage_metadata": {
-                "input_tokens": 30,
-                "output_tokens": 6,
-                "total_tokens": 36,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
-    async def fake_refinement(**_kwargs):
-        return {
-            "output": DailyRefinementDraft(
-                abort=False,
-                refined_paragraph_notes=notes,
-                refined_takeaways=takeaways,
-            ),
-            "usage_metadata": {
-                "input_tokens": 40,
-                "output_tokens": 8,
-                "total_tokens": 48,
-                "model_requests": 1,
-                "tool_calls": 0,
-            },
-        }
-
+async def test_failed_translation_usage_aggregates_with_succeeded_stages() -> None:
+    # blueprint + language_support succeed; translation burns the retry cap
+    # and fails closed — the run aborts with all three usages conserved.
     with (
-        patch(
-            "app.services.daily_reader.workflow._run_daily_highlight_llm_span",
-            new=fake_highlight,
-        ),
-        patch(
-            "app.services.daily_reader.workflow._run_daily_takeaways_llm_span",
-            new=fake_takeaways,
-        ),
-        patch(
-            "app.services.daily_reader.workflow._run_daily_refinement_llm_span",
-            new=fake_refinement,
-        ),
+        patch(f"{WORKFLOW_MODULE}._run_blueprint_llm_span", new=_blueprint_span),
+        patch(f"{WORKFLOW_MODULE}._run_language_support_llm_span", new=_language_support_span),
         patch(
             "app.llm.agent_runner.build_model_for_route",
             return_value=(
@@ -686,18 +380,21 @@ async def test_failed_translation_usage_aggregates_with_refinement() -> None:
             ),
         ),
     ):
-        final_state = await build_daily_reader_graph().ainvoke({
-            "original_text": article,
-            "title": "Policy analysis",
-            "difficulty": "B1",
-        })
+        final_state = await build_daily_reader_graph().ainvoke(graph_input_state())
 
-    per_agent = final_state["usage_summary"]["per_agent"]
-    assert per_agent["paragraph_notes"] == _FAILED_USAGE_TOTAL
-    assert per_agent["refinement"]["model_requests"] == 1
-    assert final_state["usage_summary"]["aggregate"]["model_requests"] == 7
-    assert final_state["usage_summary"]["aggregate"]["input_tokens"] == 124
-    assert final_state["paragraph_notes_json"]["article_summary"] == "文章摘要"
+    assert final_state.get("abort") is True
+    assert final_state["abort_reason"] == "translation_stage_failed"
+    # aborted runs skip daily_projection_node: aggregate via the same
+    # fallback the pipeline uses (P-3F conservation rule).
+    usage_summary = workflow_module._aggregate_usage(final_state)
+    per_agent = usage_summary["per_agent"]
+    assert per_agent["translation"] == _FAILED_USAGE_TOTAL
+    assert per_agent["blueprint"] == make_usage("blueprint")
+    assert per_agent["language_support"] == make_usage("language_support")
+    aggregate = usage_summary["aggregate"]
+    assert aggregate["model_requests"] == 4 + 1 + 1
+    assert aggregate["input_tokens"] == 44 + 10 + 10
+
 
 # ---------------------------------------------------------------------------
 # P-3F: offline failure attribution + usage closed loop
@@ -743,9 +440,10 @@ def _patched_retry_env(row: dict, final_state: dict):
 async def test_retry_abort_records_aggregated_usage_snapshot() -> None:
     final_state = {
         "abort": True,
+        "abort_reason": "teaching_v2_after_review_fail",
+        "abort_diagnostics": {"patch_rejected": True},
         "usage_summary": None,
-        "review_result": {"passed": False, "reason": "quality_review_rejected"},
-        "paragraph_notes_usage": {
+        "translation_usage": {
             "input_tokens": 44,
             "output_tokens": 28,
             "total_tokens": 72,
@@ -781,7 +479,7 @@ async def test_retry_abort_records_aggregated_usage_snapshot() -> None:
     assert record_event.await_args.kwargs["usage_data"] == {
         "available": True,
         "per_agent": {
-            "paragraph_notes": final_state["paragraph_notes_usage"],
+            "translation": final_state["translation_usage"],
             "refinement": final_state["refinement_usage"],
         },
         "aggregate": {
@@ -792,30 +490,31 @@ async def test_retry_abort_records_aggregated_usage_snapshot() -> None:
             "tool_calls": 0,
         },
     }
+    assert record_event.await_args.kwargs["error_message"] == "teaching_v2_after_review_fail"
 
 
 @pytest.mark.anyio
 async def test_retry_success_records_aggregated_usage_when_projection_summary_missing() -> None:
+    blueprint = make_blueprint().model_dump()
     final_state = {
         "abort": False,
         "usage_summary": None,
-        "body_json": {"paragraphs": []},
-        "highlights_json": [],
-        "paragraph_notes_json": {},
-        "takeaways_json": {
-            "title_zh": "新中文标题",
-            "subtitle_zh": "新副标题",
-            "tags_zh": ["科技"],
-            "article_takeaway": "一句话总结",
+        "lesson_blueprint": blueprint,
+        "lesson_v2": {
+            "lesson_blueprint": blueprint,
+            "learning_package": {},
+            "source_assets": {"source_caption": ""},
+            "run_meta": {"outcome": "cleaned_publish", "refinement_count": 0},
         },
-        "vocab_usage": {
+        "body_json": {"paragraphs": [{"id": "u01", "text": "t"}]},
+        "blueprint_usage": {
             "input_tokens": 10,
             "output_tokens": 2,
             "total_tokens": 12,
             "model_requests": 1,
             "tool_calls": 0,
         },
-        "review_usage": {
+        "semantic_review_usage": {
             "input_tokens": 20,
             "output_tokens": 4,
             "total_tokens": 24,
@@ -847,8 +546,8 @@ async def test_retry_success_records_aggregated_usage_when_projection_summary_mi
     assert record_event.await_args.kwargs["usage_data"] == {
         "available": True,
         "per_agent": {
-            "vocab": final_state["vocab_usage"],
-            "review": final_state["review_usage"],
+            "blueprint": final_state["blueprint_usage"],
+            "semantic_review": final_state["semantic_review_usage"],
         },
         "aggregate": {
             "input_tokens": 30,
@@ -859,53 +558,26 @@ async def test_retry_success_records_aggregated_usage_when_projection_summary_mi
         },
     }
 
-    # DB business payload untouched by the usage fix
+    # DB business payload untouched by the usage fix: the v2 retry UPDATE
+    # writes lesson_v2 + body_json + the promotion columns.
     _sql, *params = mock_conn.execute.call_args[0]
-    assert params[0] == {"paragraphs": []}
-    assert params[1] == []
-    assert params[2] == {}
-    assert params[3] == final_state["takeaways_json"]
-
-
-@pytest.mark.anyio
-async def test_paragraph_notes_failure_attribution_keeps_requests_without_abort() -> None:
-    with patch(
-        "app.llm.agent_runner.build_model_for_route",
-        return_value=(_invalid_structured_model(), _fake_resolved_config("daily_translation")),
-    ):
-        out = await paragraph_guides_and_translations_node(_translation_node_state())
-
-    assert out["paragraph_notes_json"] == {}
-    # full retry-cap request count survives for stage attribution
-    assert out["paragraph_notes_usage"]["model_requests"] == 4
-    # this node degrades to empty notes; it never aborts the run itself
-    assert "abort" not in out
+    assert params[0] == final_state["lesson_v2"]
+    assert params[1] == final_state["body_json"]
+    assert params[2] == "B1"  # effective_difficulty from the blueprint
+    assert params[3] == blueprint["title_zh"]
+    assert params[4] == "English Headline"
+    assert params[5] == blueprint["subtitle_zh"]
+    assert params[6] == blueprint["tags_zh"]
 
 
 @pytest.mark.anyio
 async def test_refinement_failure_attribution_aborts_with_evidence_and_usage() -> None:
-    state = {
-        "original_text": "Substantive analysis explains a complex policy choice.",
-        "normalized_paragraphs": [{
-            "paragraph_id": "p_0",
-            "text": (
-                "Substantive analysis explains a complex policy choice with "
-                "evidence and context."
-            ),
-        }],
-        "review_result": {
-            "passed": False,
-            "issues": [{
-                "dimension": "paragraph_note_coverage",
-                "severity": "major",
-                "description": "missing notes",
-                "suggestion": "add notes",
-            }],
-        },
-        "highlights_json": [],
-        "paragraph_notes_json": {},
-        "takeaways_json": {},
-    }
+    from daily_reader_teaching_v2_fixtures import make_review_fail
+    from test_daily_reader_teaching_v2_workflow import _package_state
+
+    state = _package_state()
+    state["semantic_review_result"] = make_review_fail().model_dump()
+
     with patch(
         "app.llm.agent_runner.build_model_for_route",
         return_value=(_invalid_structured_model(), _fake_resolved_config("daily_review")),
@@ -913,7 +585,6 @@ async def test_refinement_failure_attribution_aborts_with_evidence_and_usage() -
         out = await refinement_node(state)
 
     assert out["abort"] is True
-    remaining_issues = out["refinement_result"]["remaining_issues"]
-    assert any(issue["dimension"] == "refinement_failed" for issue in remaining_issues)
+    assert out["abort_reason"] == "refinement_stage_failed"
     # full retry-cap request count survives for stage attribution
     assert out["refinement_usage"]["model_requests"] == 4

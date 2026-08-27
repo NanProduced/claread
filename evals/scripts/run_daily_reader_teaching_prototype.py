@@ -1,0 +1,1365 @@
+"""Canonical Daily Reader Teaching-v2 prototype real-run harness (P-4E).
+
+Thin orchestration layer over the frozen P-2/P-4D canonical contracts:
+
+- fixed 4+1 stage topology resolved through the production model chain
+  (``resolve_model_config`` -> ``build_model_instance`` -> ``model.profile``)
+- Generation Lane (gold-free inputs only) vs Evaluation Lane
+  (``validate_artifact`` + ``run_hard_gates`` after the final artifact)
+- per-stage ``RunUsage`` ledgers with case/batch conservation and budget
+  caps derived from the actual stage settings
+- dual-flag real-run authorization plus exclusive attempt markers; a run
+  directory is single-shot: never resumed, overwritten or cleaned.
+
+Teaching business logic stays in ``claread_eval.daily_reader.teaching_v2``
+(prototype/schema/gates). This module must not grow a second teaching
+implementation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated, Any, Literal, NoReturn
+
+EVALS_ROOT = Path(__file__).resolve().parents[1]
+SERVICES_API_ROOT = EVALS_ROOT.parent / "services" / "api"
+for _path_entry in (str(EVALS_ROOT), str(SERVICES_API_ROOT)):
+    if _path_entry not in sys.path:
+        sys.path.insert(0, _path_entry)
+
+from app.config.settings import Settings  # noqa: E402
+from app.llm.provider_factory import build_model_instance  # noqa: E402
+from app.llm.router import resolve_model_config  # noqa: E402
+from app.llm.routes import (  # noqa: E402
+    MODEL_ROUTE_DAILY_ANALYSIS,
+    MODEL_ROUTE_DAILY_ANNOTATION,
+    MODEL_ROUTE_DAILY_REVIEW,
+    MODEL_ROUTE_DAILY_TRANSLATION,
+    ModelRoute,
+)
+from app.llm.types import (  # noqa: E402
+    ModelSelection,
+    ResolvedModelConfig,
+    RouteModelSelection,
+    RunModelSettings,
+)
+from app.services.daily_reader.teaching.refinement_addressing import (  # noqa: E402
+    collect_fields_to_fix,
+    preapply_patch_violations,
+)
+from pydantic import BaseModel, Field, ValidationError, model_validator  # noqa: E402
+from pydantic_ai import Agent  # noqa: E402
+from pydantic_ai.models import Model  # noqa: E402
+from pydantic_ai.usage import RunUsage  # noqa: E402
+from pydantic_graph import End  # noqa: E402
+
+from claread_eval.daily_reader.teaching_v2.gates import run_hard_gates  # noqa: E402
+from claread_eval.daily_reader.teaching_v2.prototype import (  # noqa: E402
+    SEMANTIC_REVIEW_CONTRACTS,  # noqa: F401  (re-exported canonical authority)
+    TRANSFER_CONTENT_REQUIREMENT_VALUES,
+    TRANSFER_TASK_KIND_BY_ARTICLE_TYPE,
+    build_blueprint_prompt,
+    build_language_support_prompt,
+    build_refinement_evidence,
+    build_refinement_prompt,
+    build_semantic_review_prompt,
+    build_translation_prompt,
+    derive_translation_unit_ids,
+    make_review_evidence,
+    validate_teaching_contract,
+)
+from claread_eval.daily_reader.teaching_v2.schema import (  # noqa: E402
+    CHECKPOINT_SKILLS,
+    DIFFICULTIES,
+    TRANSFER_TASK_KINDS,
+    substantive_unit_ids,
+    validate_artifact,
+)
+
+PRESET_NAME = "daily_reader"
+# Frozen P-4E stage contract: the DashScope-hosted Flash/Pro DeepSeek
+# profiles retained by ops. The official api.deepseek.com endpoint is out
+# of contract for P-4E/P-4F real runs.
+TIER_PROFILE_NAMES = {
+    "flash": "workflow-dashscope-deepseek-v4-flash-0731",
+    "pro": "workflow-dashscope-deepseek-v4-pro-0813",
+}
+OUTPUT_RETRIES = 3
+TEMPERATURE = 0.2
+TIMEOUT_SECONDS = 120.0
+FROZEN_CASE_IDS = (
+    "bbc-bumble-001",
+    "npr-europe-heat-010",
+    "bbc-iphone-motion-sickness-006",
+    "bbc-crypto-liberland-007",
+)
+
+ALLOWED_ROUTES: frozenset[str] = frozenset(
+    {
+        MODEL_ROUTE_DAILY_ANALYSIS,
+        MODEL_ROUTE_DAILY_ANNOTATION,
+        MODEL_ROUTE_DAILY_TRANSLATION,
+        MODEL_ROUTE_DAILY_REVIEW,
+    }
+)
+FORBIDDEN_ROUTES: frozenset[str] = frozenset({"daily_takeaways"})
+FORBIDDEN_PAYLOAD_KEYS = frozenset(
+    {
+        "gold",
+        "expected_article_type",
+        "expected_difficulty",
+        "allowed_paragraph_ids",
+        "required_paragraph_ids",
+    }
+)
+# ponytail: word-boundary token scan over rendered prompts; if a frozen
+# article ever legitimately contains one of these tokens, split payload
+# lanes structurally instead of loosening this scan.
+FORBIDDEN_PROMPT_TOKENS = FORBIDDEN_PAYLOAD_KEYS | {
+    "expected_outcome",
+    "expected_translation_coverage",
+    "expected_transfer_kind",
+    "human_review",
+}
+DASHSCOPE_HOST_MARKERS = ("aliyuncs.com",)
+FORBIDDEN_HOST_MARKER = "api.deepseek.com"
+
+USAGE_KEYS = ("input_tokens", "output_tokens", "total_tokens", "model_requests", "tool_calls")
+
+
+class StructuralCaseError(RuntimeError):
+    """Infrastructure/identity drift that must stop the whole batch."""
+
+
+class GenerationLeakError(ValueError):
+    """Gold-shaped content detected on a Generation Lane boundary."""
+
+
+class StageFailure(RuntimeError):
+    """One stage failed after Agent dispatch; carries confirmed usage."""
+
+    def __init__(self, stage: str, cause: BaseException, usage: RunUsage, elapsed_ms: int) -> None:
+        self.stage = stage
+        self.usage = usage
+        self.elapsed_ms = elapsed_ms
+        super().__init__(f"{stage} failed: {type(cause).__name__}")
+        self.__cause__ = cause
+
+
+class BatchStopped(RuntimeError):
+    """Structural/infra failure that halts all subsequent cases."""
+
+    def __init__(self, reason: str, partial: dict[str, Any] | None = None) -> None:
+        self.partial = partial
+        super().__init__(reason)
+
+
+@dataclass(frozen=True)
+class StageSpec:
+    name: str
+    route: ModelRoute
+    tier: str
+    max_tokens: int
+
+
+STAGE_TOPOLOGY: tuple[StageSpec, ...] = (
+    StageSpec("blueprint", MODEL_ROUTE_DAILY_ANALYSIS, "pro", 4096),
+    StageSpec("language_support", MODEL_ROUTE_DAILY_ANNOTATION, "flash", 4096),
+    StageSpec("translation", MODEL_ROUTE_DAILY_TRANSLATION, "flash", 8192),
+    StageSpec("semantic_review", MODEL_ROUTE_DAILY_REVIEW, "pro", 4096),
+    StageSpec("refinement", MODEL_ROUTE_DAILY_REVIEW, "pro", 4096),
+)
+
+
+def validate_topology(topology: Sequence[StageSpec] = STAGE_TOPOLOGY) -> None:
+    names = [spec.name for spec in topology]
+    expected = ["blueprint", "language_support", "translation", "semantic_review", "refinement"]
+    if names != expected:
+        raise ValueError(f"canonical topology drifted: {names}")
+    for spec in topology:
+        if spec.route not in ALLOWED_ROUTES:
+            raise ValueError(
+                f"forbidden route: {spec.route} "
+                "(daily_takeaways/daily_cover are out of the P-4E contract)"
+            )
+        if spec.route in FORBIDDEN_ROUTES:
+            raise ValueError(f"forbidden route: {spec.route}")
+        if spec.tier not in TIER_PROFILE_NAMES:
+            raise ValueError(f"unknown tier: {spec.tier}")
+        if spec.max_tokens not in (4096, 8192):
+            raise ValueError(f"max_tokens outside frozen caps: {spec.max_tokens}")
+
+
+# ---------------------------------------------------------------------------
+# Transport DTOs — single-stage structured-output shapes only.
+# ---------------------------------------------------------------------------
+
+
+# Mirrors schema.py UNIT_ID_RE exactly: a malformed anchor id ("14") becomes
+# an output-validation failure that burns an in-call retry instead of shipping
+# an unresolvable anchor to the hard gates.
+UnitId = Annotated[str, Field(pattern=r"^u\d{2,3}$")]
+
+
+class CheckpointDraft(BaseModel):
+    skill: Literal[*CHECKPOINT_SKILLS]
+    prompt: str
+    prompt_subject: str
+    reference_answer: str
+    reference_answer_subject: str
+    evidence_paragraph_ids: list[UnitId]
+    answer_evidence_paragraph_ids: list[UnitId]
+
+
+class TransferTaskDraft(BaseModel):
+    task_kind: Literal[*TRANSFER_TASK_KINDS]
+    content_requirement: Literal[*TRANSFER_CONTENT_REQUIREMENT_VALUES]
+    required_language_target_expressions: list[str]
+    prompt: str = ""
+    scaffold: str = ""
+    reference_points: list[str] = []
+
+
+class StructureNodeDraft(BaseModel):
+    label: str
+    function: str
+    paragraph_ids: list[UnitId]
+
+
+class BlueprintDraft(BaseModel):
+    article_type: Literal[*TRANSFER_TASK_KIND_BY_ARTICLE_TYPE]
+    effective_difficulty: Literal[*DIFFICULTIES]
+    # P-5A title contract (mirrors CloseReadingTakeaways: 刊物级中文标题,
+    # 一句话副题, 2-4 个全中文标签); length bounds stay with the gates.
+    title_zh: str = Field(min_length=1)
+    subtitle_zh: str = Field(min_length=1)
+    tags_zh: list[str] = Field(min_length=2, max_length=4)
+    reading_mission: str
+    reading_mission_stance: Literal["neutral"]
+    # Collection bounds mirror gates.py exactly (_BOUNDS + 1-2 / 2-6):
+    # over-generation is an output-validation failure burning an in-call
+    # output retry instead of a guaranteed hard-gate failure after the run.
+    learning_objectives: list[str] = Field(min_length=1, max_length=2)
+    structure_map: list[StructureNodeDraft] = Field(min_length=2, max_length=6)
+    selected_paragraph_ids: list[UnitId]
+    comprehension_checkpoints: list[CheckpointDraft] = Field(min_length=2, max_length=4)
+    transfer_task: TransferTaskDraft
+
+
+class LanguageTargetDraft(BaseModel):
+    expression: str
+    paragraph_id: UnitId
+    target_kind: str
+    teaching_purpose: str
+    # P-1 §3.4 minimum semantic fields: omission or blank values are output-
+    # validation failures and burn an in-call output retry, never silent "".
+    meaning_zh: str = Field(pattern=r"\S")
+    usage_note: str = Field(pattern=r"\S")
+    reusable_pattern: str = Field(pattern=r"\S")
+
+
+class SentenceMapDraft(BaseModel):
+    sentence: str
+    paragraph_id: UnitId
+    translation: str = ""
+    complexity_kind: Literal["complex_syntax", "argument_structure"] | None = None
+    teaching_purpose: str = ""
+
+
+class LanguageSupportDraft(BaseModel):
+    language_targets: list[LanguageTargetDraft] = Field(min_length=3, max_length=5)
+    sentence_maps: list[SentenceMapDraft] = Field(min_length=1, max_length=2)
+    high_difficulty_unit_ids: list[str]
+
+
+class TranslationItemDraft(BaseModel):
+    paragraph_id: str
+    translation: str
+
+
+class TranslationDraft(BaseModel):
+    translations: list[TranslationItemDraft]
+
+
+class ReviewIssueDraft(BaseModel):
+    contract: str
+    field: str
+    problem: str
+
+
+class ContractResultDraft(BaseModel):
+    contract: str
+    passed: bool
+    rationale: str
+
+
+class SemanticReviewDraft(BaseModel):
+    verdict: Literal["PASS", "FAIL"]
+    issues: list[ReviewIssueDraft]
+    remaining_issues: list[str]
+    contract_results: list[ContractResultDraft]
+    reviewed_at_stage: Literal["before_refinement"]
+    refinement_requested: bool
+
+    @model_validator(mode="after")
+    def _canonical_review_contract(self) -> SemanticReviewDraft:
+        # Delegate the whole PASS/FAIL cross-field contract to the canonical
+        # authority so violations become output-validation failures and burn a
+        # PydanticAI output retry inside the same logical call.
+        try:
+            make_review_evidence(**self.model_dump())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"semantic review violates canonical contract: {exc}") from exc
+        return self
+
+
+class RefinementDraft(BaseModel):
+    refinement_patch: dict[str, Any]
+    rechecked_contract_results: list[ContractResultDraft]
+    remaining_issues: list[ReviewIssueDraft]
+
+
+STAGE_OUTPUT_TYPES: dict[str, type[BaseModel]] = {
+    "blueprint": BlueprintDraft,
+    "language_support": LanguageSupportDraft,
+    "translation": TranslationDraft,
+    "semantic_review": SemanticReviewDraft,
+    "refinement": RefinementDraft,
+}
+
+
+# ---------------------------------------------------------------------------
+# Anti-leakage guards
+# ---------------------------------------------------------------------------
+
+
+def assert_generation_safe_payload(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if isinstance(key, str) and key.casefold() in FORBIDDEN_PAYLOAD_KEYS:
+                raise GenerationLeakError(f"forbidden generation key: {key}")
+            assert_generation_safe_payload(child)
+    elif isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        for child in value:
+            assert_generation_safe_payload(child)
+
+
+def assert_prompt_clean(prompt: str) -> None:
+    folded = prompt.casefold()
+    for token in sorted(FORBIDDEN_PROMPT_TOKENS):
+        if re.search(rf"\b{re.escape(token)}\b", folded):
+            raise GenerationLeakError(f"forbidden prompt token: {token}")
+
+
+def sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def generation_view(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a frozen case onto its gold-free Generation Lane view."""
+    if not isinstance(case, Mapping) or not isinstance(case.get("input"), Mapping):
+        raise StructuralCaseError("generation_view_invalid")
+    case_id = case.get("case_id")
+    inp = case["input"]
+    if not isinstance(case_id, str) or not case_id.strip():
+        raise StructuralCaseError("case_id_missing")
+    units = []
+    for unit in inp.get("reading_units") or []:
+        if not isinstance(unit, Mapping) or not isinstance(unit.get("id"), str):
+            raise StructuralCaseError("reading_units_invalid")
+        units.append({"id": unit["id"], "text": unit.get("text", "")})
+    substantive = substantive_unit_ids(dict(case))
+    return {
+        "case_id": case_id,
+        "title": inp.get("title", ""),
+        "source": inp.get("source", ""),
+        "source_caption": inp.get("source_caption", ""),
+        "original_text": inp.get("original_text", ""),
+        "reading_units": units,
+        "substantive_unit_ids": sorted(substantive),
+    }
+
+
+def _article_payload(view: Mapping[str, Any]) -> dict[str, Any]:
+    payload = {
+        "title": view["title"],
+        "source": view["source"],
+        "reading_units": view["reading_units"],
+    }
+    assert_generation_safe_payload(payload)
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Production-chain stage runtime
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StageRuntime:
+    spec: StageSpec
+    config: ResolvedModelConfig
+    settings_payload: dict[str, Any] | None
+
+    @property
+    def profile_name(self) -> str:
+        return self.config.profile_name
+
+
+def build_eval_selection(
+    settings: Settings,
+    tier_profile_names: Mapping[str, str] = TIER_PROFILE_NAMES,
+) -> ModelSelection:
+    """Pin every canonical route to its frozen tier profile via request-level selection."""
+    from app.llm.registry import build_model_registry
+
+    registry = build_model_registry(settings)
+    if PRESET_NAME not in registry.presets:
+        raise StructuralCaseError(f"preset_missing:{PRESET_NAME}")
+    validate_topology()
+    routes: dict[ModelRoute, RouteModelSelection] = {}
+    for spec in STAGE_TOPOLOGY:
+        routes[spec.route] = RouteModelSelection(profile=tier_profile_names[spec.tier])
+    return ModelSelection(preset=PRESET_NAME, routes=routes)
+
+
+def assert_route_contract(config: ResolvedModelConfig, spec: StageSpec) -> None:
+    problems: list[str] = []
+    if config.fallback_profiles:
+        problems.append("fallback_not_empty")
+    if config.adapter != "openai_compatible":
+        problems.append(f"adapter:{config.adapter}")
+    host = (config.base_url or "").lower()
+    if FORBIDDEN_HOST_MARKER in host:
+        problems.append("official_deepseek_host")
+    https_ok = host.startswith("https://")
+    dashscope_ok = any(marker in host for marker in DASHSCOPE_HOST_MARKERS)
+    if not (https_ok and dashscope_ok):
+        problems.append("host_not_dashscope")
+    if spec.tier not in (config.model_name or "").lower():
+        problems.append("tier_model_mismatch")
+    profile = config.openai_profile
+    if profile is None or profile.default_structured_output_mode != "prompted":
+        problems.append("structured_output_mode_not_prompted")
+    if profile is None or profile.supports_json_object_output is not True:
+        problems.append("json_object_unsupported")
+    stage_settings = config.model_settings
+    if stage_settings is None or stage_settings.max_tokens != spec.max_tokens:
+        problems.append("max_tokens_drift")
+    temperature = stage_settings.temperature if stage_settings else None
+    if temperature is None or abs(temperature - TEMPERATURE) > 1e-9:
+        problems.append("temperature_drift")
+    if stage_settings is None or stage_settings.timeout != TIMEOUT_SECONDS:
+        problems.append("timeout_drift")
+    extra_body = (stage_settings.extra_body if stage_settings else None) or {}
+    thinking_off = extra_body.get("enable_thinking") is False and not (
+        stage_settings.thinking_enabled() if stage_settings else False
+    )
+    if not thinking_off:
+        problems.append("thinking_not_disabled")
+    if problems:
+        raise StructuralCaseError(f"route_contract_drift:{spec.name}:" + ",".join(problems))
+
+
+def resolve_stage_runtime(
+    settings: Settings,
+    selection: ModelSelection,
+    spec: StageSpec,
+) -> StageRuntime:
+    config = resolve_model_config(settings, spec.route, selection)
+    if config is None:
+        raise StructuralCaseError(f"route_unresolved:{spec.route}")
+    stage_override = RunModelSettings(
+        max_tokens=spec.max_tokens,
+        temperature=TEMPERATURE,
+        timeout=TIMEOUT_SECONDS,
+        extra_body={"enable_thinking": False},
+    )
+    merged = (config.model_settings or RunModelSettings()).merged_with(stage_override)
+    config = config.model_copy(update={"model_settings": merged}, deep=True)
+    assert_route_contract(config, spec)
+    return StageRuntime(spec=spec, config=config, settings_payload=merged.to_pydantic_ai())
+
+
+def production_transport(config: ResolvedModelConfig) -> Model:
+    model = build_model_instance(config)
+    if model is None or isinstance(model, str):
+        raise StructuralCaseError(f"model_build_failed:{config.model_name}")
+    client = getattr(model, "client", None)
+    if client is None or not hasattr(client, "max_retries"):
+        raise StructuralCaseError("BLOCKED_PROVIDER_CLIENT_API")
+    # Contract: zero SDK-level retries; outer retries stay 0 too.
+    client.max_retries = 0
+    if client.max_retries != 0:
+        raise StructuralCaseError("sdk_retries_reset_failed")
+    return model
+
+
+def gold_identity_mismatch(case: Mapping[str, Any], artifact: Mapping[str, Any]) -> bool:
+    """Direct comparison of generated identity fields vs Gold — no error text matching."""
+    gold = case.get("gold") or {}
+    blueprint = (artifact.get("lesson_blueprint") or {}) if isinstance(artifact, Mapping) else {}
+    return blueprint.get("article_type") != gold.get("article_type") or blueprint.get(
+        "effective_difficulty"
+    ) != gold.get("expected_difficulty")
+
+
+def artifact_structural_errors(case: Mapping[str, Any], artifact: Mapping[str, Any]) -> list[str]:
+    """validate_artifact with the two gold-identity fields shadowed to gold.
+
+    The transport DTOs already guarantee legal enums and presence for these
+    fields, so any residual difference vs gold is a quality mismatch, not a
+    structural defect. Everything else validate_artifact reports here is
+    structural.
+    """
+    import copy
+
+    gold = case.get("gold") or {}
+    shadow = copy.deepcopy(dict(artifact))
+    blueprint = shadow.get("lesson_blueprint")
+    if isinstance(blueprint, dict):
+        if "article_type" in gold:
+            blueprint["article_type"] = gold["article_type"]
+        if "expected_difficulty" in gold:
+            blueprint["effective_difficulty"] = gold["expected_difficulty"]
+    return validate_artifact(dict(case), shadow)
+
+
+# ---------------------------------------------------------------------------
+# Agent drive + ledgers
+# ---------------------------------------------------------------------------
+
+
+def usage_metadata(usage: RunUsage) -> dict[str, int]:
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "model_requests": int(getattr(usage, "requests", 0) or 0),
+        "tool_calls": int(getattr(usage, "tool_calls", 0) or 0),
+    }
+
+
+async def _drive_agent(
+    agent: Agent[Any], prompt: str, settings_payload: dict[str, Any] | None
+) -> tuple[Any, RunUsage, int]:
+    started = time.perf_counter()
+    agent_run: Any = None
+    try:
+        async with agent.iter(prompt, model_settings=settings_payload) as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if agent_run.result is not None:
+                    break
+                node = await agent_run.next(node)
+        result = agent_run.result
+        usage = agent_run.usage
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+        return result, usage, elapsed_ms
+    except Exception as exc:
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+        confirmed = RunUsage()
+        try:
+            if agent_run is not None:
+                confirmed = agent_run.usage
+        except Exception:
+            confirmed = RunUsage()
+        raise StageFailure("stage", exc, confirmed, elapsed_ms) from exc
+
+
+def run_stage(runtime: StageRuntime, prompt: str, transport: Any) -> dict[str, Any]:
+    """Gate the rendered prompt, then dispatch exactly one logical call."""
+    assert_prompt_clean(prompt)
+    agent: Agent[Any] = Agent(
+        transport(runtime.config),
+        name=f"daily_reader_teaching_v2_{runtime.spec.name}",
+        output_type=STAGE_OUTPUT_TYPES[runtime.spec.name],
+        retries=OUTPUT_RETRIES,
+    )
+    try:
+        result, usage, elapsed_ms = asyncio.run(
+            _drive_agent(agent, prompt, runtime.settings_payload)
+        )
+    except StageFailure as failure:
+        return {
+            "stage": runtime.spec.name,
+            "route": runtime.spec.route,
+            "tier": runtime.spec.tier,
+            "profile": runtime.profile_name,
+            "model_name": runtime.config.model_name,
+            "outcome": f"error:{type(failure.__cause__).__name__}",
+            "latency_ms": failure.elapsed_ms,
+            "prompt_sha256": sha256_hex(prompt),
+            "usage": usage_metadata(failure.usage),
+        }
+    return {
+        "stage": runtime.spec.name,
+        "route": runtime.spec.route,
+        "tier": runtime.spec.tier,
+        "profile": runtime.profile_name,
+        "model_name": runtime.config.model_name,
+        "outcome": "ok",
+        "latency_ms": elapsed_ms,
+        "prompt_sha256": sha256_hex(prompt),
+        "usage": usage_metadata(usage),
+        "output": result.output.model_dump(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Case orchestration
+# ---------------------------------------------------------------------------
+
+
+def derive_budget(
+    *,
+    case_count: int,
+    topology: Sequence[StageSpec] = STAGE_TOPOLOGY,
+    output_retries: int = OUTPUT_RETRIES,
+) -> dict[str, int]:
+    requests_per_call = 1 + output_retries
+    logical_calls_max = case_count * len(topology)
+    return {
+        "workflow_runs_max": case_count,
+        "logical_calls_max": logical_calls_max,
+        "model_requests_max": logical_calls_max * requests_per_call,
+        "http_attempts_max": logical_calls_max * requests_per_call,
+        "output_tokens_max": case_count * requests_per_call * sum(s.max_tokens for s in topology),
+        "outer_retries": 0,
+        "sdk_retries": 0,
+        "judge_calls": 0,
+        "db_calls": 0,
+        "redis_calls": 0,
+        "fastapi_calls": 0,
+    }
+
+
+def _sum_usage(entries: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    return {key: sum(entry["usage"][key] for entry in entries) for key in USAGE_KEYS}
+
+
+def _exclusive_write(path: Path, text: str) -> None:
+    handle = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    with os.fdopen(handle, "wb") as stream:
+        stream.write(text.encode("utf-8"))
+
+
+def _assert_known_anchor_ids(view: Mapping[str, Any], ids: Sequence[str]) -> None:
+    known = {unit["id"] for unit in view["reading_units"]}
+    unknown = sorted({unit_id for unit_id in ids if unit_id} - known)
+    if unknown:
+        raise StructuralCaseError(f"anchor_identity_unresolved:{unknown[:5]}")
+
+
+def _selected_units_for_language_support(
+    view: Mapping[str, Any], blueprint: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    referenced: list[str] = list(blueprint["selected_paragraph_ids"])
+    for node in blueprint["structure_map"]:
+        referenced.extend(node["paragraph_ids"])
+    for checkpoint in blueprint["comprehension_checkpoints"]:
+        referenced.extend(checkpoint["evidence_paragraph_ids"])
+        referenced.extend(checkpoint["answer_evidence_paragraph_ids"])
+    substantive = set(view["substantive_unit_ids"])
+    seen: set[str] = set()
+    selected: list[dict[str, Any]] = []
+    for unit in view["reading_units"]:
+        if unit["id"] in referenced and unit["id"] in substantive and unit["id"] not in seen:
+            seen.add(unit["id"])
+            selected.append(unit)
+    if not selected:
+        raise StructuralCaseError("language_support_selected_units_empty")
+    return selected
+
+
+def _apply_patch(container: dict[str, Any], patch: Mapping[str, Any]) -> None:
+    for key, value in patch.items():
+        current = container.get(key)
+        if key == "translations_by_paragraph_id" and isinstance(value, Mapping):
+            # The corrected translation map is a whole-field replacement so the
+            # model can also remove entries; every other field merges.
+            container[key] = dict(value)
+        elif isinstance(current, dict) and isinstance(value, Mapping):
+            container[key] = {**current, **dict(value)}
+        else:
+            container[key] = value
+
+
+def _persist_case_event(case_dir: Path, payload: Mapping[str, Any]) -> None:
+    """F-I2: persist stop/rejection diagnostics into the case directory.
+
+    skipped_by_stop cases never call this (they have no case directory), so
+    they stay fileless by construction.
+    """
+    path = case_dir / "stop-evidence.json"
+    index = 1
+    while path.exists():
+        path = case_dir / f"stop-evidence-{index}.json"
+        index += 1
+    _exclusive_write(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+
+
+def run_case(
+    case: Mapping[str, Any],
+    settings: Settings,
+    selection: ModelSelection,
+    transport: Any,
+    out_dir: Path,
+    budget_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    view = generation_view(case)
+    case_dir = Path(out_dir) / view["case_id"]
+    case_dir.mkdir(parents=True, exist_ok=False)
+    _exclusive_write(
+        case_dir / "attempt.marker.json",
+        json.dumps({"case_id": view["case_id"], "pid": os.getpid()}, sort_keys=True),
+    )
+
+    ledger: list[dict[str, Any]] = []
+
+    def stop(reason: str, *, evidence: Mapping[str, Any] | None = None) -> NoReturn:
+        if evidence is not None:
+            # F-I2: the stopping case keeps a diagnostics file; cases that are
+            # merely skipped by this stop keep zero files.
+            _persist_case_event(case_dir, {"kind": "stop", "stop_reason": reason, **evidence})
+        aggregate = _sum_usage(ledger)
+        raise BatchStopped(
+            f"{view['case_id']}:{reason}",
+            partial={
+                "case_id": view["case_id"],
+                "outcome": f"stopped:{reason}",
+                "stop_reason": f"{view['case_id']}:{reason}",
+                "stage_ledger": ledger,
+                "usage": {
+                    "stages": {entry["stage"]: entry["usage"] for entry in ledger},
+                    "aggregate": aggregate,
+                },
+                "artifact": None,
+            },
+        )
+
+    def post_stage(entry: dict[str, Any]) -> dict[str, Any] | None:
+        compact = {key: value for key, value in entry.items() if key != "output"}
+        ledger.append(compact)
+        if budget_state is not None:
+            caps = budget_state["caps"]
+            totals = budget_state["totals"]
+            for key in ("model_requests", "output_tokens"):
+                totals[key] += int(compact["usage"].get(key, 0) or 0)
+            if totals["model_requests"] > caps.get("model_requests_max", float("inf")) or (
+                totals["output_tokens"] > caps.get("output_tokens_max", float("inf"))
+            ):
+                # Exact outcome string per contract; details live in the
+                # persisted batch report. Structured flag, not string parsing.
+                budget_state["breached"] = True
+                stop("budget_exceeded")
+        return entry.get("output")
+
+    def dispatch(spec: StageSpec, prompt: str) -> dict[str, Any] | None:
+        runtime = resolve_stage_runtime(settings, selection, spec)
+        output = post_stage(run_stage(runtime, prompt, transport))
+        if output is None:
+            stop(f"{spec.name}:{ledger[-1]['outcome']}")
+        return output
+
+    try:
+        blueprint_spec, ls_spec, tr_spec, review_spec, refine_spec = STAGE_TOPOLOGY
+
+        blueprint_prompt = build_blueprint_prompt(_article_payload(view))
+        blueprint = dispatch(blueprint_spec, blueprint_prompt)
+        assert blueprint is not None
+
+        ls_prompt = build_language_support_prompt(
+            _selected_units_for_language_support(view, blueprint),
+            blueprint["effective_difficulty"],
+        )
+        language_support = dispatch(ls_spec, ls_prompt)
+        assert language_support is not None
+        _assert_known_anchor_ids(
+            view,
+            [target["paragraph_id"] for target in language_support["language_targets"]]
+            + [sm["paragraph_id"] for sm in language_support["sentence_maps"]],
+        )
+
+        derived_targets = derive_translation_unit_ids(
+            blueprint["effective_difficulty"],
+            view["reading_units"],
+            substantive_unit_ids=view["substantive_unit_ids"],
+            checkpoint_evidence_ids=[
+                pid
+                for checkpoint in blueprint["comprehension_checkpoints"]
+                for pid in checkpoint["evidence_paragraph_ids"]
+            ],
+            language_target_paragraph_ids=[
+                target["paragraph_id"] for target in language_support["language_targets"]
+            ],
+            sentence_map_paragraph_ids=[
+                sm["paragraph_id"] for sm in language_support["sentence_maps"]
+            ],
+            high_difficulty_unit_ids=list(language_support["high_difficulty_unit_ids"]),
+        )
+        units_by_id = {unit["id"]: unit for unit in view["reading_units"]}
+        tr_prompt = build_translation_prompt(
+            [units_by_id[unit_id] for unit_id in derived_targets],
+            [
+                {"paragraph_id": sm["paragraph_id"], "sentence": sm["sentence"]}
+                for sm in language_support["sentence_maps"]
+            ],
+            blueprint["effective_difficulty"],
+        )
+        translation = dispatch(tr_spec, tr_prompt)
+        assert translation is not None
+        returned_ids = [item["paragraph_id"] for item in translation["translations"]]
+        duplicate_ids = sorted({pid for pid in returned_ids if returned_ids.count(pid) > 1})
+        if duplicate_ids:
+            stop(f"translation_duplicate_targets:{duplicate_ids[:5]}")
+        missing_ids = sorted(set(derived_targets) - set(returned_ids))
+        extra_ids = sorted(set(returned_ids) - set(derived_targets))
+        if missing_ids or extra_ids:
+            stop(f"translation_target_set_mismatch:missing={missing_ids[:5]},extra={extra_ids[:5]}")
+
+        blueprint_obj = blueprint
+        package_obj: dict[str, Any] = {
+            "comprehension_checkpoints": blueprint["comprehension_checkpoints"],
+            "high_difficulty_unit_ids": list(language_support["high_difficulty_unit_ids"]),
+            "language_targets": language_support["language_targets"],
+            "sentence_maps": language_support["sentence_maps"],
+            "transfer_task": blueprint["transfer_task"],
+            "translations_by_paragraph_id": {
+                item["paragraph_id"]: item["translation"] for item in translation["translations"]
+            },
+        }
+        deterministic_issues = validate_teaching_contract(
+            blueprint_obj,
+            package_obj,
+            reading_units=view["reading_units"],
+        )
+
+        review_prompt = build_semantic_review_prompt(
+            view["original_text"],
+            blueprint_obj,
+            package_obj,
+            {
+                "derived_translation_unit_ids": derived_targets,
+                "teaching_contract_issues": deterministic_issues,
+            },
+        )
+        review_output = dispatch(review_spec, review_prompt)
+        assert review_output is not None
+        try:
+            review_evidence = make_review_evidence(**review_output)
+        except (TypeError, ValueError) as exc:
+            stop(f"review_evidence_invalid:{exc}")
+
+        refinement_evidence: dict[str, Any] | None = None
+        refinement_count = 0
+        fields_to_fix: dict[str, Any] = {}
+        patch: dict[str, Any] = {}
+        refine_output: dict[str, Any] | None = None
+        frozen_derivation_field: str | None = None
+        if review_evidence["verdict"] == "FAIL":
+            fields_to_fix, addressing_error, addressing_field = collect_fields_to_fix(
+                review_evidence["issues"], package_obj, blueprint_obj
+            )
+            if addressing_error == "refinement_field_unknown":
+                stop(f"refinement_field_unknown:{addressing_field}")
+            if addressing_error == "frozen_derivation_field":
+                frozen_derivation_field = addressing_field
+                _persist_case_event(
+                    case_dir,
+                    {
+                        "kind": "frozen_derivation_field",
+                        "field": addressing_field,
+                    },
+                )
+            else:
+                evidence_context = {
+                    "failed_contracts": [
+                        result["contract"]
+                        for result in review_evidence["contract_results"]
+                        if not result["passed"]
+                    ]
+                }
+                refine_prompt = build_refinement_prompt(
+                    review_evidence, fields_to_fix, evidence_context
+                )
+                refine_output = dispatch(refine_spec, refine_prompt)
+                assert refine_output is not None
+                patch = refine_output["refinement_patch"]
+                # F-I1 (Owner ruling, brief-p4f6 §6.1): patch violations no longer
+                # stop the batch. The patch is rejected, both containers are
+                # restored to their serialized pre-patch image, the refinement
+                # call's usage stays booked, and the case lands as
+                # quality_fail_continue with a FAIL after-review. Violation values
+                # never reach the artifact either way — fail-closed only moved the
+                # disposition point.
+                violations = preapply_patch_violations(
+                    patch, package_obj, blueprint_obj, fields_to_fix
+                )
+                if not violations:
+                    pre_blueprint = json.loads(json.dumps(blueprint_obj))
+                    pre_package = json.loads(json.dumps(package_obj))
+                    for key, value in patch.items():
+                        if key in package_obj:
+                            _apply_patch(package_obj, {key: value})
+                        elif key in blueprint_obj:
+                            _apply_patch(blueprint_obj, {key: value})
+                    try:
+                        BlueprintDraft.model_validate(blueprint_obj)
+                    except ValidationError as exc:
+                        err = exc.errors()[0]
+                        violations.append(
+                            {
+                                "container": "blueprint",
+                                "error_type": err.get("type"),
+                                "loc": [str(part) for part in err.get("loc", [])],
+                            }
+                        )
+                    try:
+                        LanguageSupportDraft.model_validate(
+                            {
+                                "high_difficulty_unit_ids": package_obj["high_difficulty_unit_ids"],
+                                "language_targets": package_obj["language_targets"],
+                                "sentence_maps": package_obj["sentence_maps"],
+                            }
+                        )
+                    except ValidationError as exc:
+                        err = exc.errors()[0]
+                        violations.append(
+                            {
+                                "container": "learning_package",
+                                "error_type": err.get("type"),
+                                "loc": [str(part) for part in err.get("loc", [])],
+                            }
+                        )
+                    invalid_translations = sorted(
+                        pid
+                        for pid, value in package_obj["translations_by_paragraph_id"].items()
+                        if not isinstance(value, str) or not value.strip()
+                    )
+                    if invalid_translations:
+                        violations.append(
+                            {
+                                "container": "learning_package",
+                                "error_type": "invalid_translation_value",
+                                "loc": invalid_translations[:5],
+                            }
+                        )
+                    if violations:
+                        # Restore from the serialized pre-image: byte-faithful,
+                        # never a reconstruction.
+                        blueprint_obj.clear()
+                        blueprint_obj.update(pre_blueprint)
+                        package_obj.clear()
+                        package_obj.update(pre_package)
+                refinement_count = 1
+                patch_rejected = bool(violations)
+                if patch_rejected:
+                    _persist_case_event(
+                        case_dir,
+                        {
+                            "kind": "patch_rejected",
+                            "violations": violations,
+                            "restored_fields": sorted(patch),
+                        },
+                    )
+
+        if refinement_count:
+            # Non-gold deterministic replay only — gold hard gates never feed
+            # build_refinement_evidence. The translation set is read from the
+            # CURRENT patched package, never the pre-refinement response ids.
+            replay_issues = validate_teaching_contract(
+                blueprint_obj,
+                package_obj,
+                reading_units=view["reading_units"],
+            )
+            try:
+                replay_targets = derive_translation_unit_ids(
+                    blueprint_obj["effective_difficulty"],
+                    view["reading_units"],
+                    substantive_unit_ids=view["substantive_unit_ids"],
+                    checkpoint_evidence_ids=[
+                        pid
+                        for checkpoint in blueprint_obj["comprehension_checkpoints"]
+                        for pid in checkpoint["evidence_paragraph_ids"]
+                    ],
+                    language_target_paragraph_ids=[
+                        target["paragraph_id"] for target in package_obj["language_targets"]
+                    ],
+                    sentence_map_paragraph_ids=[
+                        sm["paragraph_id"] for sm in package_obj["sentence_maps"]
+                    ],
+                    high_difficulty_unit_ids=list(package_obj["high_difficulty_unit_ids"]),
+                )
+            except (KeyError, ValueError) as exc:
+                stop(f"deterministic_replay_failed:{exc}")
+            current_ids = set(package_obj["translations_by_paragraph_id"].keys())
+            non_string_keys = sorted(k for k in current_ids if not isinstance(k, str))
+            missing_ids = sorted(set(replay_targets) - current_ids)
+            extra_ids = sorted(current_ids - set(replay_targets))
+            replay_passed = (
+                not replay_issues and not non_string_keys and not missing_ids and not extra_ids
+            )
+            effective_rechecks = refine_output["rechecked_contract_results"]
+            effective_remaining = list(refine_output["remaining_issues"])
+            if patch_rejected:
+                # The model's directed rechecks describe a patch that was
+                # rejected host-side; they are discarded and replaced with
+                # fail-closed rejection evidence per failed contract.
+                rejection_note = "; ".join(
+                    f"{v['container']}:{v['error_type']}:{','.join(str(p) for p in v['loc'])}"
+                    for v in violations
+                )
+                failed_contracts = [
+                    result["contract"]
+                    for result in review_evidence["contract_results"]
+                    if not result["passed"]
+                ]
+                effective_rechecks = [
+                    {
+                        "contract": contract,
+                        "passed": False,
+                        "rationale": (
+                            f"refinement patch rejected ({rejection_note}); "
+                            "directed fix not applied"
+                        ),
+                    }
+                    for contract in failed_contracts
+                ]
+                effective_remaining = [
+                    {
+                        "contract": contract,
+                        "field": "refinement_patch",
+                        "problem": f"refinement patch rejected ({rejection_note})",
+                    }
+                    for contract in failed_contracts
+                ]
+            elif not replay_passed:
+                # Host-owned deterministic evidence contradicts the directed
+                # rechecks; canonical PASS is impossible, so the rechecks are
+                # downgraded (fail-closed) and the after-review lands FAIL.
+                replay_detail = (
+                    f"missing={missing_ids[:5]},extra={extra_ids[:5]},"
+                    f"non_string={non_string_keys[:5]},issues={len(replay_issues)}"
+                )
+                effective_rechecks = [
+                    {
+                        **dict(result),
+                        "passed": False,
+                        "rationale": (
+                            "host deterministic replay failed "
+                            f"({replay_detail}); {result.get('rationale', '')}"
+                        ),
+                    }
+                    for result in effective_rechecks
+                ]
+                effective_remaining = [
+                    {
+                        "contract": result["contract"],
+                        "field": str(result["contract"]),
+                        "problem": f"host deterministic replay failed ({replay_detail})",
+                    }
+                    for result in effective_rechecks
+                ]
+            try:
+                refinement_evidence = build_refinement_evidence(
+                    review_before_refinement=review_evidence,
+                    fields_to_fix=fields_to_fix,
+                    refinement_patch=json.loads(json.dumps(patch)),
+                    rechecked_contract_results=effective_rechecks,
+                    remaining_issues=effective_remaining,
+                    hard_gate_replay={"all_passed": replay_passed},
+                    prior_refinement_count=0,
+                )
+            except (TypeError, ValueError) as exc:
+                stop(
+                    f"refinement_evidence_invalid:{exc}",
+                    evidence={
+                        "error": {"error_type": type(exc).__name__, "message": str(exc)[:300]}
+                    },
+                )
+            if patch_rejected and refinement_evidence is not None:
+                refinement_evidence["rejection"] = {
+                    "reason": "patch_violation",
+                    "violations": violations,
+                    "restored_fields": sorted(patch),
+                }
+
+        artifact: dict[str, Any] = {
+            "case_id": view["case_id"],
+            "lesson_blueprint": blueprint_obj,
+            "learning_package": package_obj,
+            "source_assets": {"source_caption": view["source_caption"]},
+            "run_meta": {
+                "outcome": "cleaned_publish",
+                "refinement_count": refinement_count,
+            },
+        }
+        aggregate = _sum_usage(ledger)
+        artifact["usage"] = aggregate
+        artifact["run_meta"]["usage"] = aggregate
+
+        schema_errors = validate_artifact(dict(case), artifact)
+        identity_mismatch = gold_identity_mismatch(case, artifact)
+        structural_errors = artifact_structural_errors(case, artifact)
+        if structural_errors:
+            stop(f"artifact_schema_violation:{structural_errors[:3]}")
+
+        # Evaluation Lane: gold hard gates run exactly once, on the final artifact,
+        # and their results are recorded here — never fed back into model prompts.
+        gates = run_hard_gates(dict(case), artifact)
+
+        _exclusive_write(
+            case_dir / "review-evidence.json",
+            json.dumps(
+                {"review": review_evidence, "refinement": refinement_evidence},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+        _exclusive_write(
+            case_dir / "artifact.json",
+            json.dumps(artifact, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+        _exclusive_write(
+            case_dir / "stage-ledger.json",
+            json.dumps({"stages": ledger, "aggregate": aggregate}, ensure_ascii=False, indent=2),
+        )
+
+        after_fail = (
+            refinement_evidence is not None
+            and refinement_evidence["review_after_refinement"]["verdict"] == "FAIL"
+        )
+        quality_fail = (
+            identity_mismatch
+            or not gates["all_passed"]
+            or after_fail
+            or frozen_derivation_field is not None
+        )
+        return {
+            "case_id": view["case_id"],
+            "outcome": "quality_fail_continue" if quality_fail else "completed",
+            "stop_reason": None,
+            "refinement_replay_all_passed": (replay_passed if refinement_count else None),
+            "stage_ledger": ledger,
+            "usage": {
+                "stages": {entry["stage"]: entry["usage"] for entry in ledger},
+                "aggregate": aggregate,
+            },
+            "schema_errors": schema_errors,
+            "gates": {
+                "all_passed": gates["all_passed"],
+                "passed_count": gates["passed_count"],
+                "scored_count": gates["scored_count"],
+            },
+            "artifact": artifact,
+        }
+    except StructuralCaseError as exc:
+        stop(f"structural:{exc}")
+    except (
+        ValidationError,
+        GenerationLeakError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        error_detail: dict[str, Any] = {
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:300],
+        }
+        if isinstance(exc, ValidationError):
+            # F-I2: keep the structured field summary, not just the message.
+            errors = exc.errors()
+            error_detail["field_summary"] = [
+                {
+                    "type": err.get("type"),
+                    "loc": [str(part) for part in err.get("loc", [])],
+                }
+                for err in errors[:5]
+            ]
+        stop(f"unexpected:{type(exc).__name__}:{exc}", evidence={"error": error_detail})
+
+
+def _report_exit_code(report: Mapping[str, Any]) -> int:
+    """Map the structured batch report status to a CLI exit code."""
+    status = report.get("status")
+    if status == "completed":
+        return 0
+    if status == "stopped_batch":
+        return 5
+    if status == "stopped_budget":
+        return 4
+    raise ValueError(f"unknown or missing batch report status: {status!r}")
+
+
+def run_batch(
+    cases: Sequence[Mapping[str, Any]],
+    settings: Settings,
+    selection: ModelSelection,
+    transport: Any,
+    out_dir: Path,
+    *,
+    budget: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=False)
+    _exclusive_write(
+        out_dir / "batch-attempt.marker.json",
+        json.dumps(
+            {
+                "case_ids": [case.get("case_id") for case in cases],
+                "pid": os.getpid(),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+            sort_keys=True,
+        ),
+    )
+    effective_budget = budget if budget is not None else derive_budget(case_count=len(cases))
+    totals = dict.fromkeys(USAGE_KEYS, 0)
+    reports: list[dict[str, Any]] = []
+    stop_reason: str | None = None
+    status = "completed"
+    # Per-stage posting state shared with run_case; the breach fires as soon as
+    # a stage's usage is posted, not when the case completes.
+    budget_state: dict[str, Any] = {
+        "caps": effective_budget,
+        "totals": {"model_requests": 0, "output_tokens": 0},
+        "breached": False,
+    }
+    for case in cases:
+        if stop_reason is not None:
+            reports.append(
+                {
+                    "case_id": case.get("case_id"),
+                    "outcome": "skipped_by_stop",
+                    "stop_reason": stop_reason,
+                    "stage_ledger": [],
+                    "usage": {"stages": {}, "aggregate": {}},
+                }
+            )
+            continue
+        try:
+            report = run_case(
+                case, settings, selection, transport, out_dir, budget_state=budget_state
+            )
+        except BatchStopped as exc:
+            stop_reason = str(exc)
+            if exc.partial is not None:
+                report = exc.partial
+            else:
+                report = {
+                    "case_id": case.get("case_id"),
+                    "outcome": f"stopped:{exc}",
+                    "stop_reason": str(exc),
+                    "stage_ledger": [],
+                    "usage": {"stages": {}, "aggregate": {}},
+                }
+        reports.append(report)
+        for key in USAGE_KEYS:
+            totals[key] += report["usage"]["aggregate"].get(key, 0)
+    if stop_reason is not None:
+        status = "stopped_budget" if budget_state["breached"] else "stopped_batch"
+    persisted = {
+        "status": status,
+        "cases": reports,
+        "aggregate": totals,
+        "budget": dict(effective_budget),
+        "stop_reason": stop_reason,
+        "out_dir": str(out_dir),
+    }
+    _exclusive_write(
+        out_dir / "batch-report.json",
+        json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return persisted
+
+
+# ---------------------------------------------------------------------------
+# CLI — dual-flag authorized real runs only
+# ---------------------------------------------------------------------------
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Daily Reader Teaching v2 canonical prototype real-run harness (P-4E)"
+    )
+    parser.add_argument(
+        "--out-dir",
+        required=True,
+        help="brand-new output directory (single attempt)",
+    )
+    parser.add_argument(
+        "--dataset-dir",
+        default=str(EVALS_ROOT / "datasets" / "daily-reader-teaching-v2"),
+    )
+    parser.add_argument("--case", action="append", default=[], help="case id (repeatable)")
+    parser.add_argument("--model-profiles-json", default="")
+    parser.add_argument("--model-presets-json", default="")
+    parser.add_argument("--real-run", action="store_true", help="authorization flag 1/2")
+    parser.add_argument(
+        "--enable-real-provider-calls", action="store_true", help="authorization flag 2/2"
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    if not (args.real_run and args.enable_real_provider_calls):
+        print(
+            "REFUSED: real runs require both --real-run and --enable-real-provider-calls",
+            file=sys.stderr,
+        )
+        return 2
+    dataset_dir = Path(args.dataset_dir)
+    case_ids = args.case or list(FROZEN_CASE_IDS)
+    cases = []
+    for case_id in case_ids:
+        path = dataset_dir / "cases" / f"{case_id}.json"
+        if not path.is_file():
+            print(f"missing frozen case file: {path}", file=sys.stderr)
+            return 1
+        cases.append(json.loads(path.read_text(encoding="utf-8")))
+    settings_kwargs: dict[str, str] = {}
+    if args.model_profiles_json:
+        settings_kwargs["model_profiles_json"] = args.model_profiles_json
+    if args.model_presets_json:
+        settings_kwargs["model_presets_json"] = args.model_presets_json
+    try:
+        settings = Settings(**settings_kwargs)
+        selection = build_eval_selection(settings)
+        report = run_batch(cases, settings, selection, production_transport, Path(args.out_dir))
+    except FileExistsError as exc:
+        print(f"REFUSED: attempt/output already exists: {exc}", file=sys.stderr)
+        return 3
+    except StructuralCaseError as exc:
+        print(f"CONFIG STOPPED: {exc}", file=sys.stderr)
+        return 6
+    exit_code = _report_exit_code(report)
+    if exit_code != 0:
+        print(
+            f"BATCH {report['status'].upper()}: {report.get('stop_reason')}",
+            file=sys.stderr,
+        )
+    print(json.dumps(report["aggregate"], sort_keys=True), "->", args.out_dir)
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

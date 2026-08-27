@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TARGET_COVER_WIDTH = 1280
+# guim CDN 实际可供上限（{140,500,1000}；1280 恒 403）
+GUIM_MAX_COVER_WIDTH = 1000
 MIN_COVER_WIDTH = 1200
 MAX_COVER_CANDIDATES = 6
 REASON_DOWNLOAD_FAILED = "download_failed"
@@ -55,6 +57,10 @@ def upgrade_image_url(url: str) -> str:
     """Upgrade known CDN URL patterns to >=1280px width where possible."""
     if not url:
         return url
+    if "branded_news" in url:
+        # P-5 probe: bumping BBC og:image branded_news paths to 1280 404s
+        # (original width is the max served there); skip every upgrade rule.
+        return url
     # BBC ichef new format: /ace/{product}/{w}/... or /news/{w}/...
     # (only upgrades — never downgrades an already-wider variant)
     url = re.sub(
@@ -78,9 +84,12 @@ def upgrade_image_url(url: str) -> str:
         )
     if "media.guim.co.uk" in url:
         # Guardian: .../0_0_5472_3648/140.jpg — trailing segment is width.
+        # guim serves at most {140,500,1000}; 1280 403s, so cap the upgrade
+        # at the CDN's actual maximum (1000), which also meets this source's
+        # relaxed min_cover_width floor.
         url = re.sub(
             r"/(\d+)(?=\.(?:jpe?g|png|webp)$)",
-            lambda m: _bump_width(m, TARGET_COVER_WIDTH),
+            lambda m: _bump_width(m, GUIM_MAX_COVER_WIDTH),
             url,
             flags=re.IGNORECASE,
         )
@@ -157,7 +166,9 @@ class CoverValidation:
     reason: str | None = None
 
 
-def validate_image_dimensions(width: int, height: int) -> CoverValidation:
+def validate_image_dimensions(
+    width: int, height: int, *, min_width: int = MIN_COVER_WIDTH
+) -> CoverValidation:
     """Rule gate: tracking pixel / icon-like / extreme banner / min width."""
     if width <= 2 or height <= 2:
         return CoverValidation(False, width, height, REASON_TRACKING_PIXEL)
@@ -167,9 +178,19 @@ def validate_image_dimensions(width: int, height: int) -> CoverValidation:
         return CoverValidation(False, width, height, REASON_ICON_LIKE)
     if ratio > MAX_ASPECT_RATIO:
         return CoverValidation(False, width, height, REASON_EXTREME_BANNER)
-    if width < MIN_COVER_WIDTH:
+    if width < min_width:
         return CoverValidation(False, width, height, REASON_BELOW_MIN_WIDTH)
     return CoverValidation(True, width, height)
+
+
+def min_cover_width_for(source: str | None) -> int:
+    """Per-source cover width floor (P-5); defaults to MIN_COVER_WIDTH."""
+    if not source:
+        return MIN_COVER_WIDTH
+    from app.services.daily_reader.discovery import ARTICLE_SOURCES
+
+    configured = ARTICLE_SOURCES.get(source, {}).get("min_cover_width")
+    return int(configured) if configured else MIN_COVER_WIDTH
 
 
 # --- Download (structured result; UA+Referer anti-hotlink headers kept).
@@ -315,7 +336,7 @@ async def probe_cover_eligible(article: DiscoveredArticle) -> bool:
     dims = probe_image_dimensions(fetched.data)
     if dims is None:
         return False
-    return validate_image_dimensions(*dims).ok
+    return validate_image_dimensions(*dims, min_width=min_cover_width_for(article.source)).ok
 
 
 async def process_article_covers(
@@ -395,7 +416,7 @@ async def process_article_covers(
             errors.append(f"{REASON_UNREADABLE}: {cand.url[:120]}")
             candidate_meta.append(entry)
             continue
-        validation = validate_image_dimensions(*dims)
+        validation = validate_image_dimensions(*dims, min_width=min_cover_width_for(article.source))
         entry["width"], entry["height"] = dims
         if not validation.ok:
             entry["reason"] = validation.reason

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.daily_reader.cover_download import (
+    MIN_COVER_WIDTH,
     REASON_BELOW_MIN_WIDTH,
     REASON_DOWNLOAD_FAILED,
     REASON_EXTREME_BANNER,
@@ -23,6 +24,7 @@ from app.services.daily_reader.cover_download import (
     REASON_TRACKING_PIXEL,
     FetchedImage,
     fetch_image,
+    min_cover_width_for,
     probe_cover_eligible,
     probe_image_dimensions,
     process_article_covers,
@@ -134,10 +136,15 @@ class TestUpgradeImageUrl:
         assert upgrade_image_url(url).endswith("_1280.jpg")
 
     def test_guardian_trailing_width(self):
+        # guim CDN 对 1280 恒 403，升级目标应为其实际可供上限 1000。
         url = "https://media.guim.co.uk/abcdef/0_0_5472_3648/140.jpg"
         assert upgrade_image_url(url) == (
-            "https://media.guim.co.uk/abcdef/0_0_5472_3648/1280.jpg"
+            "https://media.guim.co.uk/abcdef/0_0_5472_3648/1000.jpg"
         )
+
+    def test_guardian_trailing_width_not_downgraded(self):
+        url = "https://media.guim.co.uk/abcdef/0_0_5472_3648/1000.jpg"
+        assert upgrade_image_url(url) == url
 
     def test_npr_width_suffix_upgraded(self):
         url = "https://media.npr.org/assets/img/2026/x_wide-abc_s800.jpg"
@@ -149,6 +156,18 @@ class TestUpgradeImageUrl:
 
     def test_unknown_source_unchanged(self):
         url = "https://other.example.com/photo/123.jpg"
+        assert upgrade_image_url(url) == url
+
+    def test_bbc_branded_news_path_exempt_from_upgrade(self):
+        # P-5 probe: og:image branded_news paths 404 when bumped to 1280.
+        url = (
+            "https://ichef.bbci.co.uk/ace/standard/1200/cpsprodpb"
+            "/15F51/production/_131872651_branded_news_promo.jpg"
+        )
+        assert upgrade_image_url(url) == url
+
+    def test_bbc_branded_news_width_segment_not_bumped(self):
+        url = "https://ichef.bbci.co.uk/news/1200/cpsprodpb/abc/branded_news/pic.jpg"
         assert upgrade_image_url(url) == url
 
 
@@ -673,6 +692,16 @@ class TestProbeCoverEligible:
         ):
             assert await probe_cover_eligible(article) is False
 
+    async def test_guardian_1000px_passes_per_source_gate(self):
+        article = DiscoveredArticle(
+            url="u", title="t", source="guardian", cover_image_url="https://a/t.jpg"
+        )
+        with patch(
+            "app.services.daily_reader.cover_download.fetch_image",
+            new=AsyncMock(return_value=_fetched(_png_bytes(1000, 563))),
+        ):
+            assert await probe_cover_eligible(article) is True
+
 
 class TestProcessArticleCovers:
     def _article(self, candidates: list[ImageCandidate]) -> DiscoveredArticle:
@@ -914,6 +943,49 @@ class TestProcessArticleCovers:
         assert outcome.meta["candidates"][0]["reason"] == REASON_DOWNLOAD_FAILED
         tracker.add_error.assert_awaited()
 
+    async def test_guardian_1000px_cover_passes_per_source_gate(self, tmp_path: Path):
+        article = DiscoveredArticle(
+            url="u",
+            title="Guardian article",
+            source="guardian",
+            image_candidates=[
+                ImageCandidate(url="https://media.guim.co.uk/x/1000.jpg")
+            ],
+        )
+        with (
+            patch(
+                "app.services.daily_reader.cover_download.fetch_image",
+                new=AsyncMock(
+                    return_value=_fetched(
+                        _png_bytes(1000, 563), "https://media.guim.co.uk/x/1000.jpg"
+                    )
+                ),
+            ),
+            patch(
+                "app.services.daily_reader.cover_storage.get_cover_storage"
+            ) as mock_storage_factory,
+        ):
+            mock_storage_factory.return_value = LocalCoverStorage(cover_dir=tmp_path)
+            outcome = await process_article_covers(article)
+
+        assert outcome.cover_url is not None
+
+    async def test_non_guardian_1000px_cover_still_rejected(self):
+        article = DiscoveredArticle(
+            url="u",
+            title="BBC article",
+            source="bbc",
+            image_candidates=[ImageCandidate(url="https://a/hero.jpg")],
+        )
+        with patch(
+            "app.services.daily_reader.cover_download.fetch_image",
+            new=AsyncMock(return_value=_fetched(_png_bytes(1000, 563))),
+        ):
+            outcome = await process_article_covers(article)
+
+        assert outcome.cover_url is None
+        assert outcome.meta["candidates"][0]["reason"] == REASON_BELOW_MIN_WIDTH
+
 
 class TestFetchImageFallbackOrder:
     async def test_tries_upgraded_url_first(self):
@@ -951,3 +1023,65 @@ class TestFetchImageFallbackOrder:
         assert "/standard/1280/" in calls[0]  # upgraded tried first
         # upgraded URL is retried per header variant before falling back
         assert any("/standard/240/" in call for call in calls[1:])  # original fallback
+
+    async def test_branded_news_makes_no_upgrade_request(self):
+        calls: list[str] = []
+        original = (
+            "https://ichef.bbci.co.uk/ace/standard/1200/cpsprodpb"
+            "/15F51/production/_131872651_branded_news_promo.jpg"
+        )
+
+        class _Resp:
+            headers = {"content-type": "image/jpeg"}
+            content = _jpeg_bytes(1200, 675)
+
+            def raise_for_status(self):
+                return None
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                calls.append(url)
+                return _Resp()
+
+        with patch("app.services.daily_reader.cover_download.httpx.AsyncClient", _Client):
+            result = await fetch_image(original)
+
+        assert calls == [original]  # no upgraded-URL request at all
+        assert result is not None and result.source_url == original
+
+
+# --- per-source cover width gate (P-5) ---
+
+
+class TestPerSourceMinCoverWidth:
+    def test_guardian_allows_1000px(self):
+        validation = validate_image_dimensions(
+            1000, 563, min_width=min_cover_width_for("guardian")
+        )
+        assert validation.ok and validation.reason is None
+
+    def test_guardian_still_rejects_below_1000(self):
+        validation = validate_image_dimensions(
+            500, 281, min_width=min_cover_width_for("guardian")
+        )
+        assert not validation.ok and validation.reason == REASON_BELOW_MIN_WIDTH
+
+    def test_other_sources_keep_1200_floor(self):
+        assert min_cover_width_for("bbc") == MIN_COVER_WIDTH
+        assert min_cover_width_for("npr") == MIN_COVER_WIDTH
+        assert min_cover_width_for("") == MIN_COVER_WIDTH
+        assert min_cover_width_for(None) == MIN_COVER_WIDTH
+
+        validation = validate_image_dimensions(
+            1000, 563, min_width=min_cover_width_for("bbc")
+        )
+        assert not validation.ok and validation.reason == REASON_BELOW_MIN_WIDTH

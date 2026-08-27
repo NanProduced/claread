@@ -446,13 +446,13 @@ async def test_prompt_preview_keeps_daily_reader_mode(monkeypatch) -> None:
         prompt_debug.PromptPreviewRequest(
             reading_goal="daily_reading",
             reading_variant="beginner_reading",
-            agent_type="daily_vocab",
+            agent_type="daily_blueprint",
         ),
         _auth="secret",
     )
 
     assert result.strategy_meta["workflow"] == "daily_reader"
-    assert result.strategy_meta["agent_type"] == "daily_vocab"
+    assert result.strategy_meta["agent_type"] == "daily_blueprint"
 
 
 @pytest.mark.asyncio
@@ -468,7 +468,7 @@ async def test_prompt_preview_rejects_non_daily_reading_goal(monkeypatch) -> Non
             prompt_debug.PromptPreviewRequest(
                 reading_goal="academic",
                 reading_variant="beginner_reading",
-                agent_type="daily_vocab",
+                agent_type="daily_blueprint",
             ),
             _auth="secret",
         )

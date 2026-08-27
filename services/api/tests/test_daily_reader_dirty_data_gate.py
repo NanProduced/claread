@@ -13,7 +13,7 @@ No DB / network / LLM access.
 from __future__ import annotations
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from app.services.daily_reader.extraction import (
     ExtractionResult,
@@ -25,7 +25,6 @@ from app.services.daily_reader.extraction import (
 from app.services.daily_reader.workflow import (
     build_daily_reader_graph,
     light_normalize_node,
-    quality_review_node,
 )
 
 DIRTY_BBC_TEXT = (
@@ -176,7 +175,8 @@ class TestLightNormalizeGate:
         }
         result = light_normalize_node(state)
         assert result["abort"] is True
-        assert result["normalized_paragraphs"] == []
+        assert result["reading_units"] == []
+        assert result["abort_reason"] == "transcript_rejected"
         rejection = result["pipeline_meta"]["rejection"]
         assert rejection["code"] == "transcript_rejected"
         assert rejection["markers"]
@@ -185,7 +185,8 @@ class TestLightNormalizeGate:
     def test_dirty_bbc_text_cleaned(self):
         state = {"original_text": DIRTY_BBC_TEXT, "title": "Bumble"}
         result = light_normalize_node(state)
-        joined = "\n".join(p["text"] for p in result["normalized_paragraphs"])
+        joined = "\n".join(p["text"] for p in result["reading_units"])
+        assert result["reading_units"][0]["id"] == "u01"
         assert "- Published" not in joined
         assert ", external" not in joined
         assert "Online Nation figures" in joined
@@ -204,8 +205,8 @@ class TestLightNormalizeGate:
         }
         result = light_normalize_node(state)
         assert result.get("abort") is not True
-        assert len(result.get("normalized_paragraphs", [])) > 0
-        joined = "\n".join(p["text"] for p in result["normalized_paragraphs"])
+        assert len(result.get("reading_units", [])) > 0
+        joined = "\n".join(p["text"] for p in result["reading_units"])
         assert "SCOTT SIMON, HOST:" not in joined
         assert "(SOUNDBITE OF" not in joined
         assert "Copyright" not in joined
@@ -225,50 +226,7 @@ class TestGraphTranscriptShortCircuit:
         assert final_state["pipeline_meta"]["rejection"]["code"] == "transcript_rejected"
         # short-circuited: no LLM nodes ran, so no artifacts exist
         assert "body_json" not in final_state
-        assert "highlights_json" not in final_state
-
-
-class TestReviewBoilerplateGate:
-    async def test_dirty_highlight_fails_review_without_llm(self):
-        state = {
-            "original_text": "clean article text",
-            "normalized_paragraphs": [{"paragraph_id": "p_0", "text": "clean article text"}],
-            "highlights_json": [{"text": "figures, external,", "gloss": "外部数据"}],
-            "paragraph_notes_json": {},
-            "takeaways_json": {},
-        }
-        with patch(
-            "app.services.daily_reader.workflow._run_daily_review_llm_span",
-            new_callable=AsyncMock,
-        ) as llm_span:
-            result = await quality_review_node(state)
-        review = result["review_result"]
-        assert review["passed"] is False
-        assert review["reason"] == "boilerplate_leak"
-        assert review["issues"][0]["dimension"] == "boilerplate"
-        llm_span.assert_not_called()
-
-    async def test_dirty_translation_fails_review(self):
-        state = {
-            "original_text": "clean",
-            "normalized_paragraphs": [],
-            "highlights_json": [],
-            "paragraph_notes_json": {
-                "notes": [
-                    {
-                        "paragraph_id": "p_0",
-                        "translation": (
-                            "版权归 NPR 所有。Copyright © 2026 NPR. All rights reserved."
-                        ),
-                    }
-                ]
-            },
-            "takeaways_json": {},
-        }
-        result = await quality_review_node(state)
-        review = result["review_result"]
-        assert review["passed"] is False
-        assert review["reason"] == "boilerplate_leak"
+        assert "lesson_v2" not in final_state
 
 
 class TestFindBoilerplateHits:

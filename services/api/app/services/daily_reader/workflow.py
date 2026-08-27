@@ -1,103 +1,126 @@
-"""Daily Reader Workflow - LangGraph StateGraph.
+"""Daily Reader Workflow - LangGraph StateGraph (teaching contract v2).
 
-Redesigned per redesign-tracker.tmp.md:
+P-5B topology (replaces the v1 highlight / paragraph_notes / takeaways /
+quality_review / refinement chain — the v1 nodes are removed from the run
+path, never coexisting with the v2 gates):
+
   light_normalize
-  → highlight_by_paragraph_batches
-  → paragraph_guides_and_translations
-  → close_reading_takeaways
-  → quality_review
-  → (conditional) refinement
+  → blueprint
+  → language_support
+  → translation
+  → semantic_review
+  → (FAIL verdict only) refinement   # at most one refinement per article
   → daily_projection
 
-Key changes from v1:
-- Highlights generated per-paragraph-batch to ensure full-coverage (fixes front-half bias)
-- footer_analysis replaced by paragraph_guides_and_translations (ParagraphNotesDraft)
-- full_interpretation replaced by close_reading_takeaways (CloseReadingTakeaways)
-- Coverage check in projection node
-- Refinement targets new schema fields
+The five defense lines are wired to the shared stdlib-only teaching
+package (``app/services/daily_reader/teaching/``) — no copied
+implementations:
+
+1. DTO hard boundary — pydantic stage DTOs with in-call output retries
+   (``app/schemas/internal/daily_lesson_v2.py``); counts / UnitId /
+   required fields / title contract fail as output-validation errors.
+2. Deterministic contract checks feed the semantic-review input and are
+   replayed fail-closed after refinement
+   (``teaching.prototype.validate_teaching_contract`` /
+   ``derive_translation_unit_ids``).
+3. Post-patch DTO re-check + patch rejection + pre-image restore + FAIL +
+   batch continue (P-4I semantics) in ``refinement_node``.
+4. Stop/rejection diagnostics — every fail-closed stop records
+   ``abort_reason`` + ``abort_diagnostics`` for the pipeline usage event.
+5. Usage conservation + budget gate — per-stage usage ledgers aggregated
+   by ``_aggregate_usage`` and the frozen per-article caps derived from
+   the evals P-4E batch budget (80/393216/20 for the 4-case frozen batch
+   → 20/98304/5 per article).
+
+Abort semantics: a fail-closed article stops with ``abort=True`` and is
+NOT stored (v1 precedent); the pipeline batch continues with the next
+candidate.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import math
 import re
-from collections import Counter
-from difflib import SequenceMatcher
 from html import unescape
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
+from pydantic import ValidationError
 from pydantic_ai.usage import RunUsage
 
-from app.agents.daily_footer_agent import (
-    DailyFooterAgentDeps,
-    build_daily_footer_prompt,
-    get_daily_footer_agent,
-)
-from app.agents.daily_interpretation_agent import (
-    DailyInterpretationAgentDeps,
-    build_daily_interpretation_prompt,
-    get_daily_interpretation_agent,
-)
-from app.agents.daily_refinement_agent import (
-    DailyRefinementAgentDeps,
-    build_daily_refinement_prompt,
-    get_daily_refinement_agent,
-)
-from app.agents.daily_review_agent import (
-    DailyReviewAgentDeps,
-    build_daily_review_prompt,
-    get_daily_review_agent,
-)
-from app.agents.daily_vocab_agent import (
-    DailyVocabAgentDeps,
-    build_daily_vocab_prompt,
-    get_daily_vocab_agent,
+from app.agents.daily_teaching_agents import (
+    DailyBlueprintAgentDeps,
+    DailyLanguageSupportAgentDeps,
+    DailySemanticReviewAgentDeps,
+    DailyTeachingRefinementAgentDeps,
+    DailyTranslationAgentDeps,
+    build_daily_blueprint_prompt,
+    build_daily_language_support_prompt,
+    build_daily_semantic_review_prompt,
+    build_daily_teaching_refinement_prompt,
+    build_daily_translation_prompt,
+    get_daily_blueprint_agent,
+    get_daily_language_support_agent,
+    get_daily_semantic_review_agent,
+    get_daily_teaching_refinement_agent,
+    get_daily_translation_agent,
 )
 from app.config.settings import get_settings
 from app.llm.agent_runner import extract_run_usage, run_agent_with_route
 from app.llm.router import resolve_model_config
 from app.llm.routes import (
     DAILY_READER_MODEL_PRESET,
+    MODEL_ROUTE_DAILY_ANALYSIS,
     MODEL_ROUTE_DAILY_ANNOTATION,
     MODEL_ROUTE_DAILY_REVIEW,
-    MODEL_ROUTE_DAILY_TAKEAWAYS,
     MODEL_ROUTE_DAILY_TRANSLATION,
     ModelRoute,
 )
 from app.llm.types import ModelSelection
 from app.observability.workflow_tracing import build_llm_trace_metadata, build_usage_metadata
+from app.schemas.internal.daily_lesson_v2 import BlueprintDraft, LanguageSupportDraft
 from app.services.daily_reader.extraction import (
     clean_extracted_article,
     detect_transcript_markers,
-    find_boilerplate_hits,
 )
-from app.services.prompting.daily_prompt_strategy import (
-    normalize_daily_difficulty,
-    resolve_refined_difficulty,
+from app.services.daily_reader.teaching.gates import run_hard_gates
+from app.services.daily_reader.teaching.prototype import (
+    build_refinement_evidence,
+    derive_translation_unit_ids,
+    make_review_evidence,
+    validate_teaching_contract,
 )
+from app.services.daily_reader.teaching.refinement_addressing import (
+    collect_fields_to_fix,
+    preapply_patch_violations,
+)
+from app.services.daily_reader.teaching.schema import validate_artifact
 
 logger = logging.getLogger(__name__)
 
 WORKFLOW_NAME = "daily_reader"
-WORKFLOW_VERSION = "2.0.0"
+WORKFLOW_VERSION = "3.0.0"
 DAILY_MODEL_SELECTION = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
 
+# Defense line 5: frozen per-article budget, derived from the evals P-4E
+# batch caps (model_requests 80 / output_tokens 393216 / logical calls 20
+# for the 4-case frozen batch → per article 20 / 98304 / 5).
+TEACHING_V2_MODEL_REQUESTS_MAX = 20
+TEACHING_V2_OUTPUT_TOKENS_MAX = 98304
+TEACHING_V2_LOGICAL_STAGES_MAX = 5
 
-def _metadata_from_owned_usage(run_usage: RunUsage) -> dict[str, object] | None:
-    if int(getattr(run_usage, "requests", 0) or 0) <= 0:
-        return None
-    return build_usage_metadata(run_usage)
+STAGE_USAGE_KEYS = (
+    "blueprint_usage",
+    "language_support_usage",
+    "translation_usage",
+    "semantic_review_usage",
+    "refinement_usage",
+)
 
-HIGHLIGHT_BATCH_SIZE = 6
-HIGHLIGHT_CONCURRENCY = 2
 MAX_PARAGRAPH_CHARS = 900
 MAX_PARAGRAPH_SENTENCES = 8
-MIN_REQUIRED_HIGHLIGHT_CHARS = 120
 READING_UNIT_TARGET_CHARS = 520
 READING_UNIT_MIN_CHARS = 260
 SECTION_HEADING_MAX_CHARS = 80
@@ -116,34 +139,39 @@ class DailyReaderState(TypedDict, total=False):
     pipeline_source: str
     pipeline_meta: dict
 
-    normalized_paragraphs: list[dict]
-    vocab_draft: dict | None
-    highlights_json: list[dict]
-    highlight_retry_exhausted: bool
-    highlight_retry_missing_paragraph_ids: list[str]
-    paragraph_notes_json: dict
-    takeaways_json: dict
-    review_result: dict | None
+    reading_units: list[dict]
+    lesson_blueprint: dict | None
+    language_support: dict | None
+    learning_package: dict | None
+    derived_translation_unit_ids: list[str]
+    teaching_contract_issues: list[dict] | None
+    semantic_review_result: dict | None
     refinement_result: dict | None
+    lesson_v2: dict | None
+    body_json: dict | None
+
     abort: bool
+    abort_reason: str | None
+    abort_diagnostics: dict | None
 
-    vocab_usage: dict[str, object]
-    paragraph_notes_usage: dict[str, object]
-    takeaways_usage: dict[str, object]
-    review_usage: dict[str, object]
+    blueprint_usage: dict[str, object]
+    language_support_usage: dict[str, object]
+    translation_usage: dict[str, object]
+    semantic_review_usage: dict[str, object]
     refinement_usage: dict[str, object]
-
-    body_json: dict
 
     usage_summary: dict | None
 
 
+def _metadata_from_owned_usage(run_usage: RunUsage) -> dict[str, object] | None:
+    if int(getattr(run_usage, "requests", 0) or 0) <= 0:
+        return None
+    return build_usage_metadata(run_usage)
+
+
 def _aggregate_usage(state: DailyReaderState) -> dict[str, Any]:
     per_agent: dict[str, dict[str, object]] = {}
-    for key in (
-        "vocab_usage", "phrase_gloss_usage", "paragraph_notes_usage",
-        "takeaways_usage", "review_usage", "refinement_usage",
-    ):
+    for key in STAGE_USAGE_KEYS:
         usage = state.get(key)
         if usage and isinstance(usage, dict):
             per_agent[key.replace("_usage", "")] = usage
@@ -174,6 +202,30 @@ def _aggregate_usage(state: DailyReaderState) -> dict[str, Any]:
             "model_requests": _sum("model_requests"),
             "tool_calls": _sum("tool_calls"),
         },
+    }
+
+
+def _stage_budget_exceeded(state: DailyReaderState) -> bool:
+    """Defense line 5: hard budget gate over the per-article caps."""
+    model_requests = 0
+    output_tokens = 0
+    for key in STAGE_USAGE_KEYS:
+        usage = state.get(key)
+        if usage and isinstance(usage, dict):
+            model_requests += int(usage.get("model_requests", 0) or 0)
+            output_tokens += int(usage.get("output_tokens", 0) or 0)
+    return (
+        model_requests > TEACHING_V2_MODEL_REQUESTS_MAX
+        or output_tokens > TEACHING_V2_OUTPUT_TOKENS_MAX
+    )
+
+
+def _abort(reason: str, diagnostics: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Defense line 4: every fail-closed stop carries reason + diagnostics."""
+    return {
+        "abort": True,
+        "abort_reason": reason,
+        "abort_diagnostics": diagnostics or {},
     }
 
 
@@ -208,104 +260,107 @@ def _build_daily_llm_metadata(
     )
 
 
-@traceable(name="daily_highlight_llm_call", run_type="llm")
-async def _run_daily_highlight_llm_span(
+def _span_result(result: Any) -> dict[str, Any]:
+    usage = extract_run_usage(result)
+    return {
+        "output": result.output if hasattr(result, "output") else result,
+        "usage_metadata": usage,
+    }
+
+
+@traceable(name="daily_blueprint_llm_call", run_type="llm")
+async def _run_blueprint_llm_span(
     *,
-    deps: DailyVocabAgentDeps,
+    deps: DailyBlueprintAgentDeps,
     prompt: str,
     metadata: dict[str, object],
     run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
-        agent=get_daily_vocab_agent(),
+        agent=get_daily_blueprint_agent(),
+        prompt=prompt,
+        deps=deps,
+        route=MODEL_ROUTE_DAILY_ANALYSIS,
+        model_selection=DAILY_MODEL_SELECTION,
+        run_usage=run_usage,
+    )
+    return _span_result(result)
+
+
+@traceable(name="daily_language_support_llm_call", run_type="llm")
+async def _run_language_support_llm_span(
+    *,
+    deps: DailyLanguageSupportAgentDeps,
+    prompt: str,
+    metadata: dict[str, object],
+    run_usage: RunUsage | None = None,
+) -> dict[str, Any]:
+    result = await run_agent_with_route(
+        agent=get_daily_language_support_agent(),
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_ANNOTATION,
         model_selection=DAILY_MODEL_SELECTION,
         run_usage=run_usage,
     )
-    usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return _span_result(result)
 
 
-@traceable(name="daily_paragraph_notes_llm_call", run_type="llm")
-async def _run_daily_paragraph_notes_llm_span(
+@traceable(name="daily_translation_llm_call", run_type="llm")
+async def _run_translation_llm_span(
     *,
-    deps: DailyFooterAgentDeps,
+    deps: DailyTranslationAgentDeps,
     prompt: str,
     metadata: dict[str, object],
     run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
-        agent=get_daily_footer_agent(),
+        agent=get_daily_translation_agent(),
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_TRANSLATION,
         model_selection=DAILY_MODEL_SELECTION,
         run_usage=run_usage,
     )
-    usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return _span_result(result)
 
 
-@traceable(name="daily_takeaways_llm_call", run_type="llm")
-async def _run_daily_takeaways_llm_span(
+@traceable(name="daily_semantic_review_llm_call", run_type="llm")
+async def _run_semantic_review_llm_span(
     *,
-    deps: DailyInterpretationAgentDeps,
+    deps: DailySemanticReviewAgentDeps,
     prompt: str,
     metadata: dict[str, object],
     run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
-        agent=get_daily_interpretation_agent(),
-        prompt=prompt,
-        deps=deps,
-        route=MODEL_ROUTE_DAILY_TAKEAWAYS,
-        model_selection=DAILY_MODEL_SELECTION,
-        run_usage=run_usage,
-    )
-    usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
-
-
-@traceable(name="daily_review_llm_call", run_type="llm")
-async def _run_daily_review_llm_span(
-    *,
-    deps: DailyReviewAgentDeps,
-    prompt: str,
-    metadata: dict[str, object],
-    run_usage: RunUsage | None = None,
-) -> dict[str, Any]:
-    result = await run_agent_with_route(
-        agent=get_daily_review_agent(),
+        agent=get_daily_semantic_review_agent(),
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
         model_selection=DAILY_MODEL_SELECTION,
         run_usage=run_usage,
     )
-    usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return _span_result(result)
 
 
-@traceable(name="daily_refinement_llm_call", run_type="llm")
-async def _run_daily_refinement_llm_span(
+@traceable(name="daily_teaching_refinement_llm_call", run_type="llm")
+async def _run_teaching_refinement_llm_span(
     *,
-    deps: DailyRefinementAgentDeps,
+    deps: DailyTeachingRefinementAgentDeps,
     prompt: str,
     metadata: dict[str, object],
     run_usage: RunUsage | None = None,
 ) -> dict[str, Any]:
     result = await run_agent_with_route(
-        agent=get_daily_refinement_agent(),
+        agent=get_daily_teaching_refinement_agent(),
         prompt=prompt,
         deps=deps,
         route=MODEL_ROUTE_DAILY_REVIEW,
         model_selection=DAILY_MODEL_SELECTION,
         run_usage=run_usage,
     )
-    usage = extract_run_usage(result)
-    return {"output": result.output if hasattr(result, "output") else result, "usage_metadata": usage}
+    return _span_result(result)
 
 
 def light_normalize_node(state: DailyReaderState) -> dict:
@@ -317,730 +372,651 @@ def light_normalize_node(state: DailyReaderState) -> dict:
         meta["rejection"] = {
             "code": "transcript_rejected",
             "reason": (
-                "Transcript markers detected (HOST/BYLINE/SOUNDBITE); "
-                "transcripts are not articles"
+                "Transcript markers detected (HOST/BYLINE/SOUNDBITE); transcripts are not articles"
             ),
             "markers": markers,
         }
         logger.warning(
             "daily_reader: candidate rejected as transcript (markers=%s, title=%s)",
-            markers, state.get("title", "")[:60],
+            markers,
+            state.get("title", "")[:60],
         )
         return {
-            "abort": True,
-            "normalized_paragraphs": [],
+            **_abort(
+                "transcript_rejected",
+                {"markers": markers, "rejection": meta["rejection"]},
+            ),
+            "reading_units": [],
             "pipeline_meta": meta,
-            "review_result": {"passed": False, "reason": "transcript_rejected"},
         }
 
     text = clean_extracted_article(text)
     title = state.get("title", "")
     raw_blocks = _split_into_raw_blocks(text)
     classified_blocks = _classify_raw_blocks(raw_blocks, title)
-    reading_units = _plan_reading_units(classified_blocks)
-    normalized = []
-    for i, unit in enumerate(reading_units):
-        normalized.append({"paragraph_id": f"p_{i}", "text": unit["text"]})
-    return {"normalized_paragraphs": normalized}
+    reading_units_plan = _plan_reading_units(classified_blocks)
+    # Teaching-contract unit ids: u\d{2,3} (mirrors teaching/schema.py
+    # UNIT_ID_RE); every downstream anchor references these ids.
+    reading_units = [
+        {"id": f"u{i + 1:02d}", "text": unit["text"]} for i, unit in enumerate(reading_units_plan)
+    ]
+    return {"reading_units": reading_units}
 
 
 def _is_aborted(state: DailyReaderState) -> bool:
     return bool(state.get("abort"))
 
 
-def _effective_difficulty(state: DailyReaderState) -> str:
-    """A-2: refined whole-text grade wins; scorer coarse grade is fallback."""
-    refined = resolve_refined_difficulty(state.get("paragraph_notes_json"))
-    return refined or state.get("difficulty", "")
+def _selected_units_for_language_support(reading_units: list[dict], blueprint: dict) -> list[dict]:
+    """Units referenced by the blueprint (selection ∩ evidence anchors).
+
+    Production carries no gold dirty_fragments, so every unit is
+    substantive (mirrors the P-4E generation-view selection rule).
+    """
+    referenced: list[str] = list(blueprint.get("selected_paragraph_ids") or [])
+    for node in blueprint.get("structure_map") or []:
+        referenced.extend(node.get("paragraph_ids") or [])
+    for checkpoint in blueprint.get("comprehension_checkpoints") or []:
+        referenced.extend(checkpoint.get("evidence_paragraph_ids") or [])
+        referenced.extend(checkpoint.get("answer_evidence_paragraph_ids") or [])
+    seen: set[str] = set()
+    selected: list[dict] = []
+    for unit in reading_units:
+        uid = unit.get("id")
+        if uid in referenced and uid not in seen:
+            seen.add(uid)
+            selected.append(unit)
+    return selected
 
 
-async def highlight_by_paragraph_batches_node(state: DailyReaderState) -> dict:
-    paragraphs = state.get("normalized_paragraphs", [])
-    if not paragraphs:
-        return {"vocab_draft": None, "highlights_json": []}
+async def blueprint_node(state: DailyReaderState) -> dict:
+    reading_units = state.get("reading_units", [])
+    if not reading_units:
+        return _abort("blueprint_no_reading_units")
 
-    all_highlights: list[dict] = []
-    all_para_drafts: list[dict] = []
-    total_usage: dict[str, int] = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "model_requests": 0,
-        "tool_calls": 0,
-    }
-
-    batches = _make_batches(paragraphs, HIGHLIGHT_BATCH_SIZE)
-    batch_usages = [RunUsage() for _ in batches]
-
-    semaphore = asyncio.Semaphore(HIGHLIGHT_CONCURRENCY)
-
-    async def _run_batch(batch_idx: int, batch: list[dict]) -> dict[str, Any]:
-        async with semaphore:
-            deps = DailyVocabAgentDeps(
-                paragraphs=batch,
-                batch_index=batch_idx,
-                total_batches=len(batches),
-                difficulty=state.get("difficulty", ""),
-            )
-            prompt = build_daily_vocab_prompt(deps)
-            metadata = _build_daily_llm_metadata(
-                state,
-                node_name="highlight_by_paragraph_batches",
-                route=MODEL_ROUTE_DAILY_ANNOTATION,
-                extra={
-                    "batch_index": batch_idx,
-                    "total_batches": len(batches),
-                    "paragraph_count": len(batch),
-                },
-            )
-            result = await _run_daily_highlight_llm_span(
-                deps=deps,
-                prompt=prompt,
-                metadata=metadata,
-                run_usage=batch_usages[batch_idx],
-                langsmith_extra={"metadata": metadata},
-            )
-        return result
-
-    batch_results = await asyncio.gather(
-        *[_run_batch(batch_idx, batch) for batch_idx, batch in enumerate(batches)],
-        return_exceptions=True,
-    )
-
-    for batch_idx, (batch, result) in enumerate(zip(batches, batch_results, strict=True)):
-        if isinstance(result, asyncio.CancelledError):
-            raise result
-        if isinstance(result, Exception):
-            logger.error(
-                "highlight batch %d/%d failed: %s",
-                batch_idx + 1,
-                len(batches),
-                result,
-                exc_info=(type(result), result, result.__traceback__),
-            )
-            usage = _metadata_from_owned_usage(batch_usages[batch_idx])
-            if usage:
-                for k in total_usage:
-                    total_usage[k] += int(usage.get(k, 0) or 0)
-            continue
-        if isinstance(result, BaseException):
-            raise result
-
-        draft = result.get("output")
-        usage = result.get("usage_metadata")
-
-        batch_highlights: list[dict] = []
-        if draft:
-            batch_highlights = _extract_highlights_from_vocab_draft(draft)
-            all_highlights.extend(batch_highlights)
-            for para in getattr(draft, "paragraphs", []):
-                all_para_drafts.append(para.model_dump() if hasattr(para, "model_dump") else para)
-
-        if usage:
-            for k in total_usage:
-                total_usage[k] += int(usage.get(k, 0) or 0)
-
-        logger.info(
-            "highlight batch %d/%d: %d paragraphs, %d highlights",
-            batch_idx + 1,
-            len(batches),
-            len(batch),
-            len(batch_highlights),
+    run_usage = RunUsage()
+    try:
+        deps = DailyBlueprintAgentDeps(
+            article={
+                "title": state.get("title", ""),
+                "source": state.get("source", ""),
+                "reading_units": reading_units,
+            }
         )
+        prompt = build_daily_blueprint_prompt(deps)
+        metadata = _build_daily_llm_metadata(
+            state,
+            node_name="blueprint",
+            route=MODEL_ROUTE_DAILY_ANALYSIS,
+            extra={"unit_count": len(reading_units)},
+        )
+        result = await _run_blueprint_llm_span(
+            deps=deps, prompt=prompt, metadata=metadata, run_usage=run_usage
+        )
+        blueprint = result.get("output")
+        usage = result.get("usage_metadata")
+        if not blueprint:
+            raise RuntimeError("blueprint returned no output")
 
-    missing_required = _paragraphs_requiring_highlight(paragraphs, all_highlights)
-    if missing_required:
-        retry_run_usage = RunUsage()
-        try:
-            deps = DailyVocabAgentDeps(
-                paragraphs=missing_required,
-                batch_index=len(batches),
-                total_batches=len(batches) + 1,
-                difficulty=state.get("difficulty", ""),
-            )
-            prompt = build_daily_vocab_prompt(deps)
-            metadata = _build_daily_llm_metadata(
-                state,
-                node_name="highlight_required_retry",
-                route=MODEL_ROUTE_DAILY_ANNOTATION,
-                extra={
-                    "paragraph_count": len(missing_required),
-                    "missing_paragraph_ids": [p.get("paragraph_id") for p in missing_required],
-                },
-            )
-            result = await _run_daily_highlight_llm_span(
-                deps=deps,
-                prompt=prompt,
-                metadata=metadata,
-                run_usage=retry_run_usage,
-                langsmith_extra={"metadata": metadata},
-            )
-            retry_draft = result.get("output")
-            retry_usage = result.get("usage_metadata")
-            if retry_draft:
-                retry_highlights = _extract_highlights_from_vocab_draft(retry_draft)
-                all_highlights.extend(retry_highlights)
-                logger.info(
-                    "highlight required retry: %d paragraphs, %d highlights",
-                    len(missing_required), len(retry_highlights),
+        updates: dict[str, Any] = {"lesson_blueprint": blueprint.model_dump()}
+        if usage:
+            updates["blueprint_usage"] = usage
+            if _stage_budget_exceeded({**state, **updates}):
+                updates.update(
+                    _abort("teaching_v2_budget_exceeded", _budget_diagnostics(state, updates))
                 )
-            if retry_usage:
-                for k in total_usage:
-                    total_usage[k] += int(retry_usage.get(k, 0) or 0)
-        except Exception as e:
-            logger.error("highlight required retry failed: %s", e, exc_info=True)
-            usage = _metadata_from_owned_usage(retry_run_usage)
-            if usage:
-                for k in total_usage:
-                    total_usage[k] += int(usage.get(k, 0) or 0)
+        return updates
+    except Exception as e:
+        logger.error("blueprint_node failed: %s", e, exc_info=True)
+        updates = _abort("blueprint_stage_failed", {"error": str(e)[:300]})
+        usage = _metadata_from_owned_usage(run_usage)
+        if usage:
+            updates["blueprint_usage"] = usage
+        return updates
 
-    missing_after_retry = _paragraphs_requiring_highlight(paragraphs, all_highlights)
-    coverage = _check_highlight_coverage(paragraphs, all_highlights)
-    logger.info("highlight coverage: %s", coverage)
 
-    updates: dict[str, Any] = {
-        "vocab_draft": {"paragraphs": all_para_drafts},
-        "highlights_json": all_highlights,
-        "highlight_retry_exhausted": bool(missing_after_retry),
-        "highlight_retry_missing_paragraph_ids": [
-            p.get("paragraph_id", "") for p in missing_after_retry
-        ],
+def _budget_diagnostics(state: DailyReaderState, updates: dict[str, Any]) -> dict[str, Any]:
+    aggregate = _aggregate_usage({**state, **updates})["aggregate"]
+    return {
+        "aggregate": aggregate,
+        "caps": {
+            "model_requests": TEACHING_V2_MODEL_REQUESTS_MAX,
+            "output_tokens": TEACHING_V2_OUTPUT_TOKENS_MAX,
+            "logical_stages": TEACHING_V2_LOGICAL_STAGES_MAX,
+        },
     }
-    if total_usage["total_tokens"] > 0:
-        updates["vocab_usage"] = total_usage
-    return updates
 
 
-async def paragraph_guides_and_translations_node(state: DailyReaderState) -> dict:
-    paragraphs = state.get("normalized_paragraphs", [])
-    title = state.get("title", "")
-    highlights = state.get("highlights_json", [])
+async def language_support_node(state: DailyReaderState) -> dict:
+    blueprint = state.get("lesson_blueprint") or {}
+    reading_units = state.get("reading_units", [])
 
-    if not paragraphs:
-        return {"paragraph_notes_json": {}}
+    selected_units = _selected_units_for_language_support(reading_units, blueprint)
+    if not selected_units:
+        return _abort("language_support_selected_units_empty")
 
     run_usage = RunUsage()
     try:
-        highlights_summary = ""
-        if highlights:
-            hl_texts = [h.get("text", "") for h in highlights[:15]]
-            highlights_summary = f"已标注的关键词和短语：{', '.join(hl_texts)}"
-
-        paragraphs_info = _build_paragraphs_info(paragraphs)
-
-        deps = DailyFooterAgentDeps(
-            full_text=_reconstruct_numbered_full_text(paragraphs),
-            title=title,
-            highlights_summary=highlights_summary,
-            paragraphs_info=paragraphs_info,
-            difficulty=state.get("difficulty", ""),
+        deps = DailyLanguageSupportAgentDeps(
+            selected_units=selected_units,
+            effective_difficulty=blueprint.get("effective_difficulty", ""),
         )
-        prompt = build_daily_footer_prompt(deps)
+        prompt = build_daily_language_support_prompt(deps)
         metadata = _build_daily_llm_metadata(
             state,
-            node_name="paragraph_guides_and_translations",
-            route=MODEL_ROUTE_DAILY_TRANSLATION,
-            extra={"paragraph_count": len(paragraphs), "highlight_count": len(highlights)},
+            node_name="language_support",
+            route=MODEL_ROUTE_DAILY_ANNOTATION,
+            extra={"selected_unit_count": len(selected_units)},
         )
-
-        result = await _run_daily_paragraph_notes_llm_span(
-            deps=deps,
-            prompt=prompt,
-            metadata=metadata,
-            run_usage=run_usage,
-            langsmith_extra={"metadata": metadata},
+        result = await _run_language_support_llm_span(
+            deps=deps, prompt=prompt, metadata=metadata, run_usage=run_usage
         )
-        notes_draft = result.get("output")
+        language_support = result.get("output")
         usage = result.get("usage_metadata")
+        if not language_support:
+            raise RuntimeError("language_support returned no output")
 
-        notes_dict = notes_draft.model_dump() if notes_draft else {}
-        notes_dict = _align_paragraph_notes(notes_dict, paragraphs)
-
-        updates: dict[str, Any] = {"paragraph_notes_json": notes_dict}
-        if usage:
-            updates["paragraph_notes_usage"] = usage
-        return updates
-    except Exception as e:
-        logger.error("paragraph_guides_and_translations_node failed: %s", e, exc_info=True)
-        updates: dict[str, Any] = {"paragraph_notes_json": {}}
-        usage = _metadata_from_owned_usage(run_usage)
-        if usage:
-            updates["paragraph_notes_usage"] = usage
-        return updates
-
-
-async def close_reading_takeaways_node(state: DailyReaderState) -> dict:
-    paragraphs = state.get("normalized_paragraphs", [])
-    title = state.get("title", "")
-    highlights = state.get("highlights_json", [])
-    paragraph_notes = state.get("paragraph_notes_json", {})
-
-    run_usage = RunUsage()
-    try:
-        highlights_summary = ""
-        if highlights:
-            hl_texts = [h.get("text", "") for h in highlights[:15]]
-            highlights_summary = f"已标注的关键词和短语：{', '.join(hl_texts)}"
-
-        paragraph_translations = _paragraph_translations_context(paragraph_notes)
-
-        deps = DailyInterpretationAgentDeps(
-            full_text=_reconstruct_numbered_full_text(paragraphs),
-            title=title,
-            highlights_summary=highlights_summary,
-            paragraph_translations=paragraph_translations,
-            difficulty=_effective_difficulty(state),
-        )
-        prompt = build_daily_interpretation_prompt(deps)
-        metadata = _build_daily_llm_metadata(
-            state,
-            node_name="close_reading_takeaways",
-            route=MODEL_ROUTE_DAILY_TAKEAWAYS,
-            extra={"paragraph_count": len(paragraphs), "highlight_count": len(highlights)},
-        )
-
-        result = await _run_daily_takeaways_llm_span(
-            deps=deps,
-            prompt=prompt,
-            metadata=metadata,
-            run_usage=run_usage,
-            langsmith_extra={"metadata": metadata},
-        )
-        takeaways_draft = result.get("output")
-        usage = result.get("usage_metadata")
-
-        takeaways_dict = takeaways_draft.model_dump() if takeaways_draft else {}
-
-        updates: dict[str, Any] = {"takeaways_json": takeaways_dict}
-        if usage:
-            updates["takeaways_usage"] = usage
-        return updates
-    except Exception as e:
-        logger.error("close_reading_takeaways_node failed: %s", e, exc_info=True)
-        updates: dict[str, Any] = {"takeaways_json": {}}
-        usage = _metadata_from_owned_usage(run_usage)
-        if usage:
-            updates["takeaways_usage"] = usage
-        return updates
-
-
-def _boilerplate_quality_issues(
-    highlights: list[dict],
-    paragraph_notes: dict,
-    takeaways: dict,
-) -> list[dict[str, str]]:
-    hits = sorted(set(find_boilerplate_hits(
-        _collect_artifact_surfaces(highlights, paragraph_notes, takeaways)
-    )))
-    if not hits:
-        return []
-    return [{
-        "dimension": "boilerplate",
-        "severity": "major",
-        "description": (
-            "疑似脏数据/boilerplate 出现在高亮、导读或译文中: "
-            + "; ".join(hits[:5])
-        ),
-        "suggestion": "删除所有落在 boilerplate 文本上的高亮、导读与译文",
-    }]
-
-
-def _apply_local_quality_repairs(
-    paragraphs: list[dict],
-    highlights: list[dict],
-    paragraph_notes: dict,
-    takeaways: dict,
-) -> tuple[list[dict], dict, dict, list[dict[str, str]]]:
-    issues: list[dict[str, str]] = []
-
-    repaired_highlights = _dedupe_highlights(_reconcile_highlights(paragraphs, highlights))
-    original_anchors = [(h.get("paragraph_id"), h.get("text")) for h in highlights]
-    repaired_anchors = [(h.get("paragraph_id"), h.get("text")) for h in repaired_highlights]
-    if repaired_anchors != original_anchors:
-        issues.append({
-            "dimension": "highlight_anchor",
-            "severity": "minor",
-            "description": (
-                f"高亮锚点已确定性纠正或删除（{len(highlights)}→{len(repaired_highlights)}）"
-            ),
-            "suggestion": "后续生成必须逐字复用对应 reading unit 中的原文锚点",
-        })
-
-    repaired_notes = _align_paragraph_notes(paragraph_notes, paragraphs)
-    original_note_ids = [
-        note.get("paragraph_id")
-        for note in paragraph_notes.get("notes", [])
-        if isinstance(note, dict)
-    ] if isinstance(paragraph_notes, dict) else []
-    repaired_note_ids = [
-        note.get("paragraph_id")
-        for note in repaired_notes.get("notes", [])
-        if isinstance(note, dict)
-    ]
-    if repaired_note_ids != original_note_ids:
-        issues.append({
-            "dimension": "paragraph_note_anchor",
-            "severity": "minor",
-            "description": "已删除 paragraph_id 不存在的透读 note",
-            "suggestion": "透读 note 只能引用当前 normalized reading unit 的 paragraph_id",
-        })
-
-    repaired_takeaways = _snap_sentence_translations(takeaways, paragraphs, repaired_notes)
-    if repaired_takeaways != takeaways:
-        issues.append({
-            "dimension": "translation_consistency",
-            "severity": "minor",
-            "description": "长难句译文已确定性吸附到对应段落译文",
-            "suggestion": "长难句译文必须逐字取自对应 paragraph note translation",
-        })
-
-    repaired_takeaways = dict(repaired_takeaways) if isinstance(repaired_takeaways, dict) else {}
-    limits = (
-        ("key_expressions", 7, "key_expressions_count", "重点表达"),
-        ("writing_moves", 2, "writing_moves_count", "写作借鉴"),
-        ("discussion_questions", 2, "discussion_questions_count", "讨论问题"),
-    )
-    for field_name, limit, dimension, label in limits:
-        values = repaired_takeaways.get(field_name)
-        if isinstance(values, list) and len(values) > limit:
-            repaired_takeaways[field_name] = values[:limit]
-            issues.append({
-                "dimension": dimension,
-                "severity": "minor",
-                "description": f"{label}超出上限，已从 {len(values)} 项截断为 {limit} 项",
-                "suggestion": f"只保留最有学习价值的 {limit} 项",
-            })
-
-    return repaired_highlights, repaired_notes, repaired_takeaways, issues
-
-
-def _deterministic_quality_issues(
-    paragraphs: list[dict],
-    highlights: list[dict],
-    paragraph_notes: dict,
-    takeaways: dict,
-    difficulty: str,
-) -> list[dict[str, str]]:
-    issues: list[dict[str, str]] = []
-    coverage = _check_highlight_coverage(paragraphs, highlights)
-    missing_highlights = coverage.get("uncovered_required_paragraph_ids", [])
-    if missing_highlights:
-        issues.append({
-            "dimension": "highlight_coverage",
-            "severity": "major",
-            "description": (
-                "有实质内容的 reading unit 缺少高亮: " + ", ".join(missing_highlights)
-            ),
-            "suggestion": "仅为这些 reading unit 补充 1 个准确且有学习价值的高亮",
-        })
-
-    difficulty_level = normalize_daily_difficulty(difficulty)
-    density_limit = {"A2": 4, "B1": 4, "B2": 3, "C1": 2}[difficulty_level]
-    highlight_counts = Counter(
-        h.get("paragraph_id", "") for h in highlights if h.get("paragraph_id")
-    )
-    over_limit = [
-        f"{pid}={highlight_counts[pid]}"
-        for pid in (p.get("paragraph_id", "") for p in paragraphs)
-        if highlight_counts[pid] > density_limit
-    ]
-    if over_limit:
-        issues.append({
-            "dimension": "highlight_density",
-            "severity": "major",
-            "description": (
-                f"reading unit 高亮密度超过 {difficulty_level} 上限 {density_limit}: "
-                + ", ".join(over_limit)
-            ),
-            "suggestion": "仅保留各超量 reading unit 中最有学习价值的高亮",
-        })
-
-    notes_report = _check_paragraph_notes_coverage(paragraphs, paragraph_notes)
-    missing_notes = notes_report.get("missing_required_note_ids", [])
-    if missing_notes:
-        issues.append({
-            "dimension": "paragraph_note_coverage",
-            "severity": "major",
-            "description": (
-                "有实质内容的 reading unit 缺少完整透读 note: "
-                + ", ".join(missing_notes)
-            ),
-            "suggestion": "仅为这些 reading unit 补充导读、摘要和段落译文",
-        })
-
-    question_count = len(takeaways.get("discussion_questions", []))
-    if question_count != 2:
-        issues.append({
-            "dimension": "discussion_questions_count",
-            "severity": "major",
-            "description": f"讨论问题必须恰好 2 项，当前 {question_count} 项",
-            "suggestion": "仅补充缺失的讨论问题，不重写其他文末内容",
-        })
-    return issues
-
-
-async def quality_review_node(state: DailyReaderState) -> dict:
-    original_text = state.get("original_text", "")
-    paragraphs = state.get("normalized_paragraphs", [])
-    highlights = state.get("highlights_json", [])
-    paragraph_notes = state.get("paragraph_notes_json", {})
-    takeaways = state.get("takeaways_json", {})
-
-    run_usage = RunUsage()
-    try:
-        # A-1 deterministic gate (no LLM): no highlight/guide/translation may
-        # sit on suspected boilerplate text. Reuses the extraction-layer
-        # detectors; fail routes into the existing refinement path.
-        boilerplate_issues = _boilerplate_quality_issues(
-            highlights,
-            paragraph_notes,
-            takeaways,
-        )
-        if boilerplate_issues:
-            logger.warning("quality_review: boilerplate leaked into artifacts")
-            return {
-                "review_result": {
-                    "passed": False,
-                    "reason": "boilerplate_leak",
-                    "issues": boilerplate_issues,
-                }
-            }
-
-        highlights, paragraph_notes, takeaways, local_issues = _apply_local_quality_repairs(
-            paragraphs,
-            highlights,
-            paragraph_notes,
-            takeaways,
-        )
-
-        deterministic_issues = _deterministic_quality_issues(
-            paragraphs,
-            highlights,
-            paragraph_notes,
-            takeaways,
-            _effective_difficulty(state),
-        )
-        if deterministic_issues:
-            retry_exhausted = bool(state.get("highlight_retry_exhausted")) and any(
-                issue["dimension"] == "highlight_coverage"
-                for issue in deterministic_issues
+        # Fail-closed anchor identity (P-4E structural rule): every anchor
+        # must resolve to a known reading-unit id.
+        known_ids = {unit.get("id") for unit in reading_units}
+        anchors = [t.paragraph_id for t in language_support.language_targets]
+        anchors += [sm.paragraph_id for sm in language_support.sentence_maps]
+        unknown = sorted({a for a in anchors if a not in known_ids})
+        if unknown:
+            updates = _abort(
+                "language_support_anchor_unresolved",
+                {"unknown_unit_ids": unknown[:5]},
             )
-            return {
-                **({"abort": True} if retry_exhausted else {}),
-                "highlights_json": highlights,
-                "paragraph_notes_json": paragraph_notes,
-                "takeaways_json": takeaways,
-                "review_result": {
-                    "passed": False,
-                    "reason": (
-                        "deterministic_retry_exhausted"
-                        if retry_exhausted
-                        else "deterministic_quality_gate"
-                    ),
-                    "issues": local_issues + deterministic_issues,
-                }
-            }
+            if usage:
+                updates["language_support_usage"] = usage
+            return updates
 
-        coverage_report = _check_highlight_coverage(paragraphs, highlights)
-        coverage_report["retry_exhausted"] = bool(state.get("highlight_retry_exhausted", False))
-        coverage_report["retry_missing_paragraph_ids"] = state.get("highlight_retry_missing_paragraph_ids", [])
-        paragraph_notes_report = _check_paragraph_notes_coverage(paragraphs, paragraph_notes)
+        updates: dict[str, Any] = {"language_support": language_support.model_dump()}
+        if usage:
+            updates["language_support_usage"] = usage
+            if _stage_budget_exceeded({**state, **updates}):
+                updates.update(
+                    _abort("teaching_v2_budget_exceeded", _budget_diagnostics(state, updates))
+                )
+        return updates
+    except Exception as e:
+        logger.error("language_support_node failed: %s", e, exc_info=True)
+        updates = _abort("language_support_stage_failed", {"error": str(e)[:300]})
+        usage = _metadata_from_owned_usage(run_usage)
+        if usage:
+            updates["language_support_usage"] = usage
+        return updates
 
-        deps = DailyReviewAgentDeps(
-            original_text=original_text,
-            highlights_json=json.dumps(highlights, ensure_ascii=False),
-            paragraph_notes_json=json.dumps(paragraph_notes, ensure_ascii=False),
-            takeaways_json=json.dumps(takeaways, ensure_ascii=False),
-            difficulty=_effective_difficulty(state),
+
+async def translation_node(state: DailyReaderState) -> dict:
+    blueprint = state.get("lesson_blueprint") or {}
+    language_support = state.get("language_support") or {}
+    reading_units = state.get("reading_units", [])
+    unit_ids = [unit.get("id") for unit in reading_units]
+
+    try:
+        derived_targets = derive_translation_unit_ids(
+            blueprint.get("effective_difficulty", ""),
+            reading_units,
+            # Production carries no gold: every unit is substantive.
+            substantive_unit_ids=unit_ids,
+            checkpoint_evidence_ids=[
+                pid
+                for checkpoint in blueprint.get("comprehension_checkpoints") or []
+                for pid in checkpoint.get("evidence_paragraph_ids") or []
+            ],
+            language_target_paragraph_ids=[
+                target.get("paragraph_id")
+                for target in language_support.get("language_targets") or []
+            ],
+            sentence_map_paragraph_ids=[
+                sm.get("paragraph_id") for sm in language_support.get("sentence_maps") or []
+            ],
+            high_difficulty_unit_ids=list(language_support.get("high_difficulty_unit_ids") or []),
         )
-        prompt = build_daily_review_prompt(deps)
+    except ValueError as e:
+        return _abort("translation_targets_derivation_failed", {"error": str(e)[:300]})
+
+    units_by_id = {unit.get("id"): unit for unit in reading_units}
+    target_units = [units_by_id[uid] for uid in derived_targets]
+    sentence_maps_payload = [
+        {"paragraph_id": sm.get("paragraph_id"), "sentence": sm.get("sentence")}
+        for sm in language_support.get("sentence_maps") or []
+    ]
+
+    run_usage = RunUsage()
+    try:
+        deps = DailyTranslationAgentDeps(
+            target_units=target_units,
+            sentence_maps=sentence_maps_payload,
+            effective_difficulty=blueprint.get("effective_difficulty", ""),
+        )
+        prompt = build_daily_translation_prompt(deps)
         metadata = _build_daily_llm_metadata(
             state,
-            node_name="quality_review",
-            route=MODEL_ROUTE_DAILY_REVIEW,
-            extra={
-                "paragraph_count": len(paragraphs),
-                "highlight_count": len(highlights),
-                "coverage_ratio": coverage_report.get("coverage_ratio"),
-                "missing_note_ids": paragraph_notes_report.get("missing_required_note_ids"),
+            node_name="translation",
+            route=MODEL_ROUTE_DAILY_TRANSLATION,
+            extra={"target_unit_count": len(target_units)},
+        )
+        result = await _run_translation_llm_span(
+            deps=deps, prompt=prompt, metadata=metadata, run_usage=run_usage
+        )
+        translation = result.get("output")
+        usage = result.get("usage_metadata")
+        if not translation:
+            raise RuntimeError("translation returned no output")
+
+        returned_ids = [item.paragraph_id for item in translation.translations]
+        duplicate_ids = sorted({pid for pid in returned_ids if returned_ids.count(pid) > 1})
+        if duplicate_ids:
+            updates = _abort(
+                "translation_duplicate_targets", {"duplicate_unit_ids": duplicate_ids[:5]}
+            )
+            if usage:
+                updates["translation_usage"] = usage
+            return updates
+        missing_ids = sorted(set(derived_targets) - set(returned_ids))
+        extra_ids = sorted(set(returned_ids) - set(derived_targets))
+        if missing_ids or extra_ids:
+            updates = _abort(
+                "translation_target_set_mismatch",
+                {"missing_unit_ids": missing_ids[:5], "extra_unit_ids": extra_ids[:5]},
+            )
+            if usage:
+                updates["translation_usage"] = usage
+            return updates
+
+        package: dict[str, Any] = {
+            "comprehension_checkpoints": blueprint.get("comprehension_checkpoints") or [],
+            "high_difficulty_unit_ids": list(
+                language_support.get("high_difficulty_unit_ids") or []
+            ),
+            "language_targets": language_support.get("language_targets") or [],
+            "sentence_maps": language_support.get("sentence_maps") or [],
+            "transfer_task": blueprint.get("transfer_task") or {},
+            "translations_by_paragraph_id": {
+                item.paragraph_id: item.translation for item in translation.translations
+            },
+        }
+        # Defense line 2: deterministic contract issues feed the semantic
+        # review input (never silently swallowed).
+        issues = validate_teaching_contract(blueprint, package, reading_units=reading_units)
+
+        updates: dict[str, Any] = {
+            "learning_package": package,
+            "derived_translation_unit_ids": derived_targets,
+            "teaching_contract_issues": issues,
+        }
+        if usage:
+            updates["translation_usage"] = usage
+            if _stage_budget_exceeded({**state, **updates}):
+                updates.update(
+                    _abort("teaching_v2_budget_exceeded", _budget_diagnostics(state, updates))
+                )
+        return updates
+    except Exception as e:
+        logger.error("translation_node failed: %s", e, exc_info=True)
+        updates = _abort("translation_stage_failed", {"error": str(e)[:300]})
+        usage = _metadata_from_owned_usage(run_usage)
+        if usage:
+            updates["translation_usage"] = usage
+        return updates
+
+
+async def semantic_review_node(state: DailyReaderState) -> dict:
+    blueprint = state.get("lesson_blueprint") or {}
+    package = state.get("learning_package") or {}
+
+    run_usage = RunUsage()
+    try:
+        deps = DailySemanticReviewAgentDeps(
+            original_text=state.get("original_text", ""),
+            blueprint=blueprint,
+            learning_package=package,
+            deterministic_checks={
+                "derived_translation_unit_ids": state.get("derived_translation_unit_ids") or [],
+                "teaching_contract_issues": state.get("teaching_contract_issues") or [],
             },
         )
-
-        result = await _run_daily_review_llm_span(
-            deps=deps,
-            prompt=prompt,
-            metadata=metadata,
-            run_usage=run_usage,
-            langsmith_extra={"metadata": metadata},
+        prompt = build_daily_semantic_review_prompt(deps)
+        metadata = _build_daily_llm_metadata(
+            state,
+            node_name="semantic_review",
+            route=MODEL_ROUTE_DAILY_REVIEW,
+            extra={
+                "teaching_contract_issue_count": len(state.get("teaching_contract_issues") or []),
+            },
+        )
+        result = await _run_semantic_review_llm_span(
+            deps=deps, prompt=prompt, metadata=metadata, run_usage=run_usage
         )
         review = result.get("output")
         usage = result.get("usage_metadata")
-
         if not review:
-            raise RuntimeError("semantic review returned no output")
+            raise RuntimeError("semantic_review returned no output")
 
-        review_dict = review.model_dump()
-        review_dict["issues"] = local_issues + list(review_dict.get("issues", []))
-        updates: dict[str, Any] = {
-            "highlights_json": highlights,
-            "paragraph_notes_json": paragraph_notes,
-            "takeaways_json": takeaways,
-            "review_result": review_dict,
-        }
+        try:
+            evidence = make_review_evidence(**review.model_dump())
+        except (TypeError, ValueError) as e:
+            updates = _abort("semantic_review_evidence_invalid", {"error": str(e)[:300]})
+            if usage:
+                updates["semantic_review_usage"] = usage
+            return updates
+
+        updates: dict[str, Any] = {"semantic_review_result": evidence}
         if usage:
-            updates["review_usage"] = usage
+            updates["semantic_review_usage"] = usage
+            if _stage_budget_exceeded({**state, **updates}):
+                updates.update(
+                    _abort("teaching_v2_budget_exceeded", _budget_diagnostics(state, updates))
+                )
         return updates
     except Exception as e:
-        logger.error("quality_review_node failed: %s", e, exc_info=True)
-        updates: dict[str, Any] = {
-            "abort": True,
-            "review_result": {
-                "passed": False,
-                "reason": "semantic_review_unavailable",
-                "issues": [{
-                    "dimension": "semantic_review",
-                    "severity": "major",
-                    "description": "语义质量审核执行失败",
-                    "suggestion": "保留草稿并由后续重试或人工审核处理",
-                }],
-            },
-        }
+        logger.error("semantic_review_node failed: %s", e, exc_info=True)
+        updates = _abort("semantic_review_stage_failed", {"error": str(e)[:300]})
         usage = _metadata_from_owned_usage(run_usage)
         if usage:
-            updates["review_usage"] = usage
+            updates["semantic_review_usage"] = usage
         return updates
+
+
+def _apply_patch(container: dict[str, Any], patch: dict[str, Any]) -> None:
+    for key, value in patch.items():
+        current = container.get(key)
+        if key == "translations_by_paragraph_id" and isinstance(value, dict):
+            # The corrected translation map is a whole-field replacement so the
+            # model can also remove entries; every other field merges.
+            container[key] = dict(value)
+        elif isinstance(current, dict) and isinstance(value, dict):
+            container[key] = {**current, **dict(value)}
+        else:
+            container[key] = value
 
 
 async def refinement_node(state: DailyReaderState) -> dict:
-    original_text = state.get("original_text", "")
-    paragraphs = state.get("normalized_paragraphs", [])
-    review = state.get("review_result", {})
-    highlights = state.get("highlights_json", [])
-    paragraph_notes = state.get("paragraph_notes_json", {})
-    takeaways = state.get("takeaways_json", {})
+    blueprint = state.get("lesson_blueprint") or {}
+    package = state.get("learning_package") or {}
+    review = state.get("semantic_review_result") or {}
+    reading_units = state.get("reading_units", [])
 
     run_usage = RunUsage()
     try:
-        unresolved_issues = [
-            issue
-            for issue in review.get("issues", [])
-            if issue.get("severity") == "major"
-        ]
-        issues_text = json.dumps(unresolved_issues, ensure_ascii=False)
-
-        deps = DailyRefinementAgentDeps(
-            original_text=_reconstruct_numbered_full_text(paragraphs) or original_text,
-            review_issues=issues_text,
-            current_highlights=json.dumps(highlights, ensure_ascii=False),
-            current_paragraph_notes=json.dumps(paragraph_notes, ensure_ascii=False),
-            current_takeaways=json.dumps(takeaways, ensure_ascii=False),
+        # Finite field-addressing rule (P-4E) plus frozen derivation-input
+        # pre-check (P-5D-R3): shared with the evals runner.
+        fields_to_fix, addressing_error, addressing_field = collect_fields_to_fix(
+            review.get("issues", []), package, blueprint
         )
-        prompt = build_daily_refinement_prompt(deps)
+        if addressing_error == "refinement_field_unknown":
+            updates = _abort("refinement_field_unknown", {"field": addressing_field})
+            usage = _metadata_from_owned_usage(run_usage)
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
+        if addressing_error == "frozen_derivation_field":
+            updates = _abort("frozen_derivation_field", {"field": addressing_field})
+            usage = _metadata_from_owned_usage(run_usage)
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
+        if not fields_to_fix:
+            return _abort("refinement_fields_empty")
+
+        evidence_context = {
+            "failed_contracts": [
+                result["contract"]
+                for result in review.get("contract_results", [])
+                if not result["passed"]
+            ]
+        }
+        deps = DailyTeachingRefinementAgentDeps(
+            review_before_refinement=review,
+            fields_to_fix=fields_to_fix,
+            evidence_context=evidence_context,
+        )
+        prompt = build_daily_teaching_refinement_prompt(deps)
         metadata = _build_daily_llm_metadata(
             state,
             node_name="refinement",
             route=MODEL_ROUTE_DAILY_REVIEW,
-            extra={
-                "issue_count": len(review.get("issues", [])) if isinstance(review, dict) else 0,
-                "highlight_count": len(highlights),
-            },
+            extra={"fields_to_fix": sorted(fields_to_fix)},
         )
-
-        result = await _run_daily_refinement_llm_span(
-            deps=deps,
-            prompt=prompt,
-            metadata=metadata,
-            run_usage=run_usage,
-            langsmith_extra={"metadata": metadata},
+        result = await _run_teaching_refinement_llm_span(
+            deps=deps, prompt=prompt, metadata=metadata, run_usage=run_usage
         )
         refinement = result.get("output")
         usage = result.get("usage_metadata")
-
         if not refinement:
-            return {
-                "abort": True,
-                "refinement_result": {
-                    "abort": True,
-                    "remaining_issues": [{
-                        "dimension": "refinement_unavailable",
-                        "severity": "major",
-                        "description": "定向修正未返回可验证结果",
-                        "suggestion": "保留草稿并由后续重试或人工审核处理",
-                    }],
+            raise RuntimeError("refinement returned no output")
+        patch = refinement.refinement_patch
+
+        # Defense line 3 (P-4I): patch violations do not stop the batch — the
+        # patch is rejected, both containers are restored to their serialized
+        # pre-patch image, the refinement call's usage stays booked, and the
+        # article lands fail-closed with a FAIL after-review.
+        violations = preapply_patch_violations(patch, package, blueprint, fields_to_fix)
+        if not violations:
+            pre_blueprint = json.loads(json.dumps(blueprint))
+            pre_package = json.loads(json.dumps(package))
+            for key, value in patch.items():
+                if key in package:
+                    _apply_patch(package, {key: value})
+                elif key in blueprint:
+                    _apply_patch(blueprint, {key: value})
+            try:
+                BlueprintDraft.model_validate(blueprint)
+            except ValidationError as exc:
+                err = exc.errors()[0]
+                violations.append(
+                    {
+                        "container": "blueprint",
+                        "error_type": err.get("type"),
+                        "loc": [str(part) for part in err.get("loc", [])],
+                    }
+                )
+            try:
+                LanguageSupportDraft.model_validate(
+                    {
+                        "high_difficulty_unit_ids": package["high_difficulty_unit_ids"],
+                        "language_targets": package["language_targets"],
+                        "sentence_maps": package["sentence_maps"],
+                    }
+                )
+            except ValidationError as exc:
+                err = exc.errors()[0]
+                violations.append(
+                    {
+                        "container": "learning_package",
+                        "error_type": err.get("type"),
+                        "loc": [str(part) for part in err.get("loc", [])],
+                    }
+                )
+            invalid_translations = sorted(
+                pid
+                for pid, value in package["translations_by_paragraph_id"].items()
+                if not isinstance(value, str) or not value.strip()
+            )
+            if invalid_translations:
+                violations.append(
+                    {
+                        "container": "learning_package",
+                        "error_type": "invalid_translation_value",
+                        "loc": invalid_translations[:5],
+                    }
+                )
+            if violations:
+                # Restore from the serialized pre-image: byte-faithful,
+                # never a reconstruction.
+                blueprint.clear()
+                blueprint.update(pre_blueprint)
+                package.clear()
+                package.update(pre_package)
+        patch_rejected = bool(violations)
+        if patch_rejected and set(patch) - set(fields_to_fix):
+            # The canonical refinement-evidence contract only describes a
+            # patch inside fields_to_fix. A patch that touched anything
+            # else cannot produce directed evidence: fail closed without
+            # an after-review (the article is not stored either way).
+            updates: dict[str, Any] = _abort(
+                "teaching_v2_after_review_fail",
+                {
+                    "patch_rejected": True,
+                    "violations": violations,
+                    "restored_fields": sorted(patch),
                 },
-            }
-
-        refinement_dict = refinement.model_dump()
-        updates: dict[str, Any] = {"refinement_result": refinement_dict}
-
-        if refinement and refinement.abort:
-            updates["abort"] = True
+            )
             if usage:
                 updates["refinement_usage"] = usage
             return updates
 
-        if refinement.refined_highlights is not None:
-            refined_highlights = [h.model_dump() for h in refinement.refined_highlights]
-            updates["highlights_json"] = _choose_refined_highlights(
-                paragraphs=paragraphs,
-                current=highlights,
-                refined=refined_highlights,
+        # Defense line 2 replay: deterministic contract + translation-target
+        # derivation re-run on the (possibly patched) containers; a replay
+        # contradiction downgrades the rechecks fail-closed.
+        replay_issues = validate_teaching_contract(blueprint, package, reading_units=reading_units)
+        try:
+            replay_targets = derive_translation_unit_ids(
+                blueprint.get("effective_difficulty", ""),
+                reading_units,
+                substantive_unit_ids=[unit.get("id") for unit in reading_units],
+                checkpoint_evidence_ids=[
+                    pid
+                    for checkpoint in blueprint.get("comprehension_checkpoints") or []
+                    for pid in checkpoint.get("evidence_paragraph_ids") or []
+                ],
+                language_target_paragraph_ids=[
+                    target.get("paragraph_id") for target in package.get("language_targets") or []
+                ],
+                sentence_map_paragraph_ids=[
+                    sm.get("paragraph_id") for sm in package.get("sentence_maps") or []
+                ],
+                high_difficulty_unit_ids=list(package.get("high_difficulty_unit_ids") or []),
             )
-        if refinement.refined_paragraph_notes is not None:
-            updates["paragraph_notes_json"] = refinement.refined_paragraph_notes.model_dump()
-        if refinement.refined_takeaways is not None:
-            updates["takeaways_json"] = refinement.refined_takeaways.model_dump()
+        except ValueError as e:
+            updates = _abort("deterministic_replay_failed", {"error": str(e)[:300]})
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
+        current_ids = set(package.get("translations_by_paragraph_id") or {})
+        non_string_keys = sorted(k for k in current_ids if not isinstance(k, str))
+        missing_ids = sorted(set(replay_targets) - current_ids)
+        extra_ids = sorted(current_ids - set(replay_targets))
+        replay_passed = (
+            not replay_issues and not non_string_keys and not missing_ids and not extra_ids
+        )
 
-        repaired_highlights, repaired_notes, repaired_takeaways, local_issues = (
-            _apply_local_quality_repairs(
-                paragraphs,
-                updates.get("highlights_json", highlights),
-                updates.get("paragraph_notes_json", paragraph_notes),
-                updates.get("takeaways_json", takeaways),
+        effective_rechecks = [item.model_dump() for item in refinement.rechecked_contract_results]
+        effective_remaining = [item.model_dump() for item in refinement.remaining_issues]
+        if patch_rejected:
+            # The directed rechecks describe a patch that was rejected
+            # host-side; they are discarded and replaced with fail-closed
+            # rejection evidence per failed contract.
+            rejection_note = "; ".join(
+                f"{v['container']}:{v['error_type']}:{','.join(str(p) for p in v['loc'])}"
+                for v in violations
             )
-        )
-        updates.update({
-            "highlights_json": repaired_highlights,
-            "paragraph_notes_json": repaired_notes,
-            "takeaways_json": repaired_takeaways,
-        })
-        remaining_issues = _boilerplate_quality_issues(
-            repaired_highlights,
-            repaired_notes,
-            repaired_takeaways,
-        ) + _deterministic_quality_issues(
-            paragraphs,
-            repaired_highlights,
-            repaired_notes,
-            repaired_takeaways,
-            _effective_difficulty(state),
-        )
-        if remaining_issues:
-            updates["abort"] = True
-            updates["refinement_result"] = {
-                **refinement_dict,
-                "abort": True,
-                "local_repairs": local_issues,
-                "remaining_issues": remaining_issues,
+            failed_contracts = [
+                result["contract"]
+                for result in review.get("contract_results", [])
+                if not result["passed"]
+            ]
+            effective_rechecks = [
+                {
+                    "contract": contract,
+                    "passed": False,
+                    "rationale": (
+                        f"refinement patch rejected ({rejection_note}); directed fix not applied"
+                    ),
+                }
+                for contract in failed_contracts
+            ]
+            effective_remaining = [
+                {
+                    "contract": contract,
+                    "field": "refinement_patch",
+                    "problem": f"refinement patch rejected ({rejection_note})",
+                }
+                for contract in failed_contracts
+            ]
+        elif not replay_passed:
+            replay_detail = (
+                f"missing={missing_ids[:5]},extra={extra_ids[:5]},"
+                f"non_string={non_string_keys[:5]},issues={len(replay_issues)}"
+            )
+            effective_rechecks = [
+                {
+                    **dict(result),
+                    "passed": False,
+                    "rationale": (
+                        f"host deterministic replay failed ({replay_detail}); "
+                        f"{result.get('rationale', '')}"
+                    ),
+                }
+                for result in effective_rechecks
+            ]
+            effective_remaining = [
+                {
+                    "contract": result["contract"],
+                    "field": str(result["contract"]),
+                    "problem": f"host deterministic replay failed ({replay_detail})",
+                }
+                for result in effective_rechecks
+            ]
+        try:
+            refinement_evidence = build_refinement_evidence(
+                review_before_refinement=review,
+                fields_to_fix=fields_to_fix,
+                refinement_patch=json.loads(json.dumps(patch)),
+                rechecked_contract_results=effective_rechecks,
+                remaining_issues=effective_remaining,
+                hard_gate_replay={"all_passed": replay_passed},
+                prior_refinement_count=0,
+            )
+        except (TypeError, ValueError) as e:
+            updates = _abort(
+                "refinement_evidence_invalid",
+                {"error_type": type(e).__name__, "message": str(e)[:300]},
+            )
+            if usage:
+                updates["refinement_usage"] = usage
+            return updates
+        if patch_rejected:
+            refinement_evidence["rejection"] = {
+                "reason": "patch_violation",
+                "violations": violations,
+                "restored_fields": sorted(patch),
             }
 
+        updates: dict[str, Any] = {
+            "lesson_blueprint": blueprint,
+            "learning_package": package,
+            "refinement_result": refinement_evidence,
+        }
         if usage:
             updates["refinement_usage"] = usage
+            if _stage_budget_exceeded({**state, **updates}):
+                updates.update(
+                    _abort("teaching_v2_budget_exceeded", _budget_diagnostics(state, updates))
+                )
+                return updates
+
+        after_review = refinement_evidence["review_after_refinement"]
+        if after_review["verdict"] == "FAIL":
+            # Fail-closed: the lesson failed quality and is not stored; the
+            # pipeline batch continues with the next candidate (P-4I
+            # quality_fail_continue semantics, mapped to production abort).
+            updates.update(
+                _abort(
+                    "teaching_v2_after_review_fail",
+                    {
+                        "patch_rejected": patch_rejected,
+                        "replay_passed": replay_passed,
+                        "remaining_issues": list(after_review.get("remaining_issues") or [])[:5],
+                    },
+                )
+            )
         return updates
     except Exception as e:
         logger.error("refinement_node failed: %s", e, exc_info=True)
-        updates: dict[str, Any] = {
-            "abort": True,
-            "refinement_result": {
-                "abort": True,
-                "remaining_issues": [{
-                    "dimension": "refinement_failed",
-                    "severity": "major",
-                    "description": "定向修正执行失败",
-                    "suggestion": "保留草稿并由后续重试或人工审核处理",
-                }],
-            },
-        }
+        updates = _abort("refinement_stage_failed", {"error": str(e)[:300]})
         usage = _metadata_from_owned_usage(run_usage)
         if usage:
             updates["refinement_usage"] = usage
@@ -1048,110 +1024,127 @@ async def refinement_node(state: DailyReaderState) -> dict:
 
 
 def daily_projection_node(state: DailyReaderState) -> dict:
-    paragraphs = state.get("normalized_paragraphs", [])
-    highlights = state.get("highlights_json", [])
-    paragraph_notes = state.get("paragraph_notes_json", {})
-    takeaways = state.get("takeaways_json", {})
-
-    logger.info(
-        "daily_projection_node: paragraphs=%d, highlights=%d, notes_keys=%s, takeaways_keys=%s",
-        len(paragraphs), len(highlights),
-        list(paragraph_notes.keys()) if isinstance(paragraph_notes, dict) else type(paragraph_notes),
-        list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways),
-    )
-
-    corrected = _dedupe_highlights(_reconcile_highlights(paragraphs, highlights))
-    takeaways = _snap_sentence_translations(takeaways, paragraphs, paragraph_notes)
-
-    coverage = _check_highlight_coverage(paragraphs, corrected)
-    logger.info("daily_projection_node: highlight coverage=%s", coverage)
-
-    notes_map = _build_notes_map(paragraph_notes)
-
-    body_paragraphs = []
-    for para in paragraphs:
-        pid = para.get("paragraph_id", "")
-        text = para.get("text", "")
-        para_highlights = [h for h in corrected if h.get("paragraph_id") == pid]
-        para_note = notes_map.get(pid)
-        body_paragraphs.append({
-            "id": pid,
-            "text": text,
-            "highlights": para_highlights,
-            "reading_note": para_note,
-        })
-
+    blueprint = state.get("lesson_blueprint") or {}
+    package = state.get("learning_package") or {}
+    reading_units = state.get("reading_units", [])
+    review = state.get("semantic_review_result")
+    refinement = state.get("refinement_result")
     usage_summary = _aggregate_usage(state)
 
+    artifact: dict[str, Any] = {
+        # Production row identity pre-storage: the source URL (stable per
+        # article, unique within a discovery batch).
+        "case_id": state.get("source_url", ""),
+        "lesson_blueprint": blueprint,
+        "learning_package": package,
+        "source_assets": {"source_caption": ""},
+        "run_meta": {
+            "outcome": "cleaned_publish",
+            "refinement_count": 1 if refinement else 0,
+            "usage": usage_summary.get("aggregate") if usage_summary.get("available") else None,
+            "review": review,
+            "refinement": refinement,
+        },
+    }
+
+    case = {
+        "input": {
+            "reading_units": reading_units,
+            "source_caption": "",
+        }
+    }
+
+    # Evaluation Lane (defense line 2, final fail-closed): shape validation
+    # + the shared gold-free hard-gate registry run exactly once, on the
+    # final artifact. A failure aborts — the article is not stored.
+    schema_errors = validate_artifact(case, artifact)
+    if schema_errors:
+        return {
+            **_abort(
+                "teaching_v2_artifact_schema_violation",
+                {"schema_errors": schema_errors[:5]},
+            ),
+            "usage_summary": usage_summary,
+        }
+
+    gates = run_hard_gates(case, artifact)
+    if not gates["all_passed"]:
+        failed_gates = sorted(
+            name for name, result in gates["gates"].items() if result["passed"] is False
+        )
+        diagnostics = {
+            "failed_gates": failed_gates,
+            "passed_count": gates["passed_count"],
+            "scored_count": gates["scored_count"],
+        }
+        artifact["run_meta"]["outcome"] = "draft_with_verdict"
+        artifact["run_meta"]["quality"] = {
+            "abort_reason": "teaching_v2_hard_gates_failed",
+            "verdict": review.get("verdict") if isinstance(review, dict) else None,
+            "failed_gates": failed_gates,
+            "failed_contracts": [
+                item.get("contract")
+                for item in ((review or {}).get("contract_results") or [])
+                if isinstance(item, dict) and not item.get("passed") and item.get("contract")
+            ],
+        }
+        body_json = {
+            "paragraphs": [
+                {"id": unit.get("id"), "text": unit.get("text")} for unit in reading_units
+            ]
+        }
+        return {
+            **_abort("teaching_v2_hard_gates_failed", diagnostics),
+            "lesson_v2": artifact,
+            "body_json": body_json,
+            "usage_summary": usage_summary,
+        }
+    artifact["run_meta"]["hard_gates"] = {
+        "all_passed": gates["all_passed"],
+        "passed_count": gates["passed_count"],
+        "scored_count": gates["scored_count"],
+    }
+
+    body_json = {
+        "paragraphs": [{"id": unit.get("id"), "text": unit.get("text")} for unit in reading_units]
+    }
+
+    logger.info(
+        "daily_projection_node: units=%d, checkpoints=%d, language_targets=%d, "
+        "translations=%d, refinement_count=%d, gates=%d/%d",
+        len(reading_units),
+        len(package.get("comprehension_checkpoints") or []),
+        len(package.get("language_targets") or []),
+        len(package.get("translations_by_paragraph_id") or {}),
+        artifact["run_meta"]["refinement_count"],
+        gates["passed_count"],
+        gates["scored_count"],
+    )
+
     return {
-        "body_json": {"paragraphs": body_paragraphs},
-        "highlights_json": corrected,
-        "paragraph_notes_json": paragraph_notes,
-        "takeaways_json": takeaways,
+        "lesson_v2": artifact,
+        "body_json": body_json,
         "usage_summary": usage_summary,
     }
 
 
-def _should_refine(state: DailyReaderState) -> bool:
-    review = state.get("review_result")
-    if review is None:
-        return False
-    return not review.get("passed", True)
-
-
-def _quality_review_route(state: DailyReaderState) -> str:
+def _semantic_review_route(state: DailyReaderState) -> str:
     if state.get("abort", False):
         return "abort"
-    return "refine" if _should_refine(state) else "project"
-
-
-def _collect_artifact_surfaces(
-    highlights: list[dict], paragraph_notes: dict, takeaways: dict
-) -> list[str]:
-    """User-visible artefact surfaces the dirty fragments could leak into."""
-    texts: list[str] = []
-    for h in highlights:
-        if isinstance(h, dict):
-            texts.extend([h.get("text", ""), h.get("gloss", "")])
-    if isinstance(paragraph_notes, dict):
-        texts.append(paragraph_notes.get("article_summary", ""))
-        texts.extend(paragraph_notes.get("reading_focus", []) or [])
-        for n in paragraph_notes.get("notes", []) or []:
-            if isinstance(n, dict):
-                for k in ("focus_question", "micro_summary", "translation"):
-                    texts.append(n.get(k, ""))
-    if isinstance(takeaways, dict):
-        texts.append(takeaways.get("article_takeaway", ""))
-        for e in takeaways.get("key_expressions", []) or []:
-            if isinstance(e, dict):
-                texts.extend([
-                    e.get("expression", ""), e.get("gloss", ""),
-                    e.get("context_sentence", ""), e.get("usage_note", ""),
-                ])
-        for sn in takeaways.get("sentence_notes", []) or []:
-            if isinstance(sn, dict):
-                texts.extend([
-                    sn.get("sentence", ""), sn.get("translation", ""),
-                    sn.get("breakdown", ""), sn.get("takeaway", ""),
-                ])
-        for wm in takeaways.get("writing_moves", []) or []:
-            if isinstance(wm, dict):
-                texts.extend([
-                    wm.get("anchor", ""), wm.get("explanation", ""),
-                    wm.get("reusable_pattern", "") or "",
-                ])
-        texts.extend(takeaways.get("discussion_questions", []) or [])
-    return texts
+    review = state.get("semantic_review_result")
+    if isinstance(review, dict) and review.get("verdict") == "FAIL":
+        return "refine"
+    return "project"
 
 
 def build_daily_reader_graph() -> Any:
     graph = StateGraph(DailyReaderState)
 
     graph.add_node("light_normalize", light_normalize_node)
-    graph.add_node("highlight_by_paragraph_batches", highlight_by_paragraph_batches_node)
-    graph.add_node("paragraph_guides_and_translations", paragraph_guides_and_translations_node)
-    graph.add_node("close_reading_takeaways", close_reading_takeaways_node)
-    graph.add_node("quality_review", quality_review_node)
+    graph.add_node("blueprint", blueprint_node)
+    graph.add_node("language_support", language_support_node)
+    graph.add_node("translation", translation_node)
+    graph.add_node("semantic_review", semantic_review_node)
     graph.add_node("refinement", refinement_node)
     graph.add_node("daily_projection", daily_projection_node)
 
@@ -1159,14 +1152,26 @@ def build_daily_reader_graph() -> Any:
     graph.add_conditional_edges(
         "light_normalize",
         _is_aborted,
-        {True: END, False: "highlight_by_paragraph_batches"},
+        {True: END, False: "blueprint"},
     )
-    graph.add_edge("highlight_by_paragraph_batches", "paragraph_guides_and_translations")
-    graph.add_edge("paragraph_guides_and_translations", "close_reading_takeaways")
-    graph.add_edge("close_reading_takeaways", "quality_review")
     graph.add_conditional_edges(
-        "quality_review",
-        _quality_review_route,
+        "blueprint",
+        _is_aborted,
+        {True: END, False: "language_support"},
+    )
+    graph.add_conditional_edges(
+        "language_support",
+        _is_aborted,
+        {True: END, False: "translation"},
+    )
+    graph.add_conditional_edges(
+        "translation",
+        _is_aborted,
+        {True: END, False: "semantic_review"},
+    )
+    graph.add_conditional_edges(
+        "semantic_review",
+        _semantic_review_route,
         {"abort": END, "refine": "refinement", "project": "daily_projection"},
     )
     graph.add_conditional_edges(
@@ -1177,6 +1182,11 @@ def build_daily_reader_graph() -> Any:
     graph.add_edge("daily_projection", END)
 
     return graph.compile()
+
+
+# ---------------------------------------------------------------------------
+# Reading-unit planning (light_normalize machinery, unchanged by v2)
+# ---------------------------------------------------------------------------
 
 
 def _split_into_raw_blocks(text: str) -> list[dict]:
@@ -1203,20 +1213,20 @@ def _split_into_raw_blocks(text: str) -> list[dict]:
         for line in lines:
             cleaned = _clean_paragraph(line)
             if cleaned:
-                blocks.append({
-                    "block_id": f"b_{block_idx}",
-                    "text": cleaned,
-                    "section_idx": section_idx,
-                })
+                blocks.append(
+                    {
+                        "block_id": f"b_{block_idx}",
+                        "text": cleaned,
+                        "section_idx": section_idx,
+                    }
+                )
                 block_idx += 1
                 count += 1
         section_block_counts[section_idx] = count
         section_idx += 1
 
     for block in blocks:
-        block["is_solo_in_section"] = (
-            section_block_counts.get(block["section_idx"], 0) == 1
-        )
+        block["is_solo_in_section"] = section_block_counts.get(block["section_idx"], 0) == 1
 
     return blocks
 
@@ -1227,9 +1237,7 @@ def _classify_raw_blocks(blocks: list[dict], title: str) -> list[dict]:
         text = block["text"].strip()
         if title_clean and text.lower() == title_clean:
             block["role"] = "title_duplicate"
-        elif _is_section_heading_candidate(
-            text, block.get("is_solo_in_section", False), idx
-        ):
+        elif _is_section_heading_candidate(text, block.get("is_solo_in_section", False), idx):
             block["role"] = "section_heading"
         else:
             block["role"] = "content"
@@ -1413,454 +1421,6 @@ def _split_long_paragraph(text: str) -> list[str]:
 
 def _clean_paragraph(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
-    text = unescape(text).replace("\u00A0", " ")
+    text = unescape(text).replace("\u00a0", " ")
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def _make_batches(paragraphs: list[dict], batch_size: int) -> list[list[dict]]:
-    if not paragraphs:
-        return []
-    return [
-        paragraphs[i : i + batch_size]
-        for i in range(0, len(paragraphs), batch_size)
-    ]
-
-
-def _extract_highlights_from_vocab_draft(draft: Any) -> list[dict]:
-    if draft is None:
-        return []
-    highlights = []
-    for para in getattr(draft, "paragraphs", []):
-        pid = getattr(para, "paragraph_id", "")
-        para_idx = int(pid.split("_")[1]) if "_" in pid else 0
-        hl_counter = 0
-        for hl in getattr(para, "highlights", []):
-            hl_counter += 1
-            highlights.append({
-                "id": f"hl_p{para_idx:02d}_{hl_counter:02d}",
-                "type": getattr(hl, "type", "vocab_highlight"),
-                "text": getattr(hl, "anchor", ""),
-                "gloss": getattr(hl, "gloss", ""),
-                "paragraph_id": pid,
-                "start": getattr(hl, "start", 0),
-                "end": getattr(hl, "end", 0),
-            })
-    return highlights
-
-
-def _check_highlight_coverage(
-    paragraphs: list[dict],
-    highlights: list[dict],
-) -> dict[str, Any]:
-    if not paragraphs:
-        return {"total_paragraphs": 0, "covered_paragraphs": 0, "coverage_ratio": 0.0}
-
-    para_ids = [p.get("paragraph_id", "") for p in paragraphs]
-    covered_pids = set()
-    for hl in highlights:
-        pid = hl.get("paragraph_id", "")
-        if pid in para_ids:
-            covered_pids.add(pid)
-
-    mid = len(para_ids) // 2
-    first_half = para_ids[:mid] if mid > 0 else para_ids
-    second_half = para_ids[mid:]
-
-    first_covered = sum(1 for pid in first_half if pid in covered_pids)
-    second_covered = sum(1 for pid in second_half if pid in covered_pids)
-
-    uncovered = [pid for pid in para_ids if pid not in covered_pids]
-
-    para_map = {p.get("paragraph_id", ""): p.get("text", "") for p in paragraphs}
-
-    return {
-        "total_paragraphs": len(para_ids),
-        "covered_paragraphs": len(covered_pids),
-        "total_reading_units": len(para_ids),
-        "covered_reading_units": len(covered_pids),
-        "coverage_ratio": len(covered_pids) / len(para_ids),
-        "first_half_coverage": first_covered / len(first_half) if first_half else 0.0,
-        "second_half_coverage": second_covered / len(second_half) if second_half else 0.0,
-        "uncovered_paragraph_ids": uncovered,
-        "uncovered_required_paragraph_ids": [
-            pid for pid in uncovered
-            if len(para_map.get(pid, "")) >= MIN_REQUIRED_HIGHLIGHT_CHARS
-        ],
-    }
-
-
-def _paragraphs_requiring_highlight(
-    paragraphs: list[dict],
-    highlights: list[dict],
-) -> list[dict]:
-    highlighted_ids = {
-        h.get("paragraph_id", "")
-        for h in highlights
-        if isinstance(h, dict)
-    }
-    return [
-        p for p in paragraphs
-        if p.get("paragraph_id", "") not in highlighted_ids
-        and len(p.get("text", "")) >= MIN_REQUIRED_HIGHLIGHT_CHARS
-    ]
-
-
-def _check_paragraph_notes_coverage(
-    paragraphs: list[dict],
-    paragraph_notes: dict,
-) -> dict[str, Any]:
-    para_ids = [p.get("paragraph_id", "") for p in paragraphs]
-    notes = paragraph_notes.get("notes", []) if isinstance(paragraph_notes, dict) else []
-    note_ids = {
-        n.get("paragraph_id", "")
-        for n in notes
-        if isinstance(n, dict)
-        and n.get("focus_question")
-        and n.get("micro_summary")
-        and n.get("translation")
-    }
-    missing = [pid for pid in para_ids if pid not in note_ids]
-    required_para_ids = [
-        p.get("paragraph_id", "")
-        for p in paragraphs
-        if len(p.get("text", "")) >= MIN_REQUIRED_HIGHLIGHT_CHARS
-    ]
-    missing_required = [pid for pid in required_para_ids if pid not in note_ids]
-    return {
-        "total_paragraphs": len(para_ids),
-        "noted_paragraphs": len(para_ids) - len(missing),
-        "total_reading_units": len(para_ids),
-        "noted_reading_units": len(para_ids) - len(missing),
-        "coverage_ratio": (len(para_ids) - len(missing)) / len(para_ids) if para_ids else 0.0,
-        "missing_paragraph_ids": missing,
-        "missing_required_note_ids": missing_required,
-    }
-
-
-def _reconstruct_full_text(paragraphs: list[dict]) -> str:
-    return "\n\n".join(p.get("text", "") for p in paragraphs)
-
-
-def _reconstruct_numbered_full_text(paragraphs: list[dict]) -> str:
-    return "\n\n".join(
-        f"{p.get('paragraph_id', '')}: {p.get('text', '')}"
-        for p in paragraphs
-    )
-
-
-def _build_paragraphs_info(paragraphs: list[dict]) -> str:
-    if not paragraphs:
-        return ""
-    lines = []
-    for p in paragraphs:
-        pid = p.get("paragraph_id", "")
-        text_preview = p.get("text", "")[:100]
-        lines.append(f"{pid}: {text_preview}...")
-    return "\n".join(lines)
-
-
-def _build_notes_map(paragraph_notes: dict) -> dict[str, dict]:
-    notes_map: dict[str, dict] = {}
-    if not isinstance(paragraph_notes, dict):
-        return notes_map
-    for note in paragraph_notes.get("notes", []):
-        if isinstance(note, dict):
-            pid = note.get("paragraph_id", "")
-            if pid:
-                notes_map[pid] = note
-    return notes_map
-
-
-def _align_paragraph_notes(paragraph_notes: dict, paragraphs: list[dict]) -> dict:
-    if not isinstance(paragraph_notes, dict):
-        return {}
-
-    valid_ids = {p.get("paragraph_id", "") for p in paragraphs}
-    aligned_notes = [
-        note
-        for note in paragraph_notes.get("notes", [])
-        if isinstance(note, dict) and note.get("paragraph_id") in valid_ids
-    ]
-    dropped = len(paragraph_notes.get("notes", [])) - len(aligned_notes)
-    if dropped:
-        logger.warning("Dropped %d paragraph notes with unknown paragraph_id", dropped)
-
-    return {
-        **paragraph_notes,
-        "notes": aligned_notes,
-    }
-
-
-def _reconcile_highlights(
-    paragraphs: list[dict],
-    highlights: list[dict],
-) -> list[dict]:
-    if not paragraphs or not highlights:
-        return highlights
-
-    para_map: dict[str, str] = {}
-    for p in paragraphs:
-        pid = p.get("paragraph_id", "")
-        text = p.get("text", "")
-        if pid and text:
-            para_map[pid] = text
-
-    corrected = []
-    fix_count = 0
-    for hl in highlights:
-        hl_text = hl.get("text", "")
-        assigned_pid = hl.get("paragraph_id", "")
-        assigned_para = para_map.get(assigned_pid, "")
-
-        if hl_text and assigned_para and hl_text in assigned_para:
-            start = assigned_para.index(hl_text)
-            new_hl = {**hl, "start": start, "end": start + len(hl_text)}
-            corrected.append(new_hl)
-            continue
-
-        found = False
-        for pid, para_text in para_map.items():
-            if hl_text and hl_text in para_text:
-                start = para_text.index(hl_text)
-                new_hl = {**hl, "paragraph_id": pid, "start": start, "end": start + len(hl_text)}
-                corrected.append(new_hl)
-                found = True
-                fix_count += 1
-                break
-
-        if not found:
-            logger.warning(
-                "Dropping highlight: text=%r not found in any paragraph",
-                hl_text[:50] if hl_text else "",
-            )
-
-    if fix_count:
-        logger.info("_reconcile_highlights: fixed %d highlight positions", fix_count)
-    return corrected
-
-
-_VOWELS = set("aeiouy")
-_ZH_SENT_SPLIT = re.compile(r"(?<=[。！？])")
-_ZH_PUNCT = "。！？；"
-
-
-def _simple_stem(word: str) -> str:
-    # ponytail: inflectional suffixes only (plural/tense). Add a lemmatizer
-    # if irregulars (went/go, mice/mouse) start leaking through dedup.
-    w = word
-    if len(w) <= 3:
-        return w
-    if len(w) > 5 and w.endswith("ing"):
-        w = w[:-3]
-        if len(w) > 2 and w[-1] == w[-2] and w[-1] not in _VOWELS:
-            w = w[:-1]
-    elif len(w) > 4 and w.endswith("ied"):
-        w = w[:-3] + "y"
-    elif len(w) > 4 and w.endswith("ed"):
-        w = w[:-2]
-        if len(w) > 2 and w[-1] == w[-2] and w[-1] not in _VOWELS:
-            w = w[:-1]
-    elif len(w) > 4 and w.endswith("ies"):
-        w = w[:-3] + "y"
-    elif len(w) > 4 and w.endswith("es"):
-        w = w[:-2]
-    elif w.endswith("s") and not w.endswith("ss"):
-        w = w[:-1]
-    if len(w) > 4 and w.endswith("e"):
-        w = w[:-1]
-    return w
-
-
-def _normalize_highlight_key(text: str) -> str:
-    collapsed = re.sub(r"\s+", " ", (text or "").strip()).casefold()
-    if not collapsed:
-        return ""
-    return " ".join(_simple_stem(w) for w in collapsed.split(" "))
-
-
-def _dedupe_highlights(highlights: list[dict]) -> list[dict]:
-    seen: set[str] = set()
-    kept: list[dict] = []
-    for hl in highlights:
-        key = _normalize_highlight_key(hl.get("text", ""))
-        if not key:
-            kept.append(hl)
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(hl)
-    return kept
-
-
-def _paragraph_translations_context(paragraph_notes: dict) -> str:
-    if not isinstance(paragraph_notes, dict):
-        return ""
-    lines: list[str] = []
-    for note in paragraph_notes.get("notes", []) or []:
-        if not isinstance(note, dict):
-            continue
-        pid = note.get("paragraph_id", "")
-        tr = note.get("translation", "")
-        if pid and tr:
-            lines.append(f"{pid}: {tr}")
-    return "\n".join(lines)
-
-
-def _squash_zh(s: str) -> str:
-    return re.sub(r"\s+", "", s or "")
-
-
-def _zh_sentences(text: str) -> list[str]:
-    return [p for p in _ZH_SENT_SPLIT.split(text or "") if p.strip()]
-
-
-def _find_en_span(paragraph: str, sentence: str) -> tuple[int, int] | None:
-    hay = paragraph or ""
-    needle = (sentence or "").strip()
-    if not hay or not needle:
-        return None
-    i = hay.find(needle)
-    if i >= 0:
-        return i, i + len(needle)
-    short = needle[:48]
-    if len(short) >= 12:
-        i = hay.find(short)
-        if i >= 0:
-            return i, min(len(hay), i + len(needle))
-    return None
-
-
-def _snap_zh_window(zh: str, start_ratio: float, end_ratio: float) -> str:
-    if not zh:
-        return ""
-    a = max(0, min(len(zh) - 1, int(start_ratio * len(zh))))
-    b = max(a + 1, min(len(zh), int(end_ratio * len(zh))))
-    left = 0
-    for i in range(a - 1, -1, -1):
-        if zh[i] in _ZH_PUNCT:
-            left = i + 1
-            break
-    right = len(zh)
-    for i in range(b, len(zh)):
-        if zh[i] in _ZH_PUNCT:
-            right = i + 1
-            break
-    return zh[left:right].strip()
-
-
-def _best_zh_span_by_overlap(query: str, zh_para: str) -> str:
-    sents = _zh_sentences(zh_para)
-    if not sents:
-        return ""
-    q = _squash_zh(query)
-    if not q:
-        return ""
-    best, best_score = "", 0.0
-    for i in range(len(sents)):
-        acc = ""
-        for j in range(i, len(sents)):
-            acc += sents[j]
-            score = SequenceMatcher(None, q, _squash_zh(acc)).ratio()
-            if score > best_score:
-                best_score = score
-                best = acc.strip()
-    return best if best_score >= 0.35 else ""
-
-
-def _align_one_sentence_translation(
-    sentence: str,
-    sent_tr: str,
-    en_para: str,
-    zh_para: str,
-) -> str:
-    if not zh_para:
-        return sent_tr
-    if sent_tr and _squash_zh(sent_tr) in _squash_zh(zh_para):
-        return sent_tr
-    span = _find_en_span(en_para, sentence)
-    if span is not None and en_para:
-        snapped = _snap_zh_window(zh_para, span[0] / len(en_para), span[1] / len(en_para))
-        if snapped:
-            return snapped
-    return _best_zh_span_by_overlap(sent_tr or sentence, zh_para) or sent_tr
-
-
-def _snap_sentence_translations(
-    takeaways: dict,
-    paragraphs: list[dict],
-    paragraph_notes: dict,
-) -> dict:
-    if not isinstance(takeaways, dict):
-        return takeaways
-    notes = takeaways.get("sentence_notes") or []
-    if not notes:
-        return takeaways
-    en_by_pid = {
-        p.get("paragraph_id", ""): p.get("text", "") for p in paragraphs or []
-    }
-    zh_by_pid: dict[str, str] = {}
-    if isinstance(paragraph_notes, dict):
-        for n in paragraph_notes.get("notes", []) or []:
-            if isinstance(n, dict) and n.get("paragraph_id"):
-                zh_by_pid[n["paragraph_id"]] = n.get("translation", "") or ""
-    new_notes = []
-    for sn in notes:
-        if not isinstance(sn, dict):
-            new_notes.append(sn)
-            continue
-        pid = sn.get("paragraph_id", "")
-        sentence = sn.get("sentence", "")
-        if not zh_by_pid.get(pid):
-            needle = (sentence or "").strip()[:40]
-            retarget = ""
-            if needle:
-                for other_pid, en in en_by_pid.items():
-                    if zh_by_pid.get(other_pid) and needle in (en or ""):
-                        retarget = other_pid
-                        break
-            if not retarget:
-                continue
-            pid = retarget
-            sn = {**sn, "paragraph_id": pid}
-        aligned = _align_one_sentence_translation(
-            sentence,
-            sn.get("translation", ""),
-            en_by_pid.get(pid, ""),
-            zh_by_pid.get(pid, ""),
-        )
-        new_notes.append({**sn, "translation": aligned} if aligned != sn.get("translation") else sn)
-    return {**takeaways, "sentence_notes": new_notes}
-
-
-def _choose_refined_highlights(
-    *,
-    paragraphs: list[dict] | list[str],
-    current: list[dict],
-    refined: list[dict],
-) -> list[dict]:
-    normalized_paragraphs = [
-        p if isinstance(p, dict) else {"paragraph_id": f"p_{idx}", "text": p}
-        for idx, p in enumerate(paragraphs)
-    ]
-    if not refined:
-        logger.warning("Ignoring empty refined_highlights; keeping current highlights")
-        return current
-
-    current_coverage = _check_highlight_coverage(normalized_paragraphs, current)
-    refined_coverage = _check_highlight_coverage(normalized_paragraphs, refined)
-
-    current_ratio = float(current_coverage.get("coverage_ratio", 0) or 0)
-    refined_ratio = float(refined_coverage.get("coverage_ratio", 0) or 0)
-    current_second = float(current_coverage.get("second_half_coverage", 0) or 0)
-    refined_second = float(refined_coverage.get("second_half_coverage", 0) or 0)
-
-    if refined_ratio < current_ratio or refined_second < current_second:
-        logger.warning(
-            "Ignoring refined_highlights because coverage regressed: current=%s refined=%s",
-            current_coverage,
-            refined_coverage,
-        )
-        return current
-    return refined

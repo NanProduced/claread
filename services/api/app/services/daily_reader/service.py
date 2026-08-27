@@ -257,8 +257,7 @@ async def get_review_queue(limit: int = 20, offset: int = 0) -> DailyReaderRevie
                        source, source_url, publish_date, difficulty,
                        read_time_minutes, tags, cover_image_url, cover_theme,
                        score, status, review_status, reviewed_by, reviewed_at,
-                       created_at, updated_at, body_json, highlights_json,
-                       paragraph_notes_json, takeaways_json, pipeline_meta
+                       created_at, updated_at, lesson_v2, body_json, pipeline_meta
                 FROM daily_readers
                 WHERE status = 'draft' AND review_status = 'pending'
                 ORDER BY created_at DESC, id DESC
@@ -334,6 +333,17 @@ async def update_draft_article(article_id: str, updates: dict[str, object]) -> s
 
 
 def _row_to_article_response(row: object) -> DailyReaderArticleResponse:
+    # P-5B: v2 payload projection. lesson_v2 (NULL on pre-v2 rows) carries
+    # lesson_blueprint + learning_package; body_json paragraphs project to
+    # reading_units (ids match the lesson anchors). Zero projection: the
+    # v1 body/highlights/paragraph_notes/takeaways fields are gone.
+    lesson_v2 = _decode_jsonb(row.get("lesson_v2"), {})
+    if not isinstance(lesson_v2, dict):
+        lesson_v2 = {}
+    blueprint = lesson_v2.get("lesson_blueprint")
+    package = lesson_v2.get("learning_package")
+    body = _decode_jsonb(row["body_json"], {})
+    units = body.get("paragraphs", []) if isinstance(body, dict) else []
     return DailyReaderArticleResponse(
         id=row["id"],
         title=row["title"],
@@ -349,10 +359,9 @@ def _row_to_article_response(row: object) -> DailyReaderArticleResponse:
         tags=_decode_jsonb(row["tags"], []),
         cover_image_url=row["cover_image_url"],
         cover_theme=row["cover_theme"],
-        body=_decode_jsonb(row["body_json"], {}),
-        highlights=_decode_jsonb(row["highlights_json"], []),
-        paragraph_notes=_decode_jsonb(row["paragraph_notes_json"], {}),
-        takeaways=_decode_jsonb(row["takeaways_json"], {}),
+        lesson_blueprint=blueprint if isinstance(blueprint, dict) else {},
+        learning_package=package if isinstance(package, dict) else {},
+        reading_units=units if isinstance(units, list) else [],
     )
 
 
@@ -404,11 +413,11 @@ def _row_to_review_queue_item(row: object) -> DailyReaderReviewQueueItem:
     else:
         cover_quality = "unavailable"
 
+    # P-5B: the dirty-data scan covers the v2 surfaces — the lesson_v2
+    # payload (NULL on pre-v2 rows → no surfaces) plus the plain body.
     artifacts = [
+        _decode_jsonb(row.get("lesson_v2"), {}),
         _decode_jsonb(row["body_json"], {}),
-        _decode_jsonb(row["highlights_json"], []),
-        _decode_jsonb(row["paragraph_notes_json"], {}),
-        _decode_jsonb(row["takeaways_json"], {}),
     ]
     artifact_texts = [orjson.dumps(value).decode("utf-8") for value in artifacts]
     boilerplate_hits = sorted(set(find_boilerplate_hits(artifact_texts)))

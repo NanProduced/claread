@@ -3,6 +3,10 @@
 Plain-dict validators (no pydantic models) for case/gold/artifact shapes
 and the dataset coverage matrix, per prompt-p2-eval-v2.md §Case 与 gold
 最小语义 / §样本合同. All functions are pure and offline.
+
+Since P-5A the gold-free artifact-shape half is single-sourced in
+``app.services.daily_reader.teaching.schema``; this module keeps the
+eval-only gold semantics and re-exports the shared names for callers.
 """
 
 from __future__ import annotations
@@ -10,31 +14,52 @@ from __future__ import annotations
 import re
 from typing import Any
 
-ARTICLE_TYPES = ("news_report", "opinion_commentary", "explainer", "narrative_profile")
-DIFFICULTIES = ("B1", "B2", "C1")  # A2 is legacy-compat only: never built here
-EXPECTED_OUTCOMES = ("cleaned_publish", "reject")
-COVERAGE_POLICIES = ("all_units", "selected_units")
+# shared gold-free implementation (single source of truth)
+from app.services.daily_reader.teaching.schema import (  # noqa: F401
+    ARTICLE_TYPES,
+    CHECKPOINT_SKILLS,
+    DIFFICULTIES,
+    EXPECTED_OUTCOMES,
+    TRANSFER_TASK_KINDS,
+    UNIT_ID_RE,
+    substantive_unit_ids,
+)
+from app.services.daily_reader.teaching.schema import validate_artifact as _validate_artifact_shape
+
 ANNOTATION_STATUSES = ("DRAFT_PM_REVIEW",)  # gold drafted here; approval is human work
-CHECKPOINT_SKILLS = ("fact_location", "sequence", "main_idea", "inference", "causality",
-                     "source_attribution", "claim_evidence", "stance", "structure")
-TRANSFER_TASK_KINDS = ("retell", "rewrite", "counter", "explain")
+COVERAGE_POLICIES = ("all_units", "selected_units")
 GOLD_REQUIRED_FIELDS = (
-    "annotation_status", "expected_outcome", "expected_difficulty", "article_type",
-    "dirty_fragments", "rejection_reasons", "key_evidence", "core_expressions",
-    "forbidden_facts", "acceptable_transfer_directions", "expected_translation_coverage",
+    "annotation_status",
+    "expected_outcome",
+    "expected_difficulty",
+    "article_type",
+    "dirty_fragments",
+    "rejection_reasons",
+    "key_evidence",
+    "core_expressions",
+    "forbidden_facts",
+    "acceptable_transfer_directions",
+    "expected_translation_coverage",
 )
 _GOLD_ITEM_FIELDS = {
     "key_evidence": ("source_quote", "acceptable_answer_points_zh", "paragraph_ids"),
-    "core_expressions": ("expression", "source_quote", "meaning_zh", "teaching_value",
-                         "paragraph_ids"),
+    "core_expressions": (
+        "expression",
+        "source_quote",
+        "meaning_zh",
+        "teaching_value",
+        "paragraph_ids",
+    ),
     "forbidden_facts": ("claim_zh", "reason"),
     "acceptable_transfer_directions": (
-        "task_kind", "required_learning_target", "acceptable_direction_zh"),
+        "task_kind",
+        "required_learning_target",
+        "acceptable_direction_zh",
+    ),
 }
 
-SHORT_ARTICLE_MAX_WORDS = 800   # execution default: short < 800 English words
-LONG_ARTICLE_MIN_WORDS = 1500   # execution default: long >= 1500 English words
-UNIT_ID_RE = re.compile(r"^u\d{2,3}$")
+SHORT_ARTICLE_MAX_WORDS = 800  # execution default: short < 800 English words
+LONG_ARTICLE_MIN_WORDS = 1500  # execution default: long >= 1500 English words
 
 
 def english_word_count(text: Any) -> int:
@@ -92,15 +117,19 @@ def _quote_substring(case: dict[str, Any], quote: Any, where: str, errs: list[st
         errs.append(f"{where}: source_quote is empty after whitespace normalization")
         return
     inp = _as_dict(case.get("input")) or {}
-    original = collapse_whitespace(inp.get("original_text") if isinstance(
-        inp.get("original_text"), str) else "")
+    original = collapse_whitespace(
+        inp.get("original_text") if isinstance(inp.get("original_text"), str) else ""
+    )
     if normalized not in original:
-        errs.append(f"{where}: source_quote is not a verbatim (whitespace-normalized) "
-                    f"substring of original_text: {str(quote)[:80]!r}")
+        errs.append(
+            f"{where}: source_quote is not a verbatim (whitespace-normalized) "
+            f"substring of original_text: {str(quote)[:80]!r}"
+        )
 
 
-def _quote_spans_declared_units(case: dict[str, Any], quote: Any, paragraph_ids: Any,
-                                where: str, errs: list[str]) -> None:
+def _quote_spans_declared_units(
+    case: dict[str, Any], quote: Any, paragraph_ids: Any, where: str, errs: list[str]
+) -> None:
     """P-2G-C gold gate: a source_quote must be a contiguous (whitespace-
     normalized) substring of at least one of the declared paragraph_ids'
     reading units. A quote that only exists in other paragraphs is a
@@ -124,8 +153,10 @@ def _quote_spans_declared_units(case: dict[str, Any], quote: Any, paragraph_ids:
         if isinstance(text, str):
             declared_texts.append(collapse_whitespace(text))
     if declared_texts and not any(normalized in t for t in declared_texts):
-        errs.append(f"{where}: source_quote must be a contiguous substring of at "
-                    f"least one declared paragraph unit: {str(quote)[:80]!r}")
+        errs.append(
+            f"{where}: source_quote must be a contiguous substring of at "
+            f"least one declared paragraph unit: {str(quote)[:80]!r}"
+        )
 
 
 def _require_str_list(value: Any, where: str, errs: list[str], *, allow_empty: bool) -> None:
@@ -139,8 +170,15 @@ def _require_str_list(value: Any, where: str, errs: list[str], *, allow_empty: b
             errs.append(f"{where}[{i}] must be a non-empty string")
 
 
-def _require_gold_items(gold: dict[str, Any], field: str, required_keys: tuple[str, ...],
-                        case: dict[str, Any], errs: list[str], *, allow_empty: bool) -> None:
+def _require_gold_items(
+    gold: dict[str, Any],
+    field: str,
+    required_keys: tuple[str, ...],
+    case: dict[str, Any],
+    errs: list[str],
+    *,
+    allow_empty: bool,
+) -> None:
     items = gold.get(field)
     if not isinstance(items, list):
         errs.append(f"gold.{field} must be a list")
@@ -161,13 +199,25 @@ def _require_gold_items(gold: dict[str, Any], field: str, required_keys: tuple[s
         if "paragraph_ids" in required_keys:
             _anchors(case, item.get("paragraph_ids"), where, errs)
         if "source_quote" in required_keys and "paragraph_ids" in required_keys:
-            _quote_spans_declared_units(case, item.get("source_quote"),
-                                        item.get("paragraph_ids"), where, errs)
+            _quote_spans_declared_units(
+                case, item.get("source_quote"), item.get("paragraph_ids"), where, errs
+            )
         if "acceptable_answer_points_zh" in required_keys:
-            _require_str_list(item.get("acceptable_answer_points_zh"),
-                              f"{where}.acceptable_answer_points_zh", errs, allow_empty=False)
-        for key in ("expression", "meaning_zh", "teaching_value", "claim_zh", "reason",
-                    "required_learning_target", "acceptable_direction_zh"):
+            _require_str_list(
+                item.get("acceptable_answer_points_zh"),
+                f"{where}.acceptable_answer_points_zh",
+                errs,
+                allow_empty=False,
+            )
+        for key in (
+            "expression",
+            "meaning_zh",
+            "teaching_value",
+            "claim_zh",
+            "reason",
+            "required_learning_target",
+            "acceptable_direction_zh",
+        ):
             if key in required_keys and _nonempty_str(item.get(key)) is None:
                 errs.append(f"{where}.{key} must be a non-empty string")
         if "task_kind" in required_keys and item.get("task_kind") not in TRANSFER_TASK_KINDS:
@@ -240,10 +290,13 @@ def validate_case(case: dict[str, Any]) -> list[str]:
         errs.append(f"gold.article_type must be one of {ARTICLE_TYPES}")
 
     publish = gold.get("expected_outcome") == "cleaned_publish"
-    _require_str_list(gold.get("dirty_fragments"), "gold.dirty_fragments", errs,
-                      allow_empty=True)
-    _require_str_list(gold.get("rejection_reasons"), "gold.rejection_reasons", errs,
-                      allow_empty=not (gold.get("expected_outcome") == "reject"))
+    _require_str_list(gold.get("dirty_fragments"), "gold.dirty_fragments", errs, allow_empty=True)
+    _require_str_list(
+        gold.get("rejection_reasons"),
+        "gold.rejection_reasons",
+        errs,
+        allow_empty=not (gold.get("expected_outcome") == "reject"),
+    )
     for field, keys in _GOLD_ITEM_FIELDS.items():
         allow_empty = not publish or field == "forbidden_facts"
         if field in gold or not allow_empty:
@@ -253,15 +306,14 @@ def validate_case(case: dict[str, Any]) -> list[str]:
     if cov is None:
         errs.append("gold.expected_translation_coverage must be an object")
     elif cov.get("policy") not in COVERAGE_POLICIES:
-        errs.append(f"gold.expected_translation_coverage.policy must be one of "
-                    f"{COVERAGE_POLICIES}")
+        errs.append(f"gold.expected_translation_coverage.policy must be one of {COVERAGE_POLICIES}")
     else:
         _anchors(case, cov.get("required_paragraph_ids"), "translation_coverage.required", errs)
         _anchors(case, cov.get("allowed_paragraph_ids"), "translation_coverage.allowed", errs)
-        req = set(pid for pid in (cov.get("required_paragraph_ids") or [])
-                  if isinstance(pid, str))
-        allowed = set(pid for pid in (cov.get("allowed_paragraph_ids") or [])
-                      if isinstance(pid, str))
+        req = set(pid for pid in (cov.get("required_paragraph_ids") or []) if isinstance(pid, str))
+        allowed = set(
+            pid for pid in (cov.get("allowed_paragraph_ids") or []) if isinstance(pid, str)
+        )
         if not req <= allowed:
             errs.append("translation_coverage.required must be a subset of allowed")
         diff = gold.get("expected_difficulty")
@@ -269,81 +321,44 @@ def validate_case(case: dict[str, Any]) -> list[str]:
             errs.append("B1 gold must use policy=all_units")
         if diff in ("B2", "C1") and cov.get("policy") != "selected_units":
             errs.append("B2/C1 gold must use policy=selected_units")
-        if cov.get("policy") == "all_units" and req != seen_ids:
+        substantive = substantive_unit_ids(case)
+        if cov.get("policy") == "all_units" and req != substantive:
             errs.append("policy=all_units must require exactly all reading units")
     return errs
 
 
 def validate_artifact(case: dict[str, Any], artifact: dict[str, Any]) -> list[str]:
-    """Minimal v2 artifact shape validation. [] == valid. Never raises."""
-    errs: list[str] = []
+    """Shared shape validation + the eval-only gold-equality branches.
+    [] == valid. Never raises."""
+    errs = list(_validate_artifact_shape(case, artifact))
     if not isinstance(artifact, dict):
-        return ["artifact must be an object"]
-    case = case if isinstance(case, dict) else {}
-    case_id = _nonempty_str(case.get("case_id"))
-    art_id = artifact.get("case_id")
-    if _nonempty_str(art_id) is None:
-        errs.append("artifact.case_id is required")
-    elif case_id is not None and art_id != case_id:
-        errs.append(f"artifact.case_id {art_id!r} != case.case_id {case_id!r}")
-
-    meta = _as_dict(artifact.get("run_meta")) or {}
-    if artifact.get("run_meta") is not None and _as_dict(artifact.get("run_meta")) is None:
-        errs.append("run_meta must be an object")
-    if meta.get("outcome") not in EXPECTED_OUTCOMES:
-        errs.append(f"run_meta.outcome must be one of {EXPECTED_OUTCOMES}")
-    rc = meta.get("refinement_count", 0)
-    if not isinstance(rc, int) or isinstance(rc, bool) or rc < 0:
-        errs.append("run_meta.refinement_count must be a non-negative int (bool forbidden)")
-    if meta.get("usage") is not None and _as_dict(meta.get("usage")) is None:
-        errs.append("run_meta.usage must be an object")
-    if artifact.get("source_assets") is not None and _as_dict(
-            artifact.get("source_assets")) is None:
-        errs.append("source_assets must be an object")
-    if meta.get("outcome") == "reject":
+        return errs
+    meta = artifact.get("run_meta")
+    if isinstance(meta, dict) and meta.get("outcome") == "reject":
         return errs  # rejected runs carry no teaching package
-
+    case = case if isinstance(case, dict) else {}
     gold = _as_dict(case.get("gold")) or {}
     bp = _as_dict(artifact.get("lesson_blueprint")) or {}
-    if artifact.get("lesson_blueprint") is not None and _as_dict(
-            artifact.get("lesson_blueprint")) is None:
-        errs.append("lesson_blueprint must be an object")
-    if bp.get("article_type") not in ARTICLE_TYPES:
-        errs.append(f"lesson_blueprint.article_type {bp.get('article_type')!r} "
-                    f"must be one of {ARTICLE_TYPES}")
-    elif bp.get("article_type") != gold.get("article_type"):
-        errs.append(f"lesson_blueprint.article_type {bp.get('article_type')!r} "
-                    f"must equal gold.article_type {gold.get('article_type')!r}")
-    if bp.get("effective_difficulty") not in DIFFICULTIES:
-        errs.append(f"lesson_blueprint.effective_difficulty "
-                    f"{bp.get('effective_difficulty')!r} must be one of {DIFFICULTIES}")
-    elif bp.get("effective_difficulty") != gold.get("expected_difficulty"):
-        errs.append(f"lesson_blueprint.effective_difficulty "
-                    f"{bp.get('effective_difficulty')!r} must equal "
-                    f"gold.expected_difficulty {gold.get('expected_difficulty')!r}")
-    pkg = _as_dict(artifact.get("learning_package")) or {}
-    if artifact.get("learning_package") is not None and _as_dict(
-            artifact.get("learning_package")) is None:
-        errs.append("learning_package must be an object")
-        return errs
-    for name in ("comprehension_checkpoints", "language_targets", "sentence_maps"):
-        items = pkg.get(name)
-        if items is None:
-            continue
-        if not isinstance(items, list):
-            errs.append(f"learning_package.{name} must be a list")
-            continue
-        for i, item in enumerate(items):
-            if not isinstance(item, dict):
-                errs.append(f"learning_package.{name}[{i}] must be an object")
-                continue
-            if name == "comprehension_checkpoints" and item.get("skill") not in CHECKPOINT_SKILLS:
-                errs.append(f"checkpoint skill '{item.get('skill')}' is not a P-1 §3.3 skill")
-    tt = pkg.get("transfer_task")
-    if isinstance(tt, dict) and tt.get("task_kind") not in TRANSFER_TASK_KINDS:
-        errs.append(f"transfer_task.task_kind must be one of {TRANSFER_TASK_KINDS}")
-    elif tt is not None and not isinstance(tt, dict):
-        errs.append("transfer_task must be an object")
+    if bp.get("article_type") in ARTICLE_TYPES and bp.get("article_type") != gold.get(
+        "article_type"
+    ):
+        errs.append(
+            f"lesson_blueprint.article_type {bp.get('article_type')!r} "
+            f"must equal gold.article_type {gold.get('article_type')!r}"
+        )
+    if bp.get("effective_difficulty") in DIFFICULTIES and bp.get(
+        "effective_difficulty"
+    ) != gold.get("expected_difficulty"):
+        errs.append(
+            f"lesson_blueprint.effective_difficulty "
+            f"{bp.get('effective_difficulty')!r} must equal "
+            f"gold.expected_difficulty {gold.get('expected_difficulty')!r}"
+        )
+    # P-5A title contract: v2 dataset artifacts must declare the Chinese
+    # headline fields (shape/purity validated in the shared module).
+    for field in ("title_zh", "subtitle_zh", "tags_zh"):
+        if field not in bp:
+            errs.append(f"lesson_blueprint.{field} is required (v2 title contract)")
     return errs
 
 
@@ -379,8 +394,10 @@ def validate_dataset_coverage(cases: Any) -> list[str]:
     producible = [g for g in golds if g.get("expected_outcome") == "cleaned_publish"]
     for t in ARTICLE_TYPES:
         if sum(1 for g in producible if g.get("article_type") == t) < 2:
-            errs.append(f"article_type {t} needs >=2 producible cases "
-                        f"(reject cases do not count toward quotas)")
+            errs.append(
+                f"article_type {t} needs >=2 producible cases "
+                f"(reject cases do not count toward quotas)"
+            )
     for d in DIFFICULTIES:
         n = sum(1 for g in producible if g.get("expected_difficulty") == d)
         minimum = 3 if d in ("B1", "B2") else 2
@@ -394,11 +411,9 @@ def validate_dataset_coverage(cases: Any) -> list[str]:
         errs.append(f"need >=2 sources (bbc/guardian/npr), got {sorted(sources, key=str)}")
     outside = sources - {"bbc", "guardian", "npr"}
     if outside:
-        errs.append(f"sources outside the bbc/guardian/npr allowlist: "
-                    f"{sorted(outside, key=str)}")
+        errs.append(f"sources outside the bbc/guardian/npr allowlist: {sorted(outside, key=str)}")
 
-    if not any(g.get("dirty_fragments") or g.get("expected_outcome") == "reject"
-               for g in golds):
+    if not any(g.get("dirty_fragments") or g.get("expected_outcome") == "reject" for g in golds):
         errs.append("need >=1 dirty-data case declaring expected_outcome")
     counts = [english_word_count(inp.get("original_text", "")) for inp in inputs]
     if not any(w < SHORT_ARTICLE_MAX_WORDS for w in counts):

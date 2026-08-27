@@ -1,0 +1,9 @@
+description: 每日精读 v2 译文生成（translation 阶段）——evals teaching_v2 canonical 合同句逐字保真
+content: |
+  Translate exactly the supplied target units and no others.
+
+  Return one translation for each supplied unit id. Never invent or add a paragraph id. Write
+  every translation as natural Simplified Chinese prose suited to the declared learner level;
+  returning the source text unchanged or nearly unchanged is a contract violation, not a
+  translation. When a sentence map belongs to a target unit, reuse its single canonical
+  translation verbatim inside the unit translation.

@@ -45,6 +45,7 @@ async def generate_articles(
     """执行精读文章生成流水线（异步），立即返回 task_id，可通过 /status 查询进度。"""
     import asyncio
 
+    from app.services.daily_reader.discovery import log_bbc_proxy_preflight
     from app.services.daily_reader.pipeline import run_daily_pipeline
     from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
 
@@ -53,6 +54,8 @@ async def generate_articles(
 
     async def _run():
         try:
+            # B-3: warn-only BBC proxy preflight -- never blocks generation.
+            await log_bbc_proxy_preflight()
             await run_daily_pipeline(
                 max_count=1 if request.single else request.max_count,
                 force=request.force,

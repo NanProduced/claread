@@ -11,12 +11,12 @@ from pydantic import BaseModel
 from app.config.settings import get_settings
 from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
-    build_close_reading_takeaways_strategy,
     build_daily_prompt_sections,
-    build_paragraph_notes_strategy,
-    build_quality_review_strategy,
-    build_refinement_strategy,
-    build_vocab_highlight_strategy,
+    build_teaching_blueprint_strategy,
+    build_teaching_language_support_strategy,
+    build_teaching_refinement_strategy,
+    build_teaching_semantic_review_strategy,
+    build_teaching_translation_strategy,
 )
 from app.services.prompting.prompt_composer import render_prompt_sections
 from app.services.prompting.prompt_loader import (
@@ -37,11 +37,11 @@ async def _verify_debug_key(x_debug_api_key: str = Header(...)) -> str:
 
 
 _DAILY_AGENTS = (
-    "daily_vocab",
-    "daily_footer",
-    "daily_interpretation",
-    "daily_review",
-    "daily_refinement",
+    "daily_blueprint",
+    "daily_language_support",
+    "daily_translation",
+    "daily_semantic_review",
+    "daily_teaching_refinement",
 )
 
 
@@ -67,11 +67,11 @@ def _build_daily_preview(
     include_instructions: bool,
 ) -> PromptPreviewResponse:
     strategy_builders = {
-        "daily_vocab": build_vocab_highlight_strategy,
-        "daily_footer": build_paragraph_notes_strategy,
-        "daily_interpretation": build_close_reading_takeaways_strategy,
-        "daily_review": build_quality_review_strategy,
-        "daily_refinement": build_refinement_strategy,
+        "daily_blueprint": build_teaching_blueprint_strategy,
+        "daily_language_support": build_teaching_language_support_strategy,
+        "daily_translation": build_teaching_translation_strategy,
+        "daily_semantic_review": build_teaching_semantic_review_strategy,
+        "daily_teaching_refinement": build_teaching_refinement_strategy,
     }
     builder = strategy_builders.get(agent_type)
     if builder is None:
@@ -83,9 +83,12 @@ def _build_daily_preview(
     sentences = [
         {"sentence_id": "p1", "text": "[示例段落 1]"},
     ]
-    prompt_template = render_prompt_sections(sections) + "\n<input_sentences>\n" + "\n".join(
-        f"{s['sentence_id']}: {s['text']}" for s in sentences
-    ) + "\n</input_sentences>"
+    prompt_template = (
+        render_prompt_sections(sections)
+        + "\n<input_sentences>\n"
+        + "\n".join(f"{s['sentence_id']}: {s['text']}" for s in sentences)
+        + "\n</input_sentences>"
+    )
 
     instructions = None
     if include_instructions:

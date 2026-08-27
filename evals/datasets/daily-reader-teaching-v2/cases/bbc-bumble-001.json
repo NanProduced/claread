@@ -218,7 +218,6 @@
     "expected_translation_coverage": {
       "policy": "all_units",
       "required_paragraph_ids": [
-        "u01",
         "u02",
         "u03",
         "u04",
@@ -248,7 +247,6 @@
         "u28"
       ],
       "allowed_paragraph_ids": [
-        "u01",
         "u02",
         "u03",
         "u04",

@@ -1,8 +1,8 @@
 """A-3: Chinese headline / original_title / subtitle_zh / tags_zh.
 
-Covers: takeaways schema validation, _assemble_payload projection,
-retry UPDATE coverage, and the incremental migration script
-(reentrant up, old-row backfill, down).
+Covers: blueprint title promotion via _assemble_payload, retry UPDATE
+coverage, and the incremental migration script (reentrant up, old-row
+backfill, down).
 """
 
 from __future__ import annotations
@@ -13,9 +13,7 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from pydantic import ValidationError
 
-from app.schemas.internal.daily_drafts import CloseReadingTakeaways
 from app.services.daily_reader.discovery import DiscoveredArticle
 from app.services.daily_reader.pipeline import _assemble_payload, run_workflow_only
 from app.services.daily_reader.scoring import ArticleScore
@@ -32,13 +30,13 @@ DOWN_SQL = (
 ).read_text(encoding="utf-8")
 
 
-def _takeaways_dict(**overrides) -> dict:
+def _blueprint_dict(**overrides) -> dict:
     base = {
         "title_zh": "蜂群衰退下的静默危机",
         "subtitle_zh": "野生蜂数量下滑正改变传粉格局",
         "tags_zh": ["生态", "农业"],
-        "article_takeaway": "一句话总结",
-        "discussion_questions": ["Q1?", "Q2?"],
+        "effective_difficulty": "B1",
+        "article_type": "news_report",
     }
     base.update(overrides)
     return base
@@ -60,41 +58,19 @@ def _score() -> ArticleScore:
     return ArticleScore(score=8.0, difficulty="B2", tags=["news", "science"])
 
 
-class TestTakeawaysSchema:
-    def test_zh_fields_required(self) -> None:
-        data = _takeaways_dict()
-        for key in ("title_zh", "subtitle_zh", "tags_zh"):
-            missing = {k: v for k, v in data.items() if k != key}
-            with pytest.raises(ValidationError):
-                CloseReadingTakeaways(**missing)
-
-    def test_zh_fields_accepted(self) -> None:
-        takeaways = CloseReadingTakeaways(**_takeaways_dict())
-        assert takeaways.title_zh == "蜂群衰退下的静默危机"
-        assert takeaways.subtitle_zh == "野生蜂数量下滑正改变传粉格局"
-        assert takeaways.tags_zh == ["生态", "农业"]
-
-    def test_title_zh_rejects_blank(self) -> None:
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(title_zh="   "))
-
-    def test_tags_zh_bounds(self) -> None:
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(tags_zh=["只有一个"]))
-        with pytest.raises(ValidationError):
-            CloseReadingTakeaways(**_takeaways_dict(tags_zh=["一", "二", "三", "四", "五"]))
-        assert CloseReadingTakeaways(**_takeaways_dict(tags_zh=["一", "二", "三", "四"]))
-
-
 @pytest.mark.anyio
 class TestAssemblePayload:
     async def test_zh_headline_lands_in_payload(self) -> None:
         state = {
-            "takeaways_json": _takeaways_dict(
-                title_zh=" 中文主标题 ",
-                subtitle_zh=" 一句话点题 ",
-                tags_zh=["人工智能", "教育"],
-            ),
+            "lesson_v2": {
+                "lesson_blueprint": _blueprint_dict(
+                    title_zh=" 中文主标题 ",
+                    subtitle_zh=" 一句话点题 ",
+                    tags_zh=["人工智能", "教育"],
+                ),
+                "learning_package": {"language_targets": []},
+            },
+            "body_json": {"paragraphs": [{"id": "u01", "text": "text"}]},
             "pipeline_meta": {"score": 7.5},
         }
         with patch(
@@ -108,11 +84,15 @@ class TestAssemblePayload:
         assert payload["subtitle_zh"] == "一句话点题"
         assert payload["subtitle"] == "English description"  # English description unchanged
         assert payload["tags"] == ["人工智能", "教育"]
+        # v2 promotion: difficulty comes from the blueprint
+        assert payload["difficulty"] == "B1"
+        assert payload["lesson_v2"]["lesson_blueprint"]["title_zh"].strip() == "中文主标题"
+        assert payload["body_json"]["paragraphs"][0]["id"] == "u01"
         # score.tags demoted to pipeline_meta reference only
         assert payload["pipeline_meta"]["score"] == 7.5
         assert payload["pipeline_meta"]["score_tags"] == ["news", "science"]
 
-    async def test_falls_back_to_english_when_takeaways_missing(self) -> None:
+    async def test_falls_back_to_english_when_blueprint_missing(self) -> None:
         with patch(
             "app.services.daily_reader.pipeline._next_sequence_number",
             AsyncMock(return_value=1),
@@ -122,8 +102,9 @@ class TestAssemblePayload:
         assert payload["title"] == "Bumblebees in decline, scientists warn"
         assert payload["original_title"] == "Bumblebees in decline, scientists warn"
         assert payload["subtitle_zh"] is None
-        # fallback keeps source tags, never score.tags
+        # fallback keeps source tags, never score.tags; scorer grade wins
         assert payload["tags"] == ["source-tag"]
+        assert payload["difficulty"] == "B2"
         assert payload["pipeline_meta"]["score_tags"] == ["news", "science"]
 
 
@@ -167,11 +148,15 @@ class TestRetryWorkflow:
         final_state = {
             "abort": False,
             "body_json": {"paragraphs": []},
-            "highlights_json": [],
-            "paragraph_notes_json": {},
-            "takeaways_json": _takeaways_dict(
+            "lesson_blueprint": _blueprint_dict(
                 title_zh="新中文标题", subtitle_zh="新副标题", tags_zh=["科技", "健康"]
             ),
+            "lesson_v2": {
+                "lesson_blueprint": _blueprint_dict(
+                    title_zh="新中文标题", subtitle_zh="新副标题", tags_zh=["科技", "健康"]
+                ),
+                "learning_package": {},
+            },
             "usage_summary": None,
         }
         mock_pool, graph, mock_conn = _retry_env(row, final_state)
@@ -197,25 +182,29 @@ class TestRetryWorkflow:
 
         sql, *params = mock_conn.execute.call_args[0]
         for fragment in (
-            "title = $6",
-            "original_title = $7",
-            "subtitle_zh = $8",
-            "tags = $9",
+            "lesson_v2 = $1",
+            "body_json = $2",
+            "difficulty = $3",
+            "title = $4",
+            "original_title = $5",
+            "subtitle_zh = $6",
+            "tags = $7",
         ):
             assert fragment in sql
-        assert params[5] == "新中文标题"
-        assert params[6] == "English Headline"
-        assert params[7] == "新副标题"
-        assert params[8] == ["科技", "健康"]
+        assert params[0] == final_state["lesson_v2"]
+        assert params[2] == "B1"  # blueprint effective_difficulty
+        assert params[3] == "新中文标题"
+        assert params[4] == "English Headline"
+        assert params[5] == "新副标题"
+        assert params[6] == ["科技", "健康"]
 
-    async def test_retry_keeps_stored_values_when_takeaways_missing_zh(self) -> None:
+    async def test_retry_keeps_stored_values_when_blueprint_missing_zh(self) -> None:
         row = _retry_row()
         final_state = {
             "abort": False,
             "body_json": {"paragraphs": []},
-            "highlights_json": [],
-            "paragraph_notes_json": {},
-            "takeaways_json": {"article_takeaway": "只有总结"},
+            "lesson_blueprint": {},
+            "lesson_v2": {"lesson_blueprint": {}, "learning_package": {}},
             "usage_summary": None,
         }
         mock_pool, graph, mock_conn = _retry_env(row, final_state)
@@ -234,11 +223,12 @@ class TestRetryWorkflow:
             await run_workflow_only("daily_2026_08_20_001")
 
         sql, *params = mock_conn.execute.call_args[0]
-        # keep stored Chinese headline / tags; original_title stays English
-        assert params[5] == "旧中文标题"
-        assert params[6] == "English Headline"
-        assert params[7] is None
-        assert params[8] == ["旧标签"]
+        # keep stored Chinese headline / tags / grade; original_title stays English
+        assert params[2] == "B2"
+        assert params[3] == "旧中文标题"
+        assert params[4] == "English Headline"
+        assert params[5] is None
+        assert params[6] == ["旧标签"]
 
     async def test_retry_old_row_uses_title_as_english_original(self) -> None:
         # pre-A-3 row: original_title missing entirely
@@ -250,9 +240,11 @@ class TestRetryWorkflow:
         final_state = {
             "abort": False,
             "body_json": {"paragraphs": []},
-            "highlights_json": [],
-            "paragraph_notes_json": {},
-            "takeaways_json": _takeaways_dict(),
+            "lesson_blueprint": _blueprint_dict(),
+            "lesson_v2": {
+                "lesson_blueprint": _blueprint_dict(),
+                "learning_package": {},
+            },
             "usage_summary": None,
         }
         mock_pool, graph, mock_conn = _retry_env(row, final_state)
@@ -274,8 +266,8 @@ class TestRetryWorkflow:
         assert input_state["title"] == "English Legacy Headline"
 
         sql, *params = mock_conn.execute.call_args[0]
-        assert params[5] == _takeaways_dict()["title_zh"]
-        assert params[6] == "English Legacy Headline"
+        assert params[3] == _blueprint_dict()["title_zh"]
+        assert params[4] == "English Legacy Headline"
 
 
 def test_baseline_declares_zh_title_columns() -> None:

@@ -10,6 +10,7 @@ pipeline validates, selects from, and stores.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -148,6 +149,10 @@ ARTICLE_SOURCES = {
         "show_fields": "headline,standfirst,thumbnail,wordcount,body,byline",
         "wordcount_range": (500, 2000),
         "page_size": 5,
+        # P-5 probe: guim CDN serves API thumbnails at most at 1000px width
+        # ({140,500,1000} probed), so this source's cover floor is relaxed;
+        # every other source keeps MIN_COVER_WIDTH=1200.
+        "min_cover_width": 1000,
     },
     "bbc": {
         "type": "rss",
@@ -346,3 +351,41 @@ def _strip_html(html: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = text.strip()
     return text
+
+# B-3: BBC hosts (feeds/ichef) on this machine must be fetched through the
+# system proxy (HTTPS_PROXY; httpx trust_env picks it up automatically).
+# The admin generate entry calls this warn-only reachability preflight --
+# it never blocks the pipeline.
+BBC_PREFLIGHT_FEED_URL = "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"
+BBC_PREFLIGHT_TIMEOUT_SECONDS = 3.0
+
+
+def _proxy_env_state() -> str:
+    proxy = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+    )
+    return "configured" if proxy else "direct"
+
+
+async def log_bbc_proxy_preflight() -> None:
+    """Warn-only BBC reachability preflight (read-only, never blocks)."""
+    try:
+        async with httpx.AsyncClient(timeout=BBC_PREFLIGHT_TIMEOUT_SECONDS) as client:
+            resp = await client.get(BBC_PREFLIGHT_FEED_URL)
+            reachable = resp.status_code < 400
+            detail = f"status={resp.status_code}"
+    except Exception as exc:  # noqa: BLE001 -- warn-only diagnostics
+        reachable = False
+        detail = f"{type(exc).__name__}: {exc}"[:200]
+    if reachable:
+        logger.info("BBC preflight reachable (proxy=%s)", _proxy_env_state())
+    else:
+        logger.warning(
+            "BBC preflight unreachable (proxy=%s): %s -- BBC discovery may fail; "
+            "set HTTPS_PROXY if this host requires a proxy",
+            _proxy_env_state(),
+            detail,
+        )

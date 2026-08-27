@@ -81,9 +81,12 @@ class PipelineRunTracker:
             )
         logger.info("Pipeline run %s → stage=%s", self.run_id, stage)
 
-    async def add_error(self, stage: str, message: str) -> None:
+    async def add_error(self, stage: str, message: str, evidence: dict | None = None) -> None:
         pool = await self._ensure_pool()
-        error_entry = jsonb_param([{"stage": stage, "message": message}])
+        entry: dict = {"stage": stage, "message": message}
+        if evidence:
+            entry["evidence"] = evidence
+        error_entry = jsonb_param([entry])
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -109,7 +112,9 @@ class PipelineRunTracker:
                 self.run_id,
                 articles_generated,
             )
-        logger.info("Pipeline run %s completed, %d articles generated", self.run_id, articles_generated)
+        logger.info(
+            "Pipeline run %s completed, %d articles generated", self.run_id, articles_generated
+        )
 
     async def fail(self, stage: str, message: str) -> None:
         pool = await self._ensure_pool()

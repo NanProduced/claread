@@ -59,7 +59,6 @@ from app.services.daily_reader.scoring import (
     score_article,
 )
 from app.services.daily_reader.service import business_today
-from app.services.prompting.daily_prompt_strategy import resolve_refined_difficulty
 from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = logging.getLogger(__name__)
@@ -72,8 +71,8 @@ SOURCE_ROTATION_POLICY = {
 SCORING_MAX_CANDIDATES = 10  # B-2: agreed 8-10 band shared with A-5
 ARTICLE_WORKFLOW_CONCURRENCY = 2
 DAILY_READER_WORKFLOW_NAME = "daily_reader"
-DAILY_READER_WORKFLOW_VERSION = "2.0.0"
-DAILY_READER_SCHEMA_VERSION = "1.0.0"
+DAILY_READER_WORKFLOW_VERSION = "3.0.0"
+DAILY_READER_SCHEMA_VERSION = "2.0.0"
 
 
 @dataclass
@@ -89,6 +88,85 @@ class PipelineResult:
 ALERT_ZERO_OUTPUT = "zero_output"
 ALERT_WORKFLOW_FAILURE = "workflow_failure"
 ALERT_ALL_CANDIDATES_FILTERED = "all_candidates_filtered"
+
+QUALITY_DRAFT_ABORT_REASONS = frozenset(
+    {
+        "teaching_v2_hard_gates_failed",
+        "teaching_v2_after_review_fail",
+        "frozen_derivation_field",
+    }
+)
+_ABORT_EVIDENCE_RATIONALE_MAX = 400
+_ABORT_EVIDENCE_ISSUE_MAX = 8
+
+
+def stores_quality_abort_as_draft(reason: str | None) -> bool:
+    return (reason or "") in QUALITY_DRAFT_ABORT_REASONS
+
+
+def build_abort_error_evidence(state: dict) -> dict:
+    """Structured abort payload for pipeline_runs.errors jsonb (no schema change)."""
+    review = state.get("semantic_review_result") or {}
+    if not isinstance(review, dict):
+        review = {}
+    refinement = state.get("refinement_result") or {}
+    if not isinstance(refinement, dict):
+        refinement = {}
+    failed_contracts = [
+        item.get("contract")
+        for item in (review.get("contract_results") or [])
+        if isinstance(item, dict) and not item.get("passed") and item.get("contract")
+    ]
+    issues: list[dict] = []
+    for issue in (review.get("issues") or [])[:_ABORT_EVIDENCE_ISSUE_MAX]:
+        if not isinstance(issue, dict):
+            continue
+        rationale = str(issue.get("rationale") or "")
+        problem = str(issue.get("problem") or "")
+        issues.append(
+            {
+                "contract": issue.get("contract"),
+                "field": issue.get("field"),
+                "problem": problem[:_ABORT_EVIDENCE_RATIONALE_MAX],
+                "rationale": rationale[:_ABORT_EVIDENCE_RATIONALE_MAX],
+            }
+        )
+    rejection = refinement.get("rejection") if isinstance(refinement.get("rejection"), dict) else {}
+    usage = state.get("usage_summary") or {}
+    aggregate = usage.get("aggregate") if isinstance(usage, dict) else None
+    return {
+        "verdict": review.get("verdict"),
+        "failed_contracts": failed_contracts[:8],
+        "issues": issues,
+        "rejection_violations": list(rejection.get("violations") or [])[:8],
+        "usage": aggregate,
+        "abort_diagnostics": state.get("abort_diagnostics") or {},
+    }
+
+
+def _stamp_draft_verdict(artifact: dict, state: dict) -> dict:
+    evidence = build_abort_error_evidence(state)
+    run_meta = dict(artifact.get("run_meta") or {})
+    run_meta["outcome"] = "draft_with_verdict"
+    run_meta["quality"] = {
+        "abort_reason": state.get("abort_reason"),
+        "verdict": evidence["verdict"],
+        "failed_gates": list((state.get("abort_diagnostics") or {}).get("failed_gates") or []),
+        "failed_contracts": evidence["failed_contracts"],
+    }
+    artifact["run_meta"] = run_meta
+    return artifact
+
+
+def _lesson_v2_from_state(state: dict) -> dict:
+    artifact = {
+        "case_id": state.get("source_url") or "",
+        "lesson_blueprint": state.get("lesson_blueprint") or {},
+        "learning_package": state.get("learning_package") or {},
+        "source_assets": {"source_caption": ""},
+        "run_meta": {},
+    }
+    return _stamp_draft_verdict(artifact, state)
 
 
 def collect_pipeline_alert_reasons(result: PipelineResult) -> list[str]:
@@ -141,7 +219,9 @@ async def emit_pipeline_alerts(
         )
 
 
-def _resolve_daily_workflow_model_metadata() -> tuple[dict[str, str | None], dict[str, dict[str, str]]]:
+def _resolve_daily_workflow_model_metadata() -> tuple[
+    dict[str, str | None], dict[str, dict[str, str]]
+]:
     settings = get_settings()
     selection = ModelSelection(preset=DAILY_READER_MODEL_PRESET)
     resolved_models: dict[str, dict[str, str]] = {}
@@ -231,6 +311,7 @@ async def run_daily_pipeline(
     # Layer 2: Extraction (concurrent for RSS-sourced articles)
     if tracker:
         await tracker.update_stage("extraction", candidates_found=len(candidates))
+
     async def _extract_one(article: DiscoveredArticle) -> None:
         if article.needs_extraction:
             extraction = await extract_with_trafilatura(article.url)
@@ -276,19 +357,27 @@ async def run_daily_pipeline(
 
     # Heuristic pre-filter: only LLM-score articles that pass heuristic threshold
     from app.services.daily_reader.scoring import HEURISTIC_THRESHOLD, heuristic_score
+
     pre_filtered: list[DiscoveredArticle] = []
     for a in candidates:
         h_score = heuristic_score(a)
         if h_score.score >= HEURISTIC_THRESHOLD:
             pre_filtered.append(a)
-    logger.info("Pipeline heuristic pre-filter: %d / %d articles passed (threshold=%.1f)",
-                len(pre_filtered), len(candidates), HEURISTIC_THRESHOLD)
+    logger.info(
+        "Pipeline heuristic pre-filter: %d / %d articles passed (threshold=%.1f)",
+        len(pre_filtered),
+        len(candidates),
+        HEURISTIC_THRESHOLD,
+    )
 
     if len(pre_filtered) > SCORING_MAX_CANDIDATES:
         pre_filtered.sort(key=lambda a: heuristic_score(a).score, reverse=True)
         pre_filtered = pre_filtered[:SCORING_MAX_CANDIDATES]
-        logger.info("Pipeline scoring cap: trimmed to %d candidates (SCORING_MAX_CANDIDATES=%d)",
-                     len(pre_filtered), SCORING_MAX_CANDIDATES)
+        logger.info(
+            "Pipeline scoring cap: trimmed to %d candidates (SCORING_MAX_CANDIDATES=%d)",
+            len(pre_filtered),
+            SCORING_MAX_CANDIDATES,
+        )
 
     # Layer 3: AI Scoring (concurrent, capped)
     if tracker:
@@ -457,6 +546,7 @@ async def _run_workflow_and_store(
                 "topic_interest": score.topic_interest,
                 "structure_clarity": score.structure_clarity,
                 "cultural_value": score.cultural_value,
+                "learning_fit": score.learning_fit,
             },
         },
     }
@@ -468,13 +558,11 @@ async def _run_workflow_and_store(
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(
-                    WORKFLOW_NAME, surface="daily_reader_pipeline"
-                ),
+                "tags": build_workflow_root_tags(WORKFLOW_NAME, surface="daily_reader_pipeline"),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
-                    schema_version="1.0.0",
+                    schema_version=DAILY_READER_SCHEMA_VERSION,
                     request_id=article.url,
                     source_type="pipeline",
                     reading_goal="daily_reading",
@@ -513,37 +601,53 @@ async def _run_workflow_and_store(
     usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
 
     if final_state.get("abort"):
-        review = final_state.get("review_result", {})
-        abort_reason = review.get("reason", "quality_review_rejected")
+        abort_reason = final_state.get("abort_reason") or "teaching_v2_fail_closed"
         logger.info("Workflow aborted for: %s (reason: %s)", article.title[:50], abort_reason)
+        final_state = {**final_state, "usage_summary": usage_summary}
+        evidence = build_abort_error_evidence(final_state)
         if tracker:
-            await tracker.add_error("workflow_abort", f"Aborted: {article.title[:40]}: {abort_reason}")
-        await _record_daily_pipeline_event(
-            request_id=article.url,
-            status=STATUS_SKIPPED,
-            usage_data=usage_summary,
-            latency_ms=int((perf_counter() - started_at) * 1000),
-            error_code="workflow_abort",
-            error_message=str(abort_reason),
-            metadata_json={
-                "entrypoint": "daily_reader_pipeline",
-                "article_title": article.title[:80],
-                "article_source": article.source,
-                "article_word_count": article.word_count,
-                "pipeline_score": score.score,
-                "pipeline_meta": final_state.get("pipeline_meta", {}),
-            },
-        )
-        return None
+            await tracker.add_error(
+                "workflow_abort",
+                f"Aborted: {article.title[:40]}: {abort_reason}",
+                evidence=evidence,
+            )
+        if not stores_quality_abort_as_draft(abort_reason):
+            await _record_daily_pipeline_event(
+                request_id=article.url,
+                status=STATUS_SKIPPED,
+                usage_data=usage_summary,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                error_code="workflow_abort",
+                error_message=str(abort_reason),
+                metadata_json={
+                    "entrypoint": "daily_reader_pipeline",
+                    "article_title": article.title[:80],
+                    "article_source": article.source,
+                    "article_word_count": article.word_count,
+                    "pipeline_score": score.score,
+                    "pipeline_meta": final_state.get("pipeline_meta", {}),
+                    "abort_diagnostics": final_state.get("abort_diagnostics") or {},
+                    "abort_evidence": evidence,
+                },
+            )
+            return None
+        if not final_state.get("lesson_v2"):
+            final_state["lesson_v2"] = _lesson_v2_from_state(final_state)
+            units = final_state.get("reading_units") or []
+            final_state["body_json"] = {
+                "paragraphs": [{"id": unit.get("id"), "text": unit.get("text")} for unit in units]
+            }
+        else:
+            _stamp_draft_verdict(final_state["lesson_v2"], final_state)
 
-    paragraph_notes = final_state.get("paragraph_notes_json", {})
-    takeaways = final_state.get("takeaways_json", {})
-    logger.info("Workflow final state: paragraph_notes keys=%s, takeaways keys=%s",
-                list(paragraph_notes.keys()) if isinstance(paragraph_notes, dict) else type(paragraph_notes),
-                list(takeaways.keys()) if isinstance(takeaways, dict) else type(takeaways))
+    lesson_v2 = final_state.get("lesson_v2") or {}
+    logger.info(
+        "Workflow final state: lesson_v2_keys=%s",
+        list(lesson_v2.keys()) if isinstance(lesson_v2, dict) else type(lesson_v2),
+    )
 
     try:
-        async with (finalize_lock or asyncio.Lock()):
+        async with finalize_lock or asyncio.Lock():
             if tracker:
                 await tracker.update_stage("cover_download")
             # B-1: multi-candidate validation + LLM selection + storage. Never
@@ -599,6 +703,8 @@ async def _run_workflow_and_store(
             "pipeline_score": score.score,
             "stored_article_id": payload["id"],
             "stored_status": payload["status"],
+            "abort_reason": final_state.get("abort_reason"),
+            "abort_diagnostics": final_state.get("abort_diagnostics") or {},
         },
     )
     logger.info("Article stored: %s (cover=%s)", article.title[:50], bool(cover_outcome.cover_url))
@@ -635,9 +741,9 @@ async def run_workflow_only(article_id: str) -> dict | None:
 
     graph = build_daily_reader_graph()
 
-    # A-3: title now stores the Chinese headline; the English source
-    # headline lives in original_title. Workflow prompts (takeaways
-    # title_zh, highlight context) must keep seeing the English original.
+    # A-3: title stores the Chinese editorial headline; the English source
+    # headline lives in original_title. Workflow prompts must keep seeing
+    # the English original.
     english_title = row.get("original_title") or row["title"]
 
     input_state = {
@@ -660,13 +766,11 @@ async def run_workflow_only(article_id: str) -> dict | None:
             input_state,
             config={
                 "run_name": WORKFLOW_NAME,
-                "tags": build_workflow_root_tags(
-                    WORKFLOW_NAME, surface="daily_reader_pipeline"
-                ),
+                "tags": build_workflow_root_tags(WORKFLOW_NAME, surface="daily_reader_pipeline"),
                 "metadata": build_workflow_root_metadata(
                     workflow_name=WORKFLOW_NAME,
                     workflow_version=WORKFLOW_VERSION,
-                    schema_version="1.0.0",
+                    schema_version=DAILY_READER_SCHEMA_VERSION,
                     request_id=article_id,
                     source_type="retry",
                     reading_goal="daily_reading",
@@ -700,7 +804,8 @@ async def run_workflow_only(article_id: str) -> dict | None:
     usage_summary = final_state.get("usage_summary") or _aggregate_usage(final_state)
 
     if final_state.get("abort"):
-        logger.info("Retry workflow aborted for: %s", article_id)
+        abort_reason = final_state.get("abort_reason") or "teaching_v2_fail_closed"
+        logger.info("Retry workflow aborted for: %s (reason: %s)", article_id, abort_reason)
         await _record_daily_pipeline_event(
             request_id=article_id,
             daily_reader_article_id=article_id,
@@ -708,38 +813,41 @@ async def run_workflow_only(article_id: str) -> dict | None:
             usage_data=usage_summary,
             latency_ms=int((perf_counter() - started_at) * 1000),
             error_code="workflow_abort",
-            error_message="quality_review_rejected",
+            error_message=str(abort_reason),
             metadata_json={
                 "entrypoint": "daily_reader_retry",
                 "article_id": article_id,
+                "abort_diagnostics": final_state.get("abort_diagnostics") or {},
             },
         )
         return None
 
+    blueprint = final_state.get("lesson_blueprint") or {}
+    # A-3 follow-up: retry refreshes the localized headline columns from
+    # the v2 blueprint. Missing blueprint fields keep the stored values.
+    retry_title = (blueprint.get("title_zh") or "").strip() or row["title"]
+    retry_subtitle_zh = (blueprint.get("subtitle_zh") or "").strip() or None
+    retry_tags = blueprint.get("tags_zh") or _decode_jsonb(row["tags"], [])
+    # P-5B: difficulty is the blueprint's effective_difficulty (B1/B2/C1 —
+    # CHECK-subset compatible); the stored grade is the fallback.
+    retry_difficulty = blueprint.get("effective_difficulty") or row["difficulty"]
     async with pool.acquire() as conn:
-        # A-3: retry refreshes the localized headline columns alongside the
-        # analysis payload. Missing takeaways fields keep the stored values.
-        retry_takeaways = final_state.get("takeaways_json") or {}
-        retry_title = (retry_takeaways.get("title_zh") or "").strip() or row["title"]
-        retry_subtitle_zh = (retry_takeaways.get("subtitle_zh") or "").strip() or None
-        retry_tags = retry_takeaways.get("tags_zh") or _decode_jsonb(row["tags"], [])
+        # Zero projection: the v1 JSONB columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are no longer written —
+        # stale values on retried rows are intentional until the P-5C
+        # retirement of the v1 columns.
         await conn.execute(
             """
             UPDATE daily_readers
-            SET body_json = $1, highlights_json = $2, paragraph_notes_json = $3,
-                takeaways_json = $4, difficulty = $5,
-                title = $6, original_title = $7, subtitle_zh = $8, tags = $9,
+            SET lesson_v2 = $1, body_json = $2, difficulty = $3,
+                title = $4, original_title = $5, subtitle_zh = $6, tags = $7,
                 status = 'draft', published_at = NULL,
                 review_status = 'pending', updated_at = NOW()
-            WHERE id = $10
+            WHERE id = $8
             """,
+            final_state.get("lesson_v2"),
             final_state.get("body_json", {"paragraphs": []}),
-            final_state.get("highlights_json", []),
-            final_state.get("paragraph_notes_json", {}),
-            final_state.get("takeaways_json", {}),
-            # A-2: refined whole-text grade overrides the stored coarse grade.
-            resolve_refined_difficulty(final_state.get("paragraph_notes_json"))
-            or row["difficulty"],
+            retry_difficulty,
             retry_title,
             english_title,
             retry_subtitle_zh,
@@ -756,20 +864,16 @@ async def run_workflow_only(article_id: str) -> dict | None:
         metadata_json={
             "entrypoint": "daily_reader_retry",
             "article_id": article_id,
+            "lesson_v2_updated": True,
             "body_updated": True,
-            "highlights_updated": True,
-            "paragraph_notes_updated": True,
-            "takeaways_updated": True,
         },
     )
 
     return {
         "id": article_id,
         "status": "retry_completed",
+        "lesson_v2_updated": True,
         "body_updated": True,
-        "highlights_updated": True,
-        "paragraph_notes_updated": True,
-        "takeaways_updated": True,
     }
 
 
@@ -778,16 +882,17 @@ async def _assemble_payload(
 ) -> dict:
     today = business_today()
     nnn = await _next_sequence_number(today)
-    takeaways = state.get("takeaways_json") or {}
-    # A-3: the Chinese editorial headline from takeaways is the stored
-    # title; the English source headline moves to original_title.
-    # takeaways may be empty when the takeaways node failed — then keep
-    # the English headline so the row stays renderable.
-    title_zh = (takeaways.get("title_zh") or "").strip() or article.title
-    subtitle_zh = (takeaways.get("subtitle_zh") or "").strip() or None
-    # A-3 tags verdict: takeaways tags_zh wins; score.tags stays in
+    lesson_v2 = state.get("lesson_v2") or {}
+    blueprint = lesson_v2.get("lesson_blueprint") or {}
+    # A-3 (v2): the Chinese editorial headline from the blueprint is the
+    # stored title; the English source headline moves to original_title.
+    # The blueprint may be missing only on a non-v2 state — then keep the
+    # English headline so the row stays renderable.
+    title_zh = (blueprint.get("title_zh") or "").strip() or article.title
+    subtitle_zh = (blueprint.get("subtitle_zh") or "").strip() or None
+    # A-3 tags verdict (v2): blueprint tags_zh wins; score.tags stays in
     # pipeline_meta as candidate-selection reference only.
-    tags_zh = takeaways.get("tags_zh") or article.tags
+    tags_zh = blueprint.get("tags_zh") or article.tags
     pipeline_meta = dict(state.get("pipeline_meta") or {})
     pipeline_meta.setdefault("score_tags", score.tags)
     return {
@@ -799,19 +904,19 @@ async def _assemble_payload(
         "source": article.source,
         "source_url": article.url,
         "publish_date": today,
-        # A-2: scorer coarse grade is only for candidate selection; the
-        # paragraph-notes refined whole-text grade wins at projection.
-        "difficulty": resolve_refined_difficulty(state.get("paragraph_notes_json"))
-        or score.difficulty,
+        # P-5B: the blueprint's effective_difficulty (B1/B2/C1, a subset
+        # of the column CHECK A2/B1/B2/C1) is the stored grade; the scorer
+        # coarse grade is only the candidate-selection fallback.
+        "difficulty": blueprint.get("effective_difficulty") or score.difficulty,
         "read_time_minutes": max(1, article.word_count // 200),
         "tags": tags_zh,
         "cover_image_url": local_cover_url or article.cover_image_url,
         "cover_theme": "editorial_warm",
+        # Zero projection: the v1 payload columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are no longer written —
+        # the INSERT omits them so the column defaults apply.
+        "lesson_v2": lesson_v2,
         "body_json": state.get("body_json", {"paragraphs": []}),
-        "highlights_json": state.get("highlights_json", []),
-        "footer_analysis_json": {},
-        "paragraph_notes_json": state.get("paragraph_notes_json", {}),
-        "takeaways_json": state.get("takeaways_json", {}),
         "status": "draft",
         "score": score.score,
         "original_text_hash": hashlib.sha256(article.text.encode()).hexdigest(),
@@ -879,17 +984,23 @@ async def _store_daily_reader(payload: dict) -> None:
     if pool is None:
         raise RuntimeError("Database pool not initialized")
     async with pool.acquire() as conn:
+        # P-5B: INSERT writes the lesson_v2 payload + the v2 promotion
+        # columns. The v1 JSONB columns (highlights_json /
+        # paragraph_notes_json / takeaways_json) are zero-projected: the
+        # INSERT omits them so the column defaults ('[]' / '{}') apply.
+        # footer_analysis_json keeps its P-5A '{}' default. Applying
+        # infra/scripts/alter_daily_readers_v2.sql (lesson_v2 column) is an
+        # Owner-confirmed step — see the P-5B brief.
         await conn.execute(
             """
             INSERT INTO daily_readers (
                 id, title, subtitle, original_title, subtitle_zh, source, source_url, publish_date,
                 difficulty, read_time_minutes, tags, cover_image_url, cover_theme,
-                body_json, highlights_json, footer_analysis_json, paragraph_notes_json, takeaways_json,
+                lesson_v2, body_json,
                 status, score, original_text_hash, original_text,
                 pipeline_source, pipeline_meta
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-                      $22, $23, $24)
+                      $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             """,
             payload["id"],
             payload["title"],
@@ -904,11 +1015,8 @@ async def _store_daily_reader(payload: dict) -> None:
             payload["tags"],
             payload["cover_image_url"],
             payload["cover_theme"],
+            payload["lesson_v2"],
             payload["body_json"],
-            payload["highlights_json"],
-            payload["footer_analysis_json"],
-            payload["paragraph_notes_json"],
-            payload["takeaways_json"],
             payload["status"],
             payload["score"],
             payload["original_text_hash"],
