@@ -9141,13 +9141,15 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
-    expect(img?.getAttribute("title")).toBe("Title");
+    // R2 契约：移除原生 title tooltip；显式 title 只作为 loaded 后的可见 caption
+    expect(img?.getAttribute("title")).toBeNull();
     // simulate load
     await act(async () => {
       if (img) fireEvent(img as Element, new Event("load"));
     });
     expect(c1.querySelector('[data-image-state="loaded"]')).not.toBeNull();
     expect(c1.querySelector('[data-image-state="loading"]')).toBeNull();
+    expect(c1.querySelector('[data-reader-image-caption="true"]')?.textContent).toBe("Title");
     // load_failed with alt
     const { container: c2 } = render(<ReaderRecordPlateSurface snapshot={snapshotLoading} />);
     const img2 = c2.querySelector('[data-reader-image="true"] img');
@@ -9547,8 +9549,9 @@ describe("G3b Reader image safe surface Slice B RED", () => {
       expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
       expect(container.textContent).toContain("链接不安全");
     });
-    // source surface keeps source_url text; no img fallback to sourceUrl
-    expect(container.textContent).toContain(unsafeSource);
+    // R2 契约：unsafe 普通表面不显示 raw source/effective URL（显式编辑面板除外），
+    // 也没有回退用 sourceUrl 作为 img src
+    expect(container.textContent).not.toContain(unsafeSource);
   });
 });
 
@@ -9764,7 +9767,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img1" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    expect(screen.getByText("修改链接")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
   });
 
   it("does not show 修改链接 for legacy snapshot without stable_document_id", () => {
@@ -9775,7 +9778,7 @@ describe("frozen image URL editor", () => {
     // remove key entirely to simulate legacy
     delete (snap.base as unknown as Record<string, unknown>).stable_document_id;
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    expect(screen.queryByText("修改链接")).toBeNull();
+    expect(screen.queryByRole("button", { name: "修改链接" })).toBeNull();
   });
 
   it("prefills overrideUrl verbatim, including empty string", async () => {
@@ -9785,7 +9788,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/override.png", overrideUrl: "https://example.com/override.png", blockId: "img1" },
     });
     const { unmount } = render(<ReaderRecordPlateSurface snapshot={snapWithOverride} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
     expect(input.value).toBe("https://example.com/override.png");
     expect(screen.getByText("原始地址：")).toBeTruthy();
@@ -9797,7 +9800,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, overrideUrl: "", blockId: "img1" },
     });
     render(<ReaderRecordPlateSurface snapshot={snapEmpty} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input2 = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
     expect(input2.value).toBe("");
     expect(screen.getByText("恢复原始地址")).toBeTruthy();
@@ -9813,7 +9816,7 @@ describe("frozen image URL editor", () => {
     const treePayload = (snap.stable_document_tree?.[0].payload as Record<string, unknown>);
     delete treePayload.override_url;
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
     expect(input.value).toBe("");
     expect(screen.queryByText("恢复原始地址")).toBeNull();
@@ -9829,7 +9832,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "b_img_1" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} onRequestSnapshotReload={onReload} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址");
     await user.clear(input);
     const raw = "  https://example.com/raw  ";
@@ -9861,7 +9864,7 @@ describe("frozen image URL editor", () => {
       inline: { owningBlockId: "b1", sourceUrl: "https://example.com/inline.png", effectiveUrl: "https://example.com/inline.png", ordinal: 0, before: 0 },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址");
     await user.clear(input);
     await user.type(input, "https://example.com/inline_override.png");
@@ -9882,7 +9885,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, overrideUrl: "javascript:bad", blockId: "img_del" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     await user.click(screen.getByText("恢复原始地址"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const delCall = fetchMock.mock.calls.find(([url, opts]) => String(url).includes("/image-source-overrides") && (opts as RequestInit).method === "DELETE");
@@ -9917,7 +9920,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_fail" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} onRequestSnapshotReload={onReload} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "https://example.com/new.png");
@@ -9942,7 +9945,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_cancel" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const input = screen.getByLabelText("图片覆盖地址");
     await user.type(input, "https://example.com/changed.png");
     await user.click(screen.getByText("取消"));
@@ -9958,7 +9961,7 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: "https://example.com/source.png", blockId: "img_copy" },
     });
     const { container } = render(<ReaderRecordPlateSurface snapshot={snap} />);
-    await user.click(screen.getByText("修改链接"));
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     const panel = container.querySelector('[data-reader-record-copy-exclude="true"]');
     expect(panel).not.toBeNull();
     // input, buttons, error, sourceUrl should be inside copy-excluded container
@@ -9982,8 +9985,8 @@ describe("frozen image URL editor", () => {
       image: { sourceUrl: "https://example.com/source.png", effectiveUrl: null, blockId: "img_unsafe" },
     });
     render(<ReaderRecordPlateSurface snapshot={snap} />);
-    expect(screen.getByText("修改链接")).toBeTruthy();
-    await user.click(screen.getByText("修改链接"));
+    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "修改链接" }));
     expect(screen.getByLabelText("图片覆盖地址")).toBeTruthy();
   });
 });

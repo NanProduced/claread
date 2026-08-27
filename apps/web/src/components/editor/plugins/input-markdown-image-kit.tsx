@@ -46,9 +46,17 @@ import type { Descendant } from "platejs";
 
 import katex from "katex";
 import remarkMath from "remark-math";
+import { Copy, SquarePen } from "lucide-react";
 
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/primitives/tooltip";
+import { primitiveFocusRing } from "@/components/primitives/shared";
 import { cn } from "@/lib/cn";
 
 // ---------------------------------------------------------------------------
@@ -342,6 +350,11 @@ export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
 
 // ---------------------------------------------------------------------------
 // 图片 UI 组件：四态（loading / loaded / unsafe / load_failed）+ URL 编辑
+//
+// R2 状态语言（与 Reader 图片表面一致）：failed 主文案「图片无法加载」，
+// alt 仅作次级说明；unsafe fail-closed；成功态 chrome 是右上角绝对定位的
+// 紧凑中性 toolbar（icon-only + Tooltip primitive，hover / focus-within 才
+// 出现，不占正文高度），不再长期显示「修改链接」按钮。
 // ---------------------------------------------------------------------------
 
 type ImageLoadState = "loading" | "loaded" | "failed";
@@ -350,20 +363,30 @@ const IMAGE_PLACEHOLDER_CLASS =
   "inline-flex max-w-full min-h-[4.5rem] flex-col items-start gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 align-top text-[0.85rem] text-ink-soft";
 const IMAGE_BUTTON_CLASS =
   "rounded border border-hairline px-2 py-0.5 text-[0.78rem] text-lens-blue hover:bg-surface-raised";
+// 成功态紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
+// 不占正文高度（键盘可达：按钮 focus 时经 group-focus-within 显示）
+const IMAGE_TOOLBAR_CLASS =
+  "absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline bg-surface/95 p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
+const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
 
 /**
  * 输入端图片元素组件（inline void）。
  *
- * 四态合同（§11.1）：
- * - safe URL：loading 占位（最小高度防跳动）→ onLoad 显示图片；
- *   onError 显示失败占位（alt / 空时「图片加载失败」+ 复制链接 + 修改链接）。
+ * 四态合同（§11.1 + R2 状态语言）：
+ * - safe URL：loading 占位（最小高度防跳动）→ onLoad 显示图片；onError
+ *   显示失败占位（主文案「图片无法加载」，alt 仅作次级说明，空 alt 时给
+ *   「图片加载失败」引导）+ 重新加载 / 复制链接 / 修改链接。
  * - unsafe URL：不渲染带 src 的 img（永不发起请求），显示「链接不安全」
- *   占位 + 原始 URL 可见 + 修改链接；不提供会加载原 URL 的退路。
+ *   占位 + 说明 + 原始 URL 可见 + 修改链接；不提供会加载原 URL 的退路。
+ *   输入面是显式编辑上下文，URL 保持可见（区别于 Reader 普通表面）。
  * - 修改链接：冻结前本地编辑态；保存只更新当前 image node 的 URL
  *   （alt/title/顺序不变，触发正常 serialize/onChange）；取消零变化。
  *   编辑控件 contentEditable={false}，控件文本永不进入 Markdown serialize。
+ * - 成功态 chrome：右上角绝对定位紧凑中性 toolbar（icon-only + Tooltip
+ *   primitive，hover / focus-within 才显示），不长期显示「修改链接」。
  * - 原生 `<img loading="lazy" decoding="async" referrerPolicy="no-referrer">`，
- *   不用 next/image。
+ *   不用 next/image；alt 只用于 img alt，显式 Markdown title 作为可见
+ *   caption，无 title 不自动把 alt 显示成 caption。
  *
  * Slate void 合同：必须渲染 {children}（void 内层 text
  * leaf）。slate 的 Editor.point/range 把选区 points 解析到该 leaf，
@@ -381,7 +404,11 @@ function InputImageElement({
   const node = element as InputImageNode;
   const url = typeof node.url === "string" ? node.url : "";
   const altText = imageAltText(node);
-  const title = typeof node.title === "string" ? node.title : undefined;
+  // R2 契约：alt 只用于 img alt；显式 Markdown title 才作为可见 caption
+  const title =
+    typeof node.title === "string" && node.title.length > 0
+      ? node.title
+      : undefined;
   const safe = isLoadableImageUrl(url);
 
   const [loadState, setLoadState] = useState<ImageLoadState>("loading");
@@ -470,15 +497,22 @@ function InputImageElement({
     );
   }
 
+  // R2：重试重新挂载同一安全 URL（fail 分支不渲染 img，回到 loading 分支
+  // 即重新 mount 一个新 img 节点），不改写 URL。
+  const retryLoad = () => {
+    setLoadState("loading");
+  };
+
   if (!safe) {
     return (
       <span
         {...attributes}
         data-image-input="true"
-        className="inline-block max-w-full align-top"
+        className="group inline-block max-w-full align-top"
       >
-        <span contentEditable={false} className={IMAGE_PLACEHOLDER_CLASS}>
+        <span contentEditable={false} data-image-state="unsafe" className={IMAGE_PLACEHOLDER_CLASS}>
           <span className="font-medium text-ink">链接不安全</span>
+          <span className="text-[0.78rem] leading-snug">该图片链接不安全，图片未加载；可修改链接后重试。</span>
           <span className="break-all font-mono text-[0.78rem]">{url}</span>
           <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
             修改链接
@@ -489,15 +523,46 @@ function InputImageElement({
     );
   }
 
+  if (loadState === "failed") {
+    return (
+      <span
+        {...attributes}
+        data-image-input="true"
+        className="group inline-block max-w-full align-top"
+      >
+        <span contentEditable={false} data-image-state="load_failed" className={IMAGE_PLACEHOLDER_CLASS}>
+          <span className="font-medium text-ink">图片无法加载</span>
+          {altText ? (
+            <span className="break-all text-[0.78rem] leading-snug">{altText}</span>
+          ) : (
+            <span className="text-[0.78rem] leading-snug">图片加载失败，可重新加载或修改链接。</span>
+          )}
+          <span className="flex flex-wrap items-center gap-2">
+            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={retryLoad}>
+              重新加载
+            </button>
+            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={copyLink}>
+              复制链接
+            </button>
+            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
+              修改链接
+            </button>
+          </span>
+        </span>
+        {children}
+      </span>
+    );
+  }
+
   return (
     <span
       {...attributes}
       data-image-input="true"
-      className="inline-block max-w-full align-top"
+      className="group inline-block max-w-full align-top"
     >
       <span
         contentEditable={false}
-        className="inline-flex max-w-full flex-col items-start gap-1 align-top"
+        className="relative inline-flex max-w-full flex-col items-start gap-1 align-top"
       >
         {loadState === "loading" ? (
           <span
@@ -507,39 +572,55 @@ function InputImageElement({
             图片加载中…
           </span>
         ) : null}
-        {loadState === "failed" ? (
-          <span
-            data-image-state="load_failed"
-            className={IMAGE_PLACEHOLDER_CLASS}
-          >
-            <span className="break-all">{altText || "图片加载失败"}</span>
-            <span className="flex items-center gap-2">
-              <button type="button" className={IMAGE_BUTTON_CLASS} onClick={copyLink}>
-                复制链接
-              </button>
-            </span>
+        <img
+          data-image-state={loadState === "loaded" ? "loaded" : undefined}
+          src={url}
+          alt={altText}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onLoad={() => setLoadState("loaded")}
+          onError={() => setLoadState("failed")}
+          className={cn(
+            "max-w-full rounded-[8px]",
+            loadState === "loaded" ? "" : "hidden",
+          )}
+        />
+        <TooltipProvider>
+          <span data-image-toolbar="true" className={IMAGE_TOOLBAR_CLASS}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="复制链接"
+                  className={IMAGE_TOOLBAR_BUTTON_CLASS}
+                  onClick={copyLink}
+                >
+                  <Copy aria-hidden="true" size={14} strokeWidth={1.9} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>复制链接</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="修改链接"
+                  className={IMAGE_TOOLBAR_BUTTON_CLASS}
+                  onClick={startEdit}
+                >
+                  <SquarePen aria-hidden="true" size={14} strokeWidth={1.9} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>修改链接</TooltipContent>
+            </Tooltip>
+          </span>
+        </TooltipProvider>
+        {loadState === "loaded" && title ? (
+          <span data-image-caption="true" className="text-xs leading-snug text-ink-soft">
+            {title}
           </span>
         ) : null}
-        {loadState !== "failed" ? (
-          <img
-            data-image-state={loadState === "loaded" ? "loaded" : undefined}
-            src={url}
-            alt={altText}
-            title={title}
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onLoad={() => setLoadState("loaded")}
-            onError={() => setLoadState("failed")}
-            className={cn(
-              "max-w-full rounded-[8px]",
-              loadState === "loaded" ? "" : "hidden",
-            )}
-          />
-        ) : null}
-        <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
-          修改链接
-        </button>
       </span>
       {children}
     </span>

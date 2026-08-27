@@ -157,7 +157,7 @@ describe("InputImageElement trust boundary（组件渲染层）", () => {
     },
   );
 
-  it("native img 属性完整：lazy / async / no-referrer / alt / title", () => {
+  it("native img 属性完整：lazy / async / no-referrer / alt；无原生 title tooltip", () => {
     const { container } = renderInputImage(
       "https://example.com/a.png",
       "alt text",
@@ -168,7 +168,8 @@ describe("InputImageElement trust boundary（组件渲染层）", () => {
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
-    expect(img?.getAttribute("title")).toBe("The Title");
+    // R2 契约：移除原生 title tooltip，显式 title 只作为可见 caption
+    expect(img?.getAttribute("title")).toBeNull();
   });
 });
 
@@ -191,7 +192,7 @@ describe("InputImageElement 四态（§11.1）", () => {
     ).toBeNull();
   });
 
-  it("load_failed：显示 alt、复制链接与修改链接", () => {
+  it("load_failed：图片无法加载为主、alt 为次级，提供重新加载/复制链接/修改链接", () => {
     const { container } = renderInputImage(
       "https://example.com/a.png",
       "alt text",
@@ -200,22 +201,27 @@ describe("InputImageElement 四态（§11.1）", () => {
     act(() => {
       fireEvent(img as Element, new Event("error"));
     });
+    const failed = container.querySelector("[data-image-state='load_failed']");
+    expect(failed).not.toBeNull();
+    expect(failed?.textContent).toContain("图片无法加载");
+    expect(failed?.textContent).toContain("alt text");
     expect(
-      container.querySelector("[data-image-state='load_failed']"),
-    ).not.toBeNull();
-    expect(container.textContent).toContain("alt text");
+      (failed?.textContent?.indexOf("图片无法加载") ?? -1),
+    ).toBeLessThan(failed?.textContent?.indexOf("alt text") ?? -1);
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "复制链接" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
     // 失败后不再挂载带 src 的 img
     expect(container.querySelector("img[src]")).toBeNull();
   });
 
-  it("load_failed 空 alt：显示「图片加载失败」", () => {
+  it("load_failed 空 alt：主文案 + 图片加载失败引导", () => {
     const { container } = renderInputImage("https://example.com/a.png", "");
     const img = container.querySelector("img");
     act(() => {
       fireEvent(img as Element, new Event("error"));
     });
+    expect(container.textContent).toContain("图片无法加载");
     expect(container.textContent).toContain("图片加载失败");
   });
 
@@ -234,12 +240,101 @@ describe("InputImageElement 四态（§11.1）", () => {
     expect(writeText).toHaveBeenCalledWith("https://example.com/a.png");
   });
 
-  it("unsafe：不渲染 img，显示链接不安全 + 原 URL + 修改链接，无加载退路", () => {
+  it("unsafe：不渲染 img，显示链接不安全 + 说明 + 原 URL + 修改链接，无加载退路", () => {
     const { container } = renderInputImage("javascript:alert(1)");
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("链接不安全");
+    // 输入面是显式编辑上下文：URL 保持可见（区别于 Reader 普通表面）
     expect(container.textContent).toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2 · 紧凑 chrome 与 caption（与 Reader 图片状态语言一致）
+// ---------------------------------------------------------------------------
+
+describe("InputImageElement 紧凑 chrome 与 caption（R2）", () => {
+  it("loaded：右上角绝对定位紧凑 toolbar，hover/focus-within 才显示，不占正文高度", () => {
+    const { container } = renderInputImage("https://example.com/a.png", "alt");
+    const img = container.querySelector("img");
+    act(() => {
+      fireEvent(img as Element, new Event("load"));
+    });
+    const toolbar = container.querySelector("[data-image-toolbar='true']");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.className).toContain("absolute");
+    expect(toolbar?.className).toContain("opacity-0");
+    expect(toolbar?.className).toContain("group-hover:opacity-100");
+    expect(toolbar?.className).toContain("group-focus-within:opacity-100");
+    // 修改链接只在 hover toolbar 内，不再长期显示独立按钮
+    const editBtn = screen.getByRole("button", { name: "修改链接" });
+    expect(editBtn.closest("[data-image-toolbar='true']")).not.toBeNull();
+    expect(editBtn.querySelector("svg")).not.toBeNull();
+    expect(editBtn.getAttribute("aria-label")).toBe("修改链接");
+    // 复用现有 Tooltip primitive（Radix trigger 携带 data-state）
+    expect(editBtn.getAttribute("data-state")).toBe("closed");
+    expect(editBtn.className).toContain("cursor-pointer");
+    expect(editBtn.className).toContain("hover:");
+    expect(editBtn.className).toContain("focus-visible:");
+    const copyBtn = screen.getByRole("button", { name: "复制链接" });
+    expect(copyBtn.closest("[data-image-toolbar='true']")).not.toBeNull();
+  });
+
+  it("loading：toolbar 已存在（hover/键盘可达），修改链接不占正文位置", () => {
+    const { container } = renderInputImage("https://example.com/a.png", "alt");
+    const toolbar = container.querySelector("[data-image-toolbar='true']");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.className).toContain("opacity-0");
+    const editBtn = screen.getByRole("button", { name: "修改链接" });
+    expect(editBtn.closest("[data-image-toolbar='true']")).not.toBeNull();
+  });
+
+  it("caption 来自显式 Markdown title；alt 不自动成为 caption", () => {
+    const { container } = renderInputImage(
+      "https://example.com/a.png",
+      "the alt",
+      "The Title",
+    );
+    const img = container.querySelector("img");
+    act(() => {
+      fireEvent(img as Element, new Event("load"));
+    });
+    const caption = container.querySelector("[data-image-caption='true']");
+    expect(caption?.textContent).toBe("The Title");
+    expect(img?.getAttribute("title")).toBeNull();
+    expect(img?.getAttribute("alt")).toBe("the alt");
+
+    const { container: c2 } = renderInputImage(
+      "https://example.com/b.png",
+      "only alt",
+    );
+    const img2 = c2.querySelector("img");
+    act(() => {
+      fireEvent(img2 as Element, new Event("load"));
+    });
+    expect(c2.querySelector("[data-image-caption='true']")).toBeNull();
+  });
+
+  it("重新加载：重新挂载同一安全 URL，不改写", () => {
+    const { container } = renderInputImage("https://example.com/a.png", "alt");
+    const firstImg = container.querySelector("img");
+    act(() => {
+      fireEvent(firstImg as Element, new Event("error"));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    });
+    const retryImg = container.querySelector("img");
+    expect(retryImg).not.toBeNull();
+    expect(retryImg).not.toBe(firstImg);
+    expect(retryImg?.getAttribute("src")).toBe("https://example.com/a.png");
+    expect(
+      container.querySelector("[data-image-state='loading']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[data-image-state='load_failed']"),
+    ).toBeNull();
   });
 });
 
