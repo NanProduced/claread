@@ -195,6 +195,53 @@ describe("Reader math safe surface — rendering & fail-closed & chrome exclusio
     vi.clearAllMocks();
   });
 
+  it("sentence-split mixed paragraph renders inline $s = vt$ KaTeX beside display E=mc^2", () => {
+    const unit1 = "The speed  is linear.";
+    const unit2 = "Extra sentence keeps the split.";
+    const snapshot = makeMathSnapshot(
+      [
+        { unitId: "u1", text: unit1, stableType: "paragraph", stableId: "sent_a" },
+        { unitId: "u2", text: unit2, stableType: "paragraph", stableId: "sent_b" },
+      ],
+      [
+        wgNode({
+          block_id: "b_mixed",
+          block_type: "paragraph",
+          order_index: 0,
+          canonical_text_start_utf16: 0,
+          canonical_text_end_utf16: unit1.length + 2 + unit2.length,
+          payload: {
+            inline_math: [{ latex: "s = vt", display: false, before_utf16: "The speed ".length }],
+          },
+        }),
+        wgNode({
+          block_id: "math_display",
+          block_type: "paragraph",
+          order_index: 1,
+          payload: { math_blocks: [{ latex: "E = mc^2", display: true }] },
+        }),
+      ],
+    );
+    for (const unit of snapshot.value) {
+      for (const child of unit.children) {
+        if (child.type === "reader_source_block") {
+          delete (child as { stableBlockId?: string }).stableBlockId;
+        }
+      }
+    }
+
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const inlineMath = container.querySelector('[data-reader-math="true"][data-math-display="false"]');
+    const displayMath = container.querySelector('[data-reader-math="true"][data-math-display="true"]');
+    expect(inlineMath).not.toBeNull();
+    expect(displayMath).not.toBeNull();
+    expect(inlineMath?.querySelector(".katex")).not.toBeNull();
+    expect(displayMath?.querySelector(".katex") || container.querySelector(".katex-display")).not.toBeNull();
+    expect(container.textContent).toContain("The speed");
+    expect(container.textContent).toContain("is linear.");
+    expect(container.textContent).toContain("Extra sentence keeps the split.");
+  });
+
   it("valid inline math renders KaTeX and is excluded from copy (data-reader-record-copy-exclude)", () => {
     const snapshot = makeMathSnapshot(
       [{ unitId: "u1", text: "hello world", stableType: "paragraph", stableId: "b1" }],

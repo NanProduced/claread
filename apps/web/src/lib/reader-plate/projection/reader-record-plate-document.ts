@@ -3397,6 +3397,70 @@ function enrichBlockMathForBlock(
   }
 }
 
+function isInlineHostBlock(block: ReaderRecordPlateBlock): boolean {
+  return (
+    block.type === "paragraph" ||
+    block.type === "heading" ||
+    block.type === "list_item" ||
+    block.type === "markdown_blockquote" ||
+    block.type === "table_cell"
+  );
+}
+
+function blockBaseRange(
+  block: ReaderRecordPlateBlock,
+): { startUtf16: number; endUtf16: number } | null {
+  const range = (
+    block.data as { baseRange?: { startUtf16?: unknown; endUtf16?: unknown } }
+  ).baseRange;
+  if (
+    !range ||
+    typeof range.startUtf16 !== "number" ||
+    typeof range.endUtf16 !== "number"
+  ) {
+    return null;
+  }
+  return { startUtf16: range.startUtf16, endUtf16: range.endUtf16 };
+}
+
+function collectInlineHostBlocks(
+  blocks: ReaderRecordPlateBlock[],
+  out: ReaderRecordPlateBlock[],
+): void {
+  for (const block of blocks) {
+    if (isInlineHostBlock(block)) out.push(block);
+    if (block.type === "list") {
+      for (const child of block.children) {
+        collectInlineHostBlocks([child], out);
+        if (child.type === "list_item" && child.nestedChildren) {
+          collectInlineHostBlocks(child.nestedChildren, out);
+        }
+      }
+    } else if (block.type === "table") {
+      for (const row of block.children) {
+        collectInlineHostBlocks(row.children, out);
+      }
+    } else if (block.type === "source_callout") {
+      collectInlineHostBlocks(block.children as ReaderRecordPlateBlock[], out);
+    }
+  }
+}
+
+function findHostsByCanonicalRange(
+  children: ReaderRecordPlateBlock[],
+  owningNode: ReaderStableDocumentBlockNodeDto,
+): ReaderRecordPlateBlock[] {
+  const start = owningNode.canonical_text_start_utf16;
+  const end = owningNode.canonical_text_end_utf16;
+  if (typeof start !== "number" || typeof end !== "number") return [];
+  const hosts: ReaderRecordPlateBlock[] = [];
+  collectInlineHostBlocks(children, hosts);
+  return hosts.filter((block) => {
+    const range = blockBaseRange(block);
+    return range !== null && range.startUtf16 >= start && range.endUtf16 <= end;
+  });
+}
+
 function findBlocksByStableId(
   blocks: ReaderRecordPlateBlock[],
   stableId: string,
@@ -3471,14 +3535,10 @@ function injectImages(
     findBlocksByStableId(children, owningId, targets);
     const owningNode = nodeById.get(owningId);
     const parentStableBlockId = owningNode?.parent_block_id ?? null;
-    const inlineTargets = targets.filter(
-      (target) =>
-        target.type === "paragraph" ||
-        target.type === "heading" ||
-        target.type === "list_item" ||
-        target.type === "markdown_blockquote" ||
-        target.type === "table_cell",
-    );
+    let inlineTargets = targets.filter(isInlineHostBlock);
+    if (inlineTargets.length === 0 && owningNode) {
+      inlineTargets = findHostsByCanonicalRange(children, owningNode);
+    }
     if (inlineTargets.length === 0) continue;
 
     const lengths = inlineTargets.map((target) =>
@@ -3553,14 +3613,10 @@ function injectInlineMath(
     findBlocksByStableId(children, owningId, targets);
     const owningNode = nodeById.get(owningId);
     const parentStableBlockId = owningNode?.parent_block_id ?? null;
-    const inlineTargets = targets.filter(
-      (target) =>
-        target.type === "paragraph" ||
-        target.type === "heading" ||
-        target.type === "list_item" ||
-        target.type === "markdown_blockquote" ||
-        target.type === "table_cell",
-    );
+    let inlineTargets = targets.filter(isInlineHostBlock);
+    if (inlineTargets.length === 0 && owningNode) {
+      inlineTargets = findHostsByCanonicalRange(children, owningNode);
+    }
     if (inlineTargets.length === 0) continue;
 
     const lengths = inlineTargets.map((target) =>

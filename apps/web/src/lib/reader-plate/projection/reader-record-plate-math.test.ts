@@ -287,6 +287,66 @@ describe("Reader math tree projection — inline Math", () => {
     expect(maths[0].data.latex).toBe("x+y");
   });
 
+  it("sentence-split mixed paragraph still injects $s = vt$ among surrounding prose", () => {
+    // Real Markdown snapshots join stableBlockId only when a unit range
+    // exactly equals the whole paragraph. Sentence-split mixed prose
+    // therefore has inline_math on the tree node, but the projected
+    // paragraphs have no matching stableBlockId — display math still
+    // falls back to a standalone block, inline math used to vanish.
+    const unit1 = "The speed  is linear.";
+    const unit2 = "Extra sentence keeps the split.";
+    const snapshot = makeMathSnapshot(
+      [
+        { unitId: "u1", text: unit1, stableType: "paragraph", stableId: "sent_a" },
+        { unitId: "u2", text: unit2, stableType: "paragraph", stableId: "sent_b" },
+      ],
+      [
+        wgNode({
+          block_id: "b_mixed",
+          block_type: "paragraph",
+          order_index: 0,
+          canonical_text_start_utf16: 0,
+          canonical_text_end_utf16: unit1.length + 2 + unit2.length,
+          payload: {
+            inline_math: [mathInlineEntry("s = vt", false, "The speed ".length)],
+          },
+        }),
+        wgNode({
+          block_id: "math_display",
+          block_type: "paragraph",
+          order_index: 1,
+          payload: { math_blocks: [mathBlockEntry("E = mc^2", true)] },
+        }),
+      ],
+    );
+    for (const unit of snapshot.value) {
+      for (const child of unit.children) {
+        if (child.type === "reader_source_block") {
+          delete (child as { stableBlockId?: string }).stableBlockId;
+        }
+      }
+    }
+
+    const doc = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const maths = collectMathNodes(doc);
+    expect(maths.some((m) => m.data.latex === "s = vt" && m.data.positionKind === "inline")).toBe(true);
+    expect(maths.some((m) => m.data.latex === "E = mc^2")).toBe(true);
+
+    const firstPara = doc.children.find((block) => {
+      if ((block as { type?: string }).type !== "paragraph") return false;
+      const text = (block as { children: Array<{ text?: string }> }).children
+        .filter((child) => typeof child.text === "string")
+        .map((child) => child.text)
+        .join("");
+      return text.includes("The speed");
+    }) as { children: Array<{ type?: string; text?: string; data?: { latex?: string } }> };
+    expect(firstPara).toBeDefined();
+    const types = firstPara.children.map((child) =>
+      child.type === "math" ? `math:${child.data?.latex}` : `text:${child.text}`,
+    );
+    expect(types).toEqual(["text:The speed ", "math:s = vt", "text: is linear."]);
+  });
+
   it("heading, list_item, blockquote, table_cell carrying inline_math", () => {
     const snapshot = makeMathSnapshot(
       [
