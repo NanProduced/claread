@@ -219,6 +219,11 @@ const DEFAULT_POLL_LIMIT = 100;
  * 4. On `advance` → update the local cursor; if `hasMore`, poll again sooner.
  * 5. On `caught_up` → wait for the next interval tick (no error).
  *
+ * While the document is hidden the loop pauses (no fetches, no timers);
+ * when it becomes visible again one resume poll fires and the original
+ * cadence is restored. Environments without the Page Visibility API
+ * (SSR / jsdom) fail safe to the always-on behavior above.
+ *
  * Errors from the BFF are surfaced via `error` but do not stop the loop;
  * the next tick retries. This keeps transient polling failures visible
  * without bricking the reader.
@@ -303,13 +308,32 @@ export function useReaderPlatePolling(
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // True while a tick's fetch/decision chain is executing. Guards the
+    // visibilitychange resume path against overlapping an in-flight tick
+    // (no concurrent requests, no double timers).
+    let ticking = false;
+
+    // Fail safe when the Page Visibility API is unavailable (SSR, jsdom
+    // without visibilityState): treat as visible so polling keeps its
+    // original behavior.
+    const isDocumentHidden = () =>
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden";
 
     const tick = async () => {
-      if (cancelled) return;
+      if (cancelled || ticking) return;
+
+      // Document hidden: skip the fetch and do not reschedule. The
+      // visibilitychange listener fires one resume poll when the document
+      // becomes visible again.
+      if (isDocumentHidden()) {
+        return;
+      }
 
       const currentCursor = cursorRef.current;
       let nextDelay = pollIntervalMs;
 
+      ticking = true;
       try {
         const url = new URL(
           `/api/web/reader/records/${encodeURIComponent(recordId)}/events`,
@@ -410,11 +434,38 @@ export function useReaderPlatePolling(
           setError(userFacingErrorMessage(err, "批注更新暂时不可用，请稍后重试。"));
         }
       } finally {
-        if (!cancelled) {
+        ticking = false;
+        // Stay paused while hidden; the visibilitychange listener performs
+        // the resume poll instead of a scheduled timer.
+        if (!cancelled && !isDocumentHidden()) {
           timer = setTimeout(tick, nextDelay);
         }
       }
     };
+
+    // Resume path: one poll immediately on visible, then the loop's own
+    // finally block restores the original cadence. Skips when a tick is
+    // already in flight (it reschedules itself) and replaces any pending
+    // timer so the loop never has two scheduled ticks.
+    const handleVisibilityChange = () => {
+      if (cancelled) return;
+      if (
+        typeof document === "undefined" ||
+        document.visibilityState !== "visible"
+      ) {
+        return;
+      }
+      if (ticking) return;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      void tick();
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
 
     timer = setTimeout(tick, pollIntervalMs);
 
@@ -422,6 +473,12 @@ export function useReaderPlatePolling(
       cancelled = true;
       if (timer !== undefined) {
         clearTimeout(timer);
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange,
+        );
       }
     };
   }, [enabled, recordId, pollIntervalMs, pollLimit, setCursorBoth]);

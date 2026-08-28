@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,6 +12,14 @@ import type {
   ReaderEventResponseDto,
   ReaderEventType,
 } from "@/types/api/reader-plate";
+
+// Vitest runs without `globals: true`, so @testing-library/react cannot
+// register its auto-cleanup. Without this, rendered hooks leak across
+// tests and their visibilitychange listeners keep responding to later
+// tests' dispatches.
+afterEach(() => {
+  cleanup();
+});
 
 function makeEvent(overrides: Partial<ReaderEventResponseDto>): ReaderEventResponseDto {
   return {
@@ -39,6 +47,43 @@ function makeResponse(
     events: [],
     ...overrides,
   };
+}
+
+function installFetch(eventsByCursor: Map<number, ReaderEventPollResponseDto>) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://localhost");
+    if (!url.pathname.endsWith("/events")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
+    const payload = eventsByCursor.get(afterSequence);
+    if (!payload) {
+      throw new Error(`no mock for after_sequence=${afterSequence}`);
+    }
+    return new Response(JSON.stringify({ ok: true, ...payload }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+  return fetchMock;
+}
+
+function makeReloadResponse(): ReaderEventPollResponseDto {
+  return makeResponse({
+    after_sequence: 1,
+    next_after_sequence: 2,
+    last_event_sequence: 2,
+    events: [
+      makeEvent({
+        sequence: 2,
+        event_type: "layer_published",
+      }),
+    ],
+  });
 }
 
 describe("decidePollingAction", () => {
@@ -662,43 +707,6 @@ describe("useReaderPlatePolling reload cursor semantics", () => {
     vi.restoreAllMocks();
   });
 
-  function installFetch(eventsByCursor: Map<number, ReaderEventPollResponseDto>) {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), "http://localhost");
-      if (!url.pathname.endsWith("/events")) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      const afterSequence = Number(url.searchParams.get("after_sequence") ?? "0");
-      const payload = eventsByCursor.get(afterSequence);
-      if (!payload) {
-        throw new Error(`no mock for after_sequence=${afterSequence}`);
-      }
-      return new Response(JSON.stringify({ ok: true, ...payload }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
-    return fetchMock;
-  }
-
-  function makeReloadResponse(): ReaderEventPollResponseDto {
-    return makeResponse({
-      after_sequence: 1,
-      next_after_sequence: 2,
-      last_event_sequence: 2,
-      events: [
-        makeEvent({
-          sequence: 2,
-          event_type: "layer_published",
-        }),
-      ],
-    });
-  }
-
   it("advances cursor only when onReloadRequired resolves true (success path, no regression)", async () => {
     const onReloadRequired = vi.fn(async (): Promise<boolean> => {
       // Simulate the parent successfully applying a fresh snapshot.
@@ -861,5 +869,331 @@ describe("useReaderPlatePolling reload cursor semantics", () => {
 
     expect(onReloadRequired).toHaveBeenCalledTimes(2);
     expect(result.current.cursor).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Visibility pause: while the document is hidden the loop stops fetching;
+// when it becomes visible again exactly one resume poll fires and the
+// original cadence is restored — without overlapping requests or double
+// timers, and without changing cursor / reload / advance / caught_up
+// semantics.
+// ---------------------------------------------------------------------------
+
+describe("useReaderPlatePolling visibility pause", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    restoreDocumentVisibility();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function setDocumentVisibility(state: "visible" | "hidden") {
+    Object.defineProperty(document, "visibilityState", {
+      value: state,
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+
+  function restoreDocumentVisibility() {
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+  }
+
+  function makeCaughtUpResponse(cursor: number): ReaderEventPollResponseDto {
+    return makeResponse({
+      after_sequence: cursor,
+      next_after_sequence: cursor,
+      last_event_sequence: cursor,
+      events: [],
+    });
+  }
+
+  function makeJsonResponse(payload: ReaderEventPollResponseDto): Response {
+    return new Response(JSON.stringify({ ok: true, ...payload }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function installDeferredFetch() {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    return {
+      fetchMock,
+      resolve: (response: Response) => resolveFetch(response),
+    };
+  }
+
+  async function flushMicrotasks() {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function renderPollingHook(options?: {
+    enabled?: boolean;
+    onReloadRequired?: () => Promise<boolean>;
+  }) {
+    return renderHook(() =>
+      useReaderPlatePolling({
+        recordId: "rec_1",
+        initialCursor: 1,
+        enabled: options?.enabled ?? true,
+        pollIntervalMs: 3000,
+        onReloadRequired: options?.onReloadRequired ?? vi.fn(async () => true),
+      }),
+    );
+  }
+
+  it("does not fetch when the polling timer expires while the document is hidden", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    setDocumentVisibility("hidden");
+    renderPollingHook();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("triggers one resume poll on visible and restores the original cadence", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    setDocumentVisibility("hidden");
+    renderPollingHook();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Original 3000ms cadence resumes: no sooner, no double timers.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2999);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overlap requests when visibility flips during an in-flight poll", async () => {
+    const { fetchMock, resolve } = installDeferredFetch();
+
+    renderPollingHook();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Hide + show while the first poll is still in flight: the resume
+    // path must not fire a second concurrent request.
+    setDocumentVisibility("hidden");
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Complete the in-flight poll — exactly ONE follow-up timer exists.
+    await act(async () => {
+      resolve(makeJsonResponse(makeCaughtUpResponse(1)));
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2999);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces a pending timer with one immediate resume poll (no double timer)", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    renderPollingHook();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Hide, then become visible again BEFORE the pending timer fires.
+    setDocumentVisibility("hidden");
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+
+    // One immediate resume poll fired — not two.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2999);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("pauses the loop when a poll completes while hidden, then resumes on visible", async () => {
+    const { fetchMock, resolve } = installDeferredFetch();
+
+    renderPollingHook();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The in-flight poll completes while hidden: no follow-up timer.
+    setDocumentVisibility("hidden");
+    await act(async () => {
+      resolve(makeJsonResponse(makeCaughtUpResponse(1)));
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps reload cursor semantics on the resume poll", async () => {
+    const onReloadRequired = vi.fn(async (): Promise<boolean> => true);
+    const fetchMock = installFetch(
+      new Map([
+        [1, makeReloadResponse()],
+        [2, makeCaughtUpResponse(2)],
+      ]),
+    );
+
+    setDocumentVisibility("hidden");
+    const { result } = renderPollingHook({ onReloadRequired });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onReloadRequired).toHaveBeenCalledTimes(1);
+    expect(onReloadRequired).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "layer_published" }),
+    );
+    // Reload resolved true → cursor advanced to next_after_sequence (2).
+    expect(result.current.cursor).toBe(2);
+  });
+
+  it("removes the timer and visibility listener on unmount", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    const { unmount } = renderPollingHook();
+    setDocumentVisibility("hidden");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    unmount();
+
+    // The listener was removed: becoming visible must not resume polling.
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("removes the timer and visibility listener when disabled", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useReaderPlatePolling({
+          recordId: "rec_1",
+          initialCursor: 1,
+          enabled,
+          pollIntervalMs: 3000,
+          onReloadRequired: vi.fn(async () => true),
+        }),
+      { initialProps: { enabled: true } },
+    );
+
+    setDocumentVisibility("hidden");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    rerender({ enabled: false });
+
+    setDocumentVisibility("visible");
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails safe without a document (SSR-like): polling continues and cleanup does not crash", async () => {
+    const fetchMock = installFetch(new Map([[1, makeCaughtUpResponse(1)]]));
+
+    const { unmount } = renderPollingHook();
+    vi.stubGlobal("document", undefined);
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      // No Page Visibility API → treated as visible → original behavior.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // Cleanup without document must not throw.
+      unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
