@@ -806,7 +806,7 @@ describe("G1′ image round-trip（deserialize + serialize 语义保持）", () 
 });
 
 describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前 fail-closed）", () => {
-  it("safe URL：渲染真实 img（无 lazy/async/referrerPolicy），loading 占位保留", async () => {
+  it("safe URL：渲染真实 img（无 lazy，保留 async/referrerPolicy），loading 占位保留", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue('![a](https://example.com/a.png "T")');
@@ -814,7 +814,7 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     const img = editorEl.querySelector("img");
     expect(img).not.toBeNull();
     expect(img?.getAttribute("src")).toBe("https://example.com/a.png");
-    // NARROW-REPAIR 契约：移除 loading=lazy（隐藏的 lazy 图片在真实浏览器
+    // 防死锁合同：移除 loading=lazy（隐藏的 lazy 图片在真实浏览器
     // 不会发起请求，会死锁在「图片加载中…」）
     expect(img?.getAttribute("loading")).toBeNull();
     expect(img?.getAttribute("decoding")).toBe("async");
@@ -879,7 +879,7 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     });
     expect(editorEl.querySelector("img[src]")).toBeNull();
     expect(editorEl.textContent).toContain("链接不安全");
-    // NARROW-REPAIR 契约：普通表面不显示 raw URL（显式编辑面板除外）
+    // 安全显示合同：普通表面不显示 raw URL（显式编辑面板除外）
     expect(editorEl.textContent).not.toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
     // 点击「修改链接」进入显式编辑面板后允许显示和编辑 URL

@@ -6,7 +6,7 @@
  * 覆盖：
  * - §10.2 允许/拒绝参数矩阵逐行断言（validator + 组件渲染 img.src 两个层面：
  *   allow 行 img[src] === 原始 URL；reject 行永不渲染 img[src]，零网络请求）。
- * - 组件四态：loading / loaded / load_failed / unsafe（§11.1）。
+ * - 组件四态：loading / loaded / load_failed / unsafe。
  * - native img 属性完整（lazy / async / no-referrer / alt / title）。
  * - URL 编辑：保存只更新 URL（alt/title 保留，节点顺序不动）；取消零变化。
  * - 输入端 options 级 round-trip 矩阵（standalone / inline / consecutive /
@@ -164,12 +164,12 @@ describe("InputImageElement trust boundary（组件渲染层）", () => {
       "The Title",
     );
     const img = container.querySelector("img");
-    // NARROW-REPAIR 契约：移除 loading=lazy（与 Reader 一致），保留状态机
+    // 移除 loading=lazy（与 Reader 一致），保留状态机
     expect(img?.getAttribute("loading")).toBeNull();
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
-    // R2 契约：移除原生 title tooltip，显式 title 只作为可见 caption
+    // 移除原生 title tooltip，显式 title 只作为可见 caption
     expect(img?.getAttribute("title")).toBeNull();
   });
 
@@ -184,7 +184,7 @@ describe("InputImageElement trust boundary（组件渲染层）", () => {
   });
 });
 
-describe("InputImageElement 四态（§11.1）", () => {
+describe("InputImageElement 四态", () => {
   it("loading → loaded：初始 loading 占位，onLoad 后显示图片", () => {
     const { container } = renderInputImage("https://example.com/a.png");
     expect(
@@ -255,7 +255,7 @@ describe("InputImageElement 四态（§11.1）", () => {
     const { container } = renderInputImage("javascript:alert(1)");
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("链接不安全");
-    // NARROW-REPAIR 契约：普通表面不显示 raw URL（与 Reader 一致）
+    // 普通表面不显示 raw URL（与 Reader 一致）
     expect(container.textContent).not.toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
     // 仅点击「修改链接」进入显式编辑面板后允许显示和编辑 URL
@@ -266,10 +266,10 @@ describe("InputImageElement 四态（§11.1）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R2 · 紧凑 chrome 与 caption（与 Reader 图片状态语言一致）
+// 紧凑 chrome 与 caption（与 Reader 图片状态语言一致）
 // ---------------------------------------------------------------------------
 
-describe("InputImageElement 紧凑 chrome 与 caption（R2）", () => {
+describe("InputImageElement 紧凑 chrome 与 caption", () => {
   it("loaded：右上角绝对定位紧凑 toolbar，hover/focus-within 才显示，不占正文高度", () => {
     const { container } = renderInputImage("https://example.com/a.png", "alt");
     const img = container.querySelector("img");
@@ -937,7 +937,7 @@ describe("reference-style unsafe destination（渲染层）", () => {
     );
     expect(container.querySelector("img[src]")).toBeNull();
     expect(container.textContent).toContain("链接不安全");
-    // NARROW-REPAIR 契约：普通表面不显示 raw URL（节点级上方已断言保真）
+    // 普通表面不显示 raw URL（节点级上方已断言保真）
     expect(container.textContent).not.toContain("javascript:alert(1)");
   });
 });

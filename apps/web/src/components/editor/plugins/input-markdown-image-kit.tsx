@@ -351,7 +351,7 @@ export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
 // ---------------------------------------------------------------------------
 // 图片 UI 组件：四态（loading / loaded / unsafe / load_failed）+ URL 编辑
 //
-// R2 状态语言（与 Reader 图片表面一致）：failed 主文案「图片无法加载」，
+// 图片状态语言（与 Reader 图片表面一致）：failed 主文案「图片无法加载」，
 // alt 仅作次级说明；unsafe fail-closed；成功态 chrome 是右上角绝对定位的
 // 紧凑中性 toolbar（icon-only + Tooltip primitive，hover / focus-within 才
 // 出现，不占正文高度），不再长期显示「修改链接」按钮。
@@ -372,7 +372,7 @@ const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center just
 /**
  * 输入端图片元素组件（inline void）。
  *
- * 四态合同（§11.1 + R2 状态语言）：
+ * 四态合同：
  * - safe URL：loading 占位（最小高度防跳动）→ onLoad 显示图片；onError
  *   显示失败占位（主文案「图片无法加载」，alt 仅作次级说明，空 alt 时给
  *   「图片加载失败」引导）+ 重新加载 / 复制链接 / 修改链接。
@@ -406,7 +406,7 @@ function InputImageElement({
   const node = element as InputImageNode;
   const url = typeof node.url === "string" ? node.url : "";
   const altText = imageAltText(node);
-  // R2 契约：alt 只用于 img alt；显式 Markdown title 才作为可见 caption
+  // alt 只用于 img alt；显式 Markdown title 才作为可见 caption
   const title =
     typeof node.title === "string" && node.title.length > 0
       ? node.title
@@ -499,7 +499,7 @@ function InputImageElement({
     );
   }
 
-  // R2：重试重新挂载同一安全 URL（fail 分支不渲染 img，回到 loading 分支
+  // 重试重新挂载同一安全 URL（fail 分支不渲染 img，回到 loading 分支
   // 即重新 mount 一个新 img 节点），不改写 URL。
   const retryLoad = () => {
     setLoadState("loading");

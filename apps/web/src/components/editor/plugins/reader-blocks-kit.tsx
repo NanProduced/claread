@@ -354,7 +354,7 @@ export const ReaderFrozenImageOverrideContext =
 // G3b Reader image (standalone + inline) — single image data shape, reuse
 // isLoadableImageUrl, native <img> + Clipboard API, no media framework.
 //
-// R2 状态语言：loading / loaded / load_failed / unsafe 四态共用同一文案与
+// 图片状态语言：loading / loaded / load_failed / unsafe 四态共用同一文案与
 // chrome 语法；成功态 chrome 是右上角绝对定位的紧凑中性 toolbar（icon-only
 // + Tooltip primitive，hover / focus-within 才出现，不占正文高度）；失败态
 // 的恢复操作常显；unsafe 态 fail-closed，普通表面不显示 raw URL。
@@ -391,7 +391,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
   const sourceUrl = typeof data.sourceUrl === "string" ? data.sourceUrl : "";
   const effectiveUrl = data.effectiveUrl;
   const altText = typeof data.altText === "string" ? data.altText : "";
-  // R2 契约：alt 只用于 img alt；显式 Markdown title 才作为可见 caption
+  // alt 只用于 img alt；显式 Markdown title 才作为可见 caption
   const title =
     typeof data.title === "string" && data.title.length > 0
       ? data.title
@@ -476,7 +476,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     }
   }, [ctx, stableBlockId, resolvedInlineOrdinal]);
 
-  // R2：重试重新挂载同一安全 URL（fail 分支不渲染 img，回到 loading 分支
+  // 重试重新挂载同一安全 URL（fail 分支不渲染 img，回到 loading 分支
   // 即重新 mount 一个新 img 节点），不改写 URL。
   const handleRetry = React.useCallback(() => {
     setLoadState("loading");

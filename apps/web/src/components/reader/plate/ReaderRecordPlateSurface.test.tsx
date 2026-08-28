@@ -9141,7 +9141,7 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     expect(img?.getAttribute("decoding")).toBe("async");
     expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(img?.getAttribute("alt")).toBe("alt text");
-    // R2 契约：移除原生 title tooltip；显式 title 只作为 loaded 后的可见 caption
+    // 移除原生 title tooltip；显式 title 只作为 loaded 后的可见 caption
     expect(img?.getAttribute("title")).toBeNull();
     // simulate load
     await act(async () => {
@@ -9549,7 +9549,7 @@ describe("G3b Reader image safe surface Slice B RED", () => {
       expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
       expect(container.textContent).toContain("链接不安全");
     });
-    // R2 契约：unsafe 普通表面不显示 raw source/effective URL（显式编辑面板除外），
+    // unsafe 普通表面不显示 raw source/effective URL（显式编辑面板除外），
     // 也没有回退用 sourceUrl 作为 img src
     expect(container.textContent).not.toContain(unsafeSource);
   });

@@ -1,5 +1,5 @@
 /**
- * Reader image state surface (R2) — compact chrome, stable geometry, captions.
+ * Reader image state surface — compact chrome, stable geometry, captions.
  *
  * - Loaded standalone image: absolute top-right compact neutral toolbar
  *   (icon-only + Tooltip primitive), revealed on hover / focus-within only,
