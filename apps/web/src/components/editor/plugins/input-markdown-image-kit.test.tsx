@@ -291,7 +291,8 @@ describe("InputImageElement 紧凑 chrome 与 caption", () => {
     const toolbar = container.querySelector("[data-image-toolbar='true']");
     expect(toolbar).not.toBeNull();
     expect(toolbar?.className).toContain("absolute");
-    expect(toolbar?.className).toMatch(/max-sm:opacity-100|pointer-coarse:opacity-100/);
+    expect(toolbar?.className).toContain("max-sm:opacity-100");
+    expect(toolbar?.className).toContain("pointer-coarse:opacity-100");
     expect(toolbar?.className).toContain("sm:opacity-0");
     expect(toolbar?.className).toContain("sm:group-hover:opacity-100");
     expect(toolbar?.className).toContain("sm:group-focus-within:opacity-100");
@@ -305,6 +306,10 @@ describe("InputImageElement 紧凑 chrome 与 caption", () => {
     expect(editBtn.className).toContain("cursor-pointer");
     expect(editBtn.className).toContain("hover:");
     expect(editBtn.className).toContain("focus-visible:");
+    expect(editBtn.className).toContain("max-sm:min-h-[44px]");
+    expect(editBtn.className).toContain("pointer-coarse:min-h-[44px]");
+    expect(editBtn.className).toContain("pointer-coarse:min-w-[44px]");
+    expect(editBtn.className).toContain("pointer-coarse:size-10");
     const copyBtn = screen.getByRole("button", { name: "复制链接" });
     expect(copyBtn.closest("[data-image-toolbar='true']")).not.toBeNull();
   });
@@ -313,7 +318,7 @@ describe("InputImageElement 紧凑 chrome 与 caption", () => {
     const { container } = renderInputImage("https://example.com/a.png", "alt");
     const toolbar = container.querySelector("[data-image-toolbar='true']");
     expect(toolbar).not.toBeNull();
-    expect(toolbar?.className).toContain("opacity-0");
+    expect(toolbar?.className).toContain("sm:opacity-0");
     const editBtn = screen.getByRole("button", { name: "修改链接" });
     expect(editBtn.closest("[data-image-toolbar='true']")).not.toBeNull();
   });
@@ -330,6 +335,17 @@ describe("InputImageElement 紧凑 chrome 与 caption", () => {
     });
     const caption = container.querySelector("[data-image-caption='true']");
     expect(caption?.textContent).toBe("The Title");
+    expect(caption?.className).toContain("mt-2");
+    expect(caption?.className).toContain("text-xs");
+    expect(caption?.className).toContain("leading-5");
+    expect(caption?.className).toContain("text-center");
+    expect(caption?.className).toContain("text-ink-soft/70");
+    expect(caption?.className).not.toContain("border");
+    expect(caption?.className).not.toContain("bg-");
+    expect(caption?.className).not.toContain("shadow");
+    expect(caption?.className).not.toContain("truncate");
+    expect(caption?.className).not.toContain("line-clamp");
+    expect(caption?.textContent).not.toContain("图片说明：");
     expect(img?.getAttribute("title")).toBeNull();
     expect(img?.getAttribute("alt")).toBe("the alt");
 

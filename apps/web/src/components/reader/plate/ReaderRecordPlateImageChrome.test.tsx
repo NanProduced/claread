@@ -140,14 +140,15 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(toolbar?.className).toContain("absolute");
     expect(toolbar?.className).toContain("top-");
     expect(toolbar?.className).toContain("right-");
-    // reveal on hover / keyboard focus on desktop, but visible on mobile / touch screen
-    expect(toolbar?.className).toMatch(/max-sm:opacity-100|pointer-coarse:opacity-100/);
+    // reveal on hover / keyboard focus on desktop, but visible on mobile and coarse-pointer touch screens
+    expect(toolbar?.className).toContain("max-sm:opacity-100");
+    expect(toolbar?.className).toContain("pointer-coarse:opacity-100");
     expect(toolbar?.className).toContain("sm:opacity-0");
     expect(toolbar?.className).toContain("sm:group-hover:opacity-100");
     expect(toolbar?.className).toContain("sm:group-focus-within:opacity-100");
   });
 
-  it("复制链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and mobile touch target", async () => {
+  it("复制链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and coarse touch target", async () => {
     await renderLoadedImage({ altText: "chart alt" });
     const btn = screen.getByRole("button", { name: "复制链接" });
     expect(btn.querySelector("svg")).not.toBeNull();
@@ -159,9 +160,12 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(btn.className).toContain("hover:");
     expect(btn.className).toContain("focus-visible:");
     expect(btn.className).toContain("max-sm:min-h-[44px]");
+    expect(btn.className).toContain("pointer-coarse:min-h-[44px]");
+    expect(btn.className).toContain("pointer-coarse:min-w-[44px]");
+    expect(btn.className).toContain("pointer-coarse:size-10");
   });
 
-  it("修改链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and mobile touch target", async () => {
+  it("修改链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and coarse touch target", async () => {
     await renderLoadedImage({ altText: "" });
     const btn = screen.getByRole("button", { name: "修改链接" });
     expect(btn.querySelector("svg")).not.toBeNull();
@@ -171,11 +175,14 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(btn.className).toContain("hover:");
     expect(btn.className).toContain("focus-visible:");
     expect(btn.className).toContain("max-sm:min-h-[44px]");
+    expect(btn.className).toContain("pointer-coarse:min-h-[44px]");
+    expect(btn.className).toContain("pointer-coarse:min-w-[44px]");
+    expect(btn.className).toContain("pointer-coarse:size-10");
   });
 });
 
 describe("Reader image caption (explicit title, never alt)", () => {
-  it("explicit Markdown title renders as visible figcaption outside canvas, left-aligned; img keeps no native title tooltip", async () => {
+  it("explicit Markdown title renders as visible figcaption outside canvas, centered editorial style; img keeps no native title tooltip", async () => {
     const container = await renderLoadedImage({
       altText: "the alt",
       title: "The Title",
@@ -183,10 +190,17 @@ describe("Reader image caption (explicit title, never alt)", () => {
     const caption = container.querySelector('figcaption[data-reader-image-caption="true"]');
     expect(caption).not.toBeNull();
     expect(caption?.textContent).toBe("The Title");
+    expect(caption?.className).toContain("mt-2");
     expect(caption?.className).toContain("text-xs");
-    expect(caption?.className).toContain("text-ink-soft");
-    expect(caption?.className).toContain("text-left");
-    expect(caption?.className).toContain("w-full");
+    expect(caption?.className).toContain("leading-5");
+    expect(caption?.className).toContain("text-center");
+    expect(caption?.className).toContain("text-ink-soft/70");
+    expect(caption?.className).not.toContain("border");
+    expect(caption?.className).not.toContain("bg-");
+    expect(caption?.className).not.toContain("shadow");
+    expect(caption?.className).not.toContain("truncate");
+    expect(caption?.className).not.toContain("line-clamp");
+    expect(caption?.textContent).not.toContain("图片说明：");
     const img = container.querySelector('[data-reader-image="true"] img');
     expect(img?.getAttribute("title")).toBeNull();
   });

@@ -379,7 +379,7 @@ const READER_IMAGE_BUTTON_CLASS = `rounded border border-hairline/60 bg-surface 
 // 移动端 / 粗指针下常显可发现，触控尺寸达到 44px
 const READER_IMAGE_TOOLBAR_CLASS =
   "absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline/60 bg-surface/95 p-0.5 shadow-none transition-opacity duration-150 max-sm:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 pointer-coarse:opacity-100";
-const READER_IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 max-sm:size-10 max-sm:min-h-[44px] max-sm:min-w-[44px] cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
+const READER_IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 max-sm:size-10 max-sm:min-h-[44px] max-sm:min-w-[44px] pointer-coarse:size-10 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
 
 function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderImageElement;
@@ -557,7 +557,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
   const caption = title ? (
     <CaptionTag
       data-reader-image-caption="true"
-      className={`mt-2 text-xs leading-snug text-ink-soft ${isStandalone ? "w-full text-left" : "text-center"}`}
+      className="mt-2 max-w-prose text-center text-xs leading-5 text-ink-soft/70"
     >
       {title}
     </CaptionTag>
