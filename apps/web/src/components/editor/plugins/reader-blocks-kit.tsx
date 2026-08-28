@@ -1833,7 +1833,7 @@ function ReaderStableListItemComponent({
 
 // 代码块工具区（语言 badge + 复制按钮）hover / focus 才显示（Notion 式 chrome 收敛，
 // 与图片块同款）。除祖先 group 链路外，工具栏自身带 focus-within:opacity-100：
-// Tab 聚焦复制按钮时不依赖 `.group` 祖先链路也能显现（键盘无障碍 P1）。
+// Tab 聚焦复制按钮时不依赖 `.group` 祖先链路也能显现（键盘无障碍）。
 const READER_CODE_TOOLBAR_REVEAL_CLASS =
   "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100";
 const READER_CODE_COPY_FEEDBACK_MS = 1600;
