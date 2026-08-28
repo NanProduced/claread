@@ -884,6 +884,44 @@ describe("AiWorkspacePanel", () => {
     }
   });
 
+  it("renders ASK_ANSWER inline code with the semantic mono font while keeping the code chip and fenced block contract", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        content_md: "参数 `x: float` 需要一个值。\n\n```ts\nconst y = 1;\n```",
+      }),
+    ]);
+    const { container } = renderPanel();
+
+    // The Ask answer markdown container is the only .ask-message-response
+    // carrying the border-0 recipe (ASK_ANSWER_MARKDOWN_CLASSNAME).
+    let answer: HTMLElement | null = null;
+    await waitFor(() => {
+      answer = container.querySelector<HTMLElement>(
+        ".ask-message-response.border-0",
+      );
+      expect(answer).not.toBeNull();
+    });
+    expect(answer).not.toBeNull();
+
+    // ASK-INLINE-CODE-TYPOGRAPHY-R1 — inline <code> uses the project mono font.
+    expect(answer!.className).toContain("[&_code]:font-mono");
+    // Existing chip contract stays intact: background, padding, text-xs.
+    expect(answer!.className).toContain("[&_code]:bg-muted/60");
+    expect(answer!.className).toContain("[&_code]:px-1");
+    expect(answer!.className).toContain("[&_code]:py-0.5");
+    expect(answer!.className).toContain("[&_code]:text-xs");
+    expect(answer!.className).toContain("[&_code]:rounded");
+    // Fenced code block wrapper styling is untouched.
+    expect(answer!.className).toContain("[&_pre]:bg-muted/40");
+    expect(answer!.className).toContain("[&_pre]:overflow-x-auto");
+
+    // Streamdown still renders both the inline <code> and the fenced <pre>.
+    await waitFor(() => {
+      expect(answer!.querySelector("code")).not.toBeNull();
+      expect(answer!.querySelector("pre")).not.toBeNull();
+    });
+  });
+
   it("current record is implicit and cross-record search is absent in v2", async () => {
     render(
       <AiWorkspacePanel

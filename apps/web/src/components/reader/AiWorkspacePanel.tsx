@@ -195,7 +195,7 @@ const ASK_ANSWER_MARKDOWN_CLASSNAME = cn(
   "ask-message-response border-0 bg-transparent p-0 text-[15px] leading-6 text-reader-reading-ink shadow-none",
   "[&_a]:text-lens-blue [&_a]:underline [&_a]:decoration-lens-blue/40 [&_a]:underline-offset-2",
   "[&_blockquote]:my-2 [&_blockquote]:border-hairline [&_blockquote]:text-[15px] [&_blockquote]:leading-6 [&_blockquote]:text-reader-reading-muted",
-  "[&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs",
+  "[&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:font-mono",
   "[&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0",
   "[&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0",
   "[&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2",
