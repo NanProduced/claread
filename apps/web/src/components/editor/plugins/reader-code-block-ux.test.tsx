@@ -29,6 +29,7 @@ vi.mock("@/components/providers/appearance-provider", () => ({
 }));
 
 import { ReaderRecordPlateSurface } from "@/components/reader/plate/ReaderRecordPlateSurface";
+import { primitiveFocusRing } from "@/components/primitives/shared";
 import {
   makeSnapshot,
   makeUnit,
@@ -306,6 +307,31 @@ describe("ReaderStableCodeBlockComponent code UX", () => {
       );
       expect(copyButton).not.toBeNull();
       expect(copyButton?.getAttribute("data-reader-record-copy-exclude")).toBe("true");
+    });
+
+    it("reveals on the toolbar's own focus-within, not only via the group ancestor", async () => {
+      // 键盘无障碍：Tab 聚焦「复制代码」后工具区必须可见。显露不能只依赖
+      // 祖先 `.group` 的 group-focus-within 链路；工具栏自身必须携带
+      // focus-within:opacity-100（后代获得焦点时由工具栏自己显现）。
+      const { container } = renderCodeBlock(PYTHON_CODE, "python");
+      const toolbar = container.querySelector<HTMLElement>(
+        '[data-testid="code-toolbar"]',
+      );
+      expect(toolbar).not.toBeNull();
+      expect(toolbar?.className).toMatch(/(^|\s)focus-within:opacity-100(\s|$)/);
+    });
+
+    it("copy button reuses the primitive focus ring for a visible keyboard focus state", async () => {
+      // 与图片工具栏按钮同款：复用 primitiveFocusRing，保证 focus-visible
+      // 有设计系统 ring（浏览器默认 outline 在 0.7rem chrome 上几乎不可见）。
+      const { container } = renderCodeBlock(PYTHON_CODE, "python");
+      const copyButton = container.querySelector<HTMLButtonElement>(
+        '[data-testid="code-copy-button"]',
+      );
+      expect(copyButton).not.toBeNull();
+      for (const token of primitiveFocusRing.split(/\s+/)) {
+        expect(copyButton?.className).toContain(token);
+      }
     });
 
     it("renders an always-on copy toolbar without badge for no-language code blocks", async () => {

@@ -1831,10 +1831,11 @@ function ReaderStableListItemComponent({
   );
 }
 
-// 代码块工具区（语言 badge + 复制按钮）hover / focus-visible
-// 才显示（Notion 式 chrome 收敛，与图片块 READER_IMAGE_BUTTON_REVEAL_CLASS 同款）。
+// 代码块工具区（语言 badge + 复制按钮）hover / focus 才显示（Notion 式 chrome 收敛，
+// 与图片块同款）。除祖先 group 链路外，工具栏自身带 focus-within:opacity-100：
+// Tab 聚焦复制按钮时不依赖 `.group` 祖先链路也能显现（键盘无障碍 P1）。
 const READER_CODE_TOOLBAR_REVEAL_CLASS =
-  "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";
+  "flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100";
 const READER_CODE_COPY_FEEDBACK_MS = 1600;
 
 /** 从 Plate element 的 text leaf 拼出代码原文（复制与高亮共用，不改文档模型）。 */
@@ -1933,7 +1934,7 @@ function ReaderStableCodeBlockComponent({
             event.stopPropagation();
             handleCopy();
           }}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-muted-foreground/80 transition-colors hover:bg-surface-raised hover:text-ink"
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-muted-foreground/80 transition-colors hover:bg-surface-raised hover:text-ink ${primitiveFocusRing}`}
           {...copyExcludeProps}
         >
           {copyState === "copied" ? (
