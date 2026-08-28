@@ -855,12 +855,13 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     expect(
       editorEl.querySelector("[data-image-state='load_failed']"),
     ).not.toBeNull();
+    expect(editorEl.textContent).toContain("图片暂时无法显示");
     expect(editorEl.textContent).toContain("alt text");
     expect(screen.getByRole("button", { name: "复制链接" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "修改链接" }).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("safe URL 加载失败且空 alt：显示「图片加载失败」", async () => {
+  it("safe URL 加载失败且空 alt：显示「图片暂时无法显示」", async () => {
     const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue("![](https://example.com/a.png)");
@@ -869,7 +870,8 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     await act(async () => {
       fireEvent(img as Element, new Event("error"));
     });
-    expect(editorEl.textContent).toContain("图片加载失败");
+    expect(editorEl.textContent).toContain("图片暂时无法显示");
+    expect(editorEl.textContent).not.toContain("图片说明：");
   });
 
   it("unsafe URL：无 img[src]，普通状态不显示原 URL，进入编辑面板后才可见", async () => {
@@ -878,7 +880,7 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
       ref.current?.setValue("![a](javascript:alert(1))");
     });
     expect(editorEl.querySelector("img[src]")).toBeNull();
-    expect(editorEl.textContent).toContain("链接不安全");
+    expect(editorEl.textContent).toContain("链接不安全，已停止加载图片");
     // 安全显示合同：普通表面不显示 raw URL（显式编辑面板除外）
     expect(editorEl.textContent).not.toContain("javascript:alert(1)");
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
@@ -894,7 +896,7 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
       ref.current?.setValue("![a](./local.png)");
     });
     expect(editorEl.querySelector("img[src]")).toBeNull();
-    expect(editorEl.textContent).toContain("链接不安全");
+    expect(editorEl.textContent).toContain("链接不安全，已停止加载图片");
     expect(editorEl.textContent).not.toContain("./local.png");
   });
 
@@ -935,10 +937,10 @@ describe("G1′ 图片预览 trust boundary（§10.1 八规则，赋 img.src 前
     await act(async () => {
       fireEvent(img as Element, new Event("error"));
     });
-    fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "修改链接" })[0]);
     const md = ref.current?.getMarkdown() ?? "";
     expect(md).toContain('![alt](https://example.com/a.png "T")');
-    expect(md).not.toContain("图片加载失败");
+    expect(md).not.toContain("图片暂时无法显示");
     expect(md).not.toContain("复制链接");
     expect(md).not.toContain("修改链接");
     expect(md).not.toContain("图片链接");

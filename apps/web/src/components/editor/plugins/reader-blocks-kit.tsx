@@ -18,8 +18,10 @@ import {
   ChevronDown,
   Copy,
   Flag,
+  ImageOff,
   MessageCircleQuestion,
   MessageSquareQuote,
+  ShieldAlert,
   SquarePen,
   TextSearch,
   WandSparkles,
@@ -360,18 +362,33 @@ export const ReaderFrozenImageOverrideContext =
 // 的恢复操作常显；unsafe 态 fail-closed，普通表面不显示 raw URL。
 // ---------------------------------------------------------------------------
 
-const READER_IMAGE_PLACEHOLDER_BASE_CLASS =
-  "min-h-[4.5rem] flex-col gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 text-sm text-ink-soft";
-// standalone 状态盒占满正文块宽度并预留稳定块级高度，避免加载时明显跳动
-const READER_IMAGE_PLACEHOLDER_STANDALONE_CLASS = `flex w-full items-start ${READER_IMAGE_PLACEHOLDER_BASE_CLASS}`;
-// inline 状态盒保持紧凑，不被 standalone 的全宽样式扩大
-const READER_IMAGE_PLACEHOLDER_INLINE_CLASS = `inline-flex max-w-full items-start align-top ${READER_IMAGE_PLACEHOLDER_BASE_CLASS}`;
-const READER_IMAGE_BUTTON_CLASS =
-  "rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised";
-// 成功态紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
+// ---------------------------------------------------------------------------
+// G3b Reader image (standalone + inline) — single image data shape, reuse
+// isLoadableImageUrl, native <img> + Clipboard API, no media framework.
+//
+// 图片状态语言：loading / loaded / load_failed / unsafe 四态共用同一文案与
+// chrome 语法；文章内安静媒体画布；成功态 chrome 是右上角绝对定位的紧凑中性
+// toolbar（icon-only + Tooltip primitive，hover / focus-within 才出现，不占
+// 正文高度）；load_failed 居中显示 broken-image 图标 +「图片暂时无法显示」+
+// 可选「图片说明：{alt}」+ 重新加载主按钮 + 修改链接次级动作；复制链接收纳
+// 至右上角 toolbar；unsafe 态 fail-closed 显示「链接不安全，已停止加载图片」，
+// 普通表面不显示 raw URL。
+// ---------------------------------------------------------------------------
+
+// 媒体画布：正文列宽中性媒体画布，约 4:3 占位 + 高度 clamp
+const READER_IMAGE_CANVAS_STANDALONE_CLASS =
+  "relative flex w-full aspect-[4/3] max-h-[28rem] min-h-[12rem] flex-col items-center justify-center gap-2 rounded-[8px] border border-hairline/60 bg-surface-raised/50 px-4 py-6 text-center select-none";
+const READER_IMAGE_CANVAS_INLINE_CLASS =
+  "relative inline-flex max-w-full flex-col items-start gap-1 rounded-[6px] border border-hairline/70 bg-surface-raised/55 p-2 align-middle text-xs text-ink-soft select-none";
+
+const READER_IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline bg-surface px-4 py-1.5 text-xs text-lens-blue shadow-sm hover:bg-surface-raised max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const READER_IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-1 text-xs text-ink-soft hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const READER_IMAGE_BUTTON_CLASS = `rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised ${primitiveFocusRing}`;
+
+// 紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
 // 不占正文高度（键盘可达：按钮 focus 时经 group-focus-within 显示）
 const READER_IMAGE_TOOLBAR_CLASS =
-  "absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline bg-surface/95 p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
+  "absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline bg-surface/95 p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
 const READER_IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
 
 function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
@@ -391,7 +408,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
   const sourceUrl = typeof data.sourceUrl === "string" ? data.sourceUrl : "";
   const effectiveUrl = data.effectiveUrl;
   const altText = typeof data.altText === "string" ? data.altText : "";
-  // alt 只用于 img alt；显式 Markdown title 才作为可见 caption
+  // alt 只用于 img alt 与失败态说明；显式 Markdown title 才作为可见 caption
   const title =
     typeof data.title === "string" && data.title.length > 0
       ? data.title
@@ -408,9 +425,6 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
       : null;
   const resolvedInlineOrdinal = positionKind === "inline" ? locatorInlineOrdinal : null;
   const isStandalone = positionKind === "standalone";
-  const placeholderClass = isStandalone
-    ? READER_IMAGE_PLACEHOLDER_STANDALONE_CLASS
-    : READER_IMAGE_PLACEHOLDER_INLINE_CLASS;
 
   const safe = typeof effectiveUrl === "string" && isLoadableImageUrl(effectiveUrl);
   const ctx = useContext(ReaderFrozenImageOverrideContext);
@@ -512,7 +526,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     </span>
   ) : null;
 
-  // 成功态（loading / loaded）紧凑 toolbar：icon-only + Tooltip primitive
+  // 紧凑 toolbar：icon-only + Tooltip primitive（hover / focus-within 才出现）
   const toolbar = (
     <TooltipProvider>
       <span {...copyExcludeProps} data-reader-image-toolbar="true" className={READER_IMAGE_TOOLBAR_CLASS}>
@@ -548,122 +562,207 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
     </TooltipProvider>
   );
 
+  const Container = isStandalone ? "figure" : "span";
+  const CaptionTag = isStandalone ? "figcaption" : "span";
+  const caption = title ? (
+    <CaptionTag data-reader-image-caption="true" className="mt-2 text-center text-xs leading-snug text-ink-soft">
+      {title}
+    </CaptionTag>
+  ) : null;
+
   // unsafe / null effectiveUrl — fail-closed：普通表面只显示友好说明与修改
   // 入口，不显示 raw source/effective URL（显式编辑面板除外）
   if (!safe) {
     return (
-      <span
+      <Container
         {...attributes}
         data-reader-image="true"
         data-reader-image-kind={positionKind}
-        data-image-state="unsafe"
-        className={isStandalone ? "group block w-full" : "group inline-block max-w-full align-top"}
+        className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
       >
-        <span {...copyExcludeProps} data-image-state="unsafe" className={placeholderClass}>
-          <span className="font-medium text-ink">链接不安全</span>
-          <span className="text-xs leading-snug">该图片链接不安全，图片未加载。</span>
-          {canEdit && !isEditing ? (
-            <span className="flex flex-wrap items-center gap-1">
-              <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
-                修改链接
-              </button>
+        {isStandalone ? (
+          <div
+            {...copyExcludeProps}
+            data-image-state="unsafe"
+            role="status"
+            aria-live="polite"
+            className={READER_IMAGE_CANVAS_STANDALONE_CLASS}
+          >
+            <ShieldAlert aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/70" strokeWidth={1.5} />
+            <span className="text-sm sm:text-base font-medium text-ink">链接不安全，已停止加载图片</span>
+            {canEdit && !isEditing ? (
+              <div className="mt-1 flex flex-col items-center">
+                <button type="button" className={READER_IMAGE_BUTTON_PRIMARY_CLASS} onClick={handleEdit}>
+                  修改链接
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <span
+            {...copyExcludeProps}
+            data-image-state="unsafe"
+            role="status"
+            aria-live="polite"
+            className={READER_IMAGE_CANVAS_INLINE_CLASS}
+          >
+            <span className="flex items-center gap-1.5 font-medium text-ink">
+              <ShieldAlert aria-hidden="true" size={14} className="text-ink-soft/70" strokeWidth={1.5} />
+              链接不安全，已停止加载图片
             </span>
-          ) : null}
-        </span>
-        {editingPanel}
-        {children}
-      </span>
-    );
-  }
-
-  // safe: loading / loaded / load_failed — share same edit handling
-  if (loadState === "failed") {
-    return (
-      <span
-        {...attributes}
-        data-reader-image="true"
-        data-reader-image-kind={positionKind}
-        data-image-state="load_failed"
-        className={isStandalone ? "group block w-full" : "group inline-block max-w-full align-top"}
-      >
-        <span {...copyExcludeProps} data-image-state="load_failed" className={placeholderClass}>
-          <span className="font-medium text-ink">图片无法加载</span>
-          {altText ? (
-            <span className="break-all text-xs leading-snug">{altText}</span>
-          ) : (
-            <span className="text-xs leading-snug">图片加载失败，可重新加载或检查图片链接。</span>
-          )}
-          <span className="flex flex-wrap items-center gap-1">
-            <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleRetry}>
-              重新加载
-            </button>
-            <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={copyLink}>
-              复制链接
-            </button>
             {canEdit && !isEditing ? (
               <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleEdit}>
                 修改链接
               </button>
             ) : null}
           </span>
-        </span>
+        )}
+        {caption}
         {editingPanel}
         {children}
-      </span>
+      </Container>
+    );
+  }
+
+  // safe: loading / loaded / load_failed — share same edit handling
+  if (loadState === "failed") {
+    return (
+      <Container
+        {...attributes}
+        data-reader-image="true"
+        data-reader-image-kind={positionKind}
+        className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
+      >
+        {isStandalone ? (
+          <div
+            {...copyExcludeProps}
+            data-image-state="load_failed"
+            role="status"
+            aria-live="polite"
+            className={READER_IMAGE_CANVAS_STANDALONE_CLASS}
+          >
+            <ImageOff aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/70" strokeWidth={1.5} />
+            <span className="text-sm sm:text-base font-medium text-ink">图片暂时无法显示</span>
+            {altText ? (
+              <span className="line-clamp-2 max-w-[85%] break-all text-xs leading-snug text-ink-soft">
+                图片说明：{altText}
+              </span>
+            ) : null}
+            <div className="mt-1 flex flex-col items-center gap-1.5">
+              <button type="button" className={READER_IMAGE_BUTTON_PRIMARY_CLASS} onClick={handleRetry}>
+                重新加载
+              </button>
+              {canEdit && !isEditing ? (
+                <button type="button" className={READER_IMAGE_BUTTON_SECONDARY_CLASS} onClick={handleEdit}>
+                  修改链接
+                </button>
+              ) : null}
+            </div>
+            {toolbar}
+          </div>
+        ) : (
+          <span
+            {...copyExcludeProps}
+            data-image-state="load_failed"
+            role="status"
+            aria-live="polite"
+            className={READER_IMAGE_CANVAS_INLINE_CLASS}
+          >
+            <span className="flex items-center gap-1.5 font-medium text-ink">
+              <ImageOff aria-hidden="true" size={14} className="text-ink-soft/70" strokeWidth={1.5} />
+              图片暂时无法显示
+            </span>
+            {altText ? (
+              <span className="line-clamp-2 break-all text-[0.75rem] text-ink-soft">
+                图片说明：{altText}
+              </span>
+            ) : null}
+            <span className="mt-0.5 flex items-center gap-2">
+              <button type="button" className={READER_IMAGE_BUTTON_CLASS} onClick={handleRetry}>
+                重新加载
+              </button>
+              {canEdit && !isEditing ? (
+                <button type="button" className={READER_IMAGE_BUTTON_SECONDARY_CLASS} onClick={handleEdit}>
+                  修改链接
+                </button>
+              ) : null}
+            </span>
+            {toolbar}
+          </span>
+        )}
+        {caption}
+        {editingPanel}
+        {children}
+      </Container>
     );
   }
 
   return (
-    <span
+    <Container
       {...attributes}
       data-reader-image="true"
       data-reader-image-kind={positionKind}
-      data-image-state={loadState === "loaded" ? "loaded" : "loading"}
-      className={isStandalone ? "group flex w-full justify-center" : "group inline-block max-w-full align-top"}
+      className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
     >
-      <span
-        {...copyExcludeProps}
-        className={
-          isStandalone
-            ? loadState === "loaded"
-              ? "relative inline-flex max-w-full flex-col items-start gap-1"
-              : "relative flex w-full flex-col items-start"
-            : "relative inline-flex max-w-full flex-col items-start gap-1 align-top"
-        }
-      >
-        {loadState === "loading" ? (
-          <span
-            data-image-state="loading"
-            className={
-              isStandalone
-                ? "flex w-full min-h-[4.5rem] items-center justify-center rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 text-sm text-ink-soft"
-                : READER_IMAGE_PLACEHOLDER_INLINE_CLASS
-            }
-          >
-            图片加载中…
-          </span>
-        ) : null}
-        <img
-          draggable={false}
-          data-image-state={loadState === "loaded" ? "loaded" : undefined}
-          src={effectiveUrl as string}
-          alt={altText}
-          decoding="async"
-          referrerPolicy="no-referrer"
-          onLoad={() => setLoadState("loaded")}
-          onError={() => setLoadState("failed")}
-          className={loadState === "loaded" ? "max-w-full rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
-        />
-        {toolbar}
-        {loadState === "loaded" && title ? (
-          <span data-reader-image-caption="true" className="text-xs leading-snug text-ink-soft">
-            {title}
-          </span>
-        ) : null}
-        {editingPanel}
-      </span>
+      {isStandalone ? (
+        <div {...copyExcludeProps} className="relative flex w-full justify-center rounded-[8px]">
+          {loadState === "loading" ? (
+            <div
+              data-image-state="loading"
+              role="status"
+              aria-live="polite"
+              className={READER_IMAGE_CANVAS_STANDALONE_CLASS}
+            >
+              <span className="text-xs text-ink-soft">图片加载中…</span>
+              {toolbar}
+            </div>
+          ) : null}
+          <img
+            draggable={false}
+            data-image-state={loadState === "loaded" ? "loaded" : undefined}
+            src={effectiveUrl as string}
+            alt={altText}
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoadState("loaded")}
+            onError={() => setLoadState("failed")}
+            className={loadState === "loaded" ? "mx-auto max-w-full h-auto rounded-[8px]" : "hidden max-w-full rounded-[8px]"}
+          />
+          {loadState === "loaded" ? toolbar : null}
+        </div>
+      ) : (
+        <span
+          {...copyExcludeProps}
+          className="relative inline-flex max-w-full flex-col items-start gap-1 align-top"
+        >
+          {loadState === "loading" ? (
+            <span
+              data-image-state="loading"
+              role="status"
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 rounded-[6px] border border-hairline/70 bg-surface-raised/55 px-2.5 py-1 text-xs text-ink-soft align-middle"
+            >
+              图片加载中…
+            </span>
+          ) : null}
+          <img
+            draggable={false}
+            data-image-state={loadState === "loaded" ? "loaded" : undefined}
+            src={effectiveUrl as string}
+            alt={altText}
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoadState("loaded")}
+            onError={() => setLoadState("failed")}
+            className={loadState === "loaded" ? "max-w-full h-auto rounded-[6px]" : "hidden max-w-full rounded-[6px]"}
+          />
+          {toolbar}
+        </span>
+      )}
+      {caption}
+      {editingPanel}
       {children}
-    </span>
+    </Container>
   );
 }
 

@@ -46,7 +46,7 @@ import type { Descendant } from "platejs";
 
 import katex from "katex";
 import remarkMath from "remark-math";
-import { Copy, SquarePen } from "lucide-react";
+import { Copy, ImageOff, ShieldAlert, SquarePen } from "lucide-react";
 
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
@@ -360,9 +360,10 @@ export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
 type ImageLoadState = "loading" | "loaded" | "failed";
 
 const IMAGE_PLACEHOLDER_CLASS =
-  "inline-flex max-w-full min-h-[4.5rem] flex-col items-start gap-1.5 rounded-[8px] border border-hairline/70 bg-surface-raised/55 px-3 py-2.5 align-top text-[0.85rem] text-ink-soft";
-const IMAGE_BUTTON_CLASS =
-  "rounded border border-hairline px-2 py-0.5 text-[0.78rem] text-lens-blue hover:bg-surface-raised";
+  "relative inline-flex max-w-full flex-col items-center justify-center gap-1.5 rounded-[8px] border border-hairline/60 bg-surface-raised/50 p-3 align-top text-center text-xs text-ink-soft select-none";
+const IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline bg-surface px-3 py-1 text-xs text-lens-blue shadow-sm hover:bg-surface-raised max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-0.5 text-xs text-ink-soft hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const IMAGE_BUTTON_CLASS = `rounded border border-hairline px-2 py-0.5 text-[0.78rem] text-lens-blue hover:bg-surface-raised ${primitiveFocusRing}`;
 // 成功态紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
 // 不占正文高度（键盘可达：按钮 focus 时经 group-focus-within 显示）
 const IMAGE_TOOLBAR_CLASS =
@@ -374,11 +375,11 @@ const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center just
  *
  * 四态合同：
  * - safe URL：loading 占位（最小高度防跳动）→ onLoad 显示图片；onError
- *   显示失败占位（主文案「图片无法加载」，alt 仅作次级说明，空 alt 时给
- *   「图片加载失败」引导）+ 重新加载 / 复制链接 / 修改链接。
- * - unsafe URL：不渲染带 src 的 img（永不发起请求），显示「链接不安全」
- *   占位 + 说明 + 修改链接；普通状态不显示 raw URL，仅点击「修改链接」
- *   进入显式编辑面板后允许显示和编辑 URL；不提供会加载原 URL 的退路。
+ *   显示失败占位（主文案「图片暂时无法显示」，alt 仅作次级说明，不冒充 caption）+
+ *   重新加载主按钮 / 修改链接次级动作，复制链接收纳在右上角 toolbar。
+ * - unsafe URL：不渲染带 src 的 img（永不发起请求），显示「链接不安全，已停止加载图片」
+ *   占位 + 修改链接；普通状态不显示 raw URL，仅点击「修改链接」
+ *   进入显式编辑面板后允许显示和编辑 URL；不提供无意义重试。
  * - 修改链接：冻结前本地编辑态；保存只更新当前 image node 的 URL
  *   （alt/title/顺序不变，触发正常 serialize/onChange）；取消零变化。
  *   编辑控件 contentEditable={false}，控件文本永不进入 Markdown serialize。
@@ -458,6 +459,39 @@ function InputImageElement({
     }
   };
 
+  const toolbar = (
+    <TooltipProvider>
+      <span data-image-toolbar="true" className={IMAGE_TOOLBAR_CLASS}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="复制链接"
+              className={IMAGE_TOOLBAR_BUTTON_CLASS}
+              onClick={copyLink}
+            >
+              <Copy aria-hidden="true" size={14} strokeWidth={1.9} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>复制链接</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="修改链接"
+              className={IMAGE_TOOLBAR_BUTTON_CLASS}
+              onClick={startEdit}
+            >
+              <SquarePen aria-hidden="true" size={14} strokeWidth={1.9} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>修改链接</TooltipContent>
+        </Tooltip>
+      </span>
+    </TooltipProvider>
+  );
+
   if (editing) {
     return (
       <span
@@ -512,12 +546,20 @@ function InputImageElement({
         data-image-input="true"
         className="group inline-block max-w-full align-top"
       >
-        <span contentEditable={false} data-image-state="unsafe" className={IMAGE_PLACEHOLDER_CLASS}>
-          <span className="font-medium text-ink">链接不安全</span>
-          <span className="text-[0.78rem] leading-snug">该图片链接不安全，图片未加载；可修改链接后重试。</span>
-          <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
-            修改链接
-          </button>
+        <span
+          contentEditable={false}
+          data-image-state="unsafe"
+          role="status"
+          aria-live="polite"
+          className={IMAGE_PLACEHOLDER_CLASS}
+        >
+          <ShieldAlert aria-hidden="true" size={22} className="text-ink-soft/70" strokeWidth={1.5} />
+          <span className="font-medium text-ink text-xs sm:text-sm">链接不安全，已停止加载图片</span>
+          <span className="mt-1 flex items-center">
+            <button type="button" className={IMAGE_BUTTON_PRIMARY_CLASS} onClick={startEdit}>
+              修改链接
+            </button>
+          </span>
         </span>
         {children}
       </span>
@@ -531,24 +573,29 @@ function InputImageElement({
         data-image-input="true"
         className="group inline-block max-w-full align-top"
       >
-        <span contentEditable={false} data-image-state="load_failed" className={IMAGE_PLACEHOLDER_CLASS}>
-          <span className="font-medium text-ink">图片无法加载</span>
+        <span
+          contentEditable={false}
+          data-image-state="load_failed"
+          role="status"
+          aria-live="polite"
+          className={IMAGE_PLACEHOLDER_CLASS}
+        >
+          <ImageOff aria-hidden="true" size={22} className="text-ink-soft/70" strokeWidth={1.5} />
+          <span className="font-medium text-ink text-xs sm:text-sm">图片暂时无法显示</span>
           {altText ? (
-            <span className="break-all text-[0.78rem] leading-snug">{altText}</span>
-          ) : (
-            <span className="text-[0.78rem] leading-snug">图片加载失败，可重新加载或修改链接。</span>
-          )}
-          <span className="flex flex-wrap items-center gap-2">
-            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={retryLoad}>
+            <span className="line-clamp-2 max-w-[14rem] break-all text-[0.75rem] leading-snug text-ink-soft">
+              图片说明：{altText}
+            </span>
+          ) : null}
+          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+            <button type="button" className={IMAGE_BUTTON_PRIMARY_CLASS} onClick={retryLoad}>
               重新加载
             </button>
-            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={copyLink}>
-              复制链接
-            </button>
-            <button type="button" className={IMAGE_BUTTON_CLASS} onClick={startEdit}>
+            <button type="button" className={IMAGE_BUTTON_SECONDARY_CLASS} onClick={startEdit}>
               修改链接
             </button>
           </span>
+          {toolbar}
         </span>
         {children}
       </span>
@@ -568,9 +615,12 @@ function InputImageElement({
         {loadState === "loading" ? (
           <span
             data-image-state="loading"
+            role="status"
+            aria-live="polite"
             className={IMAGE_PLACEHOLDER_CLASS}
           >
-            图片加载中…
+            <span className="text-xs text-ink-soft">图片加载中…</span>
+            {toolbar}
           </span>
         ) : null}
         <img
@@ -586,36 +636,7 @@ function InputImageElement({
             loadState === "loaded" ? "" : "hidden",
           )}
         />
-        <TooltipProvider>
-          <span data-image-toolbar="true" className={IMAGE_TOOLBAR_CLASS}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="复制链接"
-                  className={IMAGE_TOOLBAR_BUTTON_CLASS}
-                  onClick={copyLink}
-                >
-                  <Copy aria-hidden="true" size={14} strokeWidth={1.9} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>复制链接</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="修改链接"
-                  className={IMAGE_TOOLBAR_BUTTON_CLASS}
-                  onClick={startEdit}
-                >
-                  <SquarePen aria-hidden="true" size={14} strokeWidth={1.9} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>修改链接</TooltipContent>
-            </Tooltip>
-          </span>
-        </TooltipProvider>
+        {loadState === "loaded" ? toolbar : null}
         {loadState === "loaded" && title ? (
           <span data-image-caption="true" className="text-xs leading-snug text-ink-soft">
             {title}

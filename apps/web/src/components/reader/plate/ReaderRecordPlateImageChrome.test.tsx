@@ -172,12 +172,13 @@ describe("Reader image compact toolbar (loaded)", () => {
 });
 
 describe("Reader image caption (explicit title, never alt)", () => {
-  it("explicit Markdown title renders as visible caption; img keeps no native title tooltip", async () => {
+  it("explicit Markdown title renders as visible figcaption outside canvas; img keeps no native title tooltip", async () => {
     const container = await renderLoadedImage({
       altText: "the alt",
       title: "The Title",
     });
-    const caption = container.querySelector('[data-reader-image-caption="true"]');
+    const caption = container.querySelector('figcaption[data-reader-image-caption="true"]');
+    expect(caption).not.toBeNull();
     expect(caption?.textContent).toBe("The Title");
     expect(caption?.className).toContain("text-xs");
     expect(caption?.className).toContain("text-ink-soft");
@@ -194,97 +195,105 @@ describe("Reader image caption (explicit title, never alt)", () => {
     expect(img?.getAttribute("alt")).toBe("only alt");
   });
 
-  it("no caption while loading", () => {
+  it("explicit Markdown title renders as visible caption outside canvas on load failure", async () => {
     const { container } = render(
-      <Harness value={imgValue({ altText: "loading alt", title: "T" })} />,
-    );
-    expect(
-      container.querySelector('[data-reader-image-caption="true"]'),
-    ).toBeNull();
-  });
-
-  it("no caption on load failure", async () => {
-    const { container } = render(
-      <Harness value={imgValue({ altText: "broken alt", title: "T" })} />,
+      <Harness value={imgValue({ altText: "broken alt", title: "速度向量测试图" })} />,
     );
     const img = container.querySelector('[data-reader-image="true"] img');
     await act(async () => {
       fireEvent(img as Element, new Event("error"));
     });
-    expect(
-      container.querySelector('[data-reader-image-caption="true"]'),
-    ).toBeNull();
+    const caption = container.querySelector('figcaption[data-reader-image-caption="true"]');
+    expect(caption).not.toBeNull();
+    expect(caption?.textContent).toBe("速度向量测试图");
   });
 });
 
 describe("Reader standalone vs inline geometry", () => {
-  it("standalone loading reserves a stable full-width block slot", () => {
+  it("standalone renders semantic figure and quiet media canvas with aspect-ratio placeholder", () => {
     const { container } = render(<Harness value={imgValue({ altText: "a" })} />);
-    // outer span 也带 data-image-state，定位到真正的占位盒
-    const placeholder = container.querySelector(
-      '[data-reader-image="true"] > span > [data-image-state="loading"]',
-    );
-    expect(placeholder).not.toBeNull();
-    expect(placeholder?.className).toContain("w-full");
-    expect(placeholder?.className).toContain("min-h-[4.5rem]");
+    const figure = container.querySelector('figure[data-reader-image="true"]');
+    expect(figure).not.toBeNull();
+    expect(figure?.getAttribute("data-reader-image-kind")).toBe("standalone");
+    const canvas = container.querySelector('[data-image-state="loading"]');
+    expect(canvas).not.toBeNull();
+    expect(canvas?.className).toContain("w-full");
+    expect(canvas?.className).toContain("aspect-[4/3]");
+    expect(canvas?.className).toContain("max-h-");
+    expect(canvas?.className).toContain("rounded-[8px]");
+    expect(canvas?.getAttribute("role")).toBe("status");
+    expect(canvas?.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("inline image stays compact: no standalone full-width styles in text flow", () => {
+  it("inline image stays compact: no standalone full-width or aspect ratio styles in text flow", () => {
     const { container } = render(
       <Harness value={imgValue({ altText: "a", positionKind: "inline" })} />,
     );
     const outer = container.querySelector('[data-reader-image="true"]');
+    expect(outer?.tagName.toLowerCase()).not.toBe("figure");
     expect(outer?.className).toContain("inline-block");
     expect((outer?.className ?? "").split(/\s+/)).not.toContain("w-full");
     const placeholder = container.querySelector(
-      '[data-reader-image="true"] > span > [data-image-state="loading"]',
+      '[data-reader-image="true"] [data-image-state="loading"]',
     );
     expect(placeholder).not.toBeNull();
     expect((placeholder?.className ?? "").split(/\s+/)).not.toContain("w-full");
+    expect(placeholder?.className).not.toContain("aspect-[4/3]");
     const img = container.querySelector('[data-reader-image="true"] img');
     expect((img?.className ?? "").split(/\s+/)).not.toContain("w-full");
   });
 });
 
 describe("Reader image failed state", () => {
-  it("shows 图片无法加载 primary with alt secondary and visible recovery actions", async () => {
+  it("shows 图片暂时无法显示 primary with optional 图片说明 and action hierarchy", async () => {
     const { container } = render(
-      <Harness value={imgValue({ altText: "broken alt" })} />,
+      <Harness value={imgValue({ altText: "蓝色圆形速度向量示意图" })} />,
     );
     const img = container.querySelector('[data-reader-image="true"] img');
     await act(async () => {
       fireEvent(img as Element, new Event("error"));
     });
     const failed = container.querySelector('[data-image-state="load_failed"]');
-    expect(failed?.textContent).toContain("图片无法加载");
-    expect(failed?.textContent).toContain("broken alt");
-    const primaryAt = failed?.textContent?.indexOf("图片无法加载") ?? -1;
-    const altAt = failed?.textContent?.indexOf("broken alt") ?? -1;
+    expect(failed?.getAttribute("role")).toBe("status");
+    expect(failed?.getAttribute("aria-live")).toBe("polite");
+    expect(failed?.querySelector("svg")).not.toBeNull();
+    expect(failed?.textContent).toContain("图片暂时无法显示");
+    expect(failed?.textContent).toContain("图片说明：蓝色圆形速度向量示意图");
+    const primaryAt = failed?.textContent?.indexOf("图片暂时无法显示") ?? -1;
+    const altAt = failed?.textContent?.indexOf("图片说明：") ?? -1;
     expect(altAt).toBeGreaterThan(primaryAt);
-    expect(
-      screen.getByRole("button", { name: "重新加载" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "复制链接" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "修改链接" }),
-    ).toBeTruthy();
-    // recovery actions are not hover-hidden
-    const retry = screen.getByRole("button", { name: "重新加载" });
-    expect(retry.className).not.toContain("opacity-0");
+
+    // Primary recovery action is 重新加载, secondary is 修改链接
+    const retryBtn = screen.getByRole("button", { name: "重新加载" });
+    expect(retryBtn).toBeTruthy();
+    expect(retryBtn.className).toContain("max-sm:min-h-[44px]");
+    const editButtons = screen.getAllByRole("button", { name: "修改链接" });
+    expect(editButtons.length).toBeGreaterThanOrEqual(1);
+
+    // 复制链接 is NOT a visible text button inside the canvas; it is in the top-right toolbar
+    const textButtons = Array.from(failed?.querySelectorAll("button") ?? []);
+    const textButtonLabels = textButtons.map((b) => b.textContent?.trim());
+    expect(textButtonLabels).not.toContain("复制链接");
+
+    // Toolbar carries 复制链接
+    const toolbar = container.querySelector('[data-reader-image-toolbar="true"]');
+    expect(toolbar).not.toBeNull();
+    const copyInToolbar = toolbar?.querySelector('button[aria-label="复制链接"]');
+    expect(copyInToolbar).not.toBeNull();
+
     // failed state keeps no live img[src]
     expect(container.querySelector('[data-reader-image="true"] img[src]')).toBeNull();
   });
 
-  it("empty alt keeps 图片加载失败 guidance copy", async () => {
+  it("empty alt omits 图片说明 line", async () => {
     const { container } = render(<Harness value={imgValue({ altText: "" })} />);
     const img = container.querySelector('[data-reader-image="true"] img');
     await act(async () => {
       fireEvent(img as Element, new Event("error"));
     });
-    expect(container.textContent).toContain("图片无法加载");
-    expect(container.textContent).toContain("图片加载失败");
+    const failed = container.querySelector('[data-image-state="load_failed"]');
+    expect(failed?.textContent).toContain("图片暂时无法显示");
+    expect(failed?.textContent).not.toContain("图片说明：");
   });
 
   it("重新加载 remounts the same safe URL verbatim (no URL rewrite)", async () => {
@@ -315,7 +324,7 @@ describe("Reader image failed state", () => {
 });
 
 describe("Reader image unsafe state", () => {
-  it("fail-closed: friendly copy only, no raw source/effective URL, 修改链接 entry", () => {
+  it("fail-closed: quiet canvas, 链接不安全，已停止加载图片, only highlights 修改链接, no retry, no raw URL", () => {
     const { container } = render(
       <Harness
         value={imgValue({
@@ -326,13 +335,17 @@ describe("Reader image unsafe state", () => {
       />,
     );
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toContain("链接不安全");
+    const unsafeBox = container.querySelector('[data-image-state="unsafe"]');
+    expect(unsafeBox).not.toBeNull();
+    expect(unsafeBox?.getAttribute("role")).toBe("status");
+    expect(unsafeBox?.getAttribute("aria-live")).toBe("polite");
+    expect(unsafeBox?.textContent).toContain("链接不安全，已停止加载图片");
     // normal surface never shows raw source/effective URLs (edit panel only)
     expect(container.textContent).not.toContain("javascript:alert(1)");
     expect(container.textContent).not.toContain("https://example.com/source.png");
-    expect(
-      screen.getByRole("button", { name: "修改链接" }),
-    ).toBeTruthy();
+    // Only 修改链接, no retry
+    expect(screen.queryByRole("button", { name: "重新加载" })).toBeNull();
+    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
   });
 });
 

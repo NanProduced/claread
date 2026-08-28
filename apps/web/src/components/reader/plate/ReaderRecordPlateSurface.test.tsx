@@ -9169,7 +9169,7 @@ describe("G3b Reader image safe surface Slice B RED", () => {
     await act(async () => {
       if (img3) fireEvent(img3 as Element, new Event("error"));
     });
-    expect(c3.textContent).toContain("图片加载失败");
+    expect(c3.textContent).toContain("图片暂时无法显示");
     // after fix, loaded img with empty alt should have alt=""
     // For this test, we check loaded state empty alt
     const { container: c4 } = render(<ReaderRecordPlateSurface snapshot={snapshotEmptyAlt} />);

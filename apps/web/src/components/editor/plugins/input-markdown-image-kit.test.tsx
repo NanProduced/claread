@@ -203,7 +203,7 @@ describe("InputImageElement 四态", () => {
     ).toBeNull();
   });
 
-  it("load_failed：图片无法加载为主、alt 为次级，提供重新加载/复制链接/修改链接", () => {
+  it("load_failed：图片暂时无法显示为主、alt 为次级，提供重新加载与修改链接，复制链接在 toolbar", () => {
     const { container } = renderInputImage(
       "https://example.com/a.png",
       "alt text",
@@ -214,29 +214,35 @@ describe("InputImageElement 四态", () => {
     });
     const failed = container.querySelector("[data-image-state='load_failed']");
     expect(failed).not.toBeNull();
-    expect(failed?.textContent).toContain("图片无法加载");
-    expect(failed?.textContent).toContain("alt text");
+    expect(failed?.textContent).toContain("图片暂时无法显示");
+    expect(failed?.textContent).toContain("图片说明：alt text");
     expect(
-      (failed?.textContent?.indexOf("图片无法加载") ?? -1),
-    ).toBeLessThan(failed?.textContent?.indexOf("alt text") ?? -1);
+      (failed?.textContent?.indexOf("图片暂时无法显示") ?? -1),
+    ).toBeLessThan(failed?.textContent?.indexOf("图片说明：") ?? -1);
     expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "复制链接" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "修改链接" }).length).toBeGreaterThanOrEqual(1);
+    // 复制链接不再是失败占位中央的文字按钮，而是在 toolbar 中
+    const textButtons = Array.from(failed?.querySelectorAll("button") ?? []).map(
+      (b) => b.textContent?.trim(),
+    );
+    expect(textButtons).not.toContain("复制链接");
+    const toolbar = container.querySelector("[data-image-toolbar='true']");
+    expect(toolbar?.querySelector('button[aria-label="复制链接"]')).not.toBeNull();
     // 失败后不再挂载带 src 的 img
     expect(container.querySelector("img[src]")).toBeNull();
   });
 
-  it("load_failed 空 alt：主文案 + 图片加载失败引导", () => {
+  it("load_failed 空 alt：不显示图片说明", () => {
     const { container } = renderInputImage("https://example.com/a.png", "");
     const img = container.querySelector("img");
     act(() => {
       fireEvent(img as Element, new Event("error"));
     });
-    expect(container.textContent).toContain("图片无法加载");
-    expect(container.textContent).toContain("图片加载失败");
+    expect(container.textContent).toContain("图片暂时无法显示");
+    expect(container.textContent).not.toContain("图片说明：");
   });
 
-  it("load_failed 复制链接：写入 effective URL（原样字符串）", () => {
+  it("load_failed 复制链接：从 toolbar 复制 effective URL（原样字符串）", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -251,12 +257,13 @@ describe("InputImageElement 四态", () => {
     expect(writeText).toHaveBeenCalledWith("https://example.com/a.png");
   });
 
-  it("unsafe：不渲染 img，普通状态不显示 raw URL；进入编辑面板后才显示并可编辑", () => {
+  it("unsafe：不渲染 img，普通状态显示「链接不安全，已停止加载图片」且不显示 raw URL；进入编辑面板后才显示并可编辑", () => {
     const { container } = renderInputImage("javascript:alert(1)");
     expect(container.querySelector("img")).toBeNull();
-    expect(container.textContent).toContain("链接不安全");
+    expect(container.textContent).toContain("链接不安全，已停止加载图片");
     // 普通表面不显示 raw URL（与 Reader 一致）
     expect(container.textContent).not.toContain("javascript:alert(1)");
+    expect(screen.queryByRole("button", { name: "重新加载" })).toBeNull();
     expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
     // 仅点击「修改链接」进入显式编辑面板后允许显示和编辑 URL
     fireEvent.click(screen.getByRole("button", { name: "修改链接" }));
@@ -885,7 +892,7 @@ describe("复制链接的 Clipboard rejection", () => {
       expect(
         container.querySelector("[data-image-state='load_failed']"),
       ).not.toBeNull();
-      expect(screen.getByRole("button", { name: "修改链接" })).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: "修改链接" }).length).toBeGreaterThanOrEqual(1);
       // 核心断言：同步 try/catch 捕不到异步 rejection；必须显式 .catch
       expect(unhandled).toHaveLength(0);
     } finally {
