@@ -357,39 +357,29 @@ export const ReaderFrozenImageOverrideContext =
 // isLoadableImageUrl, native <img> + Clipboard API, no media framework.
 //
 // 图片状态语言：loading / loaded / load_failed / unsafe 四态共用同一文案与
-// chrome 语法；成功态 chrome 是右上角绝对定位的紧凑中性 toolbar（icon-only
-// + Tooltip primitive，hover / focus-within 才出现，不占正文高度）；失败态
-// 的恢复操作常显；unsafe 态 fail-closed，普通表面不显示 raw URL。
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// G3b Reader image (standalone + inline) — single image data shape, reuse
-// isLoadableImageUrl, native <img> + Clipboard API, no media framework.
-//
-// 图片状态语言：loading / loaded / load_failed / unsafe 四态共用同一文案与
 // chrome 语法；文章内安静媒体画布；成功态 chrome 是右上角绝对定位的紧凑中性
-// toolbar（icon-only + Tooltip primitive，hover / focus-within 才出现，不占
-// 正文高度）；load_failed 居中显示 broken-image 图标 +「图片暂时无法显示」+
-// 可选「图片说明：{alt}」+ 重新加载主按钮 + 修改链接次级动作；复制链接收纳
-// 至右上角 toolbar；unsafe 态 fail-closed 显示「链接不安全，已停止加载图片」，
-// 普通表面不显示 raw URL。
+// toolbar（icon-only + Tooltip primitive，桌面 hover / focus-within 渐进显露，
+// 触屏 / 粗指针 / 窄屏常显可发现，移动端 44px 触控区）；load_failed 居中显示
+// broken-image 图标 +「图片暂时无法显示」+ 可选「图片说明：{alt}」+ 重新加载中性
+// 主按钮（无 shadow-sm，无默认蓝）+ 修改链接次级低权重动作；复制链接收纳至右上角
+// toolbar；unsafe 态 fail-closed 显示「链接不安全，已停止加载图片」，普通表面不显示 raw URL。
 // ---------------------------------------------------------------------------
 
-// 媒体画布：正文列宽中性媒体画布，约 4:3 占位 + 高度 clamp
+// 媒体画布：正文列宽中性媒体画布，约 4:3 占位 + 高度 clamp，极弱 hairline 无外框重卡感
 const READER_IMAGE_CANVAS_STANDALONE_CLASS =
-  "relative flex w-full aspect-[4/3] max-h-[28rem] min-h-[12rem] flex-col items-center justify-center gap-2 rounded-[8px] border border-hairline/60 bg-surface-raised/50 px-4 py-6 text-center select-none";
+  "relative flex w-full aspect-[4/3] max-h-[28rem] min-h-[12rem] flex-col items-center justify-center gap-2.5 rounded-[8px] border border-hairline/35 bg-surface-raised/40 px-4 py-6 text-center select-none shadow-none";
 const READER_IMAGE_CANVAS_INLINE_CLASS =
-  "relative inline-flex max-w-full flex-col items-start gap-1 rounded-[6px] border border-hairline/70 bg-surface-raised/55 p-2 align-middle text-xs text-ink-soft select-none";
+  "relative inline-flex max-w-full flex-col items-start gap-1 rounded-[6px] border border-hairline/50 bg-surface-raised/40 p-2 align-middle text-xs text-ink-soft select-none shadow-none";
 
-const READER_IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline bg-surface px-4 py-1.5 text-xs text-lens-blue shadow-sm hover:bg-surface-raised max-sm:min-h-[44px] ${primitiveFocusRing}`;
-const READER_IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-1 text-xs text-ink-soft hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
-const READER_IMAGE_BUTTON_CLASS = `rounded border border-hairline px-2 py-0.5 text-xs text-lens-blue hover:bg-surface-raised ${primitiveFocusRing}`;
+const READER_IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline/60 bg-surface px-4 py-1.5 text-xs font-normal text-ink transition-colors hover:bg-surface-raised hover:border-hairline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const READER_IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-1 text-xs text-ink-soft transition-colors hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const READER_IMAGE_BUTTON_CLASS = `rounded border border-hairline/60 bg-surface px-2.5 py-1 text-xs text-ink transition-colors hover:bg-surface-raised ${primitiveFocusRing}`;
 
-// 紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
-// 不占正文高度（键盘可达：按钮 focus 时经 group-focus-within 显示）
+// 紧凑中性 chrome：右上角绝对定位，桌面 hover / focus-within 才出现（不占正文高度）；
+// 移动端 / 粗指针下常显可发现，触控尺寸达到 44px
 const READER_IMAGE_TOOLBAR_CLASS =
-  "absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline bg-surface/95 p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
-const READER_IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
+  "absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline/60 bg-surface/95 p-0.5 shadow-none transition-opacity duration-150 max-sm:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 pointer-coarse:opacity-100";
+const READER_IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 max-sm:size-10 max-sm:min-h-[44px] max-sm:min-w-[44px] cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
 
 function ReaderImageInlineComponent({ attributes, children, element }: PlateElementProps) {
   const node = element as unknown as ReaderImageElement;
@@ -565,7 +555,10 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
   const Container = isStandalone ? "figure" : "span";
   const CaptionTag = isStandalone ? "figcaption" : "span";
   const caption = title ? (
-    <CaptionTag data-reader-image-caption="true" className="mt-2 text-center text-xs leading-snug text-ink-soft">
+    <CaptionTag
+      data-reader-image-caption="true"
+      className={`mt-2 text-xs leading-snug text-ink-soft ${isStandalone ? "w-full text-left" : "text-center"}`}
+    >
       {title}
     </CaptionTag>
   ) : null;
@@ -578,7 +571,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         {...attributes}
         data-reader-image="true"
         data-reader-image-kind={positionKind}
-        className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
+        className={isStandalone ? "group flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
       >
         {isStandalone ? (
           <div
@@ -588,10 +581,10 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
             aria-live="polite"
             className={READER_IMAGE_CANVAS_STANDALONE_CLASS}
           >
-            <ShieldAlert aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/70" strokeWidth={1.5} />
-            <span className="text-sm sm:text-base font-medium text-ink">链接不安全，已停止加载图片</span>
+            <ShieldAlert aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/60" strokeWidth={1.5} />
+            <span className="text-sm font-medium text-ink">链接不安全，已停止加载图片</span>
             {canEdit && !isEditing ? (
-              <div className="mt-1 flex flex-col items-center">
+              <div className="mt-1.5 flex flex-col items-center">
                 <button type="button" className={READER_IMAGE_BUTTON_PRIMARY_CLASS} onClick={handleEdit}>
                   修改链接
                 </button>
@@ -631,7 +624,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
         {...attributes}
         data-reader-image="true"
         data-reader-image-kind={positionKind}
-        className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
+        className={isStandalone ? "group flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
       >
         {isStandalone ? (
           <div
@@ -641,14 +634,14 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
             aria-live="polite"
             className={READER_IMAGE_CANVAS_STANDALONE_CLASS}
           >
-            <ImageOff aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/70" strokeWidth={1.5} />
-            <span className="text-sm sm:text-base font-medium text-ink">图片暂时无法显示</span>
+            <ImageOff aria-hidden="true" className="size-8 sm:size-9 text-ink-soft/60" strokeWidth={1.5} />
+            <span className="text-sm font-medium text-ink">图片暂时无法显示</span>
             {altText ? (
-              <span className="line-clamp-2 max-w-[85%] break-all text-xs leading-snug text-ink-soft">
+              <span className="line-clamp-2 max-w-[85%] break-all text-xs leading-relaxed text-ink-soft/85">
                 图片说明：{altText}
               </span>
             ) : null}
-            <div className="mt-1 flex flex-col items-center gap-1.5">
+            <div className="mt-1.5 flex flex-col items-center gap-1">
               <button type="button" className={READER_IMAGE_BUTTON_PRIMARY_CLASS} onClick={handleRetry}>
                 重新加载
               </button>
@@ -702,7 +695,7 @@ function ReaderImageInlineComponent({ attributes, children, element }: PlateElem
       {...attributes}
       data-reader-image="true"
       data-reader-image-kind={positionKind}
-      className={isStandalone ? "group my-3 flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
+      className={isStandalone ? "group flex w-full flex-col items-center" : "group inline-block max-w-full align-top"}
     >
       {isStandalone ? (
         <div {...copyExcludeProps} className="relative flex w-full justify-center rounded-[8px]">

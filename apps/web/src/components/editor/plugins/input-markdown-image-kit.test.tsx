@@ -214,12 +214,17 @@ describe("InputImageElement 四态", () => {
     });
     const failed = container.querySelector("[data-image-state='load_failed']");
     expect(failed).not.toBeNull();
+    const retryBtn = screen.getByRole("button", { name: "重新加载" });
+    expect(retryBtn).toBeTruthy();
+    expect(retryBtn.className).toContain("max-sm:min-h-[44px]");
+    expect(retryBtn.className).not.toContain("shadow-sm");
+    expect(retryBtn.className).not.toContain("text-lens-blue");
+    expect(retryBtn.className).toContain("text-ink");
     expect(failed?.textContent).toContain("图片暂时无法显示");
     expect(failed?.textContent).toContain("图片说明：alt text");
     expect(
       (failed?.textContent?.indexOf("图片暂时无法显示") ?? -1),
     ).toBeLessThan(failed?.textContent?.indexOf("图片说明：") ?? -1);
-    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "修改链接" }).length).toBeGreaterThanOrEqual(1);
     // 复制链接不再是失败占位中央的文字按钮，而是在 toolbar 中
     const textButtons = Array.from(failed?.querySelectorAll("button") ?? []).map(
@@ -286,9 +291,10 @@ describe("InputImageElement 紧凑 chrome 与 caption", () => {
     const toolbar = container.querySelector("[data-image-toolbar='true']");
     expect(toolbar).not.toBeNull();
     expect(toolbar?.className).toContain("absolute");
-    expect(toolbar?.className).toContain("opacity-0");
-    expect(toolbar?.className).toContain("group-hover:opacity-100");
-    expect(toolbar?.className).toContain("group-focus-within:opacity-100");
+    expect(toolbar?.className).toMatch(/max-sm:opacity-100|pointer-coarse:opacity-100/);
+    expect(toolbar?.className).toContain("sm:opacity-0");
+    expect(toolbar?.className).toContain("sm:group-hover:opacity-100");
+    expect(toolbar?.className).toContain("sm:group-focus-within:opacity-100");
     // 修改链接只在 hover toolbar 内，不再长期显示独立按钮
     const editBtn = screen.getByRole("button", { name: "修改链接" });
     expect(editBtn.closest("[data-image-toolbar='true']")).not.toBeNull();

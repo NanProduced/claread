@@ -360,15 +360,15 @@ export const INPUT_MARKDOWN_PLUGIN_OPTIONS = {
 type ImageLoadState = "loading" | "loaded" | "failed";
 
 const IMAGE_PLACEHOLDER_CLASS =
-  "relative inline-flex max-w-full flex-col items-center justify-center gap-1.5 rounded-[8px] border border-hairline/60 bg-surface-raised/50 p-3 align-top text-center text-xs text-ink-soft select-none";
-const IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline bg-surface px-3 py-1 text-xs text-lens-blue shadow-sm hover:bg-surface-raised max-sm:min-h-[44px] ${primitiveFocusRing}`;
-const IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-0.5 text-xs text-ink-soft hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
-const IMAGE_BUTTON_CLASS = `rounded border border-hairline px-2 py-0.5 text-[0.78rem] text-lens-blue hover:bg-surface-raised ${primitiveFocusRing}`;
-// 成功态紧凑中性 chrome：右上角绝对定位，hover / focus-within 才出现，
-// 不占正文高度（键盘可达：按钮 focus 时经 group-focus-within 显示）
+  "relative inline-flex max-w-full flex-col items-center justify-center gap-2 rounded-[8px] border border-hairline/35 bg-surface-raised/40 p-4 align-top text-center text-xs text-ink-soft select-none shadow-none";
+const IMAGE_BUTTON_PRIMARY_CLASS = `flex items-center justify-center rounded-[6px] border border-hairline/60 bg-surface px-3.5 py-1.5 text-xs font-normal text-ink transition-colors hover:bg-surface-raised hover:border-hairline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const IMAGE_BUTTON_SECONDARY_CLASS = `flex items-center justify-center px-2 py-1 text-xs text-ink-soft transition-colors hover:text-ink hover:underline max-sm:min-h-[44px] ${primitiveFocusRing}`;
+const IMAGE_BUTTON_CLASS = `rounded border border-hairline/60 bg-surface px-2.5 py-1 text-xs text-ink transition-colors hover:bg-surface-raised ${primitiveFocusRing}`;
+// 成功态紧凑中性 chrome：右上角绝对定位，桌面 hover / focus-within 渐进显露，
+// 移动端 / 粗指针下常显可发现，触控尺寸达到 44px
 const IMAGE_TOOLBAR_CLASS =
-  "absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline bg-surface/95 p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
-const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
+  "absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-[6px] border border-hairline/60 bg-surface/95 p-0.5 shadow-none transition-opacity duration-150 max-sm:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 pointer-coarse:opacity-100";
+const IMAGE_TOOLBAR_BUTTON_CLASS = `flex size-6 max-sm:size-10 max-sm:min-h-[44px] max-sm:min-w-[44px] cursor-pointer items-center justify-center rounded-[4px] text-ink-soft transition-colors hover:bg-surface-raised hover:text-ink focus-visible:opacity-100 ${primitiveFocusRing}`;
 
 /**
  * 输入端图片元素组件（inline void）。
@@ -553,7 +553,7 @@ function InputImageElement({
           aria-live="polite"
           className={IMAGE_PLACEHOLDER_CLASS}
         >
-          <ShieldAlert aria-hidden="true" size={22} className="text-ink-soft/70" strokeWidth={1.5} />
+          <ShieldAlert aria-hidden="true" size={22} className="text-ink-soft/60" strokeWidth={1.5} />
           <span className="font-medium text-ink text-xs sm:text-sm">链接不安全，已停止加载图片</span>
           <span className="mt-1 flex items-center">
             <button type="button" className={IMAGE_BUTTON_PRIMARY_CLASS} onClick={startEdit}>
@@ -580,10 +580,10 @@ function InputImageElement({
           aria-live="polite"
           className={IMAGE_PLACEHOLDER_CLASS}
         >
-          <ImageOff aria-hidden="true" size={22} className="text-ink-soft/70" strokeWidth={1.5} />
+          <ImageOff aria-hidden="true" size={22} className="text-ink-soft/60" strokeWidth={1.5} />
           <span className="font-medium text-ink text-xs sm:text-sm">图片暂时无法显示</span>
           {altText ? (
-            <span className="line-clamp-2 max-w-[14rem] break-all text-[0.75rem] leading-snug text-ink-soft">
+            <span className="line-clamp-2 max-w-[14rem] break-all text-[0.75rem] leading-relaxed text-ink-soft/85">
               图片说明：{altText}
             </span>
           ) : null}
@@ -638,7 +638,7 @@ function InputImageElement({
         />
         {loadState === "loaded" ? toolbar : null}
         {loadState === "loaded" && title ? (
-          <span data-image-caption="true" className="text-xs leading-snug text-ink-soft">
+          <span data-image-caption="true" className="w-full text-left text-xs leading-snug text-ink-soft">
             {title}
           </span>
         ) : null}

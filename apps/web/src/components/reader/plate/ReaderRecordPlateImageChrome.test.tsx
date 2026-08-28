@@ -140,13 +140,14 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(toolbar?.className).toContain("absolute");
     expect(toolbar?.className).toContain("top-");
     expect(toolbar?.className).toContain("right-");
-    // reveal on hover / keyboard focus only
-    expect(toolbar?.className).toContain("opacity-0");
-    expect(toolbar?.className).toContain("group-hover:opacity-100");
-    expect(toolbar?.className).toContain("group-focus-within:opacity-100");
+    // reveal on hover / keyboard focus on desktop, but visible on mobile / touch screen
+    expect(toolbar?.className).toMatch(/max-sm:opacity-100|pointer-coarse:opacity-100/);
+    expect(toolbar?.className).toContain("sm:opacity-0");
+    expect(toolbar?.className).toContain("sm:group-hover:opacity-100");
+    expect(toolbar?.className).toContain("sm:group-focus-within:opacity-100");
   });
 
-  it("复制链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible", async () => {
+  it("复制链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and mobile touch target", async () => {
     await renderLoadedImage({ altText: "chart alt" });
     const btn = screen.getByRole("button", { name: "复制链接" });
     expect(btn.querySelector("svg")).not.toBeNull();
@@ -157,9 +158,10 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(btn.className).toContain("cursor-pointer");
     expect(btn.className).toContain("hover:");
     expect(btn.className).toContain("focus-visible:");
+    expect(btn.className).toContain("max-sm:min-h-[44px]");
   });
 
-  it("修改链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible", async () => {
+  it("修改链接 is icon-only Tooltip control with aria-label / pointer / hover / focus-visible and mobile touch target", async () => {
     await renderLoadedImage({ altText: "" });
     const btn = screen.getByRole("button", { name: "修改链接" });
     expect(btn.querySelector("svg")).not.toBeNull();
@@ -168,11 +170,12 @@ describe("Reader image compact toolbar (loaded)", () => {
     expect(btn.className).toContain("cursor-pointer");
     expect(btn.className).toContain("hover:");
     expect(btn.className).toContain("focus-visible:");
+    expect(btn.className).toContain("max-sm:min-h-[44px]");
   });
 });
 
 describe("Reader image caption (explicit title, never alt)", () => {
-  it("explicit Markdown title renders as visible figcaption outside canvas; img keeps no native title tooltip", async () => {
+  it("explicit Markdown title renders as visible figcaption outside canvas, left-aligned; img keeps no native title tooltip", async () => {
     const container = await renderLoadedImage({
       altText: "the alt",
       title: "The Title",
@@ -182,6 +185,8 @@ describe("Reader image caption (explicit title, never alt)", () => {
     expect(caption?.textContent).toBe("The Title");
     expect(caption?.className).toContain("text-xs");
     expect(caption?.className).toContain("text-ink-soft");
+    expect(caption?.className).toContain("text-left");
+    expect(caption?.className).toContain("w-full");
     const img = container.querySelector('[data-reader-image="true"] img');
     expect(img?.getAttribute("title")).toBeNull();
   });
@@ -215,6 +220,8 @@ describe("Reader standalone vs inline geometry", () => {
     const figure = container.querySelector('figure[data-reader-image="true"]');
     expect(figure).not.toBeNull();
     expect(figure?.getAttribute("data-reader-image-kind")).toBe("standalone");
+    // Single vertical spacing owner: figure must not hold my-3 since block component already holds it
+    expect((figure?.className ?? "").split(/\s+/)).not.toContain("my-3");
     const canvas = container.querySelector('[data-image-state="loading"]');
     expect(canvas).not.toBeNull();
     expect(canvas?.className).toContain("w-full");
@@ -267,6 +274,9 @@ describe("Reader image failed state", () => {
     const retryBtn = screen.getByRole("button", { name: "重新加载" });
     expect(retryBtn).toBeTruthy();
     expect(retryBtn.className).toContain("max-sm:min-h-[44px]");
+    expect(retryBtn.className).not.toContain("shadow-sm");
+    expect(retryBtn.className).not.toContain("text-lens-blue");
+    expect(retryBtn.className).toContain("text-ink");
     const editButtons = screen.getAllByRole("button", { name: "修改链接" });
     expect(editButtons.length).toBeGreaterThanOrEqual(1);
 
