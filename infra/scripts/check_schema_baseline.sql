@@ -19,6 +19,7 @@ DECLARE
         'anonymous_quotas',
         'candidate_reading_documents',
         'confirmed_source_documents',
+        'confirmed_source_revisions',
         'daily_readers',
         'dict_ai_candidate_entries',
         'dict_entries',
@@ -57,6 +58,7 @@ DECLARE
         'reading_units',
         'source_artifacts',
         'stable_document_blocks',
+        'stable_image_source_overrides',
         'stable_reading_documents',
         'user_annotations',
         'user_credit_accounts',
@@ -359,6 +361,62 @@ BEGIN
     END LOOP;
     IF cardinality(missing) > 0 THEN
         RAISE EXCEPTION 'Reader attribution objects missing from the baseline: %', missing;
+    END IF;
+END
+$guard$;
+
+-- R8 — immutable confirmed-source revision snapshots contract:
+-- current-row writes persist an immutable snapshot per revision;
+-- snapshot identity is the (document, revision) pair.
+DO $guard$
+DECLARE
+    expected_columns text[] := ARRAY[
+        'confirmed_source_revisions.confirmed_source_document_id',
+        'confirmed_source_revisions.reading_record_id',
+        'confirmed_source_revisions.user_id',
+        'confirmed_source_revisions.record_generation',
+        'confirmed_source_revisions.revision',
+        'confirmed_source_revisions.markdown_text',
+        'confirmed_source_revisions.content_sha256',
+        'confirmed_source_revisions.snapshot_reason',
+        'confirmed_source_revisions.edit_source'
+    ];
+    marker text;
+    missing text[] := '{}';
+BEGIN
+    FOREACH marker IN ARRAY expected_columns LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = split_part(marker, '.', 1)
+              AND column_name = split_part(marker, '.', 2)
+        ) THEN
+            missing := array_append(missing, marker);
+        END IF;
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'confirmed_source_revisions_revision_check'
+          AND contype = 'c'
+    ) THEN
+        missing := array_append(missing, 'confirmed_source_revisions_revision_check');
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'confirmed_source_revisions_snapshot_reason_check'
+          AND contype = 'c'
+    ) THEN
+        missing := array_append(missing, 'confirmed_source_revisions_snapshot_reason_check');
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_confirmed_source_revisions_document_revision'
+          AND contype = 'u'
+    ) THEN
+        missing := array_append(missing, 'uq_confirmed_source_revisions_document_revision');
+    END IF;
+    IF cardinality(missing) > 0 THEN
+        RAISE EXCEPTION 'confirmed_source_revisions contract missing from the baseline: %', missing;
     END IF;
 END
 $guard$;

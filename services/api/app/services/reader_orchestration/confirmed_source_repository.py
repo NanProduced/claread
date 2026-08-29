@@ -25,6 +25,10 @@ from app.schemas.reader_documents import (
     ConfirmedSourceDocument,
     ConfirmedSourceEditSource,
 )
+from app.services.reader_orchestration.confirmed_source_revision_repository import (
+    ConfirmedSourceRevisionReason,
+    snapshot_confirmed_source_revision,
+)
 
 
 class ConfirmedSourceError(ValueError):
@@ -65,9 +69,7 @@ def _row_to_model(row: asyncpg.Record) -> ConfirmedSourceDocument:
         user_id=str(row["user_id"]),
         record_generation=int(row["record_generation"]),
         original_input_id=(
-            str(row["original_input_id"])
-            if row["original_input_id"] is not None
-            else None
+            str(row["original_input_id"]) if row["original_input_id"] is not None else None
         ),
         markdown_text=str(row["markdown_text"]),
         revision=int(row["revision"]),
@@ -132,7 +134,16 @@ async def insert_confirmed_source(
             "insert_confirmed_source returned no row",
             reason_code="row_not_found",
         )
-    return _row_to_model(row)
+    source = _row_to_model(row)
+    # R8 — immutable revision history: snapshot the initial body (revision
+    # 1) in the same transaction as the current-row insert.
+    await snapshot_confirmed_source_revision(
+        conn,
+        source=source,
+        snapshot_reason="initial",
+        now=now,
+    )
+    return source
 
 
 async def lock_confirmed_source_for_update(
@@ -206,16 +217,19 @@ async def update_confirmed_source_with_expected_revision(
     markdown_text: str,
     edit_source: ConfirmedSourceEditSource,
     now: datetime,
+    snapshot_reason: ConfirmedSourceRevisionReason = "save",
 ) -> ConfirmedSourceDocument:
     """Optimistic-concurrency body update: revision 原地推进 +1。
 
     ``UPDATE ... WHERE id AND reading_record_id AND revision =
     expected_revision AND status = 'draft'``；未命中恰好一行即
     fail closed（stale_revision / frozen 不可变）。
+
+    Every successful write additionally persists an immutable revision
+    snapshot (``snapshot_reason``: ``save`` for regular edits, ``restore``
+    for version restores) in the same transaction.
     """
-    _require_transaction(
-        conn, "update_confirmed_source_with_expected_revision"
-    )
+    _require_transaction(conn, "update_confirmed_source_with_expected_revision")
     row = await conn.fetchrow(
         """
         UPDATE confirmed_source_documents
@@ -247,7 +261,16 @@ async def update_confirmed_source_with_expected_revision(
             "'draft' (stale revision or frozen source)",
             reason_code="stale_revision",
         )
-    return _row_to_model(row)
+    updated_source = _row_to_model(row)
+    # R8 — immutable revision history: snapshot the newly written revision
+    # in the same transaction as the current-row update.
+    await snapshot_confirmed_source_revision(
+        conn,
+        source=updated_source,
+        snapshot_reason=snapshot_reason,
+        now=now,
+    )
+    return updated_source
 
 
 async def freeze_confirmed_source(

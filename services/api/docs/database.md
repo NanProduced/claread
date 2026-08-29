@@ -65,7 +65,7 @@ infra/scripts/reset_full_keep_dict.sql
 要求：
 
 - reset 开发数据时保留 `dict_*` 三表与 `eval_example_lab_entries`（受保护数据）。
-- reset 表清单与 baseline 的 49 张非保护表精确对齐（无 legacy 表残留；
+- reset 表清单与 baseline 的 51 张非保护表精确对齐（无 legacy 表残留；
   `ai_model_execution_journal` 也在非保护重置范围内）。
 - baseline 中 `dict_*` 与 `eval_example_lab_entries` 的 DDL 使用
   `IF NOT EXISTS` / guarded ALTER，keep-dict 场景重复应用不会失败。
@@ -76,16 +76,24 @@ PostgreSQL Docker init 脚本只在 volume 首次创建时执行。已有 volume
 infra/migrations/0001_initial.sql
 ```
 
-最后执行 `check_schema_baseline.sql` 验证基线完整性（53 张表精确集合、legacy 表/列缺失断言、退出合同的 CHECK/索引断言）。
+最后执行 `check_schema_baseline.sql` 验证基线完整性（55 张表精确集合、legacy 表/列缺失断言、退出合同的 CHECK/索引断言）。
 
 `ai_model_execution_journal` 补入 reset / checker 合同后，任何已存在的开发 volume 都必须先执行 `reset_full_keep_dict.sql`，再重放 fresh baseline（`0001_initial.sql`）完成恢复；仅靠 Docker init 不会自动升级已有 volume。
+
+R8 基线事实：
+
+- `confirmed_source_revisions` 是不可变 revision snapshot 表（初始提取 /
+  每次成功保存 / 版本恢复，`snapshot_reason ∈ initial | save | restore`），
+  与 `confirmed_source_documents` 当前行同事务写入，绝不回写历史。
+- `stable_image_source_overrides` 的 checker / reset 对齐缺口已在 R8 一并补齐
+  （此前 main 的 reconcile 测试已处于 RED 存量漂移态）。
 
 ## Directus 本地配置与业务表 reset
 
 当前开发库允许重置受保护数据之外的业务表，但要区分两类数据：
 
 - 业务表
-  - baseline 中除 `dict_*` 与 `eval_example_lab_entries` 之外的 49 张表
+  - baseline 中除 `dict_*` 与 `eval_example_lab_entries` 之外的 51 张表
 - Directus system tables
   - 如 `directus_collections`、`directus_fields`、`directus_relations`、`directus_presets`
 

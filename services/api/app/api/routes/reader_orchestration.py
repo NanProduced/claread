@@ -7,7 +7,7 @@ from typing import Any, get_args
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from starlette.responses import JSONResponse
 
 from app.schemas.reader_input_adapter import InputSuitabilityRequest
@@ -31,6 +31,10 @@ from app.schemas.reader_orchestration import (
     ReaderCandidateDocumentReadResponseDto,
     ReaderConfirmedSourceConflictResponse,
     ReaderConfirmedSourceGetResponse,
+    ReaderConfirmedSourceRestoreRequest,
+    ReaderConfirmedSourceRestoreResponse,
+    ReaderConfirmedSourceRevisionResponse,
+    ReaderConfirmedSourceRevisionsResponse,
     ReaderConfirmedSourceUpdateRequest,
     ReaderConfirmedSourceUpdateResponse,
     ReaderEventPollResponse,
@@ -119,6 +123,10 @@ from app.services.reader_orchestration.confirmed_source_application_service impo
     ConfirmedSourceConflictError,
     ConfirmedSourceNotFoundError,
 )
+from app.services.reader_orchestration.confirmed_source_revision_service import (
+    ConfirmedSourceRevisionNotFoundError,
+    ConfirmedSourceRevisionService,
+)
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.input_document_normalizer import (
     InputDocumentNormalizationError,
@@ -199,8 +207,7 @@ def _has_user_client_record_unique_violation(exc: BaseException) -> bool:
     for cause in _iter_exception_chain(exc):
         if (
             isinstance(cause, asyncpg.UniqueViolationError)
-            and getattr(cause, "constraint_name", None)
-            == _CLIENT_RECORD_ID_UNIQUE_CONSTRAINT
+            and getattr(cause, "constraint_name", None) == _CLIENT_RECORD_ID_UNIQUE_CONSTRAINT
         ):
             return True
     return False
@@ -430,8 +437,7 @@ def _build_source_artifact_submit_input_response(
     "/records/input",
     response_model=ReaderUnifiedInputSubmitResponse,
     summary=(
-        "Submit reader input and route it to stable freeze, candidate creation, "
-        "or action-required"
+        "Submit reader input and route it to stable freeze, candidate creation, or action-required"
     ),
 )
 async def submit_reader_input(
@@ -442,9 +448,7 @@ async def submit_reader_input(
     # L2 — 每请求只解析一次：路由预检 gate、stable-ready freeze 与
     # candidate 创建共用同一份 MarkdownParseResult；内容格式
     # （detected_format）由这同一份解析结果决定，与输入来源解耦。
-    preparsed = MarkdownSourceParser().parse(
-        body.text.replace("\r\n", "\n").replace("\r", "\n")
-    )
+    preparsed = MarkdownSourceParser().parse(body.text.replace("\r\n", "\n").replace("\r", "\n"))
     suitability = evaluate_input_suitability(
         InputSuitabilityRequest(
             source_type=body.source_type,
@@ -565,8 +569,7 @@ async def init_reader_source_artifact_upload(
             # pending-credentials semantic. The client can retry with its
             # own credentials.
             logger.exception(
-                "Presign failed for init-upload; falling back to "
-                "pending-credentials semantic",
+                "Presign failed for init-upload; falling back to pending-credentials semantic",
             )
             presigned = None
 
@@ -703,9 +706,7 @@ def _build_artifact_pipeline_status_response(
             language=result.record.language,
         )
 
-    original_input_summary: (
-        ReaderArtifactPipelineOriginalInputSummary | None
-    ) = None
+    original_input_summary: ReaderArtifactPipelineOriginalInputSummary | None = None
     if result.original_input is not None:
         original_input_summary = ReaderArtifactPipelineOriginalInputSummary(
             original_input_id=str(result.original_input.original_input_id),
@@ -719,9 +720,7 @@ def _build_artifact_pipeline_status_response(
 
     extraction_job_summary: ReaderArtifactPipelineJobSummary | None = None
     if result.extraction_job is not None:
-        extraction_job_summary = _build_artifact_pipeline_job_summary(
-            result.extraction_job
-        )
+        extraction_job_summary = _build_artifact_pipeline_job_summary(result.extraction_job)
 
     materialization_job_summary: ReaderArtifactPipelineJobSummary | None = None
     if result.materialization_job is not None:
@@ -776,9 +775,7 @@ async def get_reader_source_artifact_pipeline_status(
             user_id=UUID(current_user.user_id),
         )
     except LookupError as exc:
-        raise HTTPException(
-            status_code=404, detail="Source artifact not found"
-        ) from exc
+        raise HTTPException(status_code=404, detail="Source artifact not found") from exc
     except ArtifactInputStatusQueryError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -903,11 +900,13 @@ def _confirmed_source_conflict_response(
     response_model=ReaderConfirmedSourceGetResponse,
     responses={
         401: {"description": "Unauthenticated (existing auth mechanism)."},
-        404: {"description": "Collapsed: not found / not owner / deleted / "
-              "no draft confirmed source."},
-        409: {"model": ReaderConfirmedSourceConflictResponse,
-              "description": "record_state_advanced (source frozen or "
-              "record advanced)."},
+        404: {
+            "description": "Collapsed: not found / not owner / deleted / no draft confirmed source."
+        },
+        409: {
+            "model": ReaderConfirmedSourceConflictResponse,
+            "description": "record_state_advanced (source frozen or record advanced).",
+        },
     },
     summary="Load the draft confirmed source for editing / resume",
 )
@@ -957,11 +956,13 @@ async def get_reader_confirmed_source(
     response_model=ReaderConfirmedSourceUpdateResponse,
     responses={
         401: {"description": "Unauthenticated (existing auth mechanism)."},
-        404: {"description": "Collapsed: not found / not owner / deleted / "
-              "no draft confirmed source."},
-        409: {"model": ReaderConfirmedSourceConflictResponse,
-              "description": "source_frozen / stale_source_revision / "
-              "record_state_advanced."},
+        404: {
+            "description": "Collapsed: not found / not owner / deleted / no draft confirmed source."
+        },
+        409: {
+            "model": ReaderConfirmedSourceConflictResponse,
+            "description": "source_frozen / stale_source_revision / record_state_advanced.",
+        },
     },
     summary="Replace the confirmed source body and reparse "
     "(optimistic concurrency via expected_revision)",
@@ -1012,6 +1013,107 @@ async def put_reader_confirmed_source(
 
 
 @router.get(
+    "/records/{record_id}/confirmed-source/revisions",
+    response_model=ReaderConfirmedSourceRevisionsResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {"description": "Collapsed: not found / not owner / deleted record (no leak)."},
+    },
+    summary="List immutable confirmed-source revision snapshots (metadata only)",
+)
+async def list_confirmed_source_revisions(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderConfirmedSourceRevisionsResponse | JSONResponse:
+    service = ConfirmedSourceRevisionService()
+    try:
+        result = await service.list_revisions(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except ConfirmedSourceRevisionNotFoundError:
+        return _confirmed_source_not_found_response()
+    return ReaderConfirmedSourceRevisionsResponse(revisions=result.revisions)
+
+
+@router.get(
+    "/records/{record_id}/confirmed-source/revisions/{revision}",
+    response_model=ReaderConfirmedSourceRevisionResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {
+            "description": "Collapsed: record not found / not owner / "
+            "deleted / revision missing (no leak)."
+        },
+    },
+    summary="Load one immutable confirmed-source revision snapshot",
+)
+async def get_confirmed_source_revision(
+    record_id: UUID,
+    current_user: AuthUserDep,
+    revision: int = Path(ge=1),
+) -> ReaderConfirmedSourceRevisionResponse | JSONResponse:
+    service = ConfirmedSourceRevisionService()
+    try:
+        result = await service.get_revision(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+            revision=revision,
+        )
+    except ConfirmedSourceRevisionNotFoundError:
+        return _confirmed_source_not_found_response()
+    snapshot = result.revision
+    return ReaderConfirmedSourceRevisionResponse(
+        revision=snapshot["revision"],
+        snapshot_reason=snapshot["snapshot_reason"],
+        edit_source=snapshot["edit_source"],
+        markdown_text=snapshot["markdown_text"],
+        content_sha256=snapshot["content_sha256"],
+        created_at=snapshot["created_at"],
+    )
+
+
+@router.post(
+    "/records/{record_id}/confirmed-source/restore",
+    response_model=ReaderConfirmedSourceRestoreResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {
+            "description": "Collapsed: record not found / not owner / deleted / revision missing."
+        },
+        409: {
+            "model": ReaderConfirmedSourceConflictResponse,
+            "description": "source_frozen / stale_source_revision.",
+        },
+    },
+    summary="Restore an immutable revision as a NEW current revision",
+)
+async def restore_confirmed_source_revision(
+    record_id: UUID,
+    body: ReaderConfirmedSourceRestoreRequest,
+    current_user: AuthUserDep,
+) -> ReaderConfirmedSourceRestoreResponse | JSONResponse:
+    service = ConfirmedSourceRevisionService()
+    try:
+        result = await service.restore_revision(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+            expected_revision=body.expected_revision,
+            target_revision=body.target_revision,
+        )
+    except ConfirmedSourceRevisionNotFoundError:
+        return _confirmed_source_not_found_response()
+    except ConfirmedSourceConflictError as exc:
+        return _confirmed_source_conflict_response(exc)
+    return ReaderConfirmedSourceRestoreResponse(
+        revision=result.revision,
+        content_sha256=result.content_sha256,
+        markdown_text=result.markdown_text,
+        restored_to=result.restored_to,
+    )
+
+
+@router.get(
     "/records/{record_id}/candidate-document",
     response_model=ReaderCandidateDocumentReadResponseDto,
     responses={
@@ -1023,12 +1125,11 @@ async def put_reader_confirmed_source(
         },
         409: {
             "model": ReaderCandidateDocumentConflictResponseDto,
-            "description": "Record state advanced or multiple ready "
-            "candidates.",
+            "description": "Record state advanced or multiple ready candidates.",
         },
     },
     summary="Load the current ready candidate document for confirmation "
-            "(Candidate Recovery read model)",
+    "(Candidate Recovery read model)",
 )
 async def get_reader_candidate_document(
     record_id: UUID,
@@ -1302,10 +1403,7 @@ async def list_reader_records(
         if invalid_product_states:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    "invalid product_state value(s): "
-                    + ", ".join(invalid_product_states)
-                ),
+                detail=("invalid product_state value(s): " + ", ".join(invalid_product_states)),
             )
         normalized_product_states = product_states
     repository = ReaderOrchestrationRepository()
@@ -1356,9 +1454,7 @@ async def mark_reader_record_opened(
         opened_at=datetime.now(tz=UTC),
     )
     if new_value is None:
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        )
+        raise HTTPException(status_code=404, detail="Reader record not found")
     return ReaderRecordOpenedResponse(
         record_id=str(record_id),
         last_opened_at=new_value,
@@ -1386,9 +1482,7 @@ async def remove_reader_record_from_recent(
         hidden_at=datetime.now(tz=UTC),
     )
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        )
+        raise HTTPException(status_code=404, detail="Reader record not found")
     recent_hidden_at, already_hidden = result
     return ReaderRecordRecentRemovedResponse(
         record_id=str(record_id),
@@ -1422,9 +1516,7 @@ async def delete_reader_record(
         user_id=UUID(current_user.user_id),
     )
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        )
+        raise HTTPException(status_code=404, detail="Reader record not found")
     return ReaderRecordDeletedResponse(
         record_id=str(result.record_id),
         status=result.status,
@@ -1468,19 +1560,11 @@ def _build_article_rag_index_status_response(
         reading_record_id=str(result.reading_record_id),
         status=result.status,
         stable_document_id=(
-            str(result.stable_document_id)
-            if result.stable_document_id is not None
-            else None
+            str(result.stable_document_id) if result.stable_document_id is not None else None
         ),
-        base_id=(
-            str(result.base_id) if result.base_id is not None else None
-        ),
+        base_id=(str(result.base_id) if result.base_id is not None else None),
         record_generation=result.record_generation,
-        index_run_id=(
-            str(result.index_run_id)
-            if result.index_run_id is not None
-            else None
-        ),
+        index_run_id=(str(result.index_run_id) if result.index_run_id is not None else None),
         plan_content_sha256=result.plan_content_sha256,
         chunk_count=result.chunk_count,
         reason_code=result.reason_code,
@@ -1496,22 +1580,12 @@ def _build_article_rag_index_ensure_response(
         reason_code=result.reason_code,
         idempotent_noop=result.idempotent_noop,
         stable_document_id=(
-            str(result.stable_document_id)
-            if result.stable_document_id is not None
-            else None
+            str(result.stable_document_id) if result.stable_document_id is not None else None
         ),
-        base_id=(
-            str(result.base_id) if result.base_id is not None else None
-        ),
+        base_id=(str(result.base_id) if result.base_id is not None else None),
         record_generation=result.record_generation,
-        index_run_id=(
-            str(result.index_run_id)
-            if result.index_run_id is not None
-            else None
-        ),
-        job_id=(
-            str(result.job_id) if result.job_id is not None else None
-        ),
+        index_run_id=(str(result.index_run_id) if result.index_run_id is not None else None),
+        job_id=(str(result.job_id) if result.job_id is not None else None),
     )
 
 
@@ -1561,13 +1635,8 @@ async def get_reader_article_rag_index_status(
             detail="article_rag_index_status_unexpected_error",
         ) from None
 
-    if (
-        result.status == STATUS_UNAVAILABLE
-        and result.reason_code == "record_not_found"
-    ):
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        )
+    if result.status == STATUS_UNAVAILABLE and result.reason_code == "record_not_found":
+        raise HTTPException(status_code=404, detail="Reader record not found")
     return _build_article_rag_index_status_response(result)
 
 
@@ -1601,13 +1670,11 @@ async def ensure_reader_article_rag_index_job(
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
-                result = (
-                    await service.ensure_article_rag_index_job_in_transaction(
-                        conn,
-                        reading_record_id=record_id,
-                        user_id=UUID(current_user.user_id),
-                        expected_generation=body.expected_generation,
-                    )
+                result = await service.ensure_article_rag_index_job_in_transaction(
+                    conn,
+                    reading_record_id=record_id,
+                    user_id=UUID(current_user.user_id),
+                    expected_generation=body.expected_generation,
                 )
     except HTTPException:
         raise
@@ -1627,9 +1694,7 @@ async def ensure_reader_article_rag_index_job(
         ) from None
 
     if result.status == ENSURE_STATUS_RECORD_NOT_FOUND:
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        )
+        raise HTTPException(status_code=404, detail="Reader record not found")
     return _build_article_rag_index_ensure_response(result)
 
 
@@ -1743,24 +1808,16 @@ async def submit_section_translation(
         )
     except LookupError:
         # Non-owner / missing record → 404 (no leak of internal detail).
-        raise HTTPException(
-            status_code=404, detail="Reader record not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Reader record not found") from None
     except ValueError:
         # Server-side fence conflict (e.g. stale generation) → 409 (no leak).
-        raise HTTPException(
-            status_code=409, detail="section_translation_fence_conflict"
-        ) from None
+        raise HTTPException(status_code=409, detail="section_translation_fence_conflict") from None
 
     # Bootstrap REJECT → no drain (planner rejected the request).
     if bootstrap_result.outcome is SectionBootstrapOutcome.REJECT:
         return ReaderSectionTranslationResponse(
             outcome="rejected",
-            job_id=(
-                str(bootstrap_result.job_id)
-                if bootstrap_result.job_id is not None
-                else None
-            ),
+            job_id=(str(bootstrap_result.job_id) if bootstrap_result.job_id is not None else None),
             detail=bootstrap_result.reason,
         )
 
@@ -1768,10 +1825,7 @@ async def submit_section_translation(
     # Other NO_OP reasons (budget exhausted / already covered / range
     # overlap) imply no claimable work and must NOT invoke drain.
     if bootstrap_result.outcome is SectionBootstrapOutcome.NO_OP:
-        if (
-            bootstrap_result.reason == REASON_ALREADY_QUEUED
-            and bootstrap_result.job_id is not None
-        ):
+        if bootstrap_result.reason == REASON_ALREADY_QUEUED and bootstrap_result.job_id is not None:
             # queued-recovery closure: drain the existing job so a
             # successful bootstrap write never leaves a dead queue.
             pass
@@ -1788,9 +1842,7 @@ async def submit_section_translation(
             return ReaderSectionTranslationResponse(
                 outcome="already_covered_or_inflight",
                 job_id=(
-                    str(bootstrap_result.job_id)
-                    if bootstrap_result.job_id is not None
-                    else None
+                    str(bootstrap_result.job_id) if bootstrap_result.job_id is not None else None
                 ),
                 detail=bootstrap_result.reason,
             )

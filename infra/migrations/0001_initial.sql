@@ -279,6 +279,32 @@ CREATE TABLE confirmed_source_documents (
     CONSTRAINT confirmed_source_documents_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'frozen'::text])))
 );
 
+-- R8 — immutable confirmed-source revision snapshots. The current row
+-- (confirmed_source_documents) keeps optimistic-concurrency in-place
+-- UPDATE (revision +1); every durable write additionally persists one
+-- immutable snapshot row here (snapshot_reason: initial | save | restore)
+-- inside the same transaction. Snapshots are never rewritten.
+CREATE TABLE confirmed_source_revisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    confirmed_source_document_id uuid NOT NULL,
+    reading_record_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    record_generation integer NOT NULL,
+    revision integer NOT NULL,
+    markdown_text text NOT NULL,
+    content_sha256 text NOT NULL,
+    snapshot_reason text NOT NULL,
+    edit_source text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT confirmed_source_revisions_content_sha256_check CHECK ((content_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT confirmed_source_revisions_edit_source_check CHECK ((edit_source = ANY (ARRAY['initial'::text, 'extraction'::text, 'wysiwyg'::text, 'source_mode'::text, 'content_check'::text]))),
+    CONSTRAINT confirmed_source_revisions_markdown_text_check CHECK ((markdown_text <> ''::text)),
+    CONSTRAINT confirmed_source_revisions_record_generation_check CHECK ((record_generation >= 1)),
+    CONSTRAINT confirmed_source_revisions_revision_check CHECK ((revision >= 1)),
+    CONSTRAINT confirmed_source_revisions_snapshot_reason_check CHECK ((snapshot_reason = ANY (ARRAY['initial'::text, 'save'::text, 'restore'::text]))),
+    CONSTRAINT ck_confirmed_source_revisions_content_sha256 CHECK ((content_sha256 = encode(digest(markdown_text, 'sha256'::text), 'hex'::text)))
+);
+
 CREATE TABLE daily_readers (
     id text NOT NULL,
     title text NOT NULL,
@@ -1914,6 +1940,9 @@ ALTER TABLE ONLY candidate_reading_documents
 ALTER TABLE ONLY confirmed_source_documents
     ADD CONSTRAINT confirmed_source_documents_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY confirmed_source_revisions
+    ADD CONSTRAINT confirmed_source_revisions_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY daily_readers
     ADD CONSTRAINT daily_readers_pkey PRIMARY KEY (id);
 
@@ -2095,6 +2124,9 @@ ALTER TABLE ONLY confirmed_source_documents
 ALTER TABLE ONLY confirmed_source_documents
     ADD CONSTRAINT uq_confirmed_source_documents_record_generation UNIQUE (reading_record_id, record_generation);
 
+ALTER TABLE ONLY confirmed_source_revisions
+    ADD CONSTRAINT uq_confirmed_source_revisions_document_revision UNIQUE (confirmed_source_document_id, revision);
+
 DO $dict$
 BEGIN
 ALTER TABLE ONLY dict_lookup_targets
@@ -2224,6 +2256,8 @@ CREATE INDEX idx_candidate_reading_documents_record_generation ON candidate_read
 CREATE INDEX idx_candidate_reading_documents_user_updated ON candidate_reading_documents USING btree (user_id, updated_at DESC) WHERE (status <> 'superseded'::text);
 
 CREATE INDEX idx_confirmed_source_documents_user_updated ON confirmed_source_documents USING btree (user_id, updated_at DESC);
+
+CREATE INDEX idx_confirmed_source_revisions_record_revision ON confirmed_source_revisions USING btree (reading_record_id, record_generation, revision);
 
 CREATE INDEX idx_credit_ledger_reader_job ON user_credit_ledger USING btree (reader_job_id, created_at DESC) WHERE (reader_job_id IS NOT NULL);
 
@@ -2537,6 +2571,15 @@ ALTER TABLE ONLY confirmed_source_documents
 
 ALTER TABLE ONLY confirmed_source_documents
     ADD CONSTRAINT confirmed_source_documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY confirmed_source_revisions
+    ADD CONSTRAINT confirmed_source_revisions_confirmed_source_document_id_fkey FOREIGN KEY (confirmed_source_document_id) REFERENCES confirmed_source_documents(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY confirmed_source_revisions
+    ADD CONSTRAINT confirmed_source_revisions_reading_record_id_fkey FOREIGN KEY (reading_record_id) REFERENCES reading_records(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY confirmed_source_revisions
+    ADD CONSTRAINT confirmed_source_revisions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY dict_ai_candidate_entries
     ADD CONSTRAINT dict_ai_candidate_entries_base_id_fkey FOREIGN KEY (base_id) REFERENCES reading_bases(id) ON DELETE SET NULL;

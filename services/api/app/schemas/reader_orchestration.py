@@ -1378,6 +1378,58 @@ class ReaderConfirmedSourceConflictResponse(BaseModel):
     current_revision: int | None = None
 
 
+class ReaderConfirmedSourceRevisionSummary(BaseModel):
+    """One immutable revision snapshot (metadata only, never the body)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=1)
+    snapshot_reason: Literal["initial", "save", "restore"]
+    edit_source: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+
+
+class ReaderConfirmedSourceRevisionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    revisions: list[ReaderConfirmedSourceRevisionSummary] = Field(default_factory=list)
+
+
+class ReaderConfirmedSourceRevisionResponse(BaseModel):
+    """Full immutable snapshot body for one revision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    revision: int = Field(ge=1)
+    snapshot_reason: Literal["initial", "save", "restore"]
+    edit_source: str = Field(min_length=1)
+    markdown_text: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+
+
+class ReaderConfirmedSourceRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    target_revision: int = Field(ge=1)
+
+
+class ReaderConfirmedSourceRestoreResponse(BaseModel):
+    """Restore writes a NEW current revision; history is never rewritten."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    revision: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    markdown_text: str = Field(min_length=1)
+    restored_to: int = Field(ge=1)
+
+
 class ReaderStableDocumentBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1386,6 +1438,7 @@ class ReaderStableDocumentBase(BaseModel):
     content_utf16_length: int = Field(ge=1)
     canonicalizer_version: str = Field(min_length=1)
     builder_version: str = Field(min_length=1)
+    segmenter_version: str = Field(min_length=1)
     segmenter_version: str = Field(min_length=1)
     language: str | None = None
     title_snapshot: str | None = None

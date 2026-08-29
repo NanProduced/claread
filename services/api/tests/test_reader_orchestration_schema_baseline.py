@@ -68,22 +68,17 @@ def test_legacy_reader_success_accounting_symbols_are_physically_deleted() -> No
 
 
 def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
-    schema_check_sql = (
-        REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql"
-    ).read_text(encoding="utf-8")
-    legacy_request_index = (
-        "uq_ai_usage_events_" + "legacy_grammar_request_id"
+    schema_check_sql = (REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql").read_text(
+        encoding="utf-8"
     )
+    legacy_request_index = "uq_ai_usage_events_" + "legacy_grammar_request_id"
 
     assert "CREATE TABLE ai_model_execution_journal (" in BASELINE_SQL
     assert "request_id text," in BASELINE_SQL
     assert "invocation_key text" in BASELINE_SQL
-    assert "CONSTRAINT ai_model_execution_journal_state_matrix_check" in (
-        BASELINE_SQL
-    )
+    assert "CONSTRAINT ai_model_execution_journal_state_matrix_check" in (BASELINE_SQL)
     assert (
-        "CONSTRAINT ai_model_execution_journal_execution_slot_check "
-        "CHECK ((execution_slot >= 1))"
+        "CONSTRAINT ai_model_execution_journal_execution_slot_check CHECK ((execution_slot >= 1))"
     ) in BASELINE_SQL
     assert legacy_request_index not in BASELINE_SQL
     assert (
@@ -159,9 +154,9 @@ def test_reset_and_checker_table_sets_reconcile_with_fresh_baseline() -> None:
         "dev reset misses baseline non-protected tables"
     )
 
-    assert len(baseline) == 53
+    assert len(baseline) == 55
     assert len(PROTECTED_KEEP_DICT_TABLES) == 4
-    assert len(expected_reset_set) == 49
+    assert len(expected_reset_set) == 51
 
 
 async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
@@ -189,7 +184,7 @@ async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
         await admin_conn.execute(BASELINE_SQL)
 
         assert await _schema_tables() == baseline
-        assert len(baseline) == 53
+        assert len(baseline) == 55
 
         # Sentinel rows: protected data must survive dev and full resets.
         await admin_conn.execute(
@@ -223,7 +218,7 @@ async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
         assert await admin_conn.fetchval("SELECT COUNT(*) FROM dict_entries") == 1
         assert await admin_conn.fetchval("SELECT COUNT(*) FROM eval_example_lab_entries") == 1
     finally:
-        await admin_conn.execute('SET search_path TO public')
+        await admin_conn.execute("SET search_path TO public")
         await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
         residual = await admin_conn.fetchval(
             "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = $1",
@@ -505,9 +500,7 @@ async def test_user_annotations_color_contract_matches_baseline_palette(
               AND attname = 'color'
             """
         )
-        assert color_comment == (
-            "用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。"
-        )
+        assert color_comment == ("用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。")
 
         # DATA-SCHEMA-BASELINE highlights are Reading Record anchor rows
         # only; the color contract is verified against that row shape.
@@ -752,10 +745,13 @@ async def test_reader_event_sequences_start_at_one_and_rollback_has_no_gap(
         user_id = await _insert_user(conn)
         record_id = await _insert_reading_record(conn, user_id)
 
-        assert await conn.fetchval(
-            "SELECT next_sequence FROM reader_event_sequences WHERE reading_record_id = $1",
-            record_id,
-        ) == 1
+        assert (
+            await conn.fetchval(
+                "SELECT next_sequence FROM reader_event_sequences WHERE reading_record_id = $1",
+                record_id,
+            )
+            == 1
+        )
 
         tx = conn.transaction()
         await tx.start()
@@ -803,10 +799,13 @@ async def test_reader_event_sequences_start_at_one_and_rollback_has_no_gap(
         )
         await tx.commit()
 
-        assert await conn.fetchval(
-            "SELECT COUNT(*) FROM reader_events WHERE reading_record_id = $1",
-            record_id,
-        ) == 1
+        assert (
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM reader_events WHERE reading_record_id = $1",
+                record_id,
+            )
+            == 1
+        )
     finally:
         await conn.close()
 
@@ -1109,7 +1108,7 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
 
         with pytest.raises(asyncpg.ForeignKeyViolationError):
             await conn.execute(
-            """
+                """
             INSERT INTO reader_jobs (
                 reading_record_id,
                 base_id,
@@ -1125,11 +1124,11 @@ async def test_reader_jobs_base_scope_and_active_fingerprint(reader_schema: str)
                 )
             VALUES ($1, $2, $3, $4, 'translate_unit', 'unit', 'u1', 'queued', 2, 'fp-unit', 'id-4b')
             """,
-            record_id,
-            base_id,
-            run_id,
-            user_id,
-        )
+                record_id,
+                base_id,
+                run_id,
+                user_id,
+            )
 
         with pytest.raises(asyncpg.CheckViolationError):
             await conn.execute(
@@ -1570,9 +1569,7 @@ async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
                 uuid4(),
             )
     finally:
-        await admin_conn.execute(
-            f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'
-        )
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
         await admin_conn.close()
 
 
@@ -1668,9 +1665,7 @@ async def test_model_execution_journal_schema_has_exact_orthogonal_contract(
                 reader_schema,
             )
         }
-        legacy_request_index = (
-            "uq_ai_usage_events_" + "legacy_grammar_request_id"
-        )
+        legacy_request_index = "uq_ai_usage_events_" + "legacy_grammar_request_id"
         assert legacy_request_index not in indexes
         assert "uq_ai_usage_events_invocation_key" in indexes
         invocation_index = indexes["uq_ai_usage_events_invocation_key"]
