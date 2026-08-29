@@ -28,6 +28,7 @@
 
 import { Fragment, type ReactNode } from "react";
 
+import { readerCodeLanguageLabel } from "@/components/editor/plugins/reader-code-highlight";
 import type {
   ReaderStructuredSourceBlock,
   ReaderStructuredSourceDiagnostic,
@@ -352,7 +353,9 @@ function renderCodeBlock(node: BlockTreeNode): ReactNode {
   // Phase 3 / P2: visible language badge for non-mermaid code blocks.
   // Mermaid blocks already carry data-mermaid and are handled by a separate
   // static-render path; showing a "MERMAID" badge would be noise.
+  // 语言标签与输入端共用同一显示函数（规格 §10）。
   const hasLanguageBadge = Boolean(language) && !isMermaid;
+  const languageLabel = readerCodeLanguageLabel(language);
   return (
     <pre
       key={node.block.block_id}
@@ -366,9 +369,9 @@ function renderCodeBlock(node: BlockTreeNode): ReactNode {
       {hasLanguageBadge ? (
         <span
           data-testid="code-language-badge"
-          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground/70"
+          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium tracking-wide text-muted-foreground/70"
         >
-          {language}
+          {languageLabel}
         </span>
       ) : null}
       <code

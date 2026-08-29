@@ -297,7 +297,8 @@ describe("ReaderStableCodeBlockComponent code UX", () => {
 
       const badge = toolbar.querySelector<HTMLElement>('[data-testid="code-language-badge"]');
       expect(badge).not.toBeNull();
-      expect(badge?.textContent).toBe("python");
+      // 语言标签与输入端共享同一显示函数：人类可读形式，禁止全大写 PYTHON。
+      expect(badge?.textContent).toBe("Python");
       expect(badge?.getAttribute("contenteditable")).toBe("false");
       expect(badge?.getAttribute("draggable")).toBe("false");
       expect(badge?.getAttribute("data-reader-record-copy-exclude")).toBe("true");
@@ -332,6 +333,22 @@ describe("ReaderStableCodeBlockComponent code UX", () => {
       for (const token of primitiveFocusRing.split(/\s+/)) {
         expect(copyButton?.className).toContain(token);
       }
+    });
+
+    it("renders the human-readable label for fence aliases and keeps unknown languages verbatim", () => {
+      const aliased = renderCodeBlock("const a = 1;", "js");
+      expect(
+        aliased.container
+          .querySelector('[data-testid="code-language-badge"]')
+          ?.textContent,
+      ).toBe("JavaScript");
+
+      const unknown = renderCodeBlock("x = 1", "definitely-unknown-lang");
+      expect(
+        unknown.container
+          .querySelector('[data-testid="code-language-badge"]')
+          ?.textContent,
+      ).toBe("definitely-unknown-lang");
     });
 
     it("renders an always-on copy toolbar without badge for no-language code blocks", async () => {

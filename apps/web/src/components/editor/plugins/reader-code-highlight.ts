@@ -185,6 +185,62 @@ export function resolveReaderCodeLanguage(
   return aliased !== undefined && aliased in READER_CODE_GRAMMARS ? aliased : null;
 }
 
+/**
+ * canonical 文法名 → 人类可读语言标签（与规格 §10 对齐：Python /
+ * TypeScript / C++ / C# 等；未知语言保留原字符串）。
+ */
+const READER_CODE_LANGUAGE_LABELS: Record<string, string> = {
+  c: "C",
+  cpp: "C++",
+  csharp: "C#",
+  css: "CSS",
+  diff: "Diff",
+  docker: "Docker",
+  go: "Go",
+  html: "HTML",
+  ini: "INI",
+  java: "Java",
+  javascript: "JavaScript",
+  json: "JSON",
+  kotlin: "Kotlin",
+  markdown: "Markdown",
+  php: "PHP",
+  python: "Python",
+  ruby: "Ruby",
+  rust: "Rust",
+  scss: "SCSS",
+  shellscript: "Shell",
+  sql: "SQL",
+  swift: "Swift",
+  toml: "TOML",
+  typescript: "TypeScript",
+  xml: "XML",
+  yaml: "YAML",
+};
+
+/**
+ * 语言标签显示函数（Reader 与输入端共用）。
+ *
+ * 已知语言（含别名）返回人类可读形式；未知语言保留安全规范化名称
+ * （trim 后的原字符串）；无语言返回 null，调用方不得虚构 badge。
+ */
+export function readerCodeLanguageLabel(
+  language: string | null | undefined,
+): string | null {
+  if (typeof language !== "string") {
+    return null;
+  }
+  const trimmed = language.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const canonical = resolveReaderCodeLanguage(trimmed);
+  if (!canonical) {
+    return trimmed;
+  }
+  return READER_CODE_LANGUAGE_LABELS[canonical] ?? canonical;
+}
+
 let readerCodeHighlighterPromise: Promise<HighlighterCore> | null = null;
 
 function getReaderCodeHighlighter(): Promise<HighlighterCore> {
@@ -297,4 +353,216 @@ export function useReaderCodeHighlight(
   }, [code, language]);
 
   return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// 输入端 transient decoration（规格 §10：复用同一 Shiki tokenizer，
+// 以 Plate decorate 机制实现只读语法高亮）。
+//
+// - decoration 只在渲染层把 token class 合入 leaf，不改变 editor.children，
+//   不进入 Markdown serialize，不污染 Slate value。
+// - shiki tokenize 是异步的，而 Plate decorate 必须同步返回：首次命中
+//   缓存未暖时调度一次 tokenize（去重），完成后通过 editor.api.redecorate()
+//   触发重渲染，下次 decorate 命中缓存直接返回 ranges。
+// ---------------------------------------------------------------------------
+
+/** decoration 属性名：渲染层 renderLeaf 读 leaf[class] 得到 token class。 */
+export const INPUT_CODE_TOKEN_DECORATION_PROP = "inputCodeTokenClass";
+
+/**
+ * decoration 的 leaf key：ranges 同步携带 `[INPUT_CODE_SYNTAX_DECORATION_KEY]:
+ * true`，由输入端注册的同名 leaf 插件组件渲染（与官方 code-block
+ * codeSyntax 同模式；不注册 leaf 插件时 decoration 不会落到 DOM）。
+ */
+export const INPUT_CODE_SYNTAX_DECORATION_KEY = "input_code_syntax";
+
+type InputCodeDecorateEditor = {
+  api: {
+    redecorate?: () => void;
+  };
+};
+
+/** decorate 内部用到的 editor api 形状（调用点做窄化 cast）。 */
+type InputCodeDecorateApi = InputCodeDecorateEditor["api"] & {
+  node(at: unknown[]): [unknown, unknown[]] | undefined;
+};
+
+type InputCodeDecorateEntry = [unknown, unknown[]];
+
+export type InputCodeTokenRange = {
+  anchor: { path: number[]; offset: number };
+  focus: { path: number[]; offset: number };
+  [key: string]: unknown;
+};
+
+const inputCodeTokenCache = new Map<string, ThemedToken[][] | null>();
+// pending 去重按 code 文本 key：同一 key 的多个 editor（多代码块/多实例）
+// 都要收到完成通知，否则后注册的 editor 永远不会重新 decorate。
+const pendingInputCodeTokens = new Map<string, Set<InputCodeDecorateEditor>>();
+const INPUT_CODE_TOKEN_CACHE_LIMIT = 512;
+
+function inputCodeTokenCacheSet(key: string, tokens: ThemedToken[][] | null): void {
+  if (!inputCodeTokenCache.has(key) && inputCodeTokenCache.size >= INPUT_CODE_TOKEN_CACHE_LIMIT) {
+    const oldest = inputCodeTokenCache.keys().next().value;
+    if (oldest !== undefined) {
+      inputCodeTokenCache.delete(oldest);
+    }
+  }
+  inputCodeTokenCache.set(key, tokens);
+}
+
+function inputCodeTokenCacheKey(language: string | null | undefined, code: string): string {
+  return `${resolveReaderCodeLanguage(language) ?? "\u0000"}\u0000${code}`;
+}
+
+function inputCodeLineText(line: unknown): string {
+  const children = (line as { children?: unknown[] } | null)?.children;
+  if (!Array.isArray(children)) {
+    return "";
+  }
+  return children
+    .map((child) =>
+      typeof (child as { text?: unknown })?.text === "string"
+        ? (child as { text: string }).text
+        : "",
+    )
+    .join("");
+}
+
+function inputCodeBlockText(codeBlock: unknown): string {
+  const lines = (codeBlock as { children?: unknown[] } | null)?.children;
+  if (!Array.isArray(lines)) {
+    return "";
+  }
+  return lines.map(inputCodeLineText).join("\n");
+}
+
+function scheduleInputCodeTokens(
+  editor: InputCodeDecorateEditor,
+  codeBlock: unknown,
+): void {
+  const language = (codeBlock as { lang?: string | null } | null)?.lang ?? null;
+  const code = inputCodeBlockText(codeBlock);
+  if (!code) {
+    return;
+  }
+  const key = inputCodeTokenCacheKey(language, code);
+  if (inputCodeTokenCache.has(key)) {
+    return;
+  }
+  const pendingEditors = pendingInputCodeTokens.get(key);
+  if (pendingEditors) {
+    pendingEditors.add(editor);
+    return;
+  }
+  if (resolveReaderCodeLanguage(language) === null) {
+    // 未知语言 fail-closed：负缓存，避免每次渲染重复解析。
+    inputCodeTokenCacheSet(key, null);
+    return;
+  }
+  const editors = new Set<InputCodeDecorateEditor>([editor]);
+  pendingInputCodeTokens.set(key, editors);
+  // setTimeout：tokenize 与 redecorate 都不能发生在 render 期间。
+  setTimeout(() => {
+    void readerCodeToTokens(code, language)
+      .then((tokens) => {
+        inputCodeTokenCacheSet(key, tokens);
+      })
+      .finally(() => {
+        pendingInputCodeTokens.delete(key);
+        editors.forEach((pendingEditor) => {
+          pendingEditor.api.redecorate?.();
+        });
+      });
+  }, 0);
+}
+
+/**
+ * 输入端代码块高亮 decorate：仅对 code_block 内的 text 节点返回 ranges，
+ * 把 token 的角色 class 作为 decoration 属性携带（渲染层由 renderLeaf 消费）。
+ */
+export function inputCodeBlockDecorate({
+  editor,
+  entry,
+}: {
+  editor: InputCodeDecorateEditor;
+  entry: InputCodeDecorateEntry;
+}): InputCodeTokenRange[] {
+  const [node, entryPath] = entry;
+  if (typeof (node as { text?: unknown })?.text !== "string") {
+    return [];
+  }
+  // decorate 只处理 code_block 内的 text 节点，路径元素均为 number。
+  const path = entryPath as number[];
+  const api = editor.api as unknown as InputCodeDecorateApi;
+  const lineEntry = api.node(path.slice(0, -1));
+  const line = lineEntry?.[0];
+  if (!line || (line as { type?: string }).type !== "code_line") {
+    return [];
+  }
+  const blockEntry = api.node(path.slice(0, -2));
+  const codeBlock = blockEntry?.[0];
+  if (
+    !codeBlock ||
+    (codeBlock as { type?: string }).type !== "code_block"
+  ) {
+    return [];
+  }
+
+  scheduleInputCodeTokens(editor, codeBlock);
+
+  const language = (codeBlock as { lang?: string | null }).lang ?? null;
+  const code = inputCodeBlockText(codeBlock);
+  if (!code) {
+    return [];
+  }
+  const tokens = inputCodeTokenCache.get(inputCodeTokenCacheKey(language, code));
+  if (!tokens) {
+    return [];
+  }
+
+  const lines = (codeBlock as { children: unknown[] }).children;
+  const lineIndex = path[path.length - 2] as number;
+  const childIndex = path[path.length - 1] as number;
+  const lineTokens = tokens[lineIndex] ?? [];
+  if (lineTokens.length === 0) {
+    return [];
+  }
+
+  // 该 text 节点在整段 code（含行间 \n）里的起始 offset。
+  let lineStart = 0;
+  for (let i = 0; i < lineIndex; i += 1) {
+    lineStart += inputCodeLineText(lines[i]).length + 1;
+  }
+  const lineChildren = Array.isArray((line as { children?: unknown[] }).children)
+    ? ((line as { children: unknown[] }).children)
+    : [];
+  let childStart = lineStart;
+  for (let i = 0; i < childIndex; i += 1) {
+    const sibling = lineChildren[i] as { text?: unknown } | undefined;
+    if (typeof sibling?.text === "string") {
+      childStart += sibling.text.length;
+    }
+  }
+  const childEnd = childStart + (node as { text: string }).text.length;
+
+  const ranges: InputCodeTokenRange[] = [];
+  let tokenOffset = lineStart;
+  for (const token of lineTokens) {
+    const tokenStart = tokenOffset;
+    tokenOffset += token.content.length;
+    const tokenEnd = tokenOffset;
+    const from = Math.max(tokenStart, childStart);
+    const to = Math.min(tokenEnd, childEnd);
+    if (to <= from) {
+      continue;
+    }
+    ranges.push({
+      anchor: { path, offset: from - childStart },
+      focus: { path, offset: to - childStart },
+      [INPUT_CODE_SYNTAX_DECORATION_KEY]: true,
+      [INPUT_CODE_TOKEN_DECORATION_PROP]: readerCodeTokenClassName(token.color),
+    });
+  }
+  return ranges;
 }

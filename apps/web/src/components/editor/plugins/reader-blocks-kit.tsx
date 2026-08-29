@@ -76,6 +76,7 @@ import {
 import katex from "katex";
 import { isLoadableImageUrl } from "@/components/editor/plugins/input-markdown-image-kit";
 import {
+  readerCodeLanguageLabel,
   readerCodeTokenClassName,
   useReaderCodeHighlight,
 } from "@/components/editor/plugins/reader-code-highlight";
@@ -1860,6 +1861,9 @@ function ReaderStableCodeBlockComponent({
 }: PlateElementProps) {
   const data = (element as unknown as ReaderCodeBlockElement).data;
   const language = data?.language ?? null;
+  // 语言标签与输入端共用同一显示函数（规格 §10）：人类可读形式，
+  // 未知语言保留原字符串，无语言不虚构 badge。
+  const languageLabel = readerCodeLanguageLabel(language);
   const codeText = readerCodeBlockPlainText(element);
   const tokens = useReaderCodeHighlight(codeText, language);
   const [copyState, setCopyState] = React.useState<"idle" | "copied" | "error">(
@@ -1916,13 +1920,13 @@ function ReaderStableCodeBlockComponent({
         className={`absolute right-3 top-2 font-sans text-[0.7rem] ${READER_CODE_TOOLBAR_REVEAL_CLASS}`}
         {...copyExcludeProps}
       >
-        {language ? (
+        {languageLabel ? (
           <span
             data-testid="code-language-badge"
-            className="font-medium uppercase tracking-wide text-muted-foreground/70"
+            className="font-medium tracking-wide text-muted-foreground/70"
             {...copyExcludeProps}
           >
-            {language}
+            {languageLabel}
           </span>
         ) : null}
         <button

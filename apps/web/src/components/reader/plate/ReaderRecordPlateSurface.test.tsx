@@ -962,7 +962,7 @@ describe("ReaderRecordPlateSurface", () => {
       throw new Error("Expected code language badge");
     }
     expect(badge.tagName).toBe("SPAN");
-    expect(badge.textContent).toBe("python");
+    expect(badge.textContent).toBe("Python");
     expect(badge.getAttribute("contenteditable")).toBe("false");
     expect(badge.getAttribute("draggable")).toBe("false");
     expect(badge.getAttribute("data-reader-record-copy-exclude")).toBe("true");

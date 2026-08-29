@@ -120,6 +120,12 @@ import {
   InputMarkdownMathBlockPlugin,
   InputMarkdownMathInlinePlugin,
 } from "@/components/editor/plugins/input-markdown-image-kit";
+import {
+  INPUT_CODE_SYNTAX_DECORATION_KEY,
+  INPUT_CODE_TOKEN_DECORATION_PROP,
+  inputCodeBlockDecorate,
+  readerCodeLanguageLabel,
+} from "@/components/editor/plugins/reader-code-highlight";
 import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
 import { negotiateClipboardSource } from "@/lib/clipboard/clipboard-source-negotiation";
 import { deserializeHybridClipboardFragment } from "@/lib/clipboard/clipboard-source-fusion";
@@ -198,13 +204,31 @@ function MarkdownListContent({ children, attributes }: PlateElementProps) {
   return <span {...attributes}>{children}</span>;
 }
 
-function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
+function MarkdownCodeBlock({ children, attributes, element }: PlateElementProps) {
+  // 语言标签与 Reader 共用同一显示函数（规格 §10）：人类可读形式，
+  // 未知语言保留原字符串，无语言不虚构 badge。输入端不渲染复制工具栏。
+  const lang = (element as { lang?: string }).lang ?? null;
+  const label = readerCodeLanguageLabel(lang);
   return (
     <pre
       {...attributes}
-      className="reader-record-plate-markdown-code-block overflow-x-auto font-mono"
+      data-language={lang ?? undefined}
+      className="reader-record-plate-markdown-code-block relative overflow-x-auto font-mono"
     >
-      <code>{children}</code>
+      {label ? (
+        // 语言标签用 CSS 伪元素文本（非 DOM text node）：原生选择/复制
+        // 不会把标签文本带进剪贴板；无障碍用 aria-label 补偿。
+        <span
+          contentEditable={false}
+          draggable={false}
+          data-testid="input-code-language-badge"
+          data-label={label}
+          role="img"
+          aria-label={`${label} 代码块`}
+          className="pointer-events-none absolute right-3 top-2 block select-none font-sans text-[0.7rem] font-medium tracking-wide text-muted-foreground/70 before:content-[attr(data-label)]"
+        />
+      ) : null}
+      <code className={label ? "block pt-6" : undefined}>{children}</code>
     </pre>
   );
 }
@@ -311,6 +335,23 @@ function MarkdownStrikethroughLeaf({ children, attributes }: PlateLeafProps) {
   return <s {...attributes} className="line-through">{children}</s>;
 }
 
+// 输入端代码块 token leaf：decoration 命中时 leaf 携带
+// INPUT_CODE_TOKEN_DECORATION_PROP（token 角色 class），由本组件渲染；
+// 与 bold/italic 同走 Plate leaf 渲染管道，无额外 renderLeaf。
+function InputCodeSyntaxLeaf({ children, attributes, leaf }: PlateLeafProps) {
+  const tokenClass = (
+    leaf as unknown as Record<string, unknown> | null
+  )?.[INPUT_CODE_TOKEN_DECORATION_PROP];
+  return (
+    <span
+      {...attributes}
+      className={typeof tokenClass === "string" ? tokenClass : undefined}
+    >
+      {children}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Plugins：官方行为插件（@platejs/basic-nodes / list-classic / link /
 // code-block / table）+ 复用上方 Markdown* 视觉组件。
@@ -341,6 +382,21 @@ const InputMarkdownPlugin = MarkdownPlugin.configure({
   options: INPUT_MARKDOWN_PLUGIN_OPTIONS,
 });
 
+// 输入端代码块高亮：decorate 返回 transient token decoration ranges，
+// 复用 reader-code-highlight 的 Shiki loader / registry / tokenizer；
+// token leaf 由 InputCodeSyntaxPlugin 的 leaf component 渲染。
+const InputCodeHighlightPlugin = createPlatePlugin({
+  key: "input_code_highlight",
+  decorate: inputCodeBlockDecorate,
+});
+
+// decoration 的 leaf key：ranges 携带 `[input_code_syntax]: true`，
+// 触发上方 InputCodeSyntaxLeaf 渲染（与官方 code-block codeSyntax 同模式）。
+const InputCodeSyntaxPlugin = createPlatePlugin({
+  key: INPUT_CODE_SYNTAX_DECORATION_KEY,
+  node: { isLeaf: true, component: InputCodeSyntaxLeaf },
+});
+
 // ---------------------------------------------------------------------------
 // G1P-B-A：HTML fenced code 语言保留（输入端窄 seam）
 //
@@ -369,6 +425,9 @@ function htmlCodeBlockLanguage(pre: HTMLElement): string | undefined {
 // （G1P-B-A）；生产链路仅本组件消费。
 export const markdownTextInputPlugins = [
   InputMarkdownPlugin,
+  // 输入端代码块语法高亮（transient decoration，不改变 Slate value）
+  InputCodeHighlightPlugin,
+  InputCodeSyntaxPlugin,
   // source_callout：Notion 风格 aside 提示框（剪贴板 HTML deserializer +
   // component 注册）。Markdown 路径的 mdast html → source_callout 转换由
   // InputMarkdownPlugin 的 rules.html 处理，但 element type 需要 plugin

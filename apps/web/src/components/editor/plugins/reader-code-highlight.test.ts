@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  readerCodeLanguageLabel,
   readerCodeToTokens,
   readerCodeTokensToPlainText,
   resolveReaderCodeLanguage,
@@ -26,6 +27,27 @@ describe("reader-code-highlight", () => {
   it("readerCodeToTokens fails closed (null) for unknown languages", async () => {
     await expect(readerCodeToTokens("x = 1", "klingon-x")).resolves.toBeNull();
     await expect(readerCodeToTokens("x = 1", null)).resolves.toBeNull();
+  });
+
+  it("readerCodeLanguageLabel maps canonical and aliased languages to human-readable names", () => {
+    expect(readerCodeLanguageLabel("python")).toBe("Python");
+    expect(readerCodeLanguageLabel("javascript")).toBe("JavaScript");
+    expect(readerCodeLanguageLabel("typescript")).toBe("TypeScript");
+    expect(readerCodeLanguageLabel("js")).toBe("JavaScript");
+    expect(readerCodeLanguageLabel("c++")).toBe("C++");
+    expect(readerCodeLanguageLabel("c#")).toBe("C#");
+    expect(readerCodeLanguageLabel("sh")).toBe("Shell");
+    expect(readerCodeLanguageLabel("bash")).toBe("Shell");
+    expect(readerCodeLanguageLabel("json")).toBe("JSON");
+  });
+
+  it("readerCodeLanguageLabel keeps unknown languages verbatim and never invents a badge for no language", () => {
+    expect(readerCodeLanguageLabel("klingon-x")).toBe("klingon-x");
+    expect(readerCodeLanguageLabel(" PY ")).toBe("Python");
+    expect(readerCodeLanguageLabel("")).toBeNull();
+    expect(readerCodeLanguageLabel("   ")).toBeNull();
+    expect(readerCodeLanguageLabel(null)).toBeNull();
+    expect(readerCodeLanguageLabel(undefined)).toBeNull();
   });
 
   it("readerCodeToTokens returns tokens that reconstruct the source verbatim", async () => {

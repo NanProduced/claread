@@ -886,7 +886,7 @@ describe("StructuredSourceRenderer", () => {
       const codeBlock = container.querySelector('[data-block-id="b18"]');
       const badge = codeBlock?.querySelector('[data-testid="code-language-badge"]');
       expect(badge).toBeTruthy();
-      expect(badge?.textContent).toBe("python");
+      expect(badge?.textContent).toBe("Python");
     });
 
     it("does not render language badge for code_block without language", () => {
@@ -1050,7 +1050,7 @@ describe("StructuredSourceRenderer", () => {
       const pythonBlock = container.querySelector('[data-block-id="b4"]');
       const pythonBadge = pythonBlock?.querySelector('[data-testid="code-language-badge"]');
       expect(pythonBadge).toBeTruthy();
-      expect(pythonBadge?.textContent).toBe("python");
+      expect(pythonBadge?.textContent).toBe("Python");
     });
 
     it("surfaces mermaid_static_only warning", () => {

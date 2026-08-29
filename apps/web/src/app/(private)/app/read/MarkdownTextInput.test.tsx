@@ -1140,3 +1140,118 @@ describe("HTML code language fidelity（G1P-B-A，实际 mounted plugins）", ()
     expect(md).toContain("y = 2");
   });
 });
+
+describe("input code block Reader parity (R8)", () => {
+  const PYTHON_INPUT_MD = "```python\ndef square(x):\n    return x * x\n```";
+
+  async function renderWithFence(markdown: string) {
+    const utils = renderEditor();
+    await act(async () => {
+      utils.ref.current?.setValue(markdown);
+    });
+    const pre = utils.editorEl.querySelector(
+      "pre.reader-record-plate-markdown-code-block",
+    );
+    if (!pre) throw new Error("Expected code block pre");
+    const code = pre.querySelector("code");
+    if (!code) throw new Error("Expected code element");
+    return { ...utils, pre, code };
+  }
+
+  it("shows a human-readable language badge shared with Reader (python → Python)", async () => {
+    const { pre } = await renderWithFence(PYTHON_INPUT_MD);
+    const badge = pre.querySelector('[data-testid="input-code-language-badge"]');
+    expect(badge).not.toBeNull();
+    // 文本由 CSS 伪元素渲染（不进 DOM text node，防复制污染）。
+    expect(badge?.getAttribute("data-label")).toBe("Python");
+    expect(badge?.getAttribute("aria-label")).toBe("Python 代码块");
+  });
+
+  it("unknown fence language keeps its safe normalized name; no language renders no badge", async () => {
+    const unknown = await renderWithFence("```lolcode\nx = 1\n```");
+    expect(
+      unknown.pre
+        .querySelector('[data-testid="input-code-language-badge"]')
+        ?.getAttribute("data-label"),
+    ).toBe("lolcode");
+
+    const noLang = await renderWithFence("```\nplain\n```");
+    expect(
+      noLang.pre.querySelector('[data-testid="input-code-language-badge"]'),
+    ).toBeNull();
+  });
+
+  it("highlights fenced code with Reader token classes; code text stays verbatim", async () => {
+    const { code } = await renderWithFence(PYTHON_INPUT_MD);
+
+    await waitFor(
+      () => {
+        expect(
+          code.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(1);
+      },
+      { timeout: 5000 },
+    );
+    expect(
+      code.querySelector(".reader-record-plate-code-token--keyword"),
+    ).not.toBeNull();
+    // decoration 是 transient 的：代码文本逐字不变（Slate 逐行渲染，
+    // DOM textContent 在行边界无换行，逐行比对）。
+    const lineTexts = Array.from(
+      code.querySelectorAll('[data-slate-node="element"]'),
+    ).map((lineEl) => lineEl.textContent);
+    expect(lineTexts).toEqual(["def square(x):", "    return x * x"]);
+  });
+
+  it("keeps decorations out of serialize: Markdown round-trip unchanged after highlight", async () => {
+    const { ref, code } = await renderWithFence(PYTHON_INPUT_MD);
+
+    await waitFor(
+      () => {
+        expect(
+          code.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+
+    const serialized = ref.current?.getMarkdown() ?? "";
+    expect(serialized).toMatch(/```python\ndef square\(x\):\n    return x \* x\n```/);
+  });
+
+  it("re-highlights live after content changes (js → JavaScript)", async () => {
+    const { ref, editorEl } = await renderWithFence(PYTHON_INPUT_MD);
+    await waitFor(
+      () => {
+        expect(
+          editorEl.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+
+    await act(async () => {
+      ref.current?.setValue("```js\nconst a = 1;\n```");
+    });
+
+    await waitFor(
+      () => {
+        const badge = editorEl.querySelector('[data-testid="input-code-language-badge"]');
+        expect(badge?.getAttribute("data-label")).toBe("JavaScript");
+        expect(
+          editorEl.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(0);
+        expect(
+          editorEl.querySelector(".reader-record-plate-code-token--keyword"),
+        ).not.toBeNull();
+      },
+      { timeout: 5000 },
+    );
+  });
+
+  it("renders no Reader copy toolbar in the input (regression lock)", async () => {
+    const { pre } = await renderWithFence(PYTHON_INPUT_MD);
+    expect(pre.querySelector('[data-testid="code-toolbar"]')).toBeNull();
+    expect(pre.querySelector('[data-testid="code-copy-button"]')).toBeNull();
+  });
+});
