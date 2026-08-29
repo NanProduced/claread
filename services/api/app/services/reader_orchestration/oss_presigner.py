@@ -70,6 +70,21 @@ class Presigner(Protocol):
         expires_in: timedelta,
     ) -> PresignedUpload | None: ...
 
+    def presign_get_object(
+        self,
+        *,
+        bucket: str,
+        endpoint: str,
+        object_key: str,
+        expires_in: timedelta,
+    ) -> PresignedUpload | None:
+        """Owner-scoped short-lived read-only URL (R8 source preview).
+
+        Fail-closed: returns ``None`` when no credentials / SDK are
+        configured. The URL is a GET with a short ``expires_in``; the
+        AccessKey secret never leaves the server.
+        """
+
 
 class PresignerNotConfiguredError(RuntimeError):
     """Raised when a presigner is asked to sign but has no credentials/SDK."""
@@ -90,6 +105,16 @@ class NullPresigner:
         object_key: str,
         content_type: str | None = None,
         content_sha256: str | None = None,
+        expires_in: timedelta,
+    ) -> PresignedUpload | None:
+        return None
+
+    def presign_get_object(
+        self,
+        *,
+        bucket: str,
+        endpoint: str,
+        object_key: str,
         expires_in: timedelta,
     ) -> PresignedUpload | None:
         return None
@@ -139,6 +164,27 @@ class FakePresigner:
             expires_at=expires_at,
         )
 
+    def presign_get_object(
+        self,
+        *,
+        bucket: str,
+        endpoint: str,
+        object_key: str,
+        expires_in: timedelta,
+    ) -> PresignedUpload | None:
+        endpoint_host = _strip_scheme(endpoint)
+        expires_at = datetime.now(UTC) + expires_in
+        url = (
+            f"{self._url_prefix}/{bucket}.{endpoint_host}/{object_key}"
+            f"?Expires={int(expires_at.timestamp())}&Signature=fake"
+        )
+        return PresignedUpload(
+            url=url,
+            method="GET",
+            headers={},
+            expires_at=expires_at,
+        )
+
 
 class AliyunOssPresigner:
     """Aliyun OSS presigner using ``oss2`` (lazy import).
@@ -183,8 +229,7 @@ class AliyunOssPresigner:
             import oss2  # type: ignore[import-untyped]
         except ImportError as exc:
             raise PresignerNotConfiguredError(
-                "oss2 SDK is not installed; install 'oss2' to enable "
-                "AliyunOssPresigner"
+                "oss2 SDK is not installed; install 'oss2' to enable AliyunOssPresigner"
             ) from exc
         self._auth = oss2.Auth(self._access_key_id, self._access_key_secret)
         self._bucket_instance = oss2.Bucket(self._auth, self._endpoint, self._bucket)
@@ -223,6 +268,32 @@ class AliyunOssPresigner:
             expires_at=datetime.now(UTC) + expires_in,
         )
 
+    def presign_get_object(
+        self,
+        *,
+        bucket: str,
+        endpoint: str,
+        object_key: str,
+        expires_in: timedelta,
+    ) -> PresignedUpload | None:
+        """Short-lived read-only GET URL (R8 source preview)."""
+        self._ensure_sdk()
+        if bucket != self._bucket or endpoint != self._endpoint:
+            return None
+        expires_seconds = int(expires_in.total_seconds())
+        url = self._bucket_instance.sign_url(
+            "GET",
+            object_key,
+            expires_seconds,
+            headers=None,
+        )
+        return PresignedUpload(
+            url=url,
+            method="GET",
+            headers={},
+            expires_at=datetime.now(UTC) + expires_in,
+        )
+
 
 def build_default_presigner() -> Presigner:
     """Build a presigner from current settings.
@@ -258,7 +329,7 @@ def build_default_presigner() -> Presigner:
 
 def _strip_scheme(endpoint: str) -> str:
     if endpoint.startswith("https://"):
-        return endpoint[len("https://"):]
+        return endpoint[len("https://") :]
     if endpoint.startswith("http://"):
-        return endpoint[len("http://"):]
+        return endpoint[len("http://") :]
     return endpoint

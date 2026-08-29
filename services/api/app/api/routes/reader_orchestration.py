@@ -48,6 +48,7 @@ from app.schemas.reader_orchestration import (
     ReaderSectionTranslationOutcome,
     ReaderSectionTranslationRequest,
     ReaderSectionTranslationResponse,
+    ReaderSourceArtifactPreviewResponse,
     ReaderSourceArtifactSubmitInputRequest,
     ReaderSourceArtifactSubmitInputResponse,
     ReaderSourceArtifactUploadCompleteRequest,
@@ -167,6 +168,10 @@ from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactNotFoundError,
     SourceArtifactRegistrationResult,
     SourceArtifactService,
+)
+from app.services.reader_orchestration.source_preview_service import (
+    SourceArtifactPreviewNotFoundError,
+    SourceArtifactPreviewService,
 )
 from app.services.reader_orchestration.stable_document_query_service import (
     StableDocumentProjectionResult,
@@ -780,6 +785,47 @@ async def get_reader_source_artifact_pipeline_status(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return _build_artifact_pipeline_status_response(result)
+
+
+@router.get(
+    "/source-artifacts/{artifact_id}/preview",
+    response_model=ReaderSourceArtifactPreviewResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {
+            "description": "Collapsed: not found / not owner / deleted / "
+            "not available / unsupported MIME (no state leak)."
+        },
+    },
+    summary=("Owner-scoped short-lived read-only preview URL for a source artifact (PDF / images)"),
+)
+async def get_reader_source_artifact_preview(
+    artifact_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderSourceArtifactPreviewResponse:
+    """Fail-closed original preview delivery contract (R8).
+
+    The response never exposes ``object_key`` / bucket / endpoint /
+    credentials. ``preview_url=None`` + ``degraded=true`` when the
+    presigner cannot deliver a safe URL; Candidate editing and
+    confirmation are never blocked by preview availability.
+    """
+    service = SourceArtifactPreviewService()
+    try:
+        result = await service.create_preview(
+            artifact_id=artifact_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except SourceArtifactPreviewNotFoundError as exc:
+        # Same collapse shape as pipeline-status sibling routes.
+        raise HTTPException(status_code=404, detail="Source artifact not found") from exc
+
+    return ReaderSourceArtifactPreviewResponse(
+        preview_url=result.preview_url,
+        expires_at=result.expires_at,
+        content_type=result.content_type,
+        degraded=result.degraded,
+    )
 
 
 @router.post(

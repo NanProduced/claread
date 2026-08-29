@@ -1430,6 +1430,23 @@ class ReaderConfirmedSourceRestoreResponse(BaseModel):
     restored_to: int = Field(ge=1)
 
 
+class ReaderSourceArtifactPreviewResponse(BaseModel):
+    """Short-lived read-only preview URL for one source artifact.
+
+    Never exposes object_key / bucket / endpoint / credentials. When the
+    preview cannot be delivered safely, ``preview_url`` is ``None`` and
+    ``degraded`` is true (Candidate editing / confirmation stay usable).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    preview_url: str | None = None
+    expires_at: datetime | None = None
+    content_type: str | None = None
+    degraded: bool = False
+
+
 class ReaderStableDocumentBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
