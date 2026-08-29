@@ -1,10 +1,10 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, Check, ChevronDown, FileText, FileType, FileUp, ImageIcon, RefreshCw, X } from "lucide-react";
-import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { ReadIntakeWaitingStage, type IntakeWaitingPhase } from "./ReadIntakeWaitingStage";
 import { ReadingPlanFields } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
@@ -59,7 +59,13 @@ type SubmitState =
   | { kind: "idle" }
   | { kind: "pending"; message: string }
   | { kind: "artifact-uploading"; filename: string; message: string }
-  | { kind: "artifact-polling"; filename: string; message: string }
+  | {
+      kind: "artifact-polling";
+      filename: string;
+      message: string;
+      outcome?: PipelineOutcome | null;
+      nextAction?: PipelineNextAction | null;
+    }
   | { kind: "success"; message: string }
   | { kind: "error"; message: string }
   | {
@@ -341,73 +347,65 @@ function MiniAperturePulse({ className }: { className?: string }) {
   );
 }
 
-function AnalysisLoadingArtwork() {
-  // 静态品牌插画：不叠加编排动效（DESIGN.md 禁止用动效表演解析过程）。
-  return (
-    <div className="relative h-[18.5rem] w-full max-w-[34rem] sm:h-[20rem]">
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="relative aspect-[16/11] w-full max-w-[29rem]">
-          <Image
-            src="/images/loading/analysis-loading-stage-idle.png"
-            alt=""
-            aria-hidden="true"
-            fill
-            sizes="(max-width: 640px) 80vw, 29rem"
-            className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-function AnalysisLoadingStage({
-  title,
-  animationSlot,
-}: {
-  title: string;
-  animationSlot?: ReactNode;
-}) {
-  return (
-    <div
-      className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-hidden px-8 py-10 sm:px-16 xl:px-24"
-      aria-live="polite"
-    >
-      <div className="pointer-events-none absolute inset-x-16 top-10 hidden max-w-[42rem] space-y-4 opacity-[0.16] sm:block xl:left-24">
-        {[0.82, 0.64, 0.76, 0.52, 0.7].map((width, index) => (
-          <span
-            key={index}
-            className="block h-px rounded-full bg-ink/35"
-            style={{ width: `${width * 100}%` }}
-          />
-        ))}
-      </div>
-
-      <div className="relative flex w-full max-w-[36rem] flex-col items-center text-center">
-        {animationSlot ?? <AnalysisLoadingArtwork />}
-
-        <p className="mt-1 font-sans text-[0.72rem] font-bold tracking-[0.16em] text-lens-blue/88">
-          Claread Reading Desk
-        </p>
-        <h2 className="mt-2.5 font-headline text-[1.5rem] font-semibold leading-tight text-ink sm:text-[1.78rem]">
-          {title}
-        </h2>
-      </div>
-    </div>
-  );
+export function computeIntakeWaitingPhase(state: SubmitState): IntakeWaitingPhase {
+  if (state.kind === "artifact-uploading") {
+    return "upload";
+  }
+  if (state.kind === "artifact-polling") {
+    const { outcome, nextAction } = state;
+    if (outcome) {
+      if (
+        outcome === "upload_pending" ||
+        outcome === "upload_available_not_submitted"
+      ) {
+        return "upload";
+      }
+      if (
+        outcome === "extraction_queued" ||
+        outcome === "extraction_running" ||
+        outcome === "extraction_retry_later"
+      ) {
+        return "extract";
+      }
+      if (
+        outcome === "materialization_queued" ||
+        outcome === "materialization_running" ||
+        outcome === "materialization_retry_later" ||
+        outcome === "candidate_document_required"
+      ) {
+        return "check";
+      }
+      if (outcome === "stable_document_ready") {
+        return "prepare";
+      }
+    }
+    if (nextAction === "complete_upload" || nextAction === "submit_input") {
+      return "upload";
+    }
+    if (nextAction === "open_reader") {
+      return "prepare";
+    }
+    return "extract";
+  }
+  return "prepare";
 }
 
 export function AnalysisLoadingStatusBar({
   messagePrefix,
   detail,
   canLeave = true,
+  reassuranceText,
 }: {
   messagePrefix: string;
   /** 真实阶段状态（pipeline next_action 映射），无则不显示。 */
   detail?: string;
   canLeave?: boolean;
+  reassuranceText?: string;
 }) {
+  const defaultReassurance = canLeave
+    ? "后台已接管处理，可以离开本页；完成后会保存到阅读记录"
+    : "上传完成前请保持此页打开";
+
   return (
     <div className="flex min-h-12 max-w-[38rem] items-center gap-3 font-sans text-[0.78rem]">
       <MiniAperturePulse className="h-8 w-8 bg-surface/76" />
@@ -424,9 +422,7 @@ export function AnalysisLoadingStatusBar({
           ) : null}
         </div>
         <p className="mt-1 min-w-0 text-[0.72rem] font-medium leading-5 text-muted-foreground">
-          {canLeave
-            ? "后台已接管处理，可以离开本页；完成后会保存到阅读记录"
-            : "上传完成前请保持此页打开"}
+          {reassuranceText ?? defaultReassurance}
         </p>
       </div>
     </div>
@@ -448,7 +444,7 @@ const SOURCE_KIND_ICONS: Record<SourceFileKind, typeof FileText> = {
 };
 
 /**
- * 上传文件确认态：居中紧凑「落签卡」——文件信息 + 竖排三步预告 + 操作。
+ * 上传文件确认态：居中紧凑「落签卡」——文件信息 + 真实四步预告 + 操作。
  * 只支持单文件，内容量小就让卡片小而完整，不再用全宽行 + 大片空白硬撑。
  */
 function SourceFilePreview({
@@ -494,7 +490,7 @@ function SourceFilePreview({
         </div>
 
         <ol className="mt-5 space-y-2.5 border-t border-hairline/60 pt-5 font-sans text-[0.8rem]">
-          {["提取文字", "可能需要你过目", "开始阅读"].map((step, index) => (
+          {["上传文件", "提取正文", "检查内容", "准备阅读"].map((step, index) => (
             <li key={step} className="flex items-center gap-2.5">
               <span
                 aria-hidden="true"
@@ -526,8 +522,8 @@ function SourceFilePreview({
         ) : null}
 
         <div className="mt-5 flex items-center justify-end gap-3 border-t border-hairline/60 pt-4">
-          <TextAction onClick={onReplace}>更换</TextAction>
-          <TextAction onClick={onRemove} className="hover:text-feedback-error">
+          <TextAction onClick={onReplace} className="min-h-[44px] px-2">更换</TextAction>
+          <TextAction onClick={onRemove} className="min-h-[44px] px-2 hover:text-feedback-error">
             移除
           </TextAction>
         </div>
@@ -773,16 +769,29 @@ export function AnalyzeSubmitForm({
         kind: "artifact-polling",
         filename: polling.filename,
         message: "正在重新查询处理进度…",
+        outcome: null,
+        nextAction: null,
       });
       pollUntilTerminal(polling.artifactId, polling.filename);
       return;
     }
     const file = lastFileRef.current;
     if (!file) {
+      if (text.trim().length > 0) {
+        void handleSubmit();
+        return;
+      }
       openFilePicker();
       return;
     }
     void startArtifactFlow(file);
+  }
+
+  function handleExitFile() {
+    stopPolling();
+    lastPollingRef.current = null;
+    clearAttachedSource();
+    openFilePicker();
   }
 
   async function postInitUpload(body: unknown): Promise<ReaderSourceArtifactUploadInitResult> {
@@ -866,9 +875,17 @@ export function AnalyzeSubmitForm({
         kind: "artifact-polling",
         filename: currentFilename,
         message: describeNextAction(status.next_action, status.outcome),
+        outcome: status.outcome,
+        nextAction: status.next_action,
       });
       if (isTerminalOutcome(status.outcome) || isTerminalAction(status.next_action)) {
-        lastPollingRef.current = null;
+        const isFailure =
+          status.outcome === "extraction_failed" ||
+          status.outcome === "materialization_failed" ||
+          status.next_action === "show_error";
+        if (!isFailure) {
+          lastPollingRef.current = null;
+        }
         applyArtifactOutcome(status, currentFilename);
         return false;
       }
@@ -944,9 +961,15 @@ export function AnalyzeSubmitForm({
     }
 
     if (nextAction === "show_error" || outcome === "extraction_failed" || outcome === "materialization_failed") {
+      const reason =
+        outcome === "extraction_failed"
+          ? "提取正文失败，请稍后重试"
+          : outcome === "materialization_failed"
+            ? "检查内容与排版失败，请稍后重试"
+            : `处理失败（${summarizeOutcome(outcome)}），请稍后重试`;
       setState({
         kind: "error",
-        message: `处理失败（${summarizeOutcome(outcome)}），可以重试或重新选择文件。`,
+        message: reason,
       });
     }
   }
@@ -1197,18 +1220,34 @@ export function AnalyzeSubmitForm({
     setReadingVariant(nextPlan.readingVariant);
   }
 
-  const loadingStageTitle =
-    state.kind === "artifact-uploading"
-      ? "正在上传这份文件"
-      : state.kind === "artifact-polling"
-        ? "正在提取这份来源"
-        : "正在准备阅读";
+  const currentWaitingPhase = useMemo(
+    () => computeIntakeWaitingPhase(state),
+    [state],
+  );
+  const canLeaveCurrentWaiting =
+    isWaiting &&
+    state.kind === "artifact-polling" &&
+    currentWaitingPhase !== "upload";
+
+  const waitingFilename =
+    state.kind === "artifact-uploading" || state.kind === "artifact-polling"
+      ? state.filename
+      : attachedSource?.file.name ?? null;
+
+  const waitingFormatLabel = attachedSource
+    ? SOURCE_FORMAT_SHORT_LABELS[attachedSource.descriptor.kind]
+    : null;
+
+  const waitingFileSize = attachedSource?.file.size ?? null;
+
   const waitingMessagePrefix =
-    state.kind === "artifact-uploading"
+    currentWaitingPhase === "upload"
       ? "正在上传"
-      : state.kind === "artifact-polling"
+      : currentWaitingPhase === "extract"
         ? "正在提取"
-        : "正在准备";
+        : currentWaitingPhase === "check"
+          ? "正在检查"
+          : "正在准备";
   const waitingDetail =
     state.kind === "artifact-uploading" ||
     state.kind === "artifact-polling" ||
@@ -1321,7 +1360,13 @@ export function AnalyzeSubmitForm({
           ) : null}
 
           {isWaiting ? (
-            <AnalysisLoadingStage title={loadingStageTitle} />
+            <ReadIntakeWaitingStage
+              phase={currentWaitingPhase}
+              filename={waitingFilename}
+              formatLabel={waitingFormatLabel}
+              fileSize={waitingFileSize}
+              canLeave={canLeaveCurrentWaiting}
+            />
           ) : attachedSource ? (
             <SourceFilePreview
               source={attachedSource}
@@ -1384,7 +1429,7 @@ export function AnalyzeSubmitForm({
               <AnalysisLoadingStatusBar
                 messagePrefix={waitingMessagePrefix}
                 detail={waitingDetail}
-                canLeave={state.kind === "artifact-polling"}
+                canLeave={canLeaveCurrentWaiting}
               />
             ) : (
               <div
@@ -1528,34 +1573,40 @@ export function AnalyzeSubmitForm({
             state.kind === "error" ? "text-feedback-error" : "text-lens-blue"
           }`}
         >
-          {state.message}
-          {state.kind === "error" && (attachedSource || lastFileRef.current) ? (
-            <div className="mt-3 flex flex-wrap gap-2 font-sans">
+          <p className="font-semibold">{state.message}</p>
+          {state.kind === "error" ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 font-sans">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
                 onClick={retryLastFile}
+                className="min-h-[44px]"
               >
                 重试
                 <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
               </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={openFilePicker}
-              >
-                重新选择文件
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearAttachedSource}
-              >
-                移除文件
-              </Button>
+              {attachedSource || lastFileRef.current ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleExitFile}
+                  className="min-h-[44px]"
+                >
+                  重新选择文件
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setState({ kind: "idle" })}
+                  className="min-h-[44px]"
+                >
+                  返回修改
+                </Button>
+              )}
             </div>
           ) : null}
         </div>
