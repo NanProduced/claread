@@ -96,6 +96,9 @@ from app.services.reader_orchestration.repository import (
     lock_record_for_candidate_write,
     supersede_ready_candidates_for_locked_record,
 )
+from app.services.reader_orchestration.review_item_enrichment import (
+    enrich_review_items,
+)
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     _build_article_ready_payload,
 )
@@ -331,9 +334,7 @@ class ConfirmedSourceApplicationService:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
-                record_row = await self._load_record_row(
-                    conn, record_id=record_id, user_id=user_id
-                )
+                record_row = await self._load_record_row(conn, record_id=record_id, user_id=user_id)
                 if record_row is None:
                     raise ConfirmedSourceNotFoundError(
                         f"reading_record {record_id} not found for confirmed "
@@ -435,9 +436,7 @@ class ConfirmedSourceApplicationService:
             async with conn.transaction():
                 # (1) record 行锁（generation fence 复用）。先读
                 # generation 再加锁——全库当前恒为 1，fence 语义不变。
-                record_row = await self._load_record_row(
-                    conn, record_id=record_id, user_id=user_id
-                )
+                record_row = await self._load_record_row(conn, record_id=record_id, user_id=user_id)
                 if record_row is None:
                     raise ConfirmedSourceNotFoundError(
                         f"reading_record {record_id} not found for "
@@ -453,8 +452,7 @@ class ConfirmedSourceApplicationService:
                     )
                 except CandidateWriteLockError as exc:
                     raise ConfirmedSourceNotFoundError(
-                        f"confirmed source update lock failed for "
-                        f"reading_record {record_id}: {exc}"
+                        f"confirmed source update lock failed for reading_record {record_id}: {exc}"
                     ) from exc
 
                 # (2) source 行 FOR UPDATE（锁顺序 record → source）。
@@ -472,8 +470,7 @@ class ConfirmedSourceApplicationService:
                     )
                 if source.status == "frozen":
                     raise ConfirmedSourceConflictError(
-                        f"confirmed source {source.id} is frozen; edits "
-                        "are no longer accepted.",
+                        f"confirmed source {source.id} is frozen; edits are no longer accepted.",
                         code="source_frozen",
                         resolution="open_reader",
                         current_revision=source.revision,
@@ -491,9 +488,7 @@ class ConfirmedSourceApplicationService:
 
                 # (4) 规范化同 hash → 幂等 no-op（不 supersede，
                 # revision 不变，返回当前 ready candidate）。
-                if confirmed_source_content_sha256(normalized_text) == (
-                    source.content_sha256
-                ):
+                if confirmed_source_content_sha256(normalized_text) == (source.content_sha256):
                     candidate_summary = await self._load_ready_candidate_summary(
                         conn, record_id=record_id, generation=generation
                     )
@@ -511,12 +506,12 @@ class ConfirmedSourceApplicationService:
                 # (5) reparse 一次 + gate 分类（阶段 1 机制：
                 # preparsed + detected_format + 三级分类）。
                 source_type = await self._derive_source_type(
-                    conn, record_id=record_id, generation=generation,
+                    conn,
+                    record_id=record_id,
+                    generation=generation,
                     source=source,
                 )
-                filename, source_metadata = await self._load_input_context(
-                    conn, source=source
-                )
+                filename, source_metadata = await self._load_input_context(conn, source=source)
                 preparsed = _MARKDOWN_PARSER.parse(normalized_text)
                 suitability = evaluate_input_suitability(
                     InputSuitabilityRequest(
@@ -527,21 +522,23 @@ class ConfirmedSourceApplicationService:
                     ),
                     preparsed=preparsed,
                 )
-                quality = _candidate_quality_json(suitability=suitability)
+                quality = _candidate_quality_json(
+                    suitability=suitability,
+                    issue_namespace=f"{record_id}:{generation}",
+                    document_text=normalized_text,
+                )
 
                 # (6) 同事务 UPDATE source（revision+1，乐观并发由
                 # 上面的行锁 + revision 校验保证）。
                 try:
-                    updated_source = (
-                        await update_confirmed_source_with_expected_revision(
-                            conn,
-                            source_document_id=UUID(source.id),
-                            record_id=record_id,
-                            expected_revision=expected_revision,
-                            markdown_text=normalized_text,
-                            edit_source=edit_source,
-                            now=updated_at,
-                        )
+                    updated_source = await update_confirmed_source_with_expected_revision(
+                        conn,
+                        source_document_id=UUID(source.id),
+                        record_id=record_id,
+                        expected_revision=expected_revision,
+                        markdown_text=normalized_text,
+                        edit_source=edit_source,
+                        now=updated_at,
                     )
                 except ConfirmedSourceError as exc:
                     raise ConfirmedSourceApplicationError(
@@ -605,15 +602,16 @@ class ConfirmedSourceApplicationService:
                 expected_generation=snapshot_generation,
             )
 
+        enriched_items = enrich_review_items(
+            adaptations=suitability.adaptations,
+            issue_namespace=f"{record_id}:{generation}",
+            document_text=normalized_text,
+        )
         adaptation_notice = [
-            record.model_dump()
-            for record in suitability.adaptations
-            if record.classification == "adaptation_notice"
+            record for record in enriched_items if record["classification"] == "adaptation_notice"
         ]
         content_check = [
-            record.model_dump()
-            for record in suitability.adaptations
-            if record.classification == "content_check"
+            record for record in enriched_items if record["classification"] == "content_check"
         ]
         assert new_revision is not None
         assert new_hash is not None
@@ -736,7 +734,11 @@ class ConfirmedSourceApplicationService:
             original_input_id=original_input_id,
             confirmed_source=updated_source,
         )
-        quality = _candidate_quality_json(suitability=suitability)
+        quality = _candidate_quality_json(
+            suitability=suitability,
+            issue_namespace=f"{record_id}:{generation}",
+            document_text=normalized_text,
+        )
 
         try:
             await supersede_ready_candidates_for_locked_record(
@@ -748,8 +750,7 @@ class ConfirmedSourceApplicationService:
             )
         except CandidateWriteLockError as exc:
             raise ConfirmedSourceApplicationError(
-                f"confirmed source update failed to supersede ready "
-                f"candidates: {exc}"
+                f"confirmed source update failed to supersede ready candidates: {exc}"
             ) from exc
 
         await conn.execute(
@@ -848,10 +849,7 @@ class ConfirmedSourceApplicationService:
                     "outcome": suitability.outcome,
                     "flags": list(suitability.flags),
                     "reasons": list(suitability.reasons),
-                    "adaptations": [
-                        record.model_dump()
-                        for record in suitability.adaptations
-                    ],
+                    "adaptations": [record.model_dump() for record in suitability.adaptations],
                 },
                 "parser_identity": (
                     dict(normalized.parser_identity)
@@ -873,8 +871,7 @@ class ConfirmedSourceApplicationService:
         )
         if freeze_result.base_id is None:
             raise ConfirmedSourceApplicationError(
-                f"freeze persistence returned null base_id for record "
-                f"{record_id}"
+                f"freeze persistence returned null base_id for record {record_id}"
             )
 
         # 插入点 B（同一 _freeze 步骤）：source 冻结与 Stable
@@ -886,9 +883,7 @@ class ConfirmedSourceApplicationService:
                 now=now,
             )
         except ConfirmedSourceError as exc:
-            raise ConfirmedSourceApplicationError(
-                f"confirmed source freeze failed: {exc}"
-            ) from exc
+            raise ConfirmedSourceApplicationError(f"confirmed source freeze failed: {exc}") from exc
 
         try:
             await self._repository.set_active_base_and_mark_article_ready(
@@ -900,8 +895,7 @@ class ConfirmedSourceApplicationService:
             )
         except (ValueError, LookupError, RuntimeError) as exc:
             raise ConfirmedSourceApplicationError(
-                f"failed to mark reading_record {record_id} "
-                f"article_ready: {exc}"
+                f"failed to mark reading_record {record_id} article_ready: {exc}"
             ) from exc
 
         # Article RAG index auto-ensure (fail-soft)，镜像

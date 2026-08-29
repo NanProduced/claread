@@ -110,7 +110,7 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 # are also first-class main-reading content so the reading surface can
 # render them. image / image_ocr / footnote / unknown still MUST NOT
 # silently enter the main reading chain by default.
-_DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] = {
+_DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, StableDocumentInterpretationPolicy] = {
     # Narrative blocks -> main reading, scope = main_reading_text.
     "paragraph": dict(
         allowed_source_scope=["main_reading_text"],
@@ -226,7 +226,7 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
 
 def default_interpretation_policy_for(
     block_type: StableDocumentBlockType,
-) -> "StableDocumentInterpretationPolicy":
+) -> StableDocumentInterpretationPolicy:
     """Return the per-block-type default StableDocumentInterpretationPolicy.
 
     Callers should NOT mutate the returned instance; if a caller needs
@@ -299,9 +299,7 @@ class StableDocumentInterpretationPolicy(BaseModel):
             # An ignored block cannot also be RAG-eligible; this would
             # silently re-introduce flattened-table / ignored-image
             # content into RAG.
-            raise ValueError(
-                "default_route='ignored' requires rag_eligible=False"
-            )
+            raise ValueError("default_route='ignored' requires rag_eligible=False")
         return self
 
 
@@ -334,9 +332,7 @@ class StableDocumentBlock(BaseModel):
     # Typed Optional so the mode="before" validator can substitute the
     # per-block-type default; after that hook the value is always a
     # StableDocumentInterpretationPolicy.
-    interpretation_policy: "StableDocumentInterpretationPolicy | None" = Field(
-        default=None
-    )
+    interpretation_policy: StableDocumentInterpretationPolicy | None = Field(default=None)
     quality_json: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -376,9 +372,7 @@ class StableDocumentBlock(BaseModel):
             block_type = values.get("block_type")
             if block_type is None or block_type not in _DEFAULT_POLICY_BY_BLOCK_TYPE:
                 return values
-            values["interpretation_policy"] = default_interpretation_policy_for(
-                block_type
-            )
+            values["interpretation_policy"] = default_interpretation_policy_for(block_type)
             return values
 
         supplied = values["interpretation_policy"]
@@ -387,9 +381,7 @@ class StableDocumentBlock(BaseModel):
             block_type = values.get("block_type")
             if block_type is None or block_type not in _DEFAULT_POLICY_BY_BLOCK_TYPE:
                 return values
-            values["interpretation_policy"] = default_interpretation_policy_for(
-                block_type
-            )
+            values["interpretation_policy"] = default_interpretation_policy_for(block_type)
             return values
 
         if isinstance(supplied, dict):
@@ -398,9 +390,7 @@ class StableDocumentBlock(BaseModel):
                 block_type = values.get("block_type")
                 if block_type is None or block_type not in _DEFAULT_POLICY_BY_BLOCK_TYPE:
                     return values
-                values["interpretation_policy"] = default_interpretation_policy_for(
-                    block_type
-                )
+                values["interpretation_policy"] = default_interpretation_policy_for(block_type)
                 return values
             # Non-empty dict: explicit caller policy, leave untouched so
             # the Candidate confirm flow can override the per-block-type
@@ -417,13 +407,11 @@ class StableDocumentBlock(BaseModel):
         end = self.canonical_text_end_utf16
         if (start is None) != (end is None):
             raise ValueError(
-                "canonical_text_start_utf16 and canonical_text_end_utf16 "
-                "must be set together"
+                "canonical_text_start_utf16 and canonical_text_end_utf16 must be set together"
             )
         if start is not None and end is not None and end <= start:
             raise ValueError(
-                "canonical_text_end_utf16 must be greater than "
-                "canonical_text_start_utf16"
+                "canonical_text_end_utf16 must be greater than canonical_text_start_utf16"
             )
         return self
 
@@ -432,9 +420,7 @@ class StableDocumentBlock(BaseModel):
         if self.block_type in _STRUCTURAL_BLOCK_TYPES:
             return self
         if not self.text_content:
-            raise ValueError(
-                f"text_content is required for block_type={self.block_type!r}"
-            )
+            raise ValueError(f"text_content is required for block_type={self.block_type!r}")
         return self
 
     @field_validator("parent_block_id")
@@ -526,3 +512,93 @@ class ConfirmedSourceDocument(BaseModel):
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: ConfirmedSourceDocumentStatus = "draft"
     edit_source: ConfirmedSourceEditSource = "initial"
+
+
+# ---------------------------------------------------------------------------
+# R8 — Structured Review Item contract.
+# Mirrors the frozen Review-Item / Evidence minimal capability contract in
+# apps/web/docs/design/surface-read-intake-content-check.md §13.1:
+# issue_id / tier / target_scope / source_anchor / anchor_hash /
+# evidence{excerpt, proposed_patch} / source_media_coordinate.
+# silent 与 adaptation_notice 分类行为不变；Routine / Attention 是
+# content_check 内部的产品 tier，不是后端 classification 的替代枚举。
+# ---------------------------------------------------------------------------
+
+ReviewIssueTier = Literal["attention", "routine"]
+
+ReviewIssueTargetScope = Literal["document", "range"]
+
+# Mirrors AdaptationClassification in reader_input_adapter (closed
+# three-level set). Kept here to avoid a circular import
+# (reader_input_adapter imports StableDocumentBlock from this module);
+# test_review_item_enrichment.py / the response DTO tests keep the sets
+# in sync with the canonical literal.
+ReviewItemClassification = Literal[
+    "silent",
+    "adaptation_notice",
+    "content_check",
+]
+
+
+class ReviewIssueEvidence(BaseModel):
+    """Per-issue evidence fields; both degrade to ``None`` when the backend
+    cannot derive them exactly (no fuzzy guessing)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    excerpt: str | None = None
+    proposed_patch: str | None = None
+
+
+class ReviewSourceAnchor(BaseModel):
+    """Structured anchor for a local review item: ``block_id`` OR a
+    UTF-16 range (offsets must be set together)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str | None = None
+    start_utf16: int | None = Field(default=None, ge=0)
+    end_utf16: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _offset_pair(self) -> ReviewSourceAnchor:
+        start = self.start_utf16
+        end = self.end_utf16
+        if (start is None) != (end is None):
+            raise ValueError("start_utf16 and end_utf16 must be set together")
+        if start is not None and end is not None and end <= start:
+            raise ValueError("end_utf16 must be greater than start_utf16")
+        return self
+
+
+class ReviewMediaCoordinate(BaseModel):
+    """Optional original-media coordinate (page / bbox) for an issue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int | None = Field(default=None, ge=1)
+    bbox: list[int] | None = None
+
+
+class StructuredReviewItem(BaseModel):
+    """One structured review item carried in confirmed-source responses and
+    persisted inside ``quality_json.suitability.adaptations``.
+
+    ``code`` / ``message`` / ``classification`` preserve the backend
+    classification verbatim. The remaining fields are the R8 review-item
+    contract fields; evidence that cannot be derived exactly degrades to
+    ``null`` (never guessed via text similarity).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1)
+    message: str = ""
+    classification: ReviewItemClassification
+    issue_id: str | None = Field(default=None, min_length=1)
+    tier: ReviewIssueTier | None = None
+    target_scope: ReviewIssueTargetScope | None = None
+    source_anchor: ReviewSourceAnchor | None = None
+    anchor_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    evidence: ReviewIssueEvidence | None = None
+    source_media_coordinate: ReviewMediaCoordinate | None = None

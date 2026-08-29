@@ -37,12 +37,12 @@ from app.schemas.reader_input_adapter import (
     InputSuitabilityRequest,
     InputSuitabilityResult,
 )
+from app.services.reader_orchestration._text import (
+    resolve_default_reader_language,
+)
 from app.services.reader_orchestration.article_rag_auto_ensure_service import (
     ArticleRagAutoEnsureService,
     build_default_auto_ensure_service,
-)
-from app.services.reader_orchestration._text import (
-    resolve_default_reader_language,
 )
 from app.services.reader_orchestration.base_builder import (
     AUTO_SEGMENTER_POLICY,
@@ -87,10 +87,12 @@ MATERIALIZATION_SOURCE = "extracted_artifact_materialization"
 
 # content_type → InputAdapterSourceType mapping for text artifacts.
 # application/octet-stream is resolved by source_filename extension.
-_MARKDOWN_CONTENT_TYPES: frozenset[str] = frozenset({
-    "text/markdown",
-    "text/x-markdown",
-})
+_MARKDOWN_CONTENT_TYPES: frozenset[str] = frozenset(
+    {
+        "text/markdown",
+        "text/x-markdown",
+    }
+)
 _PLAIN_CONTENT_TYPES: frozenset[str] = frozenset({"text/plain"})
 
 # 解析结果共享: single module-level parser used to pre-parse the
@@ -131,11 +133,13 @@ class ExtractedArtifactMaterializationError(ValueError):
 # reason_codes that the materialization worker maps to ``superseded``:
 # the record has advanced past the materialization point, so the job is
 # no longer relevant. All other reason_codes map to ``failed_terminal``.
-MATERIALIZATION_SUPERSEDED_REASONS: frozenset[str] = frozenset({
-    "stale_generation",
-    "active_base_already_exists",
-    "materialization_already_run",
-})
+MATERIALIZATION_SUPERSEDED_REASONS: frozenset[str] = frozenset(
+    {
+        "stale_generation",
+        "active_base_already_exists",
+        "materialization_already_run",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,9 +495,7 @@ class ExtractedArtifactMaterializationService:
         # The parser is deterministic and the source text is immutable
         # within the transaction, so sharing is safe.
         preparsed = _MARKDOWN_PARSER.parse(_normalize_source_text(source_text))
-        suitability = evaluate_input_suitability(
-            suitability_request, preparsed=preparsed
-        )
+        suitability = evaluate_input_suitability(suitability_request, preparsed=preparsed)
 
         # 6. Branch on outcome
         if suitability.outcome == "stable_document_ready":
@@ -611,8 +613,7 @@ class ExtractedArtifactMaterializationService:
         )
         if freeze_result.base_id is None:
             raise ExtractedArtifactMaterializationError(
-                f"freeze persistence returned null base_id for record "
-                f"{record_id}",
+                f"freeze persistence returned null base_id for record {record_id}",
                 reason_code="freeze_persistence_failed",
             )
 
@@ -721,7 +722,11 @@ class ExtractedArtifactMaterializationService:
             original_input_id=input_id,
             confirmed_source=confirmed_source,
         )
-        quality = _candidate_quality_json(suitability=suitability)
+        quality = _candidate_quality_json(
+            suitability=suitability,
+            issue_namespace=f"{record_id}:{generation}",
+            document_text=source_text,
+        )
 
         # Supersede any existing ready candidates for this (record_id,
         # generation) immediately before inserting the new ready
@@ -741,8 +746,7 @@ class ExtractedArtifactMaterializationService:
             )
         except CandidateWriteLockError as exc:
             raise ExtractedArtifactMaterializationError(
-                f"Failed to supersede existing ready candidates during "
-                f"materialization: {exc}",
+                f"Failed to supersede existing ready candidates during materialization: {exc}",
                 reason_code="caller_transaction_required",
             ) from exc
 

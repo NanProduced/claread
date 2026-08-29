@@ -48,6 +48,9 @@ from app.services.reader_orchestration.repository import (
     lock_record_for_candidate_write,
     supersede_ready_candidates_for_locked_record,
 )
+from app.services.reader_orchestration.review_item_enrichment import (
+    enrich_review_items,
+)
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE,
     _READING_RECORD_SOURCE_TYPE_BY_INPUT_SOURCE,
@@ -129,9 +132,7 @@ class CandidateDocumentCreationService:
         client_record_id: str | None = None,
         language: str | None = "en",
         now: datetime | None = None,
-        reading_goal: ReaderOrchestrationReadingGoal = (
-            DEFAULT_READER_ORCHESTRATION_READING_GOAL
-        ),
+        reading_goal: ReaderOrchestrationReadingGoal = (DEFAULT_READER_ORCHESTRATION_READING_GOAL),
         reading_variant: ReaderOrchestrationReadingVariant = (
             DEFAULT_READER_ORCHESTRATION_READING_VARIANT
         ),
@@ -267,8 +268,7 @@ class CandidateDocumentCreationService:
                             )
                         except CandidateWriteLockError as exc:
                             raise CandidateDocumentCreationError(
-                                "Candidate write lock failed during "
-                                f"creation: {exc}"
+                                f"Candidate write lock failed during creation: {exc}"
                             ) from exc
                         # Supersede any existing ready candidates for this
                         # (record_id, generation) immediately before
@@ -286,8 +286,7 @@ class CandidateDocumentCreationService:
                             )
                         except CandidateWriteLockError as exc:
                             raise CandidateDocumentCreationError(
-                                "Candidate supersede failed during "
-                                f"creation: {exc}"
+                                f"Candidate supersede failed during creation: {exc}"
                             ) from exc
                         await _insert_candidate_document(
                             conn,
@@ -302,14 +301,14 @@ class CandidateDocumentCreationService:
                             original_input_id=original_input_id,
                             suitability=suitability,
                             created_at=created_at,
+                            document_text=_normalize_source_text(text),
                             confirmed_source=confirmed_source,
                         )
                     except CandidateDocumentCreationError:
                         raise
                     except Exception as exc:
                         raise CandidateDocumentCreationError(
-                            "Failed to persist the candidate-required input "
-                            f"envelope: {exc}"
+                            f"Failed to persist the candidate-required input envelope: {exc}"
                         ) from exc
         except CandidateDocumentCreationError:
             raise
@@ -464,6 +463,7 @@ async def _insert_candidate_document(
     original_input_id: UUID,
     suitability: InputSuitabilityResult,
     created_at: datetime,
+    document_text: str | None = None,
     confirmed_source: ConfirmedSourceDocument | None = None,
 ) -> None:
     await conn.execute(
@@ -512,7 +512,13 @@ async def _insert_candidate_document(
                 confirmed_source=confirmed_source,
             )
         ),
-        jsonb_param(_candidate_quality_json(suitability=suitability)),
+        jsonb_param(
+            _candidate_quality_json(
+                suitability=suitability,
+                issue_namespace=f"{record_id}:1",
+                document_text=document_text,
+            )
+        ),
         created_at,
     )
 
@@ -543,7 +549,19 @@ def _candidate_source_refs_json(
 def _candidate_quality_json(
     *,
     suitability: InputSuitabilityResult,
+    issue_namespace: str | None = None,
+    document_text: str | None = None,
 ) -> dict[str, Any]:
+    if issue_namespace is None:
+        adaptations = [record.model_dump() for record in suitability.adaptations]
+    else:
+        # R8 — structured review items: enrich content_check records with
+        # issue_id / tier / target_scope / anchor / evidence contract fields.
+        adaptations = enrich_review_items(
+            adaptations=suitability.adaptations,
+            issue_namespace=issue_namespace,
+            document_text=document_text,
+        )
     return {
         "candidate_creation_version": _CANDIDATE_CREATION_VERSION,
         "suitability": {
@@ -555,9 +573,7 @@ def _candidate_quality_json(
             "natural_language_score": suitability.natural_language_score,
             # L1: three-level adaptation records (silent /
             # adaptation_notice / content_check).
-            "adaptations": [
-                record.model_dump() for record in suitability.adaptations
-            ],
+            "adaptations": adaptations,
         },
     }
 
@@ -589,11 +605,7 @@ def _build_candidate_blocks(
     # of truth，内容格式（而非输入来源）决定是否保留 Markdown 结构。
     # 粘贴的 Markdown（pasted_text）与 markdown_file 走同一条 parser
     # 路径；无 Markdown 标记的纯文本保持空行分段的纯文本行为。
-    parse_result = (
-        preparsed
-        if preparsed is not None
-        else _MARKDOWN_PARSER.parse(normalized_text)
-    )
+    parse_result = preparsed if preparsed is not None else _MARKDOWN_PARSER.parse(normalized_text)
     content_format = detect_input_format(
         source_type=source_type,
         parse_result=parse_result,
@@ -696,11 +708,7 @@ def _build_markdown_drafts_from_parser(
     # creation service) may already have parsed for the gate, so the
     # same MarkdownParseResult is threaded through to avoid a second
     # parse on the same text.
-    result = (
-        parse_result
-        if parse_result is not None
-        else _MARKDOWN_PARSER.parse(source_text)
-    )
+    result = parse_result if parse_result is not None else _MARKDOWN_PARSER.parse(source_text)
     title: str | None = None
     drafts: list[_BlockDraft] = []
 

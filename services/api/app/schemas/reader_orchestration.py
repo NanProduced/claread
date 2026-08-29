@@ -12,7 +12,10 @@ from app.contracts.annotation import (
     compute_text_range_hash,
     utf16_code_unit_length,
 )
-from app.schemas.reader_documents import CandidateReadingDocumentStatus
+from app.schemas.reader_documents import (
+    CandidateReadingDocumentStatus,
+    StructuredReviewItem,
+)
 from app.schemas.reader_input_adapter import (
     AdaptationRecord,
     InputAdapterSourceType,
@@ -148,9 +151,7 @@ ReaderOrchestrationReadingVariant = Literal[
 READER_ORCHESTRATION_GOAL_VARIANT_MAP: dict[
     ReaderOrchestrationReadingGoal, frozenset[ReaderOrchestrationReadingVariant]
 ] = {
-    "daily_reading": frozenset(
-        {"beginner_reading", "intermediate_reading", "intensive_reading"}
-    ),
+    "daily_reading": frozenset({"beginner_reading", "intermediate_reading", "intensive_reading"}),
     "exam": frozenset({"gaokao", "cet", "kaoyan", "tem", "ielts_toefl"}),
 }
 
@@ -158,9 +159,7 @@ READER_ORCHESTRATION_GOAL_VARIANT_MAP: dict[
 # to backfill existing rows, by submit schemas as field defaults, and by the
 # snapshot model so legacy fixtures remain valid. Do not duplicate these in
 # workers or in source_metadata.
-DEFAULT_READER_ORCHESTRATION_READING_GOAL: ReaderOrchestrationReadingGoal = (
-    "daily_reading"
-)
+DEFAULT_READER_ORCHESTRATION_READING_GOAL: ReaderOrchestrationReadingGoal = "daily_reading"
 DEFAULT_READER_ORCHESTRATION_READING_VARIANT: ReaderOrchestrationReadingVariant = (
     "intermediate_reading"
 )
@@ -673,6 +672,7 @@ class ReaderSemanticOutlineProjection(BaseModel):
     nodes: list[ReaderSemanticOutlineNode] = Field(default_factory=list)
     diagnostics: ReaderSemanticOutlineDiagnostics
 
+
 class ReaderSnapshotLayer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -798,9 +798,7 @@ class ReaderPlateSnapshot(BaseModel):
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)
     parsed_decisions: list[ReaderSnapshotParsedDecision] = Field(default_factory=list)
     value: list[dict[str, Any]] = Field(default_factory=list)
-    stable_document_tree: list[ReaderStableDocumentBlockNode] = Field(
-        default_factory=list
-    )
+    stable_document_tree: list[ReaderStableDocumentBlockNode] = Field(default_factory=list)
     # Optional trusted published ready|partial only; else None → JSON null.
     semantic_outline: ReaderSemanticOutlineProjection | None = None
     analysis_progress: ReaderAnalysisProgress
@@ -839,9 +837,7 @@ class ReaderStableReadyInputSubmitRequest(BaseModel):
 
     @field_validator("source_metadata")
     @classmethod
-    def _reject_reserved_strategy_keys(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _reject_reserved_strategy_keys(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _reject_reserved_strategy_keys_in_source_metadata(value)
 
     @model_validator(mode="after")
@@ -1035,9 +1031,7 @@ class ReaderSourceArtifactSubmitInputRequest(BaseModel):
 
     @field_validator("source_metadata")
     @classmethod
-    def _reject_reserved_strategy_keys(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _reject_reserved_strategy_keys(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _reject_reserved_strategy_keys_in_source_metadata(value)
 
     @model_validator(mode="after")
@@ -1184,12 +1178,8 @@ class ReaderCandidateDocumentPreviewDto(BaseModel):
     preview_text: str
     is_truncated: bool
     total_char_count: int = Field(ge=0)
-    document_outline: list[ReaderCandidateDocumentOutlineItemDto] = Field(
-        default_factory=list
-    )
-    risk_items: list[ReaderCandidateDocumentRiskItemDto] = Field(
-        default_factory=list
-    )
+    document_outline: list[ReaderCandidateDocumentOutlineItemDto] = Field(default_factory=list)
+    risk_items: list[ReaderCandidateDocumentRiskItemDto] = Field(default_factory=list)
 
 
 class ReaderCandidateDocumentReadResponseDto(BaseModel):
@@ -1308,7 +1298,7 @@ class ReaderConfirmedSourceGetResponse(BaseModel):
     # 无 candidate 时 {} / []。
     quality: dict[str, Any] = Field(default_factory=dict)
     adaptation_notice: list[AdaptationRecord] = Field(default_factory=list)
-    content_check: list[AdaptationRecord] = Field(default_factory=list)
+    content_check: list[StructuredReviewItem] = Field(default_factory=list)
 
 
 class ReaderConfirmedSourceUpdateRequest(BaseModel):
@@ -1349,7 +1339,7 @@ class ReaderConfirmedSourceUpdateResponse(BaseModel):
     candidate: ReaderConfirmedSourceCandidateSummary | None = None
     quality: dict[str, Any] = Field(default_factory=dict)
     adaptation_notice: list[AdaptationRecord] = Field(default_factory=list)
-    content_check: list[AdaptationRecord] = Field(default_factory=list)
+    content_check: list[StructuredReviewItem] = Field(default_factory=list)
     snapshot: ReaderPlateSnapshot | None = None
 
 
@@ -1905,10 +1895,7 @@ class ReaderAnalysisProgress(BaseModel):
             raise ValueError("order_index values must be unique")
         if order_indexes != sorted(order_indexes):
             raise ValueError("sections must be ordered by order_index")
-        if (
-            self.active_section_id is not None
-            and self.active_section_id not in section_ids
-        ):
+        if self.active_section_id is not None and self.active_section_id not in section_ids:
             raise ValueError("active_section_id must exist in sections")
         return self
 
