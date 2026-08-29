@@ -38,6 +38,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import type { Descendant } from "platejs";
 
 import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
+import { PARITY_FIXTURES } from "@/lib/reader-plate/markdown/__tests__/fixtures";
 
 import {
   MarkdownTextInput,
@@ -85,6 +86,70 @@ afterEach(() => {
 });
 
 describe("MarkdownTextInput value lifecycle (real Plate)", () => {
+  it("uses the Reader semantic typography contract for the strict shared Markdown subset", async () => {
+    const fixture = PARITY_FIXTURES.find(({ name }) => name === "r14_complex");
+    if (!fixture) throw new Error("Missing r14_complex parity fixture");
+    const { ref, editorEl } = renderEditor();
+
+    await act(async () => {
+      ref.current?.setValue(fixture.input);
+    });
+
+    expect(editorEl.classList).toContain("reader-record-plate-document");
+    expect(editorEl.querySelector("p")?.classList).toContain(
+      "reader-record-plate-markdown-p",
+    );
+    expect(editorEl.querySelector("h1")?.className).toContain(
+      "reader-record-plate-markdown-heading--h1",
+    );
+    expect(editorEl.querySelector("ul")?.classList).toContain(
+      "reader-record-plate-markdown-list",
+    );
+    expect(editorEl.querySelector("blockquote")?.classList).toContain(
+      "reader-record-plate-markdown-blockquote",
+    );
+    expect(editorEl.querySelector("pre")?.classList).toContain(
+      "reader-record-plate-markdown-code-block",
+    );
+    expect(editorEl.querySelector("p code")?.classList).toContain(
+      "reader-record-plate-inline-code",
+    );
+    expect(editorEl.querySelector("a")?.classList).toContain(
+      "reader-record-plate-link",
+    );
+    expect(editorEl.querySelector("s")?.textContent).toBe("strikethrough");
+  });
+
+  it("renders an unsafe Markdown link as plain text while preserving its source", async () => {
+    const unsafeMarkdown = "[click](javascript:alert(1))";
+    const { ref, editorEl } = renderEditor();
+
+    await act(async () => {
+      ref.current?.setValue(unsafeMarkdown);
+    });
+
+    expect(editorEl.querySelector("a")).toBeNull();
+    const unsafeText = editorEl.querySelector(
+      '[data-markdown-unsafe-link="true"]',
+    );
+    expect(unsafeText?.textContent).toBe("click");
+    expect(ref.current?.getMarkdown()).toContain("[click](javascript:");
+  });
+
+  it("keeps normalization-only parser differences explicit instead of claiming parity", () => {
+    const expectedSoftSkipNames = [
+      "footnote",
+      "raw_html",
+      "unclosed_fence",
+      "unsafe_link",
+    ];
+    const softSkipNames = PARITY_FIXTURES.filter(({ softSkip }) => softSkip).map(
+      ({ name }) => name,
+    );
+
+    expect(softSkipNames).toEqual(expectedSoftSkipNames);
+  });
+
   it("propagates structured Markdown to onChange and renders h2/h3/em structure", async () => {
     const { ref, onChange, editorEl } = renderEditor();
 

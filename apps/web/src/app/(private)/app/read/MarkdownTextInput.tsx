@@ -57,9 +57,8 @@
  *   @/components/ui/*），把 @plate/editor Editor 的关键 className
  *   （whitespace-pre-wrap break-words outline-none [&_strong]:font-bold）
  *   内联到 PlateContent，解决"无换行"问题。
- * - element/leaf component 用自包含 Tailwind utility class，显式给出
- *   字号/间距/list marker/等宽字体等（解决"无字体大小"问题）。
- *   不依赖 reader 的 --reader-record-note-* CSS 变量（输入页未定义）。
+ * - element/leaf component 复用 Reader 已有 Markdown 语义 class；编辑区
+ *   仍单独持有 padding、caret、placeholder 与 contentEditable 行为。
  *
  * 边界：本组件只负责输入与实时渲染，不做样式打磨（UI/UX 后续交接）。
  */
@@ -131,19 +130,20 @@ import {
 import { normalizeCalloutDisplayIcons } from "@/lib/source-callout/source-callout-display-icon";
 import { cn } from "@/lib/cn";
 import {
+  isUnsafeHref,
   lintMarkdownInput,
   type MarkdownLintResult,
 } from "./markdown-lint";
 import { collectScrollableAncestors, createArticleStartScrollRestorer } from "./paste-scroll-restore";
 
 // ---------------------------------------------------------------------------
-// 最小 element / leaf component（自包含，不耦合 reader 上下文）
-// 显式 Tailwind utility class，不依赖 reader CSS 变量。
+// 最小 element / leaf component：复用 Reader 的基础语义 class，但不引入
+// Reader projection、toolbar、translation 或 Ask chrome。
 // ---------------------------------------------------------------------------
 
 function MarkdownParagraph({ children, attributes }: PlateElementProps) {
   return (
-    <p {...attributes} className="my-2.5">
+    <p {...attributes} className="reader-record-plate-markdown-p">
       {children}
     </p>
   );
@@ -151,18 +151,13 @@ function MarkdownParagraph({ children, attributes }: PlateElementProps) {
 
 function MarkdownHeading({ children, element, attributes }: PlateElementProps) {
   const type = (element as { type?: string }).type ?? "h6";
-  const sizeClass: Record<string, string> = {
-    h1: "mb-3 mt-8 text-[1.875rem] font-semibold leading-[1.2] tracking-[-0.025em]",
-    h2: "mb-3 mt-7 text-2xl font-semibold leading-[1.24] tracking-[-0.02em]",
-    h3: "mb-2 mt-6 text-xl font-semibold leading-[1.3] tracking-[-0.015em]",
-    h4: "mb-2 mt-5 text-[1.08rem] font-semibold leading-[1.4]",
-    h5: "mb-1.5 mt-4 text-base font-semibold leading-[1.45]",
-    h6: "mb-1.5 mt-4 text-base font-medium leading-[1.45] text-ink-soft",
-  };
-  const className = sizeClass[type] ?? sizeClass.h6;
+  const level = /^h[1-6]$/.test(type) ? type : "h6";
   const Component = type as React.ElementType;
   return (
-    <Component {...attributes} className={className}>
+    <Component
+      {...attributes}
+      className={`reader-record-plate-markdown-heading reader-record-plate-markdown-heading--${level}`}
+    >
       {children}
     </Component>
   );
@@ -172,7 +167,7 @@ function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
   return (
     <blockquote
       {...attributes}
-      className="my-4 border-l-2 border-hairline py-0.5 pl-4 text-ink-soft"
+      className="reader-record-plate-markdown-blockquote text-ink-soft"
     >
       {children}
     </blockquote>
@@ -181,7 +176,7 @@ function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
 
 function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ul {...attributes} className="my-3 list-disc pl-6 marker:text-subtle [&_li+li]:mt-1">
+    <ul {...attributes} className="reader-record-plate-markdown-list list-disc">
       {children}
     </ul>
   );
@@ -189,7 +184,7 @@ function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
 
 function MarkdownOrderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ol {...attributes} className="my-3 list-decimal pl-6 marker:text-subtle [&_li+li]:mt-1">
+    <ol {...attributes} className="reader-record-plate-markdown-list list-decimal">
       {children}
     </ol>
   );
@@ -207,7 +202,7 @@ function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
   return (
     <pre
       {...attributes}
-      className="my-4 overflow-x-auto rounded-[8px] border border-hairline/70 bg-surface-raised/55 p-4 font-mono text-[0.875rem] leading-[1.65]"
+      className="reader-record-plate-markdown-code-block overflow-x-auto font-mono"
     >
       <code>{children}</code>
     </pre>
@@ -269,13 +264,24 @@ function MarkdownTableCell({ children, attributes, element }: PlateElementProps)
 
 function MarkdownLink({ children, element, attributes }: PlateElementProps) {
   const url = (element as { url?: string }).url ?? "#";
+  if (isUnsafeHref(url)) {
+    return (
+      <span
+        {...attributes}
+        className="break-words"
+        data-markdown-unsafe-link="true"
+      >
+        {children}
+      </span>
+    );
+  }
   return (
     <a
       {...attributes}
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="break-words text-lens-blue underline decoration-lens-blue/45 underline-offset-2 hover:decoration-lens-blue"
+      className="reader-record-plate-link break-words"
     >
       {children}
     </a>
@@ -294,7 +300,7 @@ function MarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
   return (
     <code
       {...attributes}
-      className="rounded bg-surface/60 px-1 py-0.5 font-mono text-[0.9em]"
+      className="reader-record-plate-inline-code"
     >
       {children}
     </code>
@@ -302,7 +308,7 @@ function MarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
 }
 
 function MarkdownStrikethroughLeaf({ children, attributes }: PlateLeafProps) {
-  return <span {...attributes} className="line-through">{children}</span>;
+  return <s {...attributes} className="line-through">{children}</s>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,6 +1206,7 @@ export const MarkdownTextInput = forwardRef<
         aria-describedby={ariaDescribedBy}
         className={cn(
           "min-h-0 flex-1 resize-none overflow-y-auto bg-transparent",
+          "reader-record-plate-document reader-record-plate-type-md",
           "relative whitespace-pre-wrap break-words outline-none",
           // 文档首块不从段落 margin 开始：caret/placeholder 的排版原点
           // 就是 padding 原点，二者 baseline 严格一致。

@@ -2437,6 +2437,26 @@ select {
   font-weight: 600;
 }
 
+.reader-record-plate-link {
+  color: color-mix(in srgb, var(--lens-blue) 78%, var(--ink) 22%);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--lens-blue) 42%, transparent);
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.16em;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
+}
+
+.reader-record-plate-link:hover {
+  color: var(--lens-blue);
+  text-decoration-color: currentColor;
+}
+
+.reader-record-plate-link:focus-visible {
+  border-radius: 0.18em;
+  outline: 2px solid color-mix(in srgb, var(--focus-ring) 36%, transparent);
+  outline-offset: 2px;
+}
+
 .reader-record-mini-rail-tick[data-tick-length="lg"] {
   width: 1.25rem;
 }

@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeAnalysisProgressDto } from "@/test/fixtures/reader-analysis-progress";
+import { PARITY_FIXTURES } from "@/lib/reader-plate/markdown/__tests__/fixtures";
 
 import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
@@ -1727,6 +1728,65 @@ describe("ReaderRecordPlateSurface", () => {
     expect(blockKitSource).not.toMatch(/Grammar X-Ray/);
     expect(blockKitSource).not.toMatch(
       /reader-record-plate-inline-code[^`]*bg-muted\/50[^`]*font-mono/,
+    );
+  });
+
+  it("keeps the strict shared Markdown fixture on the Reader semantic typography contract", async () => {
+    const fixture = PARITY_FIXTURES.find(({ name }) => name === "r14_complex");
+    if (!fixture) throw new Error("Missing r14_complex parity fixture");
+    const snapshot = {
+      ...makeSnapshot(),
+      value: [
+        makeUnit({
+          grammarMarks: [makeGrammarMark({ note: fixture.input })],
+        }),
+      ],
+    };
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={snapshot} />,
+    );
+    const callout = container.querySelector<HTMLElement>(
+      '[data-callout-variant="grammar"]',
+    );
+    const toggle = callout?.querySelector<HTMLButtonElement>(
+      '[data-reader-record-callout-toggle="grammar"]',
+    );
+    if (!callout || !toggle) throw new Error("Expected grammar callout");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(callout.dataset.readerRecordCalloutCollapsed).toBe("false");
+    });
+
+    expect(callout.querySelector("p")?.classList).toContain(
+      "reader-record-plate-markdown-p",
+    );
+    expect(callout.querySelector("h1")?.className).toContain(
+      "reader-record-plate-markdown-heading--h1",
+    );
+    expect(callout.querySelector("ul")?.classList).toContain(
+      "reader-record-plate-markdown-list",
+    );
+    expect(callout.querySelector("blockquote")?.classList).toContain(
+      "reader-record-plate-markdown-blockquote",
+    );
+    expect(callout.querySelector("pre")?.classList).toContain(
+      "reader-record-plate-markdown-code-block",
+    );
+    expect(callout.querySelector("p code")?.classList).toContain(
+      "reader-record-plate-inline-code",
+    );
+    expect(callout.querySelector("a")?.classList).toContain(
+      "reader-record-plate-link",
+    );
+    expect(callout.querySelector("s")?.textContent).toBe("strikethrough");
+
+    const cssSource = readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8");
+    expect(cssSource).toMatch(
+      /\.reader-record-plate-link\s*\{[\s\S]*?text-decoration-line:\s*underline/,
+    );
+    expect(cssSource).toMatch(
+      /\.reader-record-plate-link:focus-visible\s*\{[\s\S]*?outline:/,
     );
   });
 

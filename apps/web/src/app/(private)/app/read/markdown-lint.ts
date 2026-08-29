@@ -88,7 +88,7 @@ const INLINE_HTML_PATTERN = /<[a-zA-Z][^>]*>/g;
  *   - 无 scheme（相对路径/锚点）→ 安全
  *   - scheme 不在白名单 → 不安全
  */
-function isUnsafeHref(href: string): boolean {
+export function isUnsafeHref(href: string): boolean {
   if (!href) return false;
   // 与后端 urlparse(href).scheme 行为对齐：取 scheme 部分（不区分大小写）。
   // 后端允许无 scheme（相对链接/锚点）；前端用相同判断。
