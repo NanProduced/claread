@@ -28,7 +28,7 @@
 
 import { Fragment, type ReactNode } from "react";
 
-import { readerCodeLanguageLabel } from "@/components/editor/plugins/reader-code-highlight";
+import { readerCodeLanguageLabel, readerCodeNormalizedLanguage } from "@/components/editor/plugins/reader-code-highlight";
 import type {
   ReaderStructuredSourceBlock,
   ReaderStructuredSourceDiagnostic,
@@ -349,13 +349,15 @@ function renderCodeBlock(node: BlockTreeNode): ReactNode {
   const language = asString(node.block.payload_json.language);
   const fenced = asBoolean(node.block.payload_json.fenced);
   const closed = asBoolean(node.block.payload_json.closed);
-  const isMermaid = language === "mermaid";
+  // badge 展示与 mermaid 特判都基于统一归一化结果，而非原始字符串真值。
+  const normalizedLanguage = readerCodeNormalizedLanguage(language);
+  const isMermaid = normalizedLanguage === "mermaid";
   // Phase 3 / P2: visible language badge for non-mermaid code blocks.
   // Mermaid blocks already carry data-mermaid and are handled by a separate
   // static-render path; showing a "MERMAID" badge would be noise.
   // 语言标签与输入端共用同一显示函数（规格 §10）。
-  const hasLanguageBadge = Boolean(language) && !isMermaid;
   const languageLabel = readerCodeLanguageLabel(language);
+  const hasLanguageBadge = languageLabel !== null && !isMermaid;
   return (
     <pre
       key={node.block.block_id}

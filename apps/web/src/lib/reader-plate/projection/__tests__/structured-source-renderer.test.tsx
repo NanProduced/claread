@@ -1068,6 +1068,69 @@ describe("StructuredSourceRenderer", () => {
     });
   });
 
+  describe("code language normalization", () => {
+    function singleCodeBlock(language: string): ReaderStructuredSourceBlock[] {
+      return [
+        {
+          block_id: "b1",
+          block_type: "code_block",
+          text_content: "x = 1",
+          payload_json: { language },
+          parent_block_id: null,
+          order_index: 0,
+          source_range: { line_start: 1, line_end: 1 },
+        },
+      ];
+    }
+
+    it("does not render a badge for whitespace-only language", () => {
+      const { container } = render(
+        <StructuredSourceRenderer blocks={singleCodeBlock("   ")} />,
+      );
+
+      const pre = container.querySelector("pre");
+      expect(pre?.getAttribute("data-language")).toBe("   ");
+      expect(
+        pre?.querySelector('[data-testid="code-language-badge"]'),
+      ).toBeNull();
+    });
+
+    it.each([" Mermaid ", "MERMAID"])(
+      "treats %j as mermaid via normalized match (data-mermaid, no badge)",
+      (language) => {
+        const { container } = render(
+          <StructuredSourceRenderer blocks={singleCodeBlock(language)} />,
+        );
+
+        const pre = container.querySelector("pre");
+        expect(pre?.querySelector("code")?.getAttribute("data-mermaid")).toBe(
+          "true",
+        );
+        expect(
+          pre?.querySelector('[data-testid="code-language-badge"]'),
+        ).toBeNull();
+      },
+    );
+
+    it("keeps aliases and unknown languages rendering badges", () => {
+      const aliased = render(
+        <StructuredSourceRenderer blocks={singleCodeBlock("js")} />,
+      );
+      expect(
+        aliased.container.querySelector('[data-testid="code-language-badge"]')
+          ?.textContent,
+      ).toBe("JavaScript");
+
+      const unknown = render(
+        <StructuredSourceRenderer blocks={singleCodeBlock("definitely-unknown-lang")} />,
+      );
+      expect(
+        unknown.container.querySelector('[data-testid="code-language-badge"]')
+          ?.textContent,
+      ).toBe("definitely-unknown-lang");
+    });
+  });
+
   describe("raw_html fixture", () => {
     it("renders extracted_from attribute on paragraphs", () => {
       const { container } = render(

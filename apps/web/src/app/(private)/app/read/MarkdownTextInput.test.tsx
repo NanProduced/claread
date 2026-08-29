@@ -1254,4 +1254,36 @@ describe("input code block Reader parity (R8)", () => {
     expect(pre.querySelector('[data-testid="code-toolbar"]')).toBeNull();
     expect(pre.querySelector('[data-testid="code-copy-button"]')).toBeNull();
   });
+
+  it("burst edits A→B→C keep latest highlight and verbatim serialize", async () => {
+    const { ref, editorEl } = await renderWithFence("```python\na = 1\n```");
+
+    await act(async () => {
+      ref.current?.setValue("```python\nbb = 22\n```");
+    });
+    await act(async () => {
+      ref.current?.setValue("```python\nccc = 333\n```");
+    });
+
+    await waitFor(
+      () => {
+        expect(
+          editorEl.querySelector('[data-testid="input-code-language-badge"]')
+            ?.getAttribute("data-label"),
+        ).toBe("Python");
+        const lineTexts = Array.from(
+          editorEl.querySelectorAll("pre code [data-slate-node=\"element\"]"),
+        ).map((lineEl) => lineEl.textContent);
+        expect(lineTexts).toEqual(["ccc = 333"]);
+        expect(
+          editorEl.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+
+    const serialized = ref.current?.getMarkdown() ?? "";
+    expect(serialized).toMatch(/```python\nccc = 333\n```/);
+    expect(serialized).not.toMatch(/a = 1|bb = 22/);
+  });
 });
