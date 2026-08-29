@@ -39,6 +39,7 @@ import type { Descendant } from "platejs";
 
 import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
 import { PARITY_FIXTURES } from "@/lib/reader-plate/markdown/__tests__/fixtures";
+import { __inputCodeHighlightSchedulerState } from "@/components/editor/plugins/reader-code-highlight";
 
 import {
   MarkdownTextInput,
@@ -1285,5 +1286,56 @@ describe("input code block Reader parity (R8)", () => {
     const serialized = ref.current?.getMarkdown() ?? "";
     expect(serialized).toMatch(/```python\nccc = 333\n```/);
     expect(serialized).not.toMatch(/a = 1|bb = 22/);
+  });
+
+  it("real Slate replaces code block object identity on insertText and setValue (evidence)", () => {
+    const editor = createPlateEditor({ plugins: markdownTextInputPlugins });
+    const makeBlock = (text: string) => ({
+      type: "code_block",
+      lang: "python",
+      children: [{ type: "code_line", children: [{ text }] }],
+    });
+
+    editor.tf.setValue([makeBlock("aa = 1")] as never);
+    const beforeInsert = editor.children[0];
+    editor.tf.insertText("2", { at: { path: [0, 0, 0], offset: 6 } });
+    expect(editor.children[0]).not.toBe(beforeInsert);
+
+    const beforeSetValue = editor.children[0];
+    editor.tf.setValue([makeBlock("bb = 22")] as never);
+    expect(editor.children[0]).not.toBe(beforeSetValue);
+  });
+
+  it("real Slate burst (object replacement): only the latest version is tokenized and cached", async () => {
+    const { ref, editorEl } = await renderWithFence("```python\nr1 = 1\n```");
+
+    // 单个 act 内连续三次 setValue：三次 decorate 都发生在任何 timer 之前（确定性）。
+    await act(async () => {
+      ref.current?.setValue("```python\nr22 = 22\n```");
+      ref.current?.setValue("```python\nr333 = 333\n```");
+    });
+
+    await waitFor(
+      () => {
+        const lineTexts = Array.from(
+          editorEl.querySelectorAll("pre code [data-slate-node=\"element\"]"),
+        ).map((lineEl) => lineEl.textContent);
+        expect(lineTexts).toEqual(["r333 = 333"]);
+        expect(
+          editorEl.querySelectorAll(".reader-record-plate-code-token").length,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+    await waitFor(
+      () => __inputCodeHighlightSchedulerState().pendingKeys.length === 0,
+      { timeout: 5000 },
+    );
+
+    const { cacheKeys } = __inputCodeHighlightSchedulerState();
+    // 旧对象 identity 的任务不得缓存（被取消或判定 stale）。
+    expect(cacheKeys.some((key) => key.includes("r1 = 1"))).toBe(false);
+    expect(cacheKeys.some((key) => key.includes("r22 = 22"))).toBe(false);
+    expect(cacheKeys.some((key) => key.includes("r333 = 333"))).toBe(true);
   });
 });

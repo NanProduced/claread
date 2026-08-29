@@ -412,18 +412,42 @@ export type InputCodeTokenRange = {
 const inputCodeTokenCache = new Map<string, ThemedToken[][] | null>();
 const INPUT_CODE_TOKEN_CACHE_LIMIT = 512;
 
+/**
+ * 调度 slot = editor identity + code block path（真实 Slate 每次编辑都会
+ * 替换节点对象，不得使用 codeBlock 对象 identity）。waiter 记录 editor 与
+ * block path；timer fire 与 tokenize completion 都从 editor 当前树重新读取
+ * 该 path 判定 stale。
+ */
+type InputCodeWaiter = {
+  editor: InputCodeDecorateEditor;
+  blockPath: number[];
+};
+
 type PendingInputCodeEntry = {
-  blocks: Set<object>;
+  waiters: Map<string, InputCodeWaiter>;
   timerId: ReturnType<typeof setTimeout>;
 };
 
-// pending 按 code 文本 key 去重；entry 记录等待该 key 的 block 集合与定时器。
+// pending 按 code 文本 key 去重；entry 记录等待该 key 的 waiter 集合与定时器。
 const pendingInputCodeTokens = new Map<string, PendingInputCodeEntry>();
-// 每个 block 最新期望的 key（latest-wins 的 stale 判定基准）。
-const inputCodeBlockWantedKey = new WeakMap<object, string>();
-// block 当前挂在于哪个 key 的 entry 下（latest-wins 取消用）。
-const inputCodeBlockPendingKey = new WeakMap<object, string>();
-const inputCodeBlockEditor = new WeakMap<object, InputCodeDecorateEditor>();
+// waiter 当前挂在于哪个 key 的 entry 下（latest-wins 取消用）。
+const inputCodeSlotPendingKey = new Map<string, string>();
+
+const inputCodeEditorIds = new WeakMap<InputCodeDecorateEditor, number>();
+let inputCodeNextEditorId = 1;
+
+function inputCodeWaiterId(
+  editor: InputCodeDecorateEditor,
+  blockPath: number[],
+): string {
+  let id = inputCodeEditorIds.get(editor);
+  if (id === undefined) {
+    id = inputCodeNextEditorId;
+    inputCodeNextEditorId += 1;
+    inputCodeEditorIds.set(editor, id);
+  }
+  return `${id}:${blockPath.join(",")}`;
+}
 
 function inputCodeTokenCacheSet(key: string, tokens: ThemedToken[][] | null): void {
   if (!inputCodeTokenCache.has(key) && inputCodeTokenCache.size >= INPUT_CODE_TOKEN_CACHE_LIMIT) {
@@ -462,18 +486,47 @@ function inputCodeBlockText(codeBlock: unknown): string {
 }
 
 /**
- * latest-wins：该 block 在其他 key 下尚有挂起任务时先撤销——摘除 block，
- * entry 空了就取消定时器并删除 entry。burst 编辑只留最新版本的挂起任务。
+ * 从 editor 当前树重新读取 block path 上的 code block 状态。
+ * 三个时点（schedule / timer fire / tokenize completion）统一用它判定：
+ * 节点仍存在、仍是 code_block、language+code 的 cache key 是否仍等于任务 key。
  */
-function cancelStaleInputCodePending(block: object, newKey: string): void {
-  const prevKey = inputCodeBlockPendingKey.get(block);
+function readInputCodeBlockState(
+  editor: InputCodeDecorateEditor,
+  blockPath: number[],
+): { language: string | null; code: string; key: string } | null {
+  const api = editor.api as unknown as InputCodeDecorateApi;
+  const entry = api.node(blockPath);
+  const node = entry?.[0];
+  if (!node || (node as { type?: string }).type !== "code_block") {
+    return null;
+  }
+  const language = (node as { lang?: string | null }).lang ?? null;
+  const code = inputCodeBlockText(node);
+  if (!code) {
+    return null;
+  }
+  return { language, code, key: inputCodeTokenCacheKey(language, code) };
+}
+
+function inputCodeWaiterWants(waiter: InputCodeWaiter, key: string): boolean {
+  const state = readInputCodeBlockState(waiter.editor, waiter.blockPath);
+  return state !== null && state.key === key;
+}
+
+/**
+ * latest-wins：该 slot（editor+path）在其他 key 下尚有挂起任务时先撤销——
+ * 摘除 waiter，entry 空了就取消定时器并删除 entry。burst 编辑只留最新
+ * 版本的挂起任务；切换到 cache hit key 前同样先撤销。
+ */
+function cancelStaleInputCodePending(waiterId: string, newKey: string): void {
+  const prevKey = inputCodeSlotPendingKey.get(waiterId);
   if (prevKey === undefined || prevKey === newKey) {
     return;
   }
   const prevEntry = pendingInputCodeTokens.get(prevKey);
   if (prevEntry) {
-    prevEntry.blocks.delete(block);
-    if (prevEntry.blocks.size === 0) {
+    prevEntry.waiters.delete(waiterId);
+    if (prevEntry.waiters.size === 0) {
       clearTimeout(prevEntry.timerId);
       pendingInputCodeTokens.delete(prevKey);
     }
@@ -486,18 +539,22 @@ async function runInputCodeTokenize(
   language: string | null,
 ): Promise<void> {
   try {
-    // fire 时校验：entry 可能已被 latest-wins 取消。
-    const live = [...(pendingInputCodeTokens.get(key)?.blocks ?? [])].filter(
-      (block) => inputCodeBlockWantedKey.get(block) === key,
+    // fire 时校验：entry 可能已被 latest-wins 取消，或 waiter 已失效。
+    const entry = pendingInputCodeTokens.get(key);
+    if (!entry) {
+      return;
+    }
+    const live = [...entry.waiters.values()].filter((waiter) =>
+      inputCodeWaiterWants(waiter, key),
     );
     if (live.length === 0) {
       return;
     }
     const tokens = await readerCodeToTokens(code, language);
-    // 完成时再校验：期间全部过期则不缓存旧版本。
+    // 完成时再校验：从当前树重读，全部过期则不缓存旧版本。
     const stillWanted = [
-      ...(pendingInputCodeTokens.get(key)?.blocks ?? []),
-    ].some((block) => inputCodeBlockWantedKey.get(block) === key);
+      ...(pendingInputCodeTokens.get(key)?.waiters.values() ?? []),
+    ].some((waiter) => inputCodeWaiterWants(waiter, key));
     if (stillWanted) {
       inputCodeTokenCacheSet(key, tokens);
     }
@@ -505,14 +562,13 @@ async function runInputCodeTokenize(
     const waiting = pendingInputCodeTokens.get(key);
     if (waiting) {
       pendingInputCodeTokens.delete(key);
-      // 仅通知仍期望该 key 的 block 的 editor；过期完成不触发刷新。
+      // 仅通知仍期望该 key 的 waiter 的 editor；过期完成不触发刷新。
       const editors = new Set<InputCodeDecorateEditor>();
-      waiting.blocks.forEach((block) => {
-        if (inputCodeBlockWantedKey.get(block) === key) {
-          const editor = inputCodeBlockEditor.get(block);
-          if (editor) {
-            editors.add(editor);
-          }
+      waiting.waiters.forEach((waiter, waiterId) => {
+        if (inputCodeWaiterWants(waiter, key)) {
+          editors.add(waiter.editor);
+        } else if (inputCodeSlotPendingKey.get(waiterId) === key) {
+          inputCodeSlotPendingKey.delete(waiterId);
         }
       });
       editors.forEach((editor) => {
@@ -524,39 +580,36 @@ async function runInputCodeTokenize(
 
 function scheduleInputCodeTokens(
   editor: InputCodeDecorateEditor,
-  codeBlock: unknown,
+  blockPath: number[],
 ): void {
-  const language = (codeBlock as { lang?: string | null } | null)?.lang ?? null;
-  const code = inputCodeBlockText(codeBlock);
-  if (!code) {
+  // schedule 时点：从当前树重读（节点存在 / code_block / 当前 key）。
+  const state = readInputCodeBlockState(editor, blockPath);
+  if (!state) {
     return;
   }
-  const key = inputCodeTokenCacheKey(language, code);
-  const block = codeBlock as object;
-  inputCodeBlockWantedKey.set(block, key);
-  inputCodeBlockEditor.set(block, editor);
+  const { key } = state;
+  const waiterId = inputCodeWaiterId(editor, blockPath);
+  cancelStaleInputCodePending(waiterId, key);
+  inputCodeSlotPendingKey.set(waiterId, key);
   if (inputCodeTokenCache.has(key)) {
     return;
   }
-  cancelStaleInputCodePending(block, key);
   const entry = pendingInputCodeTokens.get(key);
   if (entry) {
-    entry.blocks.add(block);
-    inputCodeBlockPendingKey.set(block, key);
+    entry.waiters.set(waiterId, { editor, blockPath });
     return;
   }
-  if (resolveReaderCodeLanguage(language) === null) {
+  if (resolveReaderCodeLanguage(state.language) === null) {
     // 未知语言 fail-closed：负缓存，避免每次渲染重复解析。
     inputCodeTokenCacheSet(key, null);
     return;
   }
-  const blocks = new Set<object>([block]);
+  const waiters = new Map([[waiterId, { editor, blockPath } as InputCodeWaiter]]);
   // setTimeout：tokenize 与 redecorate 都不能发生在 render 期间。
   const timerId = setTimeout(() => {
-    void runInputCodeTokenize(key, code, language);
+    void runInputCodeTokenize(key, state.code, state.language);
   }, 0);
-  pendingInputCodeTokens.set(key, { blocks, timerId });
-  inputCodeBlockPendingKey.set(block, key);
+  pendingInputCodeTokens.set(key, { waiters, timerId });
 }
 
 /**
@@ -591,7 +644,7 @@ export function inputCodeBlockDecorate({
     return [];
   }
 
-  scheduleInputCodeTokens(editor, codeBlock);
+  scheduleInputCodeTokens(editor, path.slice(0, -2));
 
   const language = (codeBlock as { lang?: string | null }).lang ?? null;
   const code = inputCodeBlockText(codeBlock);
@@ -650,16 +703,14 @@ export function inputCodeBlockDecorate({
 }
 
 /**
- * 仅供单元测试观察调度内部状态（快照）；生产代码不得依赖。
+ * 仅供单元测试观察调度内部状态（只读快照）；生产代码不得依赖。
  */
 export function __inputCodeHighlightSchedulerState(): {
   pendingKeys: string[];
   cacheKeys: string[];
-  wantedKeyOf: (block: unknown) => string | null;
 } {
   return {
     pendingKeys: [...pendingInputCodeTokens.keys()],
     cacheKeys: [...inputCodeTokenCache.keys()],
-    wantedKeyOf: (block) => inputCodeBlockWantedKey.get(block as object) ?? null,
   };
 }

@@ -128,13 +128,13 @@ async function pollUntil(check: () => boolean, label: string): Promise<void> {
   }
 }
 
-describe("input code highlight scheduling (latest-wins)", () => {
+describe("input code highlight scheduling (latest-wins, path-slot)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("burst edits A→B→C tokenize only the latest version and leave no stale cache", async () => {
+  it("burst edits A→B→C with Slate object replacement tokenize only the latest version", async () => {
     // 捕获 setTimeout 回调但不执行：三次调度都发生在任何宏任务之前（确定性）。
     const captured: Array<() => void> = [];
     vi.stubGlobal("setTimeout", (fn: () => void) => {
@@ -143,11 +143,12 @@ describe("input code highlight scheduling (latest-wins)", () => {
     });
     vi.stubGlobal("clearTimeout", () => {});
 
-    const block = makeCodeBlock("python", ["a = 1"]);
-    const { editor, redecorate } = makeFakeEditor([block]);
+    // 真实 Slate 语义：每次编辑替换 code block 对象，路径不变。
+    const children: unknown[] = [makeCodeBlock("python", ["a = 1"])];
+    const { editor, redecorate } = makeFakeEditor(children);
 
     for (const text of ["a = 1", "bb = 22", "ccc = 333"]) {
-      block.children[0].children[0].text = text;
+      children[0] = makeCodeBlock("python", [text]);
       decorateLine({ editor, redecorate }, 0, 0, text);
     }
 
@@ -178,8 +179,8 @@ describe("input code highlight scheduling (latest-wins)", () => {
     });
     vi.stubGlobal("clearTimeout", () => {});
 
-    const block = makeCodeBlock("python", ["stale_old = 1"]);
-    const { editor, redecorate } = makeFakeEditor([block]);
+    const children: unknown[] = [makeCodeBlock("python", ["stale_old = 1"])];
+    const { editor, redecorate } = makeFakeEditor(children);
 
     decorateLine({ editor, redecorate }, 0, 0, "stale_old = 1");
     const runnerA = captured[0];
@@ -188,8 +189,8 @@ describe("input code highlight scheduling (latest-wins)", () => {
     vi.unstubAllGlobals();
     // 启动旧版本 tokenize：同步启动、异步完成（无 await → 此刻必然在途）。
     runnerA?.();
-    // 旧任务在途期间，同一 block 立即改为新内容。
-    block.children[0].children[0].text = "stale_new = 2";
+    // 旧任务在途期间，Slate 用新对象替换同一 path 的 code block。
+    children[0] = makeCodeBlock("python", ["stale_new = 2"]);
     decorateLine({ editor, redecorate }, 0, 0, "stale_new = 2");
 
     await pollUntil(
@@ -211,10 +212,65 @@ describe("input code highlight scheduling (latest-wins)", () => {
     expect(redecorate).toHaveBeenCalledTimes(1);
   });
 
+  it("pending task is cancelled when the slot switches to an already-cached key", async () => {
+    // 预热 B：另一个 editor 先把 B 内容 tokenize 完成。
+    const warmChildren: unknown[] = [makeCodeBlock("python", ["bb = 22"])];
+    const warm = makeFakeEditor(warmChildren);
+    decorateLine(warm, 0, 0, "bb = 22");
+    await pollUntil(
+      () =>
+        __inputCodeHighlightSchedulerState()
+          .cacheKeys.some((key) => key.includes("bb = 22")),
+      "warm B cached",
+    );
+
+    const children: unknown[] = [makeCodeBlock("python", ["a = 1"])];
+    const { editor, redecorate } = makeFakeEditor(children);
+    decorateLine({ editor, redecorate }, 0, 0, "a = 1"); // A pending
+    // 立即切换到已缓存的 B（新对象、同 path）。
+    children[0] = makeCodeBlock("python", ["bb = 22"]);
+    const rangesB = decorateLine({ editor, redecorate }, 0, 0, "bb = 22");
+
+    await pollUntil(
+      () => __inputCodeHighlightSchedulerState().pendingKeys.length === 0,
+      "pending drained",
+    );
+
+    const { cacheKeys } = __inputCodeHighlightSchedulerState();
+    // A 的 timer 被取消：不缓存、不通知。
+    expect(cacheKeys.some((key) => key.includes("a = 1"))).toBe(false);
+    expect(redecorate).not.toHaveBeenCalled();
+    // 切换目标直接命中缓存。
+    expect(rangesB.length).toBeGreaterThan(0);
+    // 预热 editor 的完成通知不受影响。
+    expect(warm.redecorate).toHaveBeenCalledTimes(1);
+  });
+
+  it("pending task goes stale when the code block is deleted (path occupied by other node)", async () => {
+    const children: unknown[] = [makeCodeBlock("python", ["deleted = 1"])];
+    const { editor, redecorate } = makeFakeEditor(children);
+
+    decorateLine({ editor, redecorate }, 0, 0, "deleted = 1"); // pending
+    // 删除代码块：同一 path 被段落占用。
+    children[0] = { type: "paragraph", children: [{ text: "plain paragraph" }] };
+
+    await pollUntil(
+      () => __inputCodeHighlightSchedulerState().pendingKeys.length === 0,
+      "pending drained",
+    );
+
+    const { cacheKeys } = __inputCodeHighlightSchedulerState();
+    // 不缓存已删除内容、不 redecorate。
+    expect(cacheKeys.some((key) => key.includes("deleted = 1"))).toBe(false);
+    expect(redecorate).not.toHaveBeenCalled();
+  });
+
   it("two code blocks in the same editor highlight independently", async () => {
-    const blockA = makeCodeBlock("python", ["alpha = 1"]);
-    const blockB = makeCodeBlock("python", ["beta = 2"]);
-    const { editor, redecorate } = makeFakeEditor([blockA, blockB]);
+    const children: unknown[] = [
+      makeCodeBlock("python", ["alpha = 1"]),
+      makeCodeBlock("python", ["beta = 2"]),
+    ];
+    const { editor, redecorate } = makeFakeEditor(children);
 
     decorateLine({ editor, redecorate }, 0, 0, "alpha = 1");
     decorateLine({ editor, redecorate }, 1, 0, "beta = 2");
@@ -237,10 +293,10 @@ describe("input code highlight scheduling (latest-wins)", () => {
   });
 
   it("same-key multi-editor dedup still notifies every editor", async () => {
-    const blockA = makeCodeBlock("python", ["shared = 1"]);
-    const blockB = makeCodeBlock("python", ["shared = 1"]);
-    const fakeA = makeFakeEditor([blockA]);
-    const fakeB = makeFakeEditor([blockB]);
+    const childrenA: unknown[] = [makeCodeBlock("python", ["shared = 1"])];
+    const childrenB: unknown[] = [makeCodeBlock("python", ["shared = 1"])];
+    const fakeA = makeFakeEditor(childrenA);
+    const fakeB = makeFakeEditor(childrenB);
 
     decorateLine(fakeA, 0, 0, "shared = 1");
     decorateLine(fakeB, 0, 0, "shared = 1");
@@ -252,7 +308,7 @@ describe("input code highlight scheduling (latest-wins)", () => {
       "shared key cached",
     );
 
-    // 去重：同一 key 只缓存一份
+    // 去重：同一 key 只缓存一份（只 tokenize 一次）
     expect(
       __inputCodeHighlightSchedulerState()
         .cacheKeys.filter((key) => key.includes("shared = 1")).length,
