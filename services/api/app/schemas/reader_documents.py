@@ -577,8 +577,8 @@ class ReviewSourceAnchor(BaseModel):
                 "block_id OR a complete UTF-16 range"
             )
         if has_block:
-            if not self.block_id:
-                raise ValueError("block_id must be non-empty when provided")
+            if not self.block_id.strip():
+                raise ValueError("block_id must be non-empty after stripping whitespace")
             return self
         start = self.start_utf16
         end = self.end_utf16
@@ -631,8 +631,19 @@ class StructuredReviewItem(BaseModel):
 
     @model_validator(mode="after")
     def _range_requires_anchor(self) -> StructuredReviewItem:
-        if self.target_scope == "range" and self.source_anchor is None:
-            raise ValueError(
-                "target_scope='range' requires a valid source_anchor (no fabricated ranges)"
-            )
+        if self.target_scope == "range":
+            if self.source_anchor is None:
+                raise ValueError(
+                    "target_scope='range' requires a valid source_anchor (no fabricated ranges)"
+                )
+            if self.anchor_hash is None:
+                raise ValueError(
+                    "target_scope='range' requires anchor_hash alongside source_anchor"
+                )
+            return self
+        # document scope must not carry local anchor/hash.
+        if self.source_anchor is not None:
+            raise ValueError("target_scope='document' must not carry a local source_anchor")
+        if self.anchor_hash is not None:
+            raise ValueError("target_scope='document' must not carry an anchor_hash")
         return self

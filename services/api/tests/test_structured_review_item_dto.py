@@ -162,7 +162,11 @@ def test_anchor_inverted_range_rejected() -> None:
 def test_anchor_block_id_alone_accepted() -> None:
     model = StructuredReviewItem.model_validate(
         _valid_item(
-            source_anchor={"block_id": "b42", "start_utf16": None, "end_utf16": None},
+            source_anchor={
+                "block_id": "b42",
+                "start_utf16": None,
+                "end_utf16": None,
+            },
             target_scope="range",
             evidence={"excerpt_text": None, "proposed_patch": None},
         )
@@ -224,6 +228,68 @@ def test_degraded_item_without_anchor_but_range_scope_rejected() -> None:
     item = _valid_item(
         source_anchor={"block_id": None, "start_utf16": None, "end_utf16": None},
         target_scope="range",
+        evidence={"excerpt_text": None, "proposed_patch": None},
+    )
+    with pytest.raises(ValidationError):
+        StructuredReviewItem.model_validate(item)
+
+
+# ---------------------------------------------------------------------------
+# scope / anchor / hash consistency (narrow repair)
+# ---------------------------------------------------------------------------
+
+
+def test_whitespace_block_id_rejected() -> None:
+    item = _valid_item(
+        source_anchor={
+            "block_id": "   ",
+            "start_utf16": None,
+            "end_utf16": None,
+        },
+        target_scope="range",
+        evidence={"excerpt_text": None, "proposed_patch": None},
+    )
+    with pytest.raises(ValidationError):
+        StructuredReviewItem.model_validate(item)
+
+
+def test_range_scope_without_anchor_hash_rejected() -> None:
+    # range requires BOTH source_anchor AND anchor_hash.
+    item = _valid_item(
+        source_anchor={"block_id": None, "start_utf16": 3, "end_utf16": 12},
+        target_scope="range",
+        anchor_hash=None,
+        evidence={"excerpt_text": None, "proposed_patch": None},
+    )
+    with pytest.raises(ValidationError):
+        StructuredReviewItem.model_validate(item)
+
+
+def test_range_scope_block_id_without_anchor_hash_rejected() -> None:
+    item = _valid_item(
+        source_anchor={"block_id": "b9", "start_utf16": None, "end_utf16": None},
+        target_scope="range",
+        anchor_hash=None,
+        evidence={"excerpt_text": None, "proposed_patch": None},
+    )
+    with pytest.raises(ValidationError):
+        StructuredReviewItem.model_validate(item)
+
+
+def test_document_scope_with_local_anchor_rejected() -> None:
+    item = _valid_item(
+        source_anchor={"block_id": None, "start_utf16": 3, "end_utf16": 12},
+        target_scope="document",
+        evidence={"excerpt_text": None, "proposed_patch": None},
+    )
+    with pytest.raises(ValidationError):
+        StructuredReviewItem.model_validate(item)
+
+
+def test_document_scope_with_anchor_hash_rejected() -> None:
+    item = _valid_item(
+        source_anchor=None,
+        target_scope="document",
         evidence={"excerpt_text": None, "proposed_patch": None},
     )
     with pytest.raises(ValidationError):

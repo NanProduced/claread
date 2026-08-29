@@ -152,9 +152,7 @@ async def db_env() -> AsyncIterator[asyncpg.Pool]:
 
 async def _insert_user(pool: asyncpg.Pool) -> UUID:
     async with pool.acquire() as conn:
-        user_id = await conn.fetchval(
-            "INSERT INTO users DEFAULT VALUES RETURNING id"
-        )
+        user_id = await conn.fetchval("INSERT INTO users DEFAULT VALUES RETURNING id")
     assert isinstance(user_id, UUID)
     return user_id
 
@@ -259,9 +257,7 @@ async def test_text_candidate_creation_writes_confirmed_source(
     assert source["edit_source"] == "initial"
     assert source["frozen_at"] is None
     assert source["markdown_text"] == _normalized(_CANDIDATE_MD)
-    assert source["content_sha256"] == confirmed_source_content_sha256(
-        _normalized(_CANDIDATE_MD)
-    )
+    assert source["content_sha256"] == confirmed_source_content_sha256(_normalized(_CANDIDATE_MD))
     assert source["original_input_id"] == result.original_input_id
 
     # original_inputs 仅留 lineage：source_text 恒 NULL，hash 保留。
@@ -307,9 +303,7 @@ async def test_stable_ready_freezes_confirmed_source_same_transaction(
     # stable-ready 的 Confirmed Source 正文与 preparsed/normalizer
     # 输入同式（\r\n→\n，无 strip）。
     expected_body = _STABLE_MD.replace("\r\n", "\n").replace("\r", "\n")
-    assert source["content_sha256"] == confirmed_source_content_sha256(
-        expected_body
-    )
+    assert source["content_sha256"] == confirmed_source_content_sha256(expected_body)
 
     original_input = await _fetch_original_input(db_env, result.reading_record_id)
     assert original_input["source_text"] is None
@@ -501,9 +495,7 @@ async def test_confirm_after_edit_uses_edited_source(
     assert source["frozen_at"] is not None
     assert source["revision"] == 2
     candidates = await _fetch_candidates(db_env, created.reading_record_id)
-    confirmed_candidate = next(
-        row for row in candidates if row["status"] == "confirmed"
-    )
+    confirmed_candidate = next(row for row in candidates if row["status"] == "confirmed")
     refs = _json(confirmed_candidate["source_refs_json"])
     assert refs["source_revision"] == source["revision"]
     assert refs["source_content_sha256"] == source["content_sha256"]
@@ -658,10 +650,12 @@ async def test_legacy_candidate_confirms_via_legacy_branch(
             user_id,
             title,
             jsonb_param([block.model_dump(mode="json") for block in blocks]),
-            jsonb_param({
-                "source_type": "pasted_text",
-                "original_input_id": str(original_input_id),
-            }),
+            jsonb_param(
+                {
+                    "source_type": "pasted_text",
+                    "original_input_id": str(original_input_id),
+                }
+            ),
         )
 
     confirmed = await _confirm(
@@ -689,8 +683,7 @@ async def test_get_confirmed_source_returns_quality_and_classification_split(
     拆分（footnote → content_check；安全 aside → adaptation_notice）。"""
     user_id = await _insert_user(db_env)
     text_with_aside = (
-        _CANDIDATE_MD
-        + '\n<aside class="note">A safe Notion callout carried along as an '
+        _CANDIDATE_MD + '\n<aside class="note">A safe Notion callout carried along as an '
         "adaptation notice for every reader of this document today.</aside>\n"
     )
     created = await _create_candidate(db_env, user_id, text_with_aside)
@@ -712,14 +705,8 @@ async def test_get_confirmed_source_returns_quality_and_classification_split(
     check_codes = {item["code"] for item in result.content_check}
     assert "raw_html_block" in notice_codes
     assert "footnote_reference" in check_codes
-    assert all(
-        item["classification"] == "adaptation_notice"
-        for item in result.adaptation_notice
-    )
-    assert all(
-        item["classification"] == "content_check"
-        for item in result.content_check
-    )
+    assert all(item["classification"] == "adaptation_notice" for item in result.adaptation_notice)
+    assert all(item["classification"] == "content_check" for item in result.content_check)
 
 
 async def test_get_confirmed_source_without_candidate_returns_empty_classification(
@@ -775,6 +762,7 @@ async def test_get_confirmed_source_without_candidate_returns_empty_classificati
 # ---------------------------------------------------------------------------
 # 10. artifact 路径：pipeline-status 增 has_confirmed_source（Q5）
 # ---------------------------------------------------------------------------
+
 
 async def test_pipeline_status_reports_has_confirmed_source(
     db_env: asyncpg.Pool,

@@ -37,6 +37,7 @@ import asyncpg
 from app.database.json_compat import jsonb_param
 from app.schemas.reader_documents import ConfirmedSourceDocument
 from app.schemas.reader_input_adapter import (
+    AdaptationRecord,
     InputAdapterSourceType,
     InputSuitabilityRequest,
     InputSuitabilityResult,
@@ -276,9 +277,21 @@ class ConfirmedSourceApplicationService:
         *,
         record_id: UUID,
         generation: int,
+        source: ConfirmedSourceDocument | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         """最新 ready candidate 的 quality_json 与三级分类拆分（L2 联调：
-        Content Check 首载/刷新恢复）。无 candidate 时返回 ({}, [], [])。"""
+        Content Check 首载/刷新恢复）。无 candidate 时返回 ({}, [], [])。
+
+        When ``source`` is provided, persisted ``content_check`` items in
+        the OLD three-field shape ({code, message, classification}) are
+        deterministically UPGRADED AT READ TIME via ``enrich_review_items``
+        with the current (record, generation) issue namespace and the
+        corresponding confirmed-source markdown (exact UTF-16 anchors).
+        The upgrade is read-only: nothing is written back, ranges are
+        never fabricated (un-anchorable items degrade to document scope),
+        and illegal unknown shapes fail closed. Complete new-shape items
+        pass through untouched.
+        """
         row = await conn.fetchrow(
             """
             SELECT quality_json
@@ -300,13 +313,69 @@ class ConfirmedSourceApplicationService:
         if isinstance(adaptations_raw, list):
             for item in adaptations_raw:
                 if not isinstance(item, Mapping):
-                    continue
+                    raise ConfirmedSourceApplicationError(
+                        "illegal adaptations item shape: expected an object"
+                    )
                 record = dict(item)
                 if record.get("classification") == "adaptation_notice":
                     adaptation_notice.append(record)
                 elif record.get("classification") == "content_check":
                     content_check.append(record)
+        content_check = self._upgrade_content_check_items(
+            content_check,
+            issue_namespace=f"{record_id}:{generation}",
+            document_text=source.markdown_text if source is not None else None,
+        )
         return quality, adaptation_notice, content_check
+
+    def _upgrade_content_check_items(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        issue_namespace: str,
+        document_text: str | None,
+    ) -> list[dict[str, Any]]:
+        """Read-time upgrade of persisted content_check items.
+
+        - complete new-shape items (issue_id / tier / target_scope /
+          evidence) pass through untouched — never re-enriched;
+        - old three-field items are enriched once, in order, via
+          ``enrich_review_items`` (deterministic issue ids per
+          occurrence, exact UTF-16 anchors when derivable, honest
+          document-scope degrade otherwise, no write-back);
+        - anything else fails closed.
+        """
+        _COMPLETE_FIELDS = ("issue_id", "tier", "target_scope", "evidence")
+        old_records: list[AdaptationRecord] = []
+        old_positions: list[int] = []
+        for position, item in enumerate(records):
+            if not isinstance(item, Mapping):
+                raise ConfirmedSourceApplicationError(
+                    "illegal content_check item shape: expected an object"
+                )
+            record = dict(item)
+            if all(field in record for field in _COMPLETE_FIELDS):
+                continue
+            if set(record) == {"code", "message", "classification"}:
+                old_records.append(AdaptationRecord.model_validate(record))
+                old_positions.append(position)
+                continue
+            raise ConfirmedSourceApplicationError(
+                f"illegal content_check item shape: fields "
+                f"{sorted(record)} are neither the old three-field shape "
+                "nor the complete review-item shape"
+            )
+        if not old_records:
+            return records
+        enriched = enrich_review_items(
+            adaptations=old_records,
+            issue_namespace=issue_namespace,
+            document_text=document_text,
+        )
+        upgraded = list(records)
+        for position, item in zip(old_positions, enriched, strict=False):
+            upgraded[position] = item
+        return upgraded
 
     async def _load_source_updated_at(
         self,
@@ -385,7 +454,7 @@ class ConfirmedSourceApplicationService:
                     adaptation_notice,
                     content_check,
                 ) = await self._load_ready_candidate_adaptations(
-                    conn, record_id=record_id, generation=generation
+                    conn, record_id=record_id, generation=generation, source=source
                 )
                 updated_at = await self._load_source_updated_at(
                     conn, source_document_id=UUID(source.id)
@@ -487,19 +556,30 @@ class ConfirmedSourceApplicationService:
                     )
 
                 # (4) 规范化同 hash → 幂等 no-op（不 supersede，
-                # revision 不变，返回当前 ready candidate）。
+                # revision 不变，返回当前 ready candidate 的完整审查数据，
+                # 与紧随其后的 GET confirmed-source 完全一致）。
                 if confirmed_source_content_sha256(normalized_text) == (source.content_sha256):
                     candidate_summary = await self._load_ready_candidate_summary(
                         conn, record_id=record_id, generation=generation
+                    )
+                    (
+                        quality,
+                        adaptation_notice,
+                        content_check,
+                    ) = await self._load_ready_candidate_adaptations(
+                        conn,
+                        record_id=record_id,
+                        generation=generation,
+                        source=source,
                     )
                     return ConfirmedSourceUpdateResult(
                         revision=source.revision,
                         content_sha256=source.content_sha256,
                         outcome="idempotent_noop",
                         candidate=candidate_summary,
-                        quality={},
-                        adaptation_notice=[],
-                        content_check=[],
+                        quality=quality,
+                        adaptation_notice=adaptation_notice,
+                        content_check=content_check,
                         snapshot=None,
                     )
 
