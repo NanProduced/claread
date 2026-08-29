@@ -165,6 +165,55 @@ def test_completed_v2_projects_public_blocks_and_citations() -> None:
     ReaderRecordAskHistoryMessage.model_validate(projected)
 
 
+def test_completed_v2_redacts_internal_handle_from_cold_history() -> None:
+    leaked = "evh_" + ("cd" * 16)
+    visible = {
+        **_COMPLETED_V2,
+        "answer_text": f"Climate claim {leaked} remains grounded.",
+        "answer_blocks": [
+            {
+                "text": f"Climate claim {leaked} remains grounded.",
+                "citation_ids": ["c1"],
+            }
+        ],
+    }
+
+    projected = project_agentic_history_message(
+        **_base_kwargs(
+            row_content_md=f"Climate claim {leaked} remains grounded.",
+            user_visible_output_json=visible,
+        )
+    )
+
+    assert projected["content_md"] == "Climate claim  remains grounded."
+    assert projected["agentic_answer_blocks"] == [
+        {
+            "text": "Climate claim  remains grounded.",
+            "citation_ids": ["c1"],
+        }
+    ]
+    assert projected["agentic_citations"] == _COMPLETED_V2["citations"]
+    _assert_no_evh(projected)
+
+
+def test_streaming_v2_redacts_internal_handle_from_public_history() -> None:
+    leaked = "evh_" + ("ef" * 16)
+
+    projected = project_agentic_history_message(
+        **_base_kwargs(
+            row_status="streaming",
+            row_content_md=f"Partial answer {leaked} remains visible.",
+            user_visible_output_json=None,
+            final_status=None,
+            turn_run_status="streaming",
+        )
+    )
+
+    assert projected["status"] == "streaming"
+    assert projected["content_md"] == "Partial answer  remains visible."
+    _assert_no_evh(projected)
+
+
 def test_source_unavailable_projects_fixed_copy() -> None:
     projected = project_agentic_history_message(
         **_base_kwargs(

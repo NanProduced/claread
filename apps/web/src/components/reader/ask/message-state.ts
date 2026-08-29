@@ -29,6 +29,7 @@ import {
   READER_ASK_AGENTIC_EXECUTION_VERSION,
 } from "@/types/api/reader-ask";
 import type {
+  ReaderAskAgenticAnswerBlockDto,
   ReaderAskAgenticCompletedPayloadDto,
   ReaderAskAgenticProgressPayloadDto,
   ReaderAskAgenticTerminalPayloadDto,
@@ -42,6 +43,22 @@ import type {
 
 function isDevMode(): boolean {
   return process.env.NODE_ENV !== "production";
+}
+
+const INTERNAL_EVIDENCE_HANDLE_PATTERN =
+  /(?<![A-Za-z0-9_])evh_[0-9a-f]{32}(?![A-Za-z0-9_])/g;
+
+function redactPublicAnswerText(text: string): string {
+  return text.replace(INTERNAL_EVIDENCE_HANDLE_PATTERN, "");
+}
+
+function redactPublicAnswerBlocks(
+  blocks: ReaderAskAgenticAnswerBlockDto[] | null | undefined,
+): ReaderAskAgenticAnswerBlockDto[] | null {
+  if (!blocks) return null;
+  return blocks
+    .map((block) => ({ ...block, text: redactPublicAnswerText(block.text) }))
+    .filter((block) => block.text.trim().length > 0);
 }
 
 /** Map an SSE `error` envelope to user-facing copy (never raw detail). */
@@ -350,7 +367,7 @@ export function createSseMessageHandler(
           thread_id: payload.thread_id || message.thread_id,
           status: "completed",
           // Agentic wire field is answer_text; map into the UI content slot only.
-          content_md: payload.answer_text,
+          content_md: redactPublicAnswerText(payload.answer_text),
           // Atomically drop the provisional preview
           // when the canonical answer arrives. The provisional slot must
           // never survive a committed terminal.
@@ -393,7 +410,7 @@ export function createSseMessageHandler(
           agentic_evidence: null,
           agentic_evidence_scope: null,
           // Semantic answer blocks with public citation_ids.
-          agentic_answer_blocks: payload.answer_blocks ?? null,
+          agentic_answer_blocks: redactPublicAnswerBlocks(payload.answer_blocks),
           // Finalizer-minted public citations for InlineCitation only.
           agentic_citations: payload.citations ?? null,
           // Turn-level web search summary (null when search not invoked).
@@ -1003,7 +1020,7 @@ function normalizeReaderAskMessages(
     const agenticAnswerBlocks = isCanonicalV2Assistant && isReaderAskAgenticAnswerBlockList(
       message.agentic_answer_blocks,
     )
-      ? message.agentic_answer_blocks
+      ? redactPublicAnswerBlocks(message.agentic_answer_blocks)
       : null;
     const agenticCitations = isCanonicalV2Assistant && isReaderAskAgenticCitationList(message.agentic_citations)
       ? message.agentic_citations
@@ -1050,6 +1067,9 @@ function normalizeReaderAskMessages(
       // The execution marker belongs to the assistant turn. User messages
       // remain ordinary chat entries even though the thread is v2-only.
       execution_version: isAssistantMessage ? message.execution_version : null,
+      content_md: isAssistantMessage
+        ? redactPublicAnswerText(message.content_md ?? "")
+        : message.content_md,
       final_status: finalStatus,
       // Public v2: never hydrate raw evidence / scope identity into browser state.
       agentic_evidence: agenticEvidence,

@@ -848,6 +848,53 @@ describe("AiWorkspacePanel", () => {
     }
   });
 
+  it("redacts internal evidence handles from cold history render and copy", async () => {
+    const leaked = `evh_${"ef".repeat(16)}`;
+    const originalClipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      const coldMessage = createAssistantMessage({
+        content_md: `Cold answer ${leaked} stays public.`,
+        agentic_answer_blocks: [
+          {
+            text: `Cold answer ${leaked} stays public.`,
+            citation_ids: ["c1"],
+          },
+        ],
+        agentic_citations: [
+          {
+            citation_id: "c1",
+            source_kind: "article",
+            snippet: "grounded source",
+          },
+        ],
+      });
+      expect(normalizeReaderAskMessages([coldMessage])[0].content_md).toBe(
+        "Cold answer  stays public.",
+      );
+      mockThreadMessages([coldMessage]);
+      const { container } = renderPanel();
+
+      const answerBlocks = await screen.findByTestId("agentic-answer-blocks");
+      expect(answerBlocks.textContent).toContain("Cold answer  stays public.");
+      expect(container.textContent).not.toContain(leaked);
+      fireEvent.click(screen.getByRole("button", { name: "复制内容" }));
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith("Cold answer  stays public.");
+      });
+      expect(screen.getByRole("button", { name: /查看来源/ })).not.toBeNull();
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
+
   it("shows the user-message time and copies the question from its hover actions", async () => {
     const originalClipboard = navigator.clipboard;
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -3691,6 +3738,36 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.agentic_answer_blocks).toEqual(agenticCompleted.answer_blocks);
     expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("redacts internal evidence handles from the committed stream terminal", () => {
+    const leaked = `evh_${"cd".repeat(16)}`;
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({
+      event: "message.completed",
+      data: {
+        ...agenticCompleted,
+        answer_text: `Climate claim ${leaked} remains grounded.`,
+        answer_blocks: [
+          {
+            text: `Climate claim ${leaked} remains grounded.`,
+            citation_ids: ["c1"],
+          },
+        ],
+      },
+    });
+    flushRaf();
+
+    const message = getMessages()[0];
+    expect(message.content_md).toBe("Climate claim  remains grounded.");
+    expect(message.agentic_answer_blocks).toEqual([
+      {
+        text: "Climate claim  remains grounded.",
+        citation_ids: ["c1"],
+      },
+    ]);
+    expect(message.agentic_citations).toEqual(agenticCompleted.citations);
   });
 
   it("hot completed stores null scope (server-owned fence)", () => {

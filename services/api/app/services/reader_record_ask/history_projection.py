@@ -15,6 +15,7 @@ from app.schemas.reader_record_ask_stream import (
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskTerminalDTO,
 )
+from app.services.reader_record_ask.finalizer import redact_public_answer_text
 
 AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V2
 AGENTIC_EXECUTION_VERSIONS = frozenset({EXECUTION_VERSION_AGENTIC_V2})
@@ -306,8 +307,21 @@ def project_agentic_history_message(
 
         completed = _try_project_v2_completed(visible)
         if completed is not None:
-            answer = completed.answer_text
-            content_md = answer if answer else (row_content_md or "")
+            answer = redact_public_answer_text(completed.answer_text)
+            content_md = answer if answer else redact_public_answer_text(row_content_md or "")
+            answer_blocks = []
+            for block in completed.answer_blocks:
+                block_text = redact_public_answer_text(block.text)
+                if not block_text.strip():
+                    return _safe_degraded_message(**base_kwargs)
+                answer_blocks.append(
+                    {
+                        **block.model_dump(mode="json"),
+                        "text": block_text,
+                    }
+                )
+            if not content_md.strip():
+                return _safe_degraded_message(**base_kwargs)
             return {
                 "id": message_id,
                 "thread_id": thread_id,
@@ -338,9 +352,7 @@ def project_agentic_history_message(
                 "updated_at": updated_at,
                 "execution_version": EXECUTION_VERSION_AGENTIC_V2,
                 "final_status": "ok",
-                "agentic_answer_blocks": [
-                    block.model_dump(mode="json") for block in completed.answer_blocks
-                ],
+                "agentic_answer_blocks": answer_blocks,
                 # G0-b3: exclude_none so article citations keep their
                 # pre-web shape (no url/title/description=None keys) while
                 # web citations drop snippet=None. Web fields are only
@@ -410,7 +422,7 @@ def project_agentic_history_message(
             "thread_id": thread_id,
             "role": role,
             "status": "streaming",
-            "content_md": row_content_md or "",
+            "content_md": redact_public_answer_text(row_content_md or ""),
             "submission_mode": "chat",
             "resolved_intent": None,
             "context_anchors": anchors,
