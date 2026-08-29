@@ -199,25 +199,37 @@ export function ContentCheckPanel({
     : state.phase === "confirming"
       ? "确认中…"
       : "确认并开始阅读";
-  const handleConfirm = useCallback(() => {
+  const handleConfirm = () => {
     if (
       isBusy ||
       (isRejected && !state.dirty) ||
-      unresolvedChecks.length > 0 ||
+      attentionChecks.length > 0 ||
       !canAttemptConfirm
     ) {
       return;
     }
     void confirmAndStart(flushEditor());
-  }, [
-    canAttemptConfirm,
-    confirmAndStart,
-    flushEditor,
-    isBusy,
-    isRejected,
-    state.dirty,
-    unresolvedChecks.length,
-  ]);
+  };
+
+  const handleDefer = async () => {
+    const text = flushEditor();
+    const needsSave = text !== draft?.savedMarkdown || state.dirty;
+    if (needsSave) {
+      const saved = await saveNow(text);
+      if (!saved) return;
+    }
+    onDefer({
+      recordId,
+      // A save may reparse the document and replace its candidate. Avoid
+      // persisting stale candidate metadata; recordId is the resume authority.
+      candidateDocumentId: needsSave
+        ? null
+        : (draft?.candidate?.candidate_document_id ?? null),
+      canonicalTextPreview: needsSave
+        ? null
+        : (draft?.candidate?.canonical_text_preview ?? null),
+    });
+  };
 
   if (state.phase === "loading" && !draft) {
     return (
@@ -334,6 +346,7 @@ export function ContentCheckPanel({
               type="button"
               variant="secondary"
               size="sm"
+              className="max-sm:min-h-11"
               onClick={() => handleAutoFix(item.code, key)}
             >
               <Wrench aria-hidden className="mr-1 h-3 w-3" />
@@ -344,6 +357,7 @@ export function ContentCheckPanel({
             type="button"
             variant="secondary"
             size="sm"
+            className="max-sm:min-h-11"
             onClick={() => resolveCheckCode(key)}
           >
             确认无误
@@ -357,7 +371,7 @@ export function ContentCheckPanel({
     <section
       data-testid="content-check-panel"
       aria-labelledby="content-check-title"
-      className="flex min-h-[24rem] w-full flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200 motion-reduce:animate-none lg:min-h-[32rem]"
+      className="flex h-[calc(100dvh-8rem)] min-h-[24rem] max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200 motion-reduce:animate-none lg:min-h-[32rem]"
     >
       <header className="shrink-0 border-b border-hairline/68 px-5 pb-4 pt-5 sm:px-8">
         <p className="text-[0.68rem] font-bold tracking-[0.14em] text-lens-blue">
@@ -372,6 +386,8 @@ export function ContentCheckPanel({
         <p className="mt-2 inline-flex items-center gap-1.5 font-sans text-[0.74rem] font-medium text-subtle">
           <FileText aria-hidden className="h-3.5 w-3.5" />
           {filename?.trim() ? `来源：${filename.trim()}` : "来源：粘贴文本"}
+          <span aria-hidden>·</span>
+          <span>正文可直接修改，修改会自动保存</span>
         </p>
       </header>
 
@@ -390,6 +406,7 @@ export function ContentCheckPanel({
               variant="secondary"
               size="sm"
               onClick={() => void handleReloadLatest()}
+              className="max-sm:min-h-11"
             >
               载入最新版本（放弃我的修改）
             </Button>
@@ -398,6 +415,7 @@ export function ContentCheckPanel({
               variant="ghost"
               size="sm"
               onClick={() => void retryWithLatestRevision()}
+              className="max-sm:min-h-11"
             >
               以我的修改重试
             </Button>
@@ -413,14 +431,13 @@ export function ContentCheckPanel({
             ) : null}
             {statusSummary}
           </p>
-          {unresolvedChecks.length > 0 ? (
+          {routineChecks.length > 0 ? (
             <TextAction
               data-testid="content-check-keep-all-plain"
-              onClick={() =>
-                resolveAllCheckCodes(checkEntries.map((entry) => entry.key))
-              }
+              className="max-sm:min-h-11"
+              onClick={() => resolveAllCheckCodes(routineChecks.map((entry) => entry.key))}
             >
-              全部确认无误
+              确认全部普通建议
             </TextAction>
           ) : null}
         </div>
@@ -446,7 +463,7 @@ export function ContentCheckPanel({
               initialValue={draft.savedMarkdown}
               onChange={handleEdit}
               onSubmit={handleConfirm}
-              className="mx-auto h-full min-h-[18rem] w-full max-w-[52rem] overflow-y-auto rounded-[12px] border border-hairline/70 bg-surface px-6 py-6 font-sans text-base leading-[1.68] text-ink shadow-[var(--app-panel-shadow-quiet)] selection:bg-lens-blue/15 selection:text-ink sm:px-10 sm:py-8"
+              className="mx-auto h-full min-h-[18rem] w-full max-w-[52rem] overflow-y-auto rounded-[12px] border border-hairline/70 bg-surface px-6 py-6 font-sans text-base leading-[1.68] text-ink shadow-[var(--app-panel-shadow-quiet)] selection:bg-lens-blue/15 selection:text-ink max-sm:h-auto max-sm:overflow-visible sm:px-10 sm:py-8"
             />
           ) : null}
         </div>
@@ -554,21 +571,15 @@ export function ContentCheckPanel({
             <div className="flex flex-wrap items-center gap-2">
               <TextAction
                 disabled={isBusy}
-                onClick={() =>
-                  onDefer({
-                    recordId,
-                    candidateDocumentId:
-                      draft?.candidate?.candidate_document_id ?? null,
-                    canonicalTextPreview:
-                      draft?.candidate?.canonical_text_preview ?? null,
-                  })
-                }
+                className="max-sm:min-h-11"
+                onClick={() => void handleDefer()}
               >
                 稍后处理
               </TextAction>
               {origin === "submit" ? (
                 <TextAction
                   disabled={isBusy}
+                  className="max-sm:min-h-11"
                   onClick={() => onBackToInput(flushEditor())}
                 >
                   重新输入
@@ -580,6 +591,7 @@ export function ContentCheckPanel({
                   variant="secondary"
                   size="sm"
                   disabled={isBusy}
+                  className="max-sm:min-h-11"
                   onClick={() => void saveNow()}
                 >
                   重试保存
@@ -593,9 +605,10 @@ export function ContentCheckPanel({
                 disabled={
                   isBusy ||
                   (isRejected && !state.dirty) ||
-                  unresolvedChecks.length > 0 ||
+                  attentionChecks.length > 0 ||
                   !canAttemptConfirm
                 }
+                className="max-sm:min-h-11"
                 onClick={handleConfirm}
               >
                 {primaryLabel}

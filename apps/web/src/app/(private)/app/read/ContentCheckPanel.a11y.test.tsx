@@ -176,7 +176,7 @@ describe("ContentCheckPanel a11y 合同", () => {
     renderPanel();
     await waitForReady();
 
-    fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
+    fireEvent.click(screen.getByRole("button", { name: "确认无误" }));
     const confirm = screen.getByTestId("content-check-confirm-button");
     confirm.focus();
     expect(document.activeElement).toBe(confirm);
@@ -212,6 +212,28 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(panel.className).toContain("motion-safe:duration-200");
   });
 
+  it("低噪说明自动保存，移动端由面板滚动且主要操作满足 44px 目标", async () => {
+    installFetchMock();
+    renderPanel();
+    await waitForReady();
+
+    expect(screen.getByText("正文可直接修改，修改会自动保存")).toBeTruthy();
+
+    const panel = screen.getByTestId("content-check-panel");
+    expect(panel.className).toContain("overflow-hidden");
+    const scrollOwner = panel.querySelector(":scope > div.flex.min-h-0.flex-1");
+    expect(scrollOwner?.className).toContain("overflow-y-auto");
+
+    const editor = document.getElementById("content-check-editor");
+    expect(editor?.className).toContain("max-sm:overflow-visible");
+    expect(screen.getByRole("button", { name: "采用建议" }).className).toContain(
+      "max-sm:min-h-11",
+    );
+    expect(screen.getByRole("button", { name: "稍后处理" }).className).toContain(
+      "max-sm:min-h-11",
+    );
+  });
+
   it("风险卡片操作按钮（采用建议/确认无误）与定位入口可按名称定位", async () => {
     installFetchMock();
     renderPanel();
@@ -220,8 +242,6 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(screen.getByRole("button", { name: /采用建议/ })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "确认无误" }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "去修改" })).toBeNull();
-    expect(screen.getByTestId("content-check-keep-all-plain").textContent).toContain(
-      "全部确认无误",
-    );
+    expect(screen.queryByTestId("content-check-keep-all-plain")).toBeNull();
   });
 });

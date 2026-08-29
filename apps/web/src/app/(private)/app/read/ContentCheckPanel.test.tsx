@@ -286,31 +286,54 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
   });
 
-  it("全部确认无误清空风险列表", async () => {
+  it("批量确认只处理 routine，attention 仍需逐项决定", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
 
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
-    await waitFor(() =>
-      expect(screen.queryAllByTestId("content-check-risk-item")).toHaveLength(0),
-    );
+    await waitFor(() => {
+      const items = screen.getAllByTestId("content-check-risk-item");
+      expect(items).toHaveLength(1);
+      expect(items[0]?.getAttribute("data-code")).toBe("has_unclosed_fence");
+    });
     expect(screen.getByTestId("content-check-resolved-summary").textContent).toContain(
-      "已处理 2 项",
+      "已处理 1 项",
     );
+    expect(
+      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("routine 建议不阻塞确认，attention 风险才阻塞", async () => {
+    installFetchMock({
+      content_check: [
+        {
+          code: "footnote_reference",
+          message: "Footnote reference encountered.",
+          classification: "content_check",
+        },
+      ],
+    });
+    renderPanel();
+    await waitForPanelReady();
+
+    expect(
+      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it("未逐项处理风险前禁止确认；同 code 的风险必须逐项处理", async () => {
     installFetchMock({
       content_check: [
         {
-          code: "footnote_reference",
-          message: "第一处脚注引用",
+          code: "has_unclosed_fence",
+          message: "第一处未闭合代码块",
           classification: "content_check",
         },
         {
-          code: "footnote_reference",
-          message: "第二处脚注引用",
+          code: "has_unclosed_fence",
+          message: "第二处未闭合代码块",
           classification: "content_check",
         },
       ],
@@ -329,10 +352,17 @@ describe("ContentCheckPanel 三级提示渲染", () => {
         (button) => button.textContent === "确认无误",
       )!,
     );
-    expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
     expect(confirm.disabled).toBe(true);
 
-    fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
+    const remainingItem = screen.getAllByTestId("content-check-risk-item")[0];
+    fireEvent.click(
+      Array.from(remainingItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认无误",
+      )!,
+    );
     await waitFor(() => expect(confirm.disabled).toBe(false));
   });
 
@@ -351,6 +381,15 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     expect(props.onConfirmed).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
+    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
+    fireEvent.click(
+      Array.from(attentionItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认无误",
+      )!,
+    );
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
     await waitFor(() =>
       expect(props.onConfirmed).toHaveBeenCalledWith("rec_cc_1"),
@@ -417,6 +456,15 @@ describe("ContentCheckPanel 三级提示渲染", () => {
 
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
     await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
+    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
+    fireEvent.click(
+      Array.from(attentionItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认无误",
+      )!,
+    );
+    await waitFor(() =>
       expect((saveButton as HTMLButtonElement).disabled).toBe(false),
     );
 
@@ -479,6 +527,15 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     fireEvent.change(editor, { target: { value: "abc" } });
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
     await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
+    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
+    fireEvent.click(
+      Array.from(attentionItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认无误",
+      )!,
+    );
+    await waitFor(() =>
       expect(
         (screen.getByTestId(
           "content-check-confirm-button",
@@ -511,10 +568,109 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     expect(props.onBackToInput).toHaveBeenCalledWith(DRAFT_MARKDOWN);
 
     fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
+    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
+    fireEvent.click(
+      Array.from(attentionItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认无误",
+      )!,
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.click(screen.getByTestId("content-check-confirm-button"));
     await waitFor(() =>
       expect(props.onConfirmed).toHaveBeenCalledWith("rec_cc_1"),
     );
+  });
+
+  it("编辑后立即稍后处理会先 flush 保存，再退出", async () => {
+    const callOrder: string[] = [];
+    const fetchMock = installFetchMock();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/confirmed-source") && method === "GET") {
+        return new Response(JSON.stringify(makeReadResponse()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/confirmed-source") && method === "PUT") {
+        callOrder.push("save");
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          markdown_text: "# Edited before defer",
+        });
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            revision: 2,
+            content_sha256: "b".repeat(64),
+            outcome: "candidate_document_required",
+            candidate: makeReadResponse().candidate,
+            quality: null,
+            adaptation_notice: [],
+            content_check: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+    const onDefer = vi.fn(() => callOrder.push("defer"));
+    renderPanel({ onDefer });
+    await waitForPanelReady();
+
+    fireEvent.change(document.getElementById("content-check-editor")!, {
+      target: { value: "# Edited before defer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "稍后处理" }));
+
+    await waitFor(() => expect(onDefer).toHaveBeenCalledTimes(1));
+    expect(callOrder).toEqual(["save", "defer"]);
+    expect(onDefer).toHaveBeenCalledWith({
+      recordId: "rec_cc_1",
+      candidateDocumentId: null,
+      canonicalTextPreview: null,
+    });
+  });
+
+  it("稍后处理保存失败时留在当前面板并可重试", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/confirmed-source") && method === "GET") {
+        return new Response(JSON.stringify(makeReadResponse()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/confirmed-source") && method === "PUT") {
+        return new Response(
+          JSON.stringify({ ok: false, status: 503, message: "保存暂时不可用" }),
+          { status: 503, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+    const onDefer = vi.fn();
+    renderPanel({ onDefer });
+    await waitForPanelReady();
+
+    fireEvent.change(document.getElementById("content-check-editor")!, {
+      target: { value: "# Unsaved" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "稍后处理" }));
+
+    await waitFor(() => expect(screen.getByText("保存暂时不可用")).toBeTruthy());
+    expect(onDefer).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "重试保存" })).toBeTruthy();
   });
 
   it("resume 来源隐藏重新输入", async () => {

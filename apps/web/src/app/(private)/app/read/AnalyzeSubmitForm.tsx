@@ -100,18 +100,23 @@ interface AttachedSource {
 type PipelineOutcome = ReaderArtifactPipelineStatusSafeDto["outcome"];
 type PipelineNextAction = ReaderArtifactPipelineStatusSafeDto["next_action"];
 
-const SOURCE_ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/jpg,image/webp,image/gif";
-const SUPPORTED_SOURCE_FORMATS = "PDF / Markdown / TXT / PNG / JPG / WEBP / GIF";
+const SOURCE_ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/webp";
+const SUPPORTED_SOURCE_FORMATS = "PDF / Markdown / TXT / PNG / JPG / WEBP";
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const POLL_INTERVAL_MS = 3000;
 const CLIENT_MARKDOWN_LINT_EXTENSIONS = new Set(["txt", "md", "markdown"]);
-const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
-  "image/jpg",
   "image/webp",
-  "image/gif",
+]);
+const SUPPORTED_FILE_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/octet-stream",
+  "text/plain",
+  "text/markdown",
+  "text/x-markdown",
 ]);
 
 /**
@@ -204,6 +209,21 @@ function describeSourceFile(file: File): SourceFileDescriptor | null {
   const extension = sourceFileExtension(file.name);
   const mimeType = normalizedMimeType(file);
 
+  if (
+    mimeType === "application/octet-stream" &&
+    !CLIENT_MARKDOWN_LINT_EXTENSIONS.has(extension)
+  ) {
+    return null;
+  }
+
+  if (
+    mimeType &&
+    !SUPPORTED_FILE_MIME_TYPES.has(mimeType) &&
+    !SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)
+  ) {
+    return null;
+  }
+
   if (extension === "pdf" || mimeType === "application/pdf") {
     return { kind: "pdf", sourceKind: "file" };
   }
@@ -226,6 +246,18 @@ function describeSourceFile(file: File): SourceFileDescriptor | null {
   }
 
   return null;
+}
+
+function uploadContentType(file: File, descriptor: SourceFileDescriptor): string {
+  const mimeType = normalizedMimeType(file);
+  if (mimeType) return mimeType;
+  if (descriptor.kind === "pdf") return "application/pdf";
+  if (descriptor.kind === "markdown") return "text/markdown";
+  if (descriptor.kind === "text") return "text/plain";
+  const extension = sourceFileExtension(file.name);
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  return "image/webp";
 }
 
 function validateSourceFile(file: File):
@@ -369,10 +401,12 @@ function AnalysisLoadingStage({
 export function AnalysisLoadingStatusBar({
   messagePrefix,
   detail,
+  canLeave = true,
 }: {
   messagePrefix: string;
   /** 真实阶段状态（pipeline next_action 映射），无则不显示。 */
   detail?: string;
+  canLeave?: boolean;
 }) {
   return (
     <div className="flex min-h-12 max-w-[38rem] items-center gap-3 font-sans text-[0.78rem]">
@@ -390,7 +424,9 @@ export function AnalysisLoadingStatusBar({
           ) : null}
         </div>
         <p className="mt-1 min-w-0 text-[0.72rem] font-medium leading-5 text-muted-foreground">
-          离开本页不会影响透读，完成后会保存到阅读记录
+          {canLeave
+            ? "后台已接管处理，可以离开本页；完成后会保存到阅读记录"
+            : "上传完成前请保持此页打开"}
         </p>
       </div>
     </div>
@@ -510,7 +546,9 @@ export function AnalyzeSubmitForm({
   const markdownEditorRef = useRef<MarkdownTextInputHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastFileRef = useRef<File | null>(null);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollGenerationRef = useRef(0);
+  const lastPollingRef = useRef<{ artifactId: string; filename: string } | null>(null);
   const dragDepthRef = useRef(0);
   const attachedSourceRef = useRef<AttachedSource | null>(null);
   const stashedEditorTextRef = useRef<string | null>(null);
@@ -565,18 +603,18 @@ export function AnalyzeSubmitForm({
     const searchParams = new URLSearchParams(window.location.search);
     const resumeRecordId = searchParams.get("resume_candidate")?.trim() ?? "";
 
-    if (resumeRecordId) {
-      setState({
-        kind: "content-check",
-        recordId: resumeRecordId,
-        filename: null,
-        inputSnapshot: null,
-        origin: "resume",
-      });
-      return;
-    }
-
     const timer = window.setTimeout(() => {
+      if (resumeRecordId) {
+        setState({
+          kind: "content-check",
+          recordId: resumeRecordId,
+          filename: null,
+          inputSnapshot: null,
+          origin: "resume",
+        });
+        return;
+      }
+
       const pending = readPendingCandidate();
       if (pending) {
         const snapshot = pending.inputSnapshot ?? "";
@@ -602,8 +640,9 @@ export function AnalyzeSubmitForm({
   }, []);
 
   function stopPolling() {
+    pollGenerationRef.current += 1;
     if (pollTimerRef.current !== null) {
-      clearInterval(pollTimerRef.current);
+      clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }
@@ -629,6 +668,7 @@ export function AnalyzeSubmitForm({
 
   function clearAttachedSource() {
     stopPolling();
+    lastPollingRef.current = null;
     clearPendingCandidate();
     lastFileRef.current = null;
     setCurrentAttachedSource(null);
@@ -727,6 +767,16 @@ export function AnalyzeSubmitForm({
   }
 
   function retryLastFile() {
+    const polling = lastPollingRef.current;
+    if (polling) {
+      setState({
+        kind: "artifact-polling",
+        filename: polling.filename,
+        message: "正在重新查询处理进度…",
+      });
+      pollUntilTerminal(polling.artifactId, polling.filename);
+      return;
+    }
     const file = lastFileRef.current;
     if (!file) {
       openFilePicker();
@@ -781,26 +831,35 @@ export function AnalyzeSubmitForm({
     return (await response.json()) as ReaderArtifactPipelineStatusResult;
   }
 
-  async function pollUntilTerminal(artifactId: string, currentFilename: string) {
+  function pollUntilTerminal(artifactId: string, currentFilename: string) {
+    stopPolling();
+    const generation = pollGenerationRef.current;
     const tick = async () => {
-      const result = await fetchPipelineStatus(artifactId);
+      let result: ReaderArtifactPipelineStatusResult;
+      try {
+        result = await fetchPipelineStatus(artifactId);
+      } catch {
+        if (pollGenerationRef.current === generation) {
+          setState({ kind: "error", message: "查询处理进度失败，请稍后重试。" });
+        }
+        return false;
+      }
+      if (pollGenerationRef.current !== generation) return false;
       if (isBffError(result)) {
-        stopPolling();
         setState({
           kind: "error",
           message: result.message || "查询处理进度失败，请稍后重试。",
         });
-        return;
+        return false;
       }
 
       const status = result;
       if (isArtifactPipelineWorkerStalled(status)) {
-        stopPolling();
         setState({
           kind: "error",
           message: "解析服务暂时没响应，请稍后重试或换个文件",
         });
-        return;
+        return false;
       }
 
       setState({
@@ -809,15 +868,20 @@ export function AnalyzeSubmitForm({
         message: describeNextAction(status.next_action, status.outcome),
       });
       if (isTerminalOutcome(status.outcome) || isTerminalAction(status.next_action)) {
-        stopPolling();
+        lastPollingRef.current = null;
         applyArtifactOutcome(status, currentFilename);
+        return false;
       }
+      return true;
     };
 
-    void tick();
-    pollTimerRef.current = setInterval(() => {
-      void tick();
-    }, POLL_INTERVAL_MS);
+    const run = async () => {
+      const shouldContinue = await tick();
+      if (shouldContinue && pollGenerationRef.current === generation) {
+        pollTimerRef.current = setTimeout(() => void run(), POLL_INTERVAL_MS);
+      }
+    };
+    void run();
   }
 
   function applyArtifactOutcome(status: ReaderArtifactPipelineStatusSafeDto, currentFilename: string) {
@@ -897,6 +961,7 @@ export function AnalyzeSubmitForm({
       return;
     }
 
+    lastPollingRef.current = null;
     lastFileRef.current = file;
     setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
     setState({
@@ -906,10 +971,11 @@ export function AnalyzeSubmitForm({
     });
 
     try {
+      const contentType = uploadContentType(file, validation.descriptor);
       const initResult = await postInitUpload({
         artifactKind: "original_upload",
         sourceFilename: file.name,
-        contentType: file.type || "application/octet-stream",
+        contentType,
         byteSize: file.size,
       });
       if (!initResult.ok) {
@@ -958,7 +1024,7 @@ export function AnalyzeSubmitForm({
       }
 
       const completeResult = await postCompleteUpload(artifactId, {
-        contentType: file.type || "application/octet-stream",
+        contentType,
         byteSize: file.size,
       });
       if (!completeResult.ok) {
@@ -994,7 +1060,8 @@ export function AnalyzeSubmitForm({
         filename: file.name,
         message: "已提交，正在等待后台处理...",
       });
-      await pollUntilTerminal(artifactId, file.name);
+      lastPollingRef.current = { artifactId, filename: file.name };
+      pollUntilTerminal(artifactId, file.name);
     } catch (error: unknown) {
       setState({
         kind: "error",
@@ -1317,6 +1384,7 @@ export function AnalyzeSubmitForm({
               <AnalysisLoadingStatusBar
                 messagePrefix={waitingMessagePrefix}
                 detail={waitingDetail}
+                canLeave={state.kind === "artifact-polling"}
               />
             ) : (
               <div
@@ -1454,6 +1522,8 @@ export function AnalyzeSubmitForm({
 
       {state.kind !== "idle" && !isWaiting && state.kind !== "content-check" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
         <div
+          role={state.kind === "error" ? "alert" : "status"}
+          aria-live={state.kind === "error" ? "assertive" : "polite"}
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-feedback-error" : "text-lens-blue"
           }`}

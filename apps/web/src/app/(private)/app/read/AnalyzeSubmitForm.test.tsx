@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalysisLoadingStatusBar, AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
@@ -13,6 +13,8 @@ import {
   readPageSubmitRequestBody,
 } from "./submit-mode";
 import { PENDING_CANDIDATE_STORAGE_KEY } from "./pending-candidate";
+
+const POLL_INTERVAL_FOR_TEST_MS = 3000;
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -311,6 +313,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("AnalysisLoadingStatusBar", () => {
@@ -324,7 +327,9 @@ describe("AnalysisLoadingStatusBar", () => {
 
     expect(screen.getByText("正在准备")).toBeTruthy();
     expect(screen.getByText("正在提交，准备解析…")).toBeTruthy();
-    expect(screen.getByText("离开本页不会影响透读，完成后会保存到阅读记录")).toBeTruthy();
+    expect(
+      screen.getByText("后台已接管处理，可以离开本页；完成后会保存到阅读记录"),
+    ).toBeTruthy();
     // 不再有虚构进度的轮播文案
     expect(screen.queryByText("正在梳理文章结构")).toBeNull();
 
@@ -333,6 +338,19 @@ describe("AnalysisLoadingStatusBar", () => {
     expect(renderedText).not.toContain("%");
     expect(renderedText).not.toContain("第");
     expect(renderedText).not.toContain("共");
+  });
+
+  it("requires the page to stay open until the browser upload finishes", () => {
+    render(
+      <AnalysisLoadingStatusBar
+        messagePrefix="正在上传"
+        detail="正在上传文件…"
+        canLeave={false}
+      />,
+    );
+
+    expect(screen.getByText("上传完成前请保持此页打开")).toBeTruthy();
+    expect(screen.queryByText(/可以离开本页/)).toBeNull();
   });
 });
 
@@ -656,7 +674,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
       expect(screen.queryByRole("button", { name: "开始透读" })).toBeNull();
     });
     expect(screen.getByText("正在准备")).toBeTruthy();
-    expect(screen.getByText("离开本页不会影响透读，完成后会保存到阅读记录")).toBeTruthy();
+    expect(screen.getByText("上传完成前请保持此页打开")).toBeTruthy();
 
     // Settle the in-flight fetch so React finishes its updates cleanly.
     const resolve = resolveHolder.current;
@@ -915,8 +933,167 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     expect(screen.queryByTestId("source-file-preview")).toBeNull();
     expect(screen.getByText(/暂不支持/).textContent).toContain("archive.zip");
-    expect(screen.getByText(/PDF \/ Markdown \/ TXT \/ PNG \/ JPG \/ WEBP \/ GIF/)).toBeTruthy();
+    expect(screen.getByText(/PDF \/ Markdown \/ TXT \/ PNG \/ JPG \/ WEBP/)).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["scan.gif", "image/gif"],
+    ["scan.jpg", "image/jpg"],
+  ])("rejects OCR formats the backend cannot extract: %s (%s)", (name, type) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile(name, type)] },
+    });
+
+    expect(screen.queryByTestId("source-file-preview")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("暂不支持");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["paper.pdf", "application/pdf"],
+    ["scan.png", "image/png"],
+    ["photo.jpg", "image/jpeg"],
+    ["diagram.webp", "image/webp"],
+  ])("normalizes an empty browser MIME for %s to %s", async (name, expectedType) => {
+    const fetchMock = installStableArtifactFetchMock(`rec_${name}`);
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile(name, "")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => expect(navigationMock.push).toHaveBeenCalled());
+    const initCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/init-upload"));
+    const completeCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/complete-upload"),
+    );
+    expect(JSON.parse(String(initCall?.[1]?.body))).toMatchObject({
+      contentType: expectedType,
+    });
+    expect(JSON.parse(String(completeCall?.[1]?.body))).toMatchObject({
+      contentType: expectedType,
+    });
+  });
+
+  it("a failed status check retries only pipeline status and never uploads again", async () => {
+    let statusAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+      if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+      if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+      if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_retry"));
+      if (url.endsWith("/pipeline-status")) {
+        statusAttempts += 1;
+        return statusAttempts === 1
+          ? jsonResponse({ ok: false, status: 503, message: "查询暂时失败" }, 503)
+          : jsonResponse(makePipelineStableResponse("rec_retry"));
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile()] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+    await waitFor(() => expect(screen.getByText("查询暂时失败")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_retry"));
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
+    expect(urls.filter((url) => url.startsWith("https://oss.example.com/"))).toHaveLength(1);
+    expect(urls.filter((url) => url.endsWith("/complete-upload"))).toHaveLength(1);
+    expect(urls.filter((url) => url.endsWith("/submit-input"))).toHaveLength(1);
+    expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
+  });
+
+  it("waits for each status response before scheduling the next poll", async () => {
+    vi.useFakeTimers();
+    let resolveFirstStatus!: (response: Response) => void;
+    const firstStatusResponse = new Promise<Response>((resolveResponse) => {
+      resolveFirstStatus = resolveResponse;
+    });
+    let statusAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+      if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+      if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+      if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_serial"));
+      if (url.endsWith("/pipeline-status")) {
+        statusAttempts += 1;
+        if (statusAttempts === 1) {
+          return await firstStatusResponse;
+        }
+        return jsonResponse(makePipelineStableResponse("rec_serial"));
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+    fireEvent.change(screen.getByTestId("source-file-input"), {
+      target: { files: [makeFile()] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(statusAttempts).toBe(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_FOR_TEST_MS * 3);
+    });
+    expect(statusAttempts).toBe(1);
+
+    await act(async () => {
+      resolveFirstStatus(
+        jsonResponse({
+          ...makePipelineStableResponse("rec_serial"),
+          outcome: "extraction_queued",
+          next_action: "wait_for_worker",
+          extraction_job: null,
+          materialization_job: null,
+        }),
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_FOR_TEST_MS - 1);
+    });
+    expect(statusAttempts).toBe(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(statusAttempts).toBe(2);
   });
 
   it("starts artifact upload only after clicking 开始透读", async () => {
@@ -1460,7 +1637,7 @@ describe("unified read intake source guards", () => {
     expect(source).toContain("startArtifactFlow");
     expect(source).toContain("lastFileRef");
     expect(source).toMatch(/lastFileRef\.current\s*=\s*file/);
-    expect(source).toContain("clearInterval(pollTimerRef.current)");
+    expect(source).toContain("clearTimeout(pollTimerRef.current)");
     expect(source).toMatch(/pollUntilTerminal\(\s*artifactId,\s*file\.name/);
     expect(source).toMatch(/applyArtifactOutcome\(\s*status,\s*currentFilename\s*\)/);
   });
