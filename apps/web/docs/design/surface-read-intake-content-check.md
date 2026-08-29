@@ -8,7 +8,7 @@
 >
 > **Surface role**: Claread Web 内容录入、文件上传/OCR、等待阶段与 Content Check 审查工作区（`/app/read` 及 resume 恢复入口）
 >
-> **Authority**: 本文档为 Claread Web Read Intake 与 Content Check 唯一的正式 Surface Brief，固化 Owner 已确认的产品与设计决策。R2 Contract Repair 完成全部 P1/P2 合同闭环。不修改 `PRODUCT.md`、`DESIGN.md` 或架构文档；未完成的底层能力列入实现依赖。
+> **Authority**: 本文档为 Claread Web Read Intake 与 Content Check 唯一的正式 Surface Brief，固化 Owner 已确认的产品与设计决策。R3 Contract Closeout 固化最终 Owner 决策与底层交付合同闭环。不修改 `PRODUCT.md`、`DESIGN.md` 或架构文档；未完成的底层能力列入实现依赖。
 
 ---
 
@@ -101,7 +101,7 @@
 │  - 双向高亮联动              │  - Plate 结构化实时编辑器              │  - 下一个待确认     │
 │  - 缺坐标时显示「未能定位」   │  - 行首/边缘 Gutter Markers             │ ────────────────── │
 │                              │  - 极淡范围高亮背景                     │ [长文/多页结构导航] │
-│                              │  - 支持直接就地打字与标准撤销           │  - 章节/页码导航    │
+│                              │  - 支持直接就地打字与标准撤销           │  - 可信大纲/页码导航│
 │                              │                                        │  - Attention 数量点│
 │                              │                                        │  - 当前可见节指示  │
 │                              │                                        │ ────────────────── │
@@ -118,17 +118,21 @@
 ```
 
 ### 长文与多页文件结构导航（Structure Overview）
-为了解决长文（>4,000 词）或多页 PDF（多于 3 页）无法快速掌握审查全貌的问题，在桌面批注栏顶部（待办概览下方、卡片列表上方）增加轻量、可折叠的**文档结构导航区**：
-1. **内容要素**：
-   - 提取文档天然的章节结构（H1/H2 标题）或 PDF 页码（如“第 1 页”、“第 2 页”）。
-   - 每个结构项右侧标记该区域内未解决的 `Attention`（需要确认）数量徽章（如“§2 核心架构 · 2 项待确认”）。
-   - 当前正在正文画布视口内阅读的章节/页码显示高亮激活点。
-2. **交互行为**：
-   - 点击结构项：正文画布平滑滚动至对应章节或页码起点，并自动将该区域内第一个待确认问题高亮激活。
-   - 严禁行为：不得在结构区复制大段正文内容；不得建立独立的“概览全屏页”；不得将所有 Routine（提示）项平铺在结构区（Routine 仍收纳在下方卡片流）。
-3. **短文自适应**：无章节标题的短文或单页文档（<1,000 词且无 H1/H2），结构导航区默认折叠或隐藏。
-4. **移动端收纳**：在移动端，结构导航作为独立折叠区嵌入 Bottom Sheet 顶部，读者可在展开 Sheet 后点选章节，禁止为此增加子路由或跨层弹窗。
-5. **结构不足降级**：若文档缺少标题或无法解析分页，仅展示“全文”及确认项统计，绝不得基于正文段落盲目猜测虚假层级。
+为了解决长篇或多页材料难以把握审查全貌的问题，在桌面批注栏顶部（待办概览下方、卡片列表上方）增加轻量、可折叠的**文档结构导航区**：
+1. **触发契约与事实来源**：
+   - 结构概览**完全由后端或稳定结构层提供的可信结构元数据（如 `long-document` 标识、章节 `outline` 或分页 `page metadata`）决定**。
+   - 规格**不冻结任何硬编码数字阈值**（如固定词数、标题数量或页数限制）；具体大纲提取或触发阈值属于可配置工程参数，需基于真实材料后续校准，不作为冻结产品事实。
+2. **内容要素**：
+   - 展示材料可确认的天然章节结构（如 H1/H2 标题）或分页标识（如“第 1 页”、“第 2 页”）。
+   - 每个结构项右侧标明该区域内未决的 `Attention`（需要确认）数量徽章（如“§2 核心架构 · 2 项待确认”）。
+   - 当前正在正文画布视口内阅读的章节/页码展示高亮激活点。
+3. **交互行为与红线**：
+   - 点击结构项：正文画布平滑滚动至对应章节或页码起点，并自动激活该区域内首个待确认问题卡片。
+   - 严禁行为：不得在结构区复制大段正文内容；不得占用独立全屏页面；不得将所有 Routine（提示）项平铺在结构区（Routine 仍收纳在下方卡片流）。
+4. **短文自适应与缺失降级**：
+   - 短篇材料或缺少可信结构元数据时，结构导航区默认折叠或不渲染。
+   - 严禁基于正文字符长度、标题字面相似度或客户端启发式算法盲目猜测虚假层级；结构信息不足时仅展示当前可确认的标题或“全文”确认项统计。
+5. **移动端收纳**：在移动端，结构导航作为独立折叠区嵌入 Bottom Sheet 顶部，避免增加额外页面层级。
 
 ### 状态推进序列
 
@@ -159,15 +163,15 @@ flowchart TD
 
 > **关键事实订正**：后端 DTO（`ReaderArtifactPipelineStatusResponse` 与前端安全映射 `ReaderArtifactPipelineStatusSafeDto`）**根本不存在根级 `stage` 字段**。
 >
-> 状态判断必须由前端严格基于当前真实存在的字段组合推导：`artifact.status`、`extraction_job.status`、`materialization_job.status`、`outcome`、`next_action`、`candidate_document` 及 `stable_document`。严禁读取臆造字段，严禁使用虚假百分比。
+> 普通 UI 路由必须严格优先消费安全的公开状态对：`outcome` 与 `next_action`，并结合 `artifact.status`、`candidate_document` 及 `stable_document` 进行组合推导。嵌套的 `job.status == 'failed_terminal'` 仅作为辅助排查证据，**绝对不得绕开已冻结的公开 outcome / next_action 合同**。严禁读取臆造字段，严禁使用虚假百分比。
 
-下表定义客户端展现的“四个真实阶段”与后端真实字段的精确映射契约：
+下表定义客户端展现的“四个真实阶段”与后端真实字段的精确映射契约，覆盖全部 13 个公开 outcome 与 8 个公开 next_action：
 
 | 客户端展示阶段 | 业务含义 | 后端真实字段判定条件 | 用户界面指示文案 | 允许动作 |
 |---|---|---|---|---|
 | **阶段一：上传文件** | 浏览器文件准备、获取 OSS 预签名 URL、直接上传至 OSS、通知完成上传 | 1. 预请求：本地选择文件并校验通过；<br>2. 初始化：`POST /source-artifacts/init-upload`；<br>3. 直传中：`artifact.status == 'pending'`，`outcome == 'upload_pending'`，`next_action == 'complete_upload'`；<br>4. 完成通知：`POST /source-artifacts/{id}/complete-upload` 成功后 `artifact.status == 'available'`，`outcome == 'upload_available_not_submitted'`，`next_action == 'submit_input'`。 | “正在上传文件…” | 取消上传 / 移除文件 |
-| **阶段二：提取正文** | 提交解析任务，后台 Worker 执行文本解码或 OCR 识别 | 1. 提交任务：`POST /source-artifacts/{id}/submit-input`；<br>2. 执行中：`extraction_job.status IN ('queued', 'claimed', 'retry_later')`，`outcome IN ('extraction_queued', 'extraction_running', 'extraction_retry_later')`，`next_action IN ('wait_for_worker', 'retry_later')`；<br>3. 成功终态：`extraction_job.status == 'succeeded'`。 | “正在提取正文…”<br>副标：“离开本页不会影响透读，完成后会保存到阅读记录” | 允许安全离开页面 |
-| **阶段三：检查内容** | 适用性门控评估、Markdown 解析、结构排版与合规检查 | 1. 执行中：`materialization_job.status IN ('queued', 'claimed', 'retry_later')`，`outcome IN ('materialization_queued', 'materialization_running', 'materialization_retry_later')`，`next_action IN ('wait_for_worker', 'retry_later')`；<br>2. 产生候选：`outcome == 'candidate_document_required'`，`next_action == 'confirm_candidate_document'`，`candidate_document` 非空（进入 Content Check）；<br>3. 拒绝输入：`outcome == 'input_rejected_or_action_required'`，`next_action == 'revise_input'`。 | “正在检查内容与排版…”<br>副标：“离开本页不会影响透读，完成后会保存到阅读记录” | 允许安全离开页面 |
+| **阶段二：提取正文** | 提交解析任务，后台 Worker 执行文本解码或 OCR 识别 | 1. 提交任务：`POST /source-artifacts/{id}/submit-input`；<br>2. 执行中：`outcome IN ('extraction_queued', 'extraction_running', 'extraction_retry_later')`，`next_action IN ('wait_for_worker', 'retry_later')`（此时 `extraction_job.status IN ('queued', 'claimed', 'retry_later')`）；<br>3. 成功终态：`extraction_job.status == 'succeeded'`；<br>4. **提取失败**：`outcome == 'extraction_failed'`，`next_action == 'show_error'`（此时 `extraction_job.status == 'failed_terminal'`，转入 S8 失败状态）。 | “正在提取正文…”<br>副标：“离开本页不会影响透读，完成后会保存到阅读记录” | 允许安全离开页面 |
+| **阶段三：检查内容** | 适用性门控评估、Markdown 解析、结构排版与合规检查 | 1. 执行中：`outcome IN ('materialization_queued', 'materialization_running', 'materialization_retry_later')`，`next_action IN ('wait_for_worker', 'retry_later')`（此时 `materialization_job.status IN ('queued', 'claimed', 'retry_later')`）；<br>2. 产生候选：`outcome == 'candidate_document_required'`，`next_action == 'confirm_candidate_document'`，`candidate_document` 非空（进入 Content Check）；<br>3. 拒绝输入：`outcome == 'input_rejected_or_action_required'`，`next_action == 'revise_input'`；<br>4. **材料化失败**：`outcome == 'materialization_failed'`，`next_action == 'show_error'`（此时 `materialization_job.status == 'failed_terminal'`，转入 S8 失败状态）。 | “正在检查内容与排版…”<br>副标：“离开本页不会影响透读，完成后会保存到阅读记录” | 允许安全离开页面 |
 | **阶段四：准备阅读** | 确定性冻结正文、生成 Reading Base 与 Anchor Segments，交接进入 Reader | 1. 免确认直达：`outcome == 'stable_document_ready'`，`next_action == 'open_reader'`，`stable_document` 非空，`record.active_base_id` 非空；<br>2. 审查后确认：用户在 Content Check 界面确认后，`POST /records/{id}/candidate-documents/{cid}/confirm` 执行事务写入完成。<br>*注：此阶段是确定的终态握手，不是独立的后台排队 Job。* | “正在准备阅读环境…” | 准备跳转进入 Reader |
 
 ### 完整页面状态机矩阵
@@ -181,13 +185,13 @@ flowchart TD
 | `S5_WAIT_EXTRACT` | 阶段二：提取正文 | `submit-input` 已完成，提取 Worker 运行中 | 居中文件卡，展示阶段二呼吸细点；指示“正在提取正文…”；副标提示可离开 | 允许离开页面 | - | 后端接管，生成 reading_record_id |
 | `S6_WAIT_CHECK` | 阶段三：检查内容 | 提取成功，材料化 Worker 运行中 | 居中文件卡，展示阶段三呼吸细点；指示“正在检查内容与排版…” | 允许离开页面 | - | 适用性门控执行中 |
 | `S7_WAIT_PREPARE` | 阶段四：准备阅读 | 冻结就绪或确认完毕 | 居中文件卡，展示阶段四呼吸细点；指示“正在准备阅读环境…” | - | - | 即将跳转进入 Reader |
-| `S8_WAIT_FAILED` | 等待失败/超时 | Job 报 `failed_terminal` 或重试超限 | 工作区展示红/灰色弱警示框；仅展示一句用户语言失败原因 | 单一恢复动作（「重试」） | 单一退出动作（「重新选择文件」或「返回修改」） | 禁止展示 Python 堆栈、worker lease 或 OSS 错误码 |
+| `S8_WAIT_FAILED` | 等待失败/超时 | `outcome IN ('extraction_failed', 'materialization_failed')` 且 `next_action == 'show_error'`（嵌套 job.status 仅作辅助诊断） | 工作区展示红/灰色弱警示框；仅展示一句用户语言失败原因 | 单一恢复动作（「重试」） | 单一退出动作（「重新选择文件」或「返回修改」） | 禁止展示 Python 堆栈、worker lease 或 OSS 错误码 |
 | `S9_CHECK_READY` | 审查待办态 | `outcome == 'candidate_document_required'` | 拓扑完全展开：正文画布 + 右侧批注栏。存在未决的“需要确认”项 | 逐项审阅批注卡 | 稍后处理 / 重新输入（仅初次提交） | 主按钮文案为“确认正文并开始阅读”，保持 disabled 状态 |
 | `S10_CHECK_EDITING` | 审查就地编辑态 | 用户在 Candidate 画布键入修改 | 正文直接输入，底部状态栏显示“保存中…”；1200ms 防抖后发起 PUT；关联批注标记转为“内容已修改，待确认” | 继续编辑 / 点击保存 | 稍后处理 | 严禁自动将问题标记为已解决；PUT 乐观锁带 `expected_revision` |
-| `S11_CHECK_CONFLICT` | 审查并发冲突 | PUT 接口返回 HTTP 409（`stale_revision`） | 顶部横幅提示“检测到内容在其他位置有更新” | 「以我的修改重试」（自动拉取最新 revision 重放本地文本） | 「载入最新版本」（放弃本地修改） | 服务端永不静默覆盖；本地编辑内容绝对不丢失 |
+| `S11_CHECK_CONFLICT` | 审查并发冲突 | PUT 接口返回 HTTP 409（公开错误码 `stale_source_revision`；仓储内部 `stale_revision` 仅作后端日志记录） | 顶部横幅提示“检测到内容在其他位置有更新” | 「以我的修改重试」（自动拉取最新 revision 重放本地文本） | 「载入最新版本」（放弃本地修改） | 服务端永不静默覆盖；本地编辑内容绝对不丢失 |
 | `S12_CHECK_RESOLVED` | 审查全部就绪 | 全部“需要确认”项已解决；正文无未保存修改 | 「确认正文并开始阅读」（原位高亮启用） | 稍后处理 | 原位激活，不弹窗，不自动跳转 |
 | `S13_CONFIRMING` | 正在冻结正文 | 用户点击主 CTA | 主按钮显示 loading 态“确认中…”；界面遮罩防重 | - | - | POST candidate confirm 幂等提交 |
-| `S14_TASK_CONFLICT` | 活动任务存在冲突 | 本地存在进行中的活动任务，用户尝试新建输入 | 弹出居中选择对话框：“检测到您有一份未完成的任务” | 「继续旧任务」 | 「替换并开始新任务」 | 严禁任何形式的静默覆盖（禁止 Last-Write-Wins） |
+| `S14_TASK_CONFLICT` | 活动任务存在冲突 | 本地存在进行中的活动任务，用户尝试新建输入 | 弹出居中选择对话框：“检测到未完成的任务” | 「继续旧任务」 | 「替换并开始新任务」 | 严禁任何形式的静默覆盖（禁止 Last-Write-Wins） |
 
 ---
 
@@ -233,7 +237,7 @@ Backend Classification:
 | `missing_source_range` | `content_check` | **Attention (需要确认)** | 内容无法映射回原始文件坐标 | **是** | “部分内容无法对应回原文，建议确认内容是否完整”；无自动修复。 |
 | `layout_order_uncertain` | `content_check` | **Attention (需要确认)** | OCR 双栏或复杂版面阅读顺序存疑 | **是** | “版面阅读顺序不太确定，建议核对段落先后”；无自动修复。 |
 | `code_dominant` | `content_check` | **Attention (需要确认)** | 代码行数占比过高缺少散文 | **是** | “这份内容以代码为主，批注价值有限，请确认是否继续”；归入全文检查。 |
-| `too_long_requires_envelope`| `content_check` | **Attention (需要确认)** | 全文词数 > 8,000 | **是** | “全文过长，建议拆分后再进行深度阅读”；归入全文检查。 |
+| `too_long_requires_envelope`| `content_check` | **Attention (需要确认)** | 全文篇幅过长超出处理边界 | **是** | “全文过长，建议拆分后再进行深度阅读”；归入全文检查。 |
 | `unclosed_html_aside` | `content_check` | **Attention (需要确认)** | `<aside>` 标签未闭合 | **是** | “一段侧栏结构不完整，建议检查附近内容”；无自动修复。 |
 
 ---
@@ -263,17 +267,23 @@ Backend Classification:
 - **Tablet (640px – 1023px)**：正文全宽；批注栏收拢为右侧滑入 Sheet 面板；原件抽屉占屏幕 60%。
 - **Mobile (< 640px)**：单列正文浏览 + 顶部紧凑状态条 + 底部可拖拽 Bottom Sheet。所有关键按钮尺寸严格保证 `min-h-[44px]` 与 `min-w-[44px]`。
 
-### 移动端 Bottom Sheet 无障碍合同（Accessibility Contract）
-1. **显式切换控件（Explicit Controls）**：
+### 移动端 Bottom Sheet 无障碍与容器语义合同（Accessibility Contract）
+1. **现有可访问 Primitive 底座保证**：
+   - 必须使用现有可访问 Sheet/Dialog primitive（如 Radix UI Dialog / Sheet primitive 或语义等价封装），**严禁自研新的焦点管理框架**。
+   - Sheet 容器必须具备明确的 Accessible Name，通过 `aria-labelledby`（指向标题）或 `aria-label="审查批注面板"` 提供。
+   - 展开形态遵循模态语义，配置 `aria-modal="true"`。
+   - 触发按钮通过 `aria-controls` 与 Sheet 面板建立关联（若底层 primitive 支持）。
+2. **显式切换控件（Explicit Controls）**：
    - 严禁仅依赖滑动手势！Bottom Sheet 顶部 Peek 状态条必须配备清晰可见、触控区域至少 44×44px 的展开/收起切换按钮。
    - 按钮提供严格的语义属性：`aria-expanded="true" | "false"`，并附带动态 `aria-label`（如“展开审查批注面板，还有 2 项需要确认” / “收起审查批注面板”）。
-2. **焦点进入与返回管理**：
+3. **焦点包含（Focus Containment）与返回管理**：
    - 展开 Sheet 时：焦点自动进入 Sheet 内部，优先置于当前激活的待确认问题卡片标题；
+   - 包含规则：Sheet 展开期间必须具备**焦点包裹（Focus Containment / Trap）**，用户连续按 `Tab` 键焦点只能在 Sheet 内部循环，**严禁逃逸至被置为 inert 的底层正文画布**；
    - 关闭 Sheet 时：焦点精确返回到触发展开的状态条按钮，或返回到正文画布中刚才定位的 Gutter Marker。
    - 实体按键：移动端支持外接键盘时，按 `Esc` 必须能够关闭 Sheet。
-3. **背景惰性隔离（Inert Background）**：
+4. **背景惰性隔离（Inert Background）**：
    - 当 Bottom Sheet 处于半屏或全屏展开状态时，底层的正文画布容器必须动态设置 `inert` 属性（或 `aria-hidden="true"` 并拦截底层滚动），防止屏幕阅读器将焦点读入底层背景，杜绝背景误触打字或滚动穿透。
-4. **读屏器状态播报**：
+5. **读屏器状态播报**：
    - 批注项状态变更（如确认无误、内容修改待确认、自动保存）必须通过局部 `aria-live="polite"` 容器向辅助技术即时宣告。
    - 绝不依赖颜色或纯图标来传达“需要确认”与“提示”状态。
 
@@ -328,7 +338,7 @@ Backend Classification:
 #### UI 与状态保护规则
 1. **入口收纳**：版本恢复入口收纳在底部状态栏或紧凑菜单内（“版本与恢复”）。
 2. **Dirty 状态恢复确认**：当本地存在未保存修改（`dirty === true`）时，用户点击任意恢复动作，必须弹出显式确认对话框：“恢复将放弃当前未保存的内容，确认恢复到 [目标版本名称] 吗？”，明确标出目标版本。
-3. **409 并发冲突保护**：发生 revision conflict 时，前端保持本地编辑文本完好不丢失，界面提示冲突原因并提供“以我的修改重试”与“载入最新版本”。**任何保存或网络失败绝对不得清空正文画布**。
+3. **409 并发冲突保护**：发生 revision conflict 时（公开接口返回 HTTP 409，公开错误码 `stale_source_revision`；仓储内部 `stale_revision` 仅为后端诊断证据，不得暴露为前端判断依据），前端保持本地编辑文本完好不丢失，界面提示冲突原因并提供“以我的修改重试”与“载入最新版本”。**任何保存或网络失败绝对不得清空正文画布**。
 4. **能力分界**：单会话内的 `Ctrl+Z` 内存撤销与跨刷新的版本恢复属于两套完全独立的机制，不可混淆。
 
 ---
@@ -377,7 +387,7 @@ interface StoredIntakeTask {
 - 当标签页 B 推进了任务状态（如完成审查或取消任务），标签页 A 自动感知并安静同步工作区状态，若检测到冲突则提示用户“任务已在其他标签页更新”。无需搭建复杂的 WebSocket 同步服务。
 
 #### 生命周期与 TTL 清理规则
-1. **TTL 期限**：固定为 **24 小时**（自最后一次 `updatedAt` 起算），与 Daily Reading 日常阅读周期及 OSS 预签名周期对齐。（*注：此数值为经推导的显式工程选择*）。
+1. **TTL 期限**：Owner 确定的首版产品默认值为 **24 小时**（自最后一次 `updatedAt` 起算），属于**可配置产品默认值**，由前端常量配置管理；它不依赖也不对应后端 OSS 预签名周期或底层基础设施时钟。
 2. **正常清理触发点**：
    - 任务成功到达终态（进入 Reader 阅读页）；
    - 用户显式点击“重新输入”或在冲突弹窗中确认“替换旧任务”；
@@ -420,9 +430,10 @@ interface StoredIntakeTask {
 | | 底部次级操作 | “稍后处理” / “重新输入” | 退出与重置 |
 | | 原件抽屉标题 | “参考原件对比” | 抽屉标题 |
 | | 原件缺坐标说明 | “未能精确定位，仅展示参考原件供比对” | 降级说明 |
+| | 原件安全加载失败 | “暂时无法打开原件供对比，正文可继续编辑与确认” | 原件安全降级 |
 | **版本与恢复** | 版本恢复菜单 | “版本与恢复” / “恢复到初始提取版本” / “恢复到上一个已保存版本” | 菜单项 |
 | | 恢复确认弹窗 | “恢复将放弃当前未保存的修改，确认恢复到 {version} 吗？” | 风险确认 |
-| | 409 冲突说明 | “检测到内容在其他位置有更新，请选择处理方式” | 冲突提示 |
+| | 409 冲突说明 | “检测到内容在其他位置有更新，请选择处理方式” | 冲突提示 (`stale_source_revision`) |
 | | 409 解决动作 | “载入最新版本（放弃本地修改）” / “以我的修改重试” | 冲突双动作 |
 | **移动端** | Bottom Sheet 切换 | “展开审查批注面板，还有 {N} 项需要确认” / “收起审查批注面板” | 读屏与无障碍 |
 
@@ -433,12 +444,12 @@ interface StoredIntakeTask {
 ### 确认的后端事实（Confirmed Backend Facts）
 1. **上传与提取流水线**：
    - 接口：`POST /source-artifacts/init-upload`、`POST /source-artifacts/{id}/complete-upload`、`POST /source-artifacts/{id}/submit-input`。
-   - 状态接口：`GET /source-artifacts/{id}/pipeline-status` 返回 `artifact`, `extraction_job`, `materialization_job`, `candidate_document`, `stable_document`, `outcome`, `next_action`。**无根级 `stage` 字段**。
+   - 状态接口：`GET /source-artifacts/{id}/pipeline-status` 返回安全的 `ReaderArtifactPipelineStatusSafeDto`（包含 `artifact`, `extraction_job`, `materialization_job`, `candidate_document`, `stable_document`, `outcome`, `next_action`）。**无根级 `stage` 字段**。
 2. **适用性评估与分类闭合集**：
    - `input_suitability_gate.py` 产出 `code`, `message`, `classification`（`silent` vs `adaptation_notice` vs `content_check`）。
    - 闭合代码集严格按 `file-upload-parse-chain-markdown.md §9` 执行，其中 `strikethrough_extension` 属于 `silent`。
 3. **Confirmed Source 与 Candidate 确认**：
-   - 接口：`GET /records/{id}/confirmed-source`、`PUT /records/{id}/confirmed-source`、`POST /records/{id}/candidate-documents/{cid}/confirm`。
+   - 接口：`GET /records/{id}/confirmed-source`、`PUT /records/{id}/confirmed-source`（乐观并发失败返回 HTTP 409 `stale_source_revision`）、`POST /records/{id}/candidate-documents/{cid}/confirm`。
    - 存储：`infra/migrations/0001_initial.sql`（原 migration 0025 已合入 baseline），`confirmed_source_repository.py` 执行原地 UPDATE。
 
 ---
@@ -456,34 +467,50 @@ interface StoredIntakeTask {
 5. **`evidence`**：
    - 提供 `excerpt_text`（原始问题片断）。
    - 存在自动修复时提供 `proposed_patch`（建议替换片断），用于展开局部 Unified Diff。
-6. **`source_media_coordinate` (可选)**：针对 PDF 或图片提供 `{ page_number: number, bounding_box: [x, y, w, h] }`。
-7. **严格降级红线**：
+6. **严格降级红线**：
    - 客户端**严禁基于相似文本执行模糊匹配猜测（Fuzzy Guessing）**。
    - 相同 `code` 的多项问题必须赋予独立 `issue_id`，**严禁合并为同一项**。
    - 缺少 range/patch 证据时，卡片**严禁伪造局部 diff**，仅展示建议文字。
-   - 缺少坐标时，原件抽屉只能展示参考页并明确标示“未能精确定位”。
 
-#### 2. 正文三点版本持久化缺口（Backend Gap）
+#### 2. 原件预览交付安全合同（Source Preview Delivery Open Contract）
+当前 page/bbox 仅解决坐标定位，不解决原件内容如何安全交付。特此冻结原件预览安全边界：
+1. **Owner-Scoped 受控访问**：
+   - 原件预览必须由受控 API/BFF 统一交付，返回短期只读 GET URL（短期 presigned GET URL）、受控文件流（controlled file stream）或安全页快照（safe page snapshot image）之一；
+   - 客户端**严禁根据内部 `object_key` 自行拼接公网访问 URL**；
+   - 客户端**严禁复用上传时使用的 PUT URL 作为读取 URL**。
+2. **权限与媒体类型严格校验**：
+   - 服务端/BFF 必须严格校验 ownership（归属当前已认证用户）、artifact 状态（`status == 'available'` 且未被标记删除）、Content-Type 与允许的媒体类型白名单（PDF、PNG、JPEG、WEBP 等）；
+   - **严禁**将内部 object key、OSS bucket 名称、云凭据或长期有效 URL 暴露在客户端普通 DOM 属性中。
+3. **CSP 与 Fail-Closed 安全降级**：
+   - PDF/图片预览必须严格遵守 Claread Web 既有的 CSP（Content Security Policy）、安全下载与 Fail-Closed 策略；
+   - **安全容错降级**：若无法安全取得原件（如网络异常、OSS 访问故障或该文件类型不支持预览），原件抽屉仅展示：“**暂时无法打开原件供对比，正文可继续编辑与确认**”；Candidate 正文的就地修改、批注确认与最终开始阅读流程**绝对不被阻断**；
+   - 缺少页面或 BBox 坐标时，抽屉展示参考全页，并明确标记“未能精确定位”。
+
+#### 3. 正文三点版本持久化缺口（Backend Gap）
 - **事实**：`confirmed_source_documents` 当前原地覆盖更新，初始提取版本（v0）与上一个已保存版本（v_prev）均未入库。
 - **依赖要求**：后端需扩展数据表结构，保存不可变初始提取正文快照及上一版本快照指针，并在 `GET /confirmed-source` 响应中下发版本元数据，支撑产品级版本回滚。
 
-#### 3. 单活动任务管理与 LocalStorage 统一（Frontend Task）
+#### 4. 可信大纲与长文元数据下发（Backend Gap）
+- **事实**：当前材料化输出尚未下发结构化章节 outline、PDF 页码边界或 long-document 标识。
+- **依赖要求**：后端解析管线需增强大纲提取能力，提供可信的 `document_structure_outline` 与分页元数据；在未下发前，前端结构概览默认折叠或不渲染，不进行盲目猜测。
+
+#### 5. 单活动任务管理与 LocalStorage 统一（Frontend Task）
 - **依赖要求**：重构并扩展现有 `pending-candidate.ts`，建立标准 `read-intake-recovery-store`：
   - 实现 `claread:intake_task:${accountId}:v1` 键名规范；
-  - 封装 24h TTL 自动校验与过期清理；
+  - 封装 24h 默认 TTL 校验与过期清理；
   - 绑定 `window.storage` 事件实现跨标签页状态同步；
   - 拦截新输入，弹出“继续旧任务”或“替换并开始新任务”的仲裁对话框。
 
-#### 4. Shiki Tokenizer 的 Plate Transient Decoration 插件（Frontend Task）
+#### 6. Shiki Tokenizer 的 Plate Transient Decoration 插件（Frontend Task）
 - **依赖要求**：将 Reader 现存的 Shiki 词法着色器封装为适配 Plate 可编辑状态的轻量 transient decoration 插件，确保大段编辑时不破坏光标状态且不卡顿。
 
 ---
 
 ### 显式工程选择与开放参数（Open Implementation Choices）
-以下参数在当前产品规范中根据上下文合理推导并冻结为基线；若未来运维数据证明需调整，可直接微调配置而不违反产品架构：
-- **LocalStorage TTL**：基线设定为 **24 小时**（对齐每日阅读记录与 OSS 凭证周期）。
-- **自动保存防抖时间**：基线设定为 **1,200ms**。
-- **长文结构导航触发阈值**：全文词数 **≥ 4,000 词** 或 包含 **≥ 3 个 H1/H2 标题** 或 PDF **≥ 4 页**。
+以下参数在当前规范中由产品与工程边界明确定义；未来可按工程实际与线上指标微调配置，不构成冻结产品事实：
+- **LocalStorage TTL 默认值**：基线设定为 **24 小时**（Owner 确定的可配置产品默认值，由客户端常量配置管理）。
+- **自动保存防抖时间**：基线设定为 **1,200ms**（与当前生产实现一致）。
+- **长文结构导航触发阈值**：由后端可信大纲、分页与 long-document 元数据驱动；具体阈值属于可配置工程参数，需基于真实测试材料后续微调，不在规格中固化任何硬编码数值。
 
 ---
 
@@ -493,7 +520,7 @@ interface StoredIntakeTask {
 
 | 验证项编号 | 测试/验收场景 | 前置条件与输入 | 预期表现与验收标准 | 平台与环境 |
 |---|---|---|---|---|
-| **TC-01** | **四阶段真实状态映射** | 上传一个复杂 PDF 文件 | 界面严格经历“上传文件”→“提取正文”→“检查内容”→“准备阅读/审查”，阶段状态与 `outcome`/`next_action` 完全吻合，无虚假百分比，无不存在字段。 | 全平台 |
+| **TC-01** | **四阶段真实状态映射与失败覆盖** | 上传一个复杂或损坏的文件 | 1. 正常路径严格经历“上传文件”→“提取正文”→“检查内容”→“准备阅读/审查”，阶段状态与 `outcome`/`next_action` 完全吻合，无虚假百分比，无不存在字段；<br>2. 提取失败 (`extraction_failed` + `show_error`) 或材料化失败 (`materialization_failed` + `show_error`) 正确进入 S8 失败状态，展示单句说明与单一重试动作。 | 全平台 |
 | **TC-02** | **Silent 分类绝对不上屏** | 输入包含删除线 `~~strikethrough~~` 的 Markdown | 后端下发 `strikethrough_extension`（silent）；界面正常渲染删除线文本，批注栏中绝对不出现该项卡片，通知轨亦不出现。 | Desktop / Mobile |
 | **TC-03** | **Adaptation Notice 仅进通知轨** | 输入包含 `<script>` 标签与 `javascript:` 链接 | 后端下发 `raw_html_block` 与 `unsafe_link_protocol`；仅在顶层折叠通知栏提示已自动清理，严禁作为待解决问题出现在批注卡片流中。 | Desktop / Mobile |
 | **TC-04** | **同 Code 多 Issue 独立性** | 输入包含两处不同未闭合代码块 | 后端下发两条 `has_unclosed_fence`；批注栏展现两张独立的卡片，分别对应各自的行号与文本范围，严禁合并为一张卡片。 | Desktop |
@@ -501,19 +528,20 @@ interface StoredIntakeTask {
 | **TC-06** | **缺失 BBox 时原件抽屉安全降级** | 文本或无坐标 PDF 触发 Content Check | 打开原件抽屉，抽屉顶部明确显示“未能精确定位，仅展示参考原件供比对”，展示整页原件，原件上不得随意绘制错误红框。 | Desktop (Safari / Chrome) |
 | **TC-07** | **三点版本恢复流程** | 用户对正文进行了多次编辑与保存 | 点击“恢复到初始提取版本”，系统弹出警告说明将放弃当前未保存内容；确认后编辑器内容重置为初始提取文本，并递增 revision。 | Desktop / Mobile |
 | **TC-08** | **Dirty 状态恢复保护** | 用户正在键入修改，正文处于 dirty 态 | 点击恢复菜单中的任一项，必须阻断并弹出确认框，取消则完全保留当前正在编辑的文本。 | Desktop / Mobile |
-| **TC-09** | **409 并发冲突文本保护** | 模拟双标签页提交导致 PUT 接口返回 409 | 编辑器画布文本绝对不被冲掉或置空；界面展示冲突横幅，提供“以我的修改重试”与“载入最新版本”。 | Desktop (Chrome) |
-| **TC-10** | **长文/多页结构导航** | 提交一份包含 5 个章节的长文 | 批注栏顶部展示章节导航列表，清晰标记各章节内的 Attention 待确认项数量；点击某章节，正文平滑滚动至该章节并聚焦首个待确认项。 | Desktop (≥ 1024px) |
+| **TC-09** | **409 并发冲突文本保护 (stale_source_revision)** | 模拟并发提交导致 PUT 接口返回 HTTP 409 (`stale_source_revision`) | 编辑器画布文本绝对不被冲掉或置空；界面展示冲突横幅，提供“以我的修改重试”与“载入最新版本”。 | Desktop (Chrome) |
+| **TC-10** | **结构导航元数据驱动（无硬编码数值）** | 分别提交含可信大纲的长文与缺少大纲的短文 | 1. 存在可信大纲/页码元数据时，批注栏顶部展示结构导航与各节 Attention 数量，点击可平滑滚动定位；<br>2. 缺少可信结构元数据时，导航默认折叠或不渲染，严禁基于词数或文本相似度猜测虚假结构。 | Desktop (≥ 1024px) |
 | **TC-11** | **单活动任务仲裁（避免覆盖）** | 任务正在提取中，用户在另一个标签页粘贴新文本 | 系统弹出阻断弹窗，明确说明旧任务文件名与阶段，提供“继续旧任务”与“替换并开始新任务”；未选择前旧任务不被覆盖。 | Desktop (多标签页) |
-| **TC-12** | **账号隔离与 24h TTL** | 切换不同账号登录；模拟超过 24 小时的存储数据 | 账号 A 的未完成任务对账号 B 隔离不可见；超过 24h 的过期数据静默清理并提示“上一次未完成的审查任务已过期”。 | Desktop / Mobile |
-| **TC-13** | **移动端 Bottom Sheet 无障碍** | 手机端访问 Content Check 页面 | 1. 具备明确可见的展开/收起按钮，`aria-expanded` 属性准确；<br>2. 展开后底层正文画布增加 `inert`；<br>3. 焦点进入 Sheet，按 `Esc` 或点击收起按钮后焦点返回原处。 | iOS Safari / Android Chrome |
+| **TC-12** | **账号隔离与 24h 可配置默认 TTL** | 切换不同账号登录；模拟超过 24 小时的存储数据 | 账号 A 的未完成任务对账号 B 隔离不可见；超过 24h 的过期数据静默清理并提示“上一次未完成的审查任务已过期”。 | Desktop / Mobile |
+| **TC-13** | **移动端 Bottom Sheet 无障碍与焦点包裹** | 手机端访问 Content Check 页面 | 1. 使用标准 Dialog/Sheet primitive，具备清晰 accessible name；<br>2. 具备明确可见的展开/收起按钮，`aria-expanded` 与 `aria-modal` 正确；<br>3. 展开后底层正文设置 `inert`，焦点在 Sheet 内被有效包裹（containment）；<br>4. 按 `Esc` 或点击收起后焦点返回原处。 | iOS Safari / Android Chrome |
 | **TC-14** | **无跨设备恢复边界保证** | 在桌面端发起文件上传，在手机端登录同一账号 | 手机端不出现“继续桌面端上传”的伪同步提示（当前版本明确不承诺跨设备漫游）。 | 跨设备回归验证 |
+| **TC-15** | **原件预览安全交付与安全降级** | 触发原件抽屉对比；模拟无权限、过期或网络失败 | 1. 必须由受控 API/BFF 交付安全短期预览，DOM 中绝对不出现内部 `object_key` 或云凭据；<br>2. 若原件加载失败，提示“暂时无法打开原件供对比，正文可继续编辑与确认”，正文编辑与确认阅读流程完全不受阻断。 | Desktop (Safari / Chrome / Edge) |
 
 ---
 
 ## 15. NOT_IMPLEMENTED / Open Engineering Risks
 
 1. **大长篇 Markdown 编辑器性能风险（Risk 1）**：
-   - *风险*：当用户输入接近 8,000 词的长文时，实时运行 Markdown 解析与 Shiki 高亮可能引起击键延迟。
+   - *风险*：当用户输入超长篇幅文本时，实时运行 Markdown 解析与 Shiki 高亮可能引起击键延迟。
    - *缓解措施*：解析与高亮必须运行在 Web Worker 或通过 `requestIdleCallback` 批处理，禁止逐键阻塞主线程。
 2. **后端单版本覆盖与并发丢修改风险（Risk 2）**：
    - *风险*：后端当前为原地更新，若用户在两个标签页同时打开同一记录审查，可能频繁报 409。
@@ -521,6 +549,9 @@ interface StoredIntakeTask {
 3. **坐标数据缺失导致的原件定位期望落差（Risk 3）**：
    - *风险*：用户期待点击“查看原件”能够像专业 PDF 阅读器一样直接高亮原件那一行，但第一阶段后端无法提供精确 bounding box。
    - *缓解措施*：明确展示“未能精确定位，仅展示参考原件”，管理用户预期，避免被误判为功能 Bug。
-4. **输入端与阅读端 Token 漂移风险（Risk 4）**：
+4. **原件预览访问安全与网络风险（Risk 4）**：
+   - *风险*：若原件文件较大或 OSS 网络抖动，可能导致原件预览加载缓慢或失败。
+   - *防护红线*：原件预览始终遵循 Fail-Closed 与非阻断原则，原件抽屉加载失败绝不得阻塞用户在中央画布的正文阅读与审查确认。
+5. **输入端与阅读端 Token 漂移风险（Risk 5）**：
    - *风险*：后续若开发者随意在输入端增加独立的 CSS 工具类，会导致“输入时看起来像一种排版，进入 Reader 变成另一种排版”。
    - *防护红线*：任何修改必须同时运行 `@claread/web` 的 parity 单元测试，强制输入端与阅读端锁定同一份 Tailwind token 与排版规范。
