@@ -108,7 +108,10 @@ def test_preview_returns_short_lived_url_without_storage_fields() -> None:
     assert body["expires_at"] is not None
     assert body["content_type"] == "application/pdf"
     assert body["degraded"] is False
-    # Storage coordinates never appear as response fields.
+    # The response has NO independent storage-coordinate fields; the
+    # presigned URL value itself is a sensitive temporary delivery value
+    # (Web consumers must not write it into ordinary DOM — controlled
+    # same-origin BFF / Blob URL delivery is the frozen contract).
     for leaked in ("object_key", "bucket", "endpoint", "secret"):
         assert leaked not in body
 

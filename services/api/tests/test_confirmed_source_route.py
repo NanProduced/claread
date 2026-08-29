@@ -111,6 +111,16 @@ def test_get_confirmed_source_returns_draft_body() -> None:
                     "code": "image_ocr_uncertain",
                     "message": "m",
                     "classification": "content_check",
+                    "issue_id": "b2c3d4e5f6a7b8c9",
+                    "tier": "routine",
+                    "target_scope": "document",
+                    "source_anchor": None,
+                    "anchor_hash": None,
+                    "evidence": {
+                        "excerpt_text": None,
+                        "proposed_patch": None,
+                    },
+                    "source_media_coordinate": None,
                 }
             ],
         )
@@ -142,9 +152,7 @@ def test_get_confirmed_source_returns_draft_body() -> None:
     assert body["content_sha256"] == SOURCE_HASH
     assert body["candidate"] is None
     # L2 联调：三级分类字段映射（与 PUT 响应语义一致）。
-    assert body["quality"] == {
-        "candidate_creation_version": "candidate_creation_v1"
-    }
+    assert body["quality"] == {"candidate_creation_version": "candidate_creation_v1"}
     assert body["adaptation_notice"][0]["code"] == "raw_html_block"
     assert body["adaptation_notice"][0]["classification"] == "adaptation_notice"
     assert body["content_check"][0]["code"] == "image_ocr_uncertain"
@@ -239,6 +247,16 @@ def _update_result(outcome: str = "candidate_document_required") -> ConfirmedSou
                 "code": "image_ocr_uncertain",
                 "message": "m",
                 "classification": "content_check",
+                "issue_id": "b2c3d4e5f6a7b8c9",
+                "tier": "routine",
+                "target_scope": "document",
+                "source_anchor": None,
+                "anchor_hash": None,
+                "evidence": {
+                    "excerpt_text": None,
+                    "proposed_patch": None,
+                },
+                "source_media_coordinate": None,
             }
         ],
         snapshot=None,
@@ -424,9 +442,7 @@ def test_confirm_maps_stale_candidate_revision_to_structured_409() -> None:
 
 def test_confirm_generic_error_keeps_legacy_409_mapping() -> None:
     app = _build_app()
-    confirm_mock = AsyncMock(
-        side_effect=CandidateDocumentConfirmApplicationError("some failure")
-    )
+    confirm_mock = AsyncMock(side_effect=CandidateDocumentConfirmApplicationError("some failure"))
     with (
         _mock_auth(),
         patch.object(

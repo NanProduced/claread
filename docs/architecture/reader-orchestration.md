@@ -109,6 +109,7 @@
 - Source Artifact（`source_artifacts` 表）是 OSS-backed 文件载体；其 `status` schema 允许 `pending | available | failed | deleted`（migration 0001 §`source_artifacts_status_check` line 1445），但当前生产 writer 只稳定到达 `pending` 与 `available`；`failed` 与 `deleted` schema-allowed 但当前无生产 writer（详见 `docs/operations/reader-runtime.md` §Artifact Input Operations Contract）。
 - Reading Base（`reading_bases` 表）是同一 generation 内的 stable 文档载体；`record_generation` + `active_base_id` 是 record 的 stable identity；新 generation 或新 base 必须通过 supersede 路径创建，不得原地覆盖。
 - Confirmed Source（migration 0025）是 single-per-(record, generation) 的规范化正文，由 DB CHECK 自校验 `content_sha256`；revision 乐观并发演进采用原地 UPDATE 当前行（`confirmed_source_documents`），**同时每个 durable 写入在同一事务内持久化不可变 revision snapshot（`confirmed_source_revisions`，`snapshot_reason ∈ initial | save | restore`）**；版本恢复（restore）把目标 snapshot 正文写成新 revision（单调递增），**绝不回写历史行**。版本列表 / 单版本读取 / 恢复均为 owner-scoped API，冲突沿用 409 `stale_source_revision` 公开错误码。
+- Source Preview（`GET /reader/source-artifacts/{artifact_id}/preview`）是 owner-scoped、短期、只读 GET presigned URL：仅 owner 且未软删、`available`、`oss` 存储、PDF/允许图片 MIME 才可预览，其余一律 404 collapse；响应不含独立存储坐标字段（object_key / bucket / endpoint / 凭据）。**冻结的 Web 消费合同：presigned URL 值是敏感临时交付值，不得直接写入普通 DOM**；后续 Web 交付必须经受控同源 BFF（proxy/redirect）或同源 fetch 后的安全 Blob URL 或等价受控方式（该前端消费为待办依赖，不由后端本任务实现）。
 
 ### Anchor / Unit / Layer 职责
 

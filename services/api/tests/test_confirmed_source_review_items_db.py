@@ -147,13 +147,14 @@ async def test_candidate_creation_persists_structured_review_items(
     assert fence["anchor_hash"] and len(fence["anchor_hash"]) == 64
     normalized = _normalized(_CANDIDATE_MD)
     assert fence["source_anchor"]["start_utf16"] == normalized.index("```python")
-    assert fence["evidence"]["excerpt"] == "```python"
+    assert fence["evidence"]["excerpt_text"] == "```python"
     assert "source_media_coordinate" in fence
 
     footnote = by_code.get("footnote_reference")
     assert footnote is not None
     assert footnote["tier"] == "routine"
-    assert footnote["target_scope"] == "range"
+    # No precisely derivable anchor -> honest document-scope degrade.
+    assert footnote["target_scope"] == "document"
     assert footnote["issue_id"] and len(footnote["issue_id"]) == 16
 
 

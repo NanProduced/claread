@@ -542,17 +542,24 @@ ReviewItemClassification = Literal[
 
 class ReviewIssueEvidence(BaseModel):
     """Per-issue evidence fields; both degrade to ``None`` when the backend
-    cannot derive them exactly (no fuzzy guessing)."""
+    cannot derive them exactly (no fuzzy guessing).
+
+    ``excerpt_text`` is the official surface-spec field name (the narrow
+    repair renamed the earlier ``excerpt``).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    excerpt: str | None = None
+    excerpt_text: str | None = None
     proposed_patch: str | None = None
 
 
 class ReviewSourceAnchor(BaseModel):
-    """Structured anchor for a local review item: ``block_id`` OR a
-    UTF-16 range (offsets must be set together)."""
+    """Structured anchor for a local review item — EXACTLY ONE form:
+    a non-empty ``block_id`` OR a complete UTF-16 range with
+    ``end > start``. Never both, never empty (an item without a precise
+    anchor simply carries ``source_anchor=None`` and degrades to document
+    scope)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -561,7 +568,18 @@ class ReviewSourceAnchor(BaseModel):
     end_utf16: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def _offset_pair(self) -> ReviewSourceAnchor:
+    def _single_form(self) -> ReviewSourceAnchor:
+        has_block = self.block_id is not None
+        has_range = self.start_utf16 is not None or self.end_utf16 is not None
+        if has_block == has_range:
+            raise ValueError(
+                "source_anchor must be exactly one form: a non-empty "
+                "block_id OR a complete UTF-16 range"
+            )
+        if has_block:
+            if not self.block_id:
+                raise ValueError("block_id must be non-empty when provided")
+            return self
         start = self.start_utf16
         end = self.end_utf16
         if (start is None) != (end is None):
@@ -584,21 +602,37 @@ class StructuredReviewItem(BaseModel):
     """One structured review item carried in confirmed-source responses and
     persisted inside ``quality_json.suitability.adaptations``.
 
-    ``code`` / ``message`` / ``classification`` preserve the backend
-    classification verbatim. The remaining fields are the R8 review-item
-    contract fields; evidence that cannot be derived exactly degrades to
-    ``null`` (never guessed via text similarity).
+    Public contract (narrow repair):
+
+    - ``classification`` is EXACTLY ``content_check`` — silent /
+      adaptation_notice records never surface in ``content_check``,
+    - ``issue_id`` / ``tier`` / ``target_scope`` / ``evidence`` are
+      REQUIRED (an item that cannot provide them is not emitted),
+    - ``issue_id`` is exactly 16 lowercase hex chars,
+    - ``source_anchor`` is nullable; when present it is exactly one form
+      (see ``ReviewSourceAnchor``),
+    - ``target_scope='range'`` REQUIRES a valid ``source_anchor`` —
+      ranges are never fabricated; without a precise anchor the item
+      degrades to ``target_scope='document'``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(min_length=1)
     message: str = ""
-    classification: ReviewItemClassification
-    issue_id: str | None = Field(default=None, min_length=1)
-    tier: ReviewIssueTier | None = None
-    target_scope: ReviewIssueTargetScope | None = None
+    classification: Literal["content_check"]
+    issue_id: str = Field(pattern=r"^[0-9a-f]{16}$")
+    tier: ReviewIssueTier
+    target_scope: ReviewIssueTargetScope
     source_anchor: ReviewSourceAnchor | None = None
     anchor_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    evidence: ReviewIssueEvidence | None = None
+    evidence: ReviewIssueEvidence
     source_media_coordinate: ReviewMediaCoordinate | None = None
+
+    @model_validator(mode="after")
+    def _range_requires_anchor(self) -> StructuredReviewItem:
+        if self.target_scope == "range" and self.source_anchor is None:
+            raise ValueError(
+                "target_scope='range' requires a valid source_anchor (no fabricated ranges)"
+            )
+        return self

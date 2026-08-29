@@ -1433,9 +1433,14 @@ class ReaderConfirmedSourceRestoreResponse(BaseModel):
 class ReaderSourceArtifactPreviewResponse(BaseModel):
     """Short-lived read-only preview URL for one source artifact.
 
-    Never exposes object_key / bucket / endpoint / credentials. When the
-    preview cannot be delivered safely, ``preview_url`` is ``None`` and
-    ``degraded`` is true (Candidate editing / confirmation stay usable).
+    The response has NO independent storage-coordinate fields (object_key
+    / bucket / endpoint / credentials); the ``preview_url`` value itself
+    is a sensitive temporary delivery value. Web consumers must NOT write
+    the raw URL into ordinary DOM — delivery goes through a controlled
+    same-origin BFF / safe Blob URL or equivalent (frozen contract). When
+    the preview cannot be delivered safely, ``preview_url`` is ``None``
+    and ``degraded`` is true (Candidate editing / confirmation stay
+    usable).
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -805,10 +805,15 @@ async def get_reader_source_artifact_preview(
 ) -> ReaderSourceArtifactPreviewResponse:
     """Fail-closed original preview delivery contract (R8).
 
-    The response never exposes ``object_key`` / bucket / endpoint /
-    credentials. ``preview_url=None`` + ``degraded=true`` when the
-    presigner cannot deliver a safe URL; Candidate editing and
-    confirmation are never blocked by preview availability.
+    The response exposes NO independent storage-coordinate fields
+    (object_key / bucket / endpoint / credentials). The presigned URL
+    value itself is a sensitive temporary delivery value and must never
+    be written directly into ordinary DOM; Web consumption goes through
+    a controlled same-origin BFF / safe Blob URL or equivalent (frozen
+    contract — see SourceArtifactPreviewService docstring).
+    ``preview_url=None`` + ``degraded=true`` when the presigner cannot
+    deliver a safe URL; Candidate editing and confirmation are never
+    blocked by preview availability.
     """
     service = SourceArtifactPreviewService()
     try:

@@ -3,8 +3,8 @@
 Route-level contract tests (service mocked, no DB): the GET/PUT
 ``content_check`` array serializes the R8 Structured Review Item fields
 (issue_id / tier / target_scope / source_anchor / anchor_hash /
-evidence{excerpt, proposed_patch} / source_media_coordinate) and rejects
-fabricated unknown fields (extra="forbid", fail closed).
+evidence{excerpt_text, proposed_patch} / source_media_coordinate) and
+rejects fabricated unknown fields (extra="forbid", fail closed).
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ REVIEW_ITEM = {
     "target_scope": "range",
     "source_anchor": {"block_id": None, "start_utf16": 3, "end_utf16": 12},
     "anchor_hash": "d" * 64,
-    "evidence": {"excerpt": "```python", "proposed_patch": None},
+    "evidence": {"excerpt_text": "```python", "proposed_patch": None},
     "source_media_coordinate": None,
 }
 
@@ -132,7 +132,10 @@ def test_get_confirmed_source_serializes_structured_review_items() -> None:
         "end_utf16": 12,
     }
     assert item["anchor_hash"] == "d" * 64
-    assert item["evidence"] == {"excerpt": "```python", "proposed_patch": None}
+    assert item["evidence"] == {
+        "excerpt_text": "```python",
+        "proposed_patch": None,
+    }
     assert item["source_media_coordinate"] is None
     assert "code" in item and "classification" in item and "message" in item
 
@@ -183,7 +186,7 @@ def test_put_confirmed_source_serializes_structured_review_items() -> None:
     assert response.status_code == 200
     item = response.json()["content_check"][0]
     assert item["issue_id"] == "a1b2c3d4e5f6a7b8"
-    assert item["evidence"]["excerpt"] == "```python"
+    assert item["evidence"]["excerpt_text"] == "```python"
     assert response.json()["adaptation_notice"][0]["code"] == "raw_html_block"
 
 

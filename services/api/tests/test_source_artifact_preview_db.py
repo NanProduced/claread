@@ -248,11 +248,13 @@ async def test_preview_never_exposes_storage_field_names(
         user_id=user_id,
     )
     # Response contract: only the DTO fields. object_key / bucket /
-    # endpoint / credentials never appear as fields (asserted at the DTO
-    # level in test_source_artifact_preview_route.py); the presigned URL
-    # host embeds the bucket per the standard OSS address model (same as
-    # the documented PUT presign contract), and the AccessKey SECRET never
-    # appears anywhere.
+    # endpoint / credentials never appear as independent response fields
+    # (asserted at the DTO level in test_source_artifact_preview_route.py).
+    # The presigned URL value itself is a sensitive temporary delivery
+    # value (bucket host + key path are inherent to the OSS presigned-URL
+    # model, same as the documented PUT contract) and must never be
+    # written into ordinary DOM; the AccessKey SECRET never appears
+    # anywhere.
     assert result.preview_url is not None
     assert "Signature=fake" in result.preview_url
     assert "OSSAccessKeySecret" not in result.preview_url

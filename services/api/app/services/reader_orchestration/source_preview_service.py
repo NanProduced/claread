@@ -8,10 +8,20 @@ surface-read-intake-content-check.md §13.2):
 - only the owner's non-deleted artifact in ``available`` status with an
   allowed preview MIME (PDF / images) may be previewed — every other state
   collapses to denial (404) without revealing the reason;
-- the response NEVER exposes ``object_key`` / bucket / endpoint /
-  credentials or a long-lived URL; ``preview_url`` is ``None`` when the
-  presigner cannot produce a URL (fail closed — Candidate editing and
-  confirmation flows are never blocked by preview availability),
+- the response exposes NO independent storage-coordinate FIELDS
+  (``object_key`` / bucket / endpoint / credentials). The presigned URL
+  value itself is a **sensitive temporary delivery value** — it addresses
+  the object (bucket host + key path are inherent to the OSS presigned-URL
+  model, same as the documented PUT contract) and must be treated as a
+  credential-equivalent secret;
+- **frozen Web consumption contract**: the raw presigned URL must NOT be
+  written directly into ordinary DOM. Web delivery must go through a
+  controlled same-origin BFF (proxy / redirect), a safe Blob URL obtained
+  via a same-origin fetch, or an equivalent controlled delivery
+  mechanism — never direct embedding of the raw URL in markup/attributes;
+- ``preview_url`` is ``None`` when the presigner cannot produce a URL
+  (fail closed — Candidate editing and confirmation flows are never
+  blocked by preview availability),
 - the URL is never logged.
 """
 

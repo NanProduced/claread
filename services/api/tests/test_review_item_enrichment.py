@@ -153,13 +153,33 @@ def test_target_scope_document_for_doc_level_codes() -> None:
         assert items[0]["target_scope"] == "document", code
 
 
-def test_target_scope_range_for_local_codes() -> None:
-    for code in ("has_unclosed_fence", "table_structure_uncertain"):
+def test_target_scope_range_only_when_anchor_derivable() -> None:
+    # has_unclosed_fence WITH locatable document text -> range.
+    items = enrich_review_items(
+        adaptations=[_record("has_unclosed_fence")],
+        issue_namespace="ns",
+        document_text="A\n\n```python\nx\n",
+    )
+    assert items[0]["target_scope"] == "range"
+    assert items[0]["source_anchor"] is not None
+
+
+def test_no_fake_range_without_anchor_degrades_to_document() -> None:
+    # Local-semantic codes without a precisely derivable anchor must NOT
+    # claim range; they degrade honestly to document scope.
+    for code, text in (
+        ("has_unclosed_fence", None),
+        ("table_structure_uncertain", "| a | b |\n"),
+        ("has_unclosed_fence", "```python\nprint(1)\n```\n"),
+        ("missing_source_range", "some text"),
+    ):
         items = enrich_review_items(
             adaptations=[_record(code)],
             issue_namespace="ns",
+            document_text=text,
         )
-        assert items[0]["target_scope"] == "range", code
+        assert items[0]["target_scope"] == "document", (code, text)
+        assert items[0]["source_anchor"] is None, (code, text)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +201,7 @@ def test_unclosed_fence_anchor_is_exact_utf16() -> None:
     assert anchor["end_utf16"] > anchor["start_utf16"]
     assert items[0]["anchor_hash"] is not None
     expected_excerpt = text[anchor["start_utf16"] : anchor["end_utf16"]]
-    assert items[0]["evidence"]["excerpt"] == expected_excerpt
+    assert items[0]["evidence"]["excerpt_text"] == expected_excerpt
     assert items[0]["anchor_hash"] == hashlib.sha256(expected_excerpt.encode("utf-8")).hexdigest()
 
 
@@ -197,7 +217,7 @@ def test_indented_fence_marker_anchor_includes_leading_space() -> None:
     # the whole (indented) opening line: offsets 2..13 ("  ```python" is
     # 11 chars), excerpt verbatim.
     assert anchor == {"block_id": None, "start_utf16": 2, "end_utf16": 13}
-    assert items[0]["evidence"]["excerpt"] == "  ```python"
+    assert items[0]["evidence"]["excerpt_text"] == "  ```python"
 
 
 def test_closed_fences_do_not_fabricate_anchors() -> None:
@@ -210,7 +230,7 @@ def test_closed_fences_do_not_fabricate_anchors() -> None:
     # No unclosed fence exists: the fence item degrades to null anchors.
     assert items[0]["source_anchor"] is None
     assert items[0]["anchor_hash"] is None
-    assert items[0]["evidence"]["excerpt"] is None
+    assert items[0]["evidence"]["excerpt_text"] is None
 
 
 def test_anchors_assigned_in_order_for_multiple_fence_records() -> None:
@@ -238,6 +258,69 @@ def test_no_anchor_for_non_fence_codes() -> None:
     )
     assert items[0]["source_anchor"] is None
     assert items[0]["anchor_hash"] is None
+    assert items[0]["target_scope"] == "document"
+
+
+# ---------------------------------------------------------------------------
+# UTF-16 code-unit anchors (Python len() counts code points — NOT code
+# units for non-BMP characters; offsets must be UTF-16LE units)
+# ---------------------------------------------------------------------------
+
+
+def test_emoji_prefix_offsets_are_utf16_code_units() -> None:
+    # "标题😀" = 2 BMP chars (1 unit each) + 1 emoji (surrogate pair = 2
+    # units); line break is 1 unit. Python len() would say 4; the correct
+    # UTF-16 prefix length is 2 + 2 + 1 = 5.
+    text = "标题😀\n```python\nx\n"
+    items = enrich_review_items(
+        adaptations=[_record("has_unclosed_fence")],
+        issue_namespace="ns",
+        document_text=text,
+    )
+    anchor = items[0]["source_anchor"]
+    assert anchor == {"block_id": None, "start_utf16": 5, "end_utf16": 14}
+    assert items[0]["evidence"]["excerpt_text"] == "```python"
+
+
+def test_chinese_info_string_excerpt_uses_utf16_units() -> None:
+    # "```代码块" = 3 backticks + 3 BMP CJK chars = 6 UTF-16 units.
+    text = "A\n\n```代码块\nx\n"
+    items = enrich_review_items(
+        adaptations=[_record("has_unclosed_fence")],
+        issue_namespace="ns",
+        document_text=text,
+    )
+    anchor = items[0]["source_anchor"]
+    assert anchor == {"block_id": None, "start_utf16": 3, "end_utf16": 9}
+    assert items[0]["evidence"]["excerpt_text"] == "```代码块"
+
+
+def test_crlf_and_emoji_before_fence_offsets() -> None:
+    # "A\r\n\r\n😀\n```python\nx\n": A(1) + \r\n(2) + \r\n(2) + 😀\n(3)
+    # = 8 units before the fence marker.
+    text = "A\r\n\r\n😀\n```python\nx\n"
+    items = enrich_review_items(
+        adaptations=[_record("has_unclosed_fence")],
+        issue_namespace="ns",
+        document_text=text,
+    )
+    anchor = items[0]["source_anchor"]
+    assert anchor == {"block_id": None, "start_utf16": 8, "end_utf16": 17}
+    assert items[0]["evidence"]["excerpt_text"] == "```python"
+
+
+def test_utf16_anchor_length_never_equals_python_len_for_non_bmp() -> None:
+    text = "A😀B\n```python\nx\n"
+    items = enrich_review_items(
+        adaptations=[_record("has_unclosed_fence")],
+        issue_namespace="ns",
+        document_text=text,
+    )
+    anchor = items[0]["source_anchor"]
+    assert anchor["start_utf16"] == 5  # A(1) + 😀(2) + B(1) + \n(1)
+    assert anchor["end_utf16"] == 14
+    with_emojis = 5
+    assert with_emojis > len("A😀B\n")  # len() undercounts (4)
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +335,13 @@ def test_missing_document_text_degrades_all_evidence_fields() -> None:
     )
     assert items[0]["source_anchor"] is None
     assert items[0]["anchor_hash"] is None
-    assert items[0]["evidence"] == {"excerpt": None, "proposed_patch": None}
+    assert items[0]["evidence"] == {
+        "excerpt_text": None,
+        "proposed_patch": None,
+    }
     assert items[0]["source_media_coordinate"] is None
+    # No anchor -> range would be fabricated; degrade to document scope.
+    assert items[0]["target_scope"] == "document"
 
 
 def test_media_coordinate_is_always_present_as_nullable_field() -> None:
@@ -329,5 +417,5 @@ def test_enriched_dict_validates_as_structured_review_item() -> None:
     assert model.target_scope == "range"
     assert model.source_anchor is not None
     assert model.anchor_hash is not None
-    assert model.evidence is not None and model.evidence.excerpt is not None
+    assert model.evidence is not None and model.evidence.excerpt_text is not None
     assert model.source_media_coordinate is None

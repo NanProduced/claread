@@ -50,15 +50,20 @@ _ROUTINE_CODES = frozenset(
         "task_list_unsupported",
     }
 )
-_DOCUMENT_SCOPE_CODES = frozenset(
-    {
-        "code_dominant",
-        "too_long_requires_envelope",
-    }
-)
 
 _FENCE_MARKERS = ("```", "~~~")
 _ISSUE_ID_DIGEST_LENGTH = 16
+
+
+def _utf16_code_unit_length(text: str) -> int:
+    """UTF-16LE code unit length.
+
+    Python ``len()`` counts code points: astral characters (emoji etc.)
+    are a surrogate PAIR = **2** UTF-16 code units while ``len()`` says 1.
+    All offsets in the review-item contract are UTF-16 code units, so
+    ``len()`` must never be used for offsets.
+    """
+    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in text)
 
 
 def _issue_id(namespace: str, code: str, occurrence_index: int) -> str:
@@ -79,8 +84,9 @@ def _locate_unclosed_fence_openings(text: str) -> list[dict[str, Any]]:
     fence marker (after up to three leading spaces, per GFM); a closing
     fence is a line containing the same marker with nothing but optional
     trailing whitespace after it. Anything else while inside a fence is
-    body content. Never guesses: positions are literal UTF-16 offsets of
-    the opening marker line.
+    body content. Never guesses: positions are literal **UTF-16 code
+    unit** offsets of the opening marker line (see
+    ``_utf16_code_unit_length``).
     """
     openings: list[dict[str, Any]] = []
     active: dict[str, Any] | None = None
@@ -93,7 +99,7 @@ def _locate_unclosed_fence_openings(text: str) -> list[dict[str, Any]]:
         trimmed = content[leading:]
         marker = next((m for m in _FENCE_MARKERS if trimmed.startswith(m)), None)
         if marker is None:
-            offset += len(line)
+            offset += _utf16_code_unit_length(line)
             continue
         if active is None:
             active = {
@@ -106,9 +112,9 @@ def _locate_unclosed_fence_openings(text: str) -> list[dict[str, Any]]:
             active = None
         # Any other fenced line (different marker, or marker + info string)
         # while inside a fence is body content — no state change.
-        offset += len(line)
+        offset += _utf16_code_unit_length(line)
     if active is not None:
-        end = active["start"] + len(active["line_text"])
+        end = active["start"] + _utf16_code_unit_length(active["line_text"])
         openings.append(
             {
                 "start_utf16": active["start"],
@@ -166,15 +172,19 @@ def enrich_review_items(
             excerpt = opening["excerpt"]
             anchor_hash = hashlib.sha256(excerpt.encode("utf-8")).hexdigest()
 
+        # target_scope: range ONLY when a valid anchor is emitted; a local
+        # item without a precisely derivable anchor degrades honestly to
+        # document scope (a range must never be fabricated).
+        target_scope = "range" if source_anchor is not None else "document"
         item.update(
             {
                 "issue_id": issue_id,
                 "tier": _tier_for(record.code),
-                "target_scope": ("document" if record.code in _DOCUMENT_SCOPE_CODES else "range"),
+                "target_scope": target_scope,
                 "source_anchor": source_anchor,
                 "anchor_hash": anchor_hash,
                 "evidence": {
-                    "excerpt": excerpt,
+                    "excerpt_text": excerpt,
                     "proposed_patch": None,
                 },
                 "source_media_coordinate": None,
