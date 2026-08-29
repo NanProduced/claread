@@ -1767,13 +1767,14 @@ describe("resume_candidate entry", () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
-    });
-    expect(screen.queryByRole("button", { name: "重新输入" })).toBeNull();
-    expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
+    // The loading surface already carries data-testid="content-check-panel";
+    // waiting on the test id races the async confirmed-source load. Wait for
+    // the real ready-state control via an accessible query instead.
+    await screen.findByRole("button", { name: "稍后处理" });
     expect(screen.getByRole("button", { name: "确认并开始阅读" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重新输入" })).toBeNull();
     expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
+    expect(screen.queryByText("正在载入待确认的内容…")).toBeNull();
   });
 
   it("query param wins over a submit-origin localStorage candidate", async () => {
