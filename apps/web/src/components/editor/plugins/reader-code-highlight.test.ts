@@ -166,9 +166,11 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
     expect(cacheKeys.some((key) => key.includes("bb = 22"))).toBe(false);
     // 只有最新版本触发有效刷新
     expect(redecorate).toHaveBeenCalledTimes(1);
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
     // 最新内容命中缓存并产出 decoration
     const ranges = decorateLine({ editor, redecorate }, 0, 0, "ccc = 333");
     expect(ranges.length).toBeGreaterThan(0);
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
   });
 
   it("in-flight stale tokenize completes without caching or refreshing outdated content", async () => {
@@ -210,6 +212,7 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
     expect(cacheKeys.some((key) => key.includes("stale_old = 1"))).toBe(false);
     expect(cacheKeys.some((key) => key.includes("stale_new = 2"))).toBe(true);
     expect(redecorate).toHaveBeenCalledTimes(1);
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
   });
 
   it("pending task is cancelled when the slot switches to an already-cached key", async () => {
@@ -244,6 +247,17 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
     expect(rangesB.length).toBeGreaterThan(0);
     // 预热 editor 的完成通知不受影响。
     expect(warm.redecorate).toHaveBeenCalledTimes(1);
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
+  });
+
+  it("unknown-language negative caching leaves no pending slot", () => {
+    const children: unknown[] = [
+      makeCodeBlock("not-a-language", ["unknown_language = 1"]),
+    ];
+    const fake = makeFakeEditor(children);
+
+    expect(decorateLine(fake, 0, 0, "unknown_language = 1")).toEqual([]);
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
   });
 
   it("pending task goes stale when the code block is deleted (path occupied by other node)", async () => {
@@ -263,6 +277,7 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
     // 不缓存已删除内容、不 redecorate。
     expect(cacheKeys.some((key) => key.includes("deleted = 1"))).toBe(false);
     expect(redecorate).not.toHaveBeenCalled();
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
   });
 
   it("two code blocks in the same editor highlight independently", async () => {
@@ -316,5 +331,20 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
     // 全部刷新：两个 editor 都收到完成通知
     expect(fakeA.redecorate).toHaveBeenCalled();
     expect(fakeB.redecorate).toHaveBeenCalled();
+    expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
+  });
+
+  it("repeated editor create/destroy cycles do not accumulate pending slots", async () => {
+    for (let index = 0; index < 5; index += 1) {
+      const fake = makeFakeEditor([
+        makeCodeBlock("python", ["editor_cycle = 1"]),
+      ]);
+      decorateLine(fake, 0, 0, "editor_cycle = 1");
+      await pollUntil(
+        () => __inputCodeHighlightSchedulerState().pendingKeys.length === 0,
+        "editor cycle pending drained",
+      );
+      expect(__inputCodeHighlightSchedulerState().pendingSlotCount).toBe(0);
+    }
   });
 });

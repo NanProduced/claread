@@ -531,6 +531,9 @@ function cancelStaleInputCodePending(waiterId: string, newKey: string): void {
       pendingInputCodeTokens.delete(prevKey);
     }
   }
+  if (inputCodeSlotPendingKey.get(waiterId) === prevKey) {
+    inputCodeSlotPendingKey.delete(waiterId);
+  }
 }
 
 async function runInputCodeTokenize(
@@ -567,7 +570,8 @@ async function runInputCodeTokenize(
       waiting.waiters.forEach((waiter, waiterId) => {
         if (inputCodeWaiterWants(waiter, key)) {
           editors.add(waiter.editor);
-        } else if (inputCodeSlotPendingKey.get(waiterId) === key) {
+        }
+        if (inputCodeSlotPendingKey.get(waiterId) === key) {
           inputCodeSlotPendingKey.delete(waiterId);
         }
       });
@@ -590,13 +594,13 @@ function scheduleInputCodeTokens(
   const { key } = state;
   const waiterId = inputCodeWaiterId(editor, blockPath);
   cancelStaleInputCodePending(waiterId, key);
-  inputCodeSlotPendingKey.set(waiterId, key);
   if (inputCodeTokenCache.has(key)) {
     return;
   }
   const entry = pendingInputCodeTokens.get(key);
   if (entry) {
     entry.waiters.set(waiterId, { editor, blockPath });
+    inputCodeSlotPendingKey.set(waiterId, key);
     return;
   }
   if (resolveReaderCodeLanguage(state.language) === null) {
@@ -610,6 +614,7 @@ function scheduleInputCodeTokens(
     void runInputCodeTokenize(key, state.code, state.language);
   }, 0);
   pendingInputCodeTokens.set(key, { waiters, timerId });
+  inputCodeSlotPendingKey.set(waiterId, key);
 }
 
 /**
@@ -708,9 +713,11 @@ export function inputCodeBlockDecorate({
 export function __inputCodeHighlightSchedulerState(): {
   pendingKeys: string[];
   cacheKeys: string[];
+  pendingSlotCount: number;
 } {
   return {
     pendingKeys: [...pendingInputCodeTokens.keys()],
     cacheKeys: [...inputCodeTokenCache.keys()],
+    pendingSlotCount: inputCodeSlotPendingKey.size,
   };
 }
