@@ -2210,7 +2210,7 @@ describe("阅读方案弹层", () => {
       expect(screen.getByTestId("waiting-phase-step-extract").getAttribute("data-state")).toBe("completed");
     });
 
-    it("extraction failure renders exactly 1 reason, 1 primary action (重试), 1 exit action (重新选择文件), with no 3rd button", async () => {
+    it("extraction failure renders exactly 1 reason, primary action (选择其他文件), secondary action (返回粘贴内容), with no fake 重试 button", async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
@@ -2246,102 +2246,39 @@ describe("阅读方案弹层", () => {
         expect(screen.getByRole("alert")).toBeTruthy();
       });
 
-      // Exactly 1 reason sentence
+      // Single sentence cause
       expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
 
-      // Only 2 buttons in the alert: primary recovery (重试) and exit action (重新选择文件)
+      // No fake "重试" button on terminal failure
+      expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+
+      // Only 2 buttons in the alert: primary recovery (选择其他文件) and exit action (返回粘贴内容)
       const alert = screen.getByRole("alert");
       const buttons = alert.querySelectorAll("button");
       expect(buttons).toHaveLength(2);
-      expect(buttons[0].textContent).toContain("重试");
-      expect(buttons[1].textContent).toContain("重新选择文件");
-
-      // No third button (e.g. 移除文件) in failure state
-      expect(alert.querySelector("button:nth-of-type(3)")).toBeNull();
+      expect(buttons[0].textContent).toContain("选择其他文件");
+      expect(buttons[1].textContent).toContain("返回粘贴内容");
 
       // Both buttons meet 44px min touch target
       expect(buttons[0].className).toContain("min-h-[44px]");
       expect(buttons[1].className).toContain("min-h-[44px]");
     });
 
-    it("clicking 重试 after extraction failure retries from current polling stage without re-uploading", async () => {
-      let statusCount = 0;
+    it("materialization failure renders exactly 1 reason, primary action (选择其他文件), secondary action (返回粘贴内容), with no fake 重试 button", async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
         if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
         if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
-        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_retry_extract"));
+        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_mat_fail"));
         if (url.endsWith("/pipeline-status")) {
-          statusCount += 1;
-          if (statusCount === 1) {
-            return jsonResponse({
-              ...makePipelineStableResponse("rec_r8_retry_extract"),
-              outcome: "extraction_failed",
-              next_action: "show_error",
-              extraction_job: { status: "failed_terminal" },
-              materialization_job: null,
-            });
-          }
-          return jsonResponse(makePipelineStableResponse("rec_r8_retry_extract"));
-        }
-        throw new Error(`Unexpected fetch ${url}`);
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      render(
-        <AnalyzeSubmitForm
-          readingGoal="daily_reading"
-          readingVariant="intermediate_reading"
-        />,
-      );
-
-      fireEvent.change(screen.getByTestId("source-file-input"), {
-        target: { files: [makeFile("paper.pdf", "application/pdf")] },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
-
-      await waitFor(() => {
-        expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
-      });
-
-      // Click 重试
-      fireEvent.click(screen.getByRole("button", { name: "重试" }));
-
-      // Succeeded after retry
-      await waitFor(() => {
-        expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_r8_retry_extract");
-      });
-
-      // Verify /init-upload and OSS upload was called only ONCE (no re-upload)
-      const urls = fetchMock.mock.calls.map(([url]) => String(url));
-      expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
-      expect(urls.filter((url) => url.startsWith("https://oss.example.com/"))).toHaveLength(1);
-      expect(urls.filter((url) => url.endsWith("/complete-upload"))).toHaveLength(1);
-      expect(urls.filter((url) => url.endsWith("/submit-input"))).toHaveLength(1);
-      expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
-    });
-
-    it("clicking 重试 after materialization failure retries from current polling stage without re-uploading", async () => {
-      let statusCount = 0;
-      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
-        if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
-        if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
-        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_retry_mat"));
-        if (url.endsWith("/pipeline-status")) {
-          statusCount += 1;
-          if (statusCount === 1) {
-            return jsonResponse({
-              ...makePipelineStableResponse("rec_r8_retry_mat"),
-              outcome: "materialization_failed",
-              next_action: "show_error",
-              extraction_job: { status: "succeeded" },
-              materialization_job: { status: "failed_terminal" },
-            });
-          }
-          return jsonResponse(makePipelineStableResponse("rec_r8_retry_mat"));
+          return jsonResponse({
+            ...makePipelineStableResponse("rec_r8_mat_fail"),
+            outcome: "materialization_failed",
+            next_action: "show_error",
+            extraction_job: { status: "succeeded" },
+            materialization_job: { status: "failed_terminal" },
+          });
         }
         throw new Error(`Unexpected fetch ${url}`);
       });
@@ -2363,19 +2300,17 @@ describe("阅读方案弹层", () => {
         expect(screen.getByText("检查内容与排版失败，请稍后重试")).toBeTruthy();
       });
 
-      // Click 重试
-      fireEvent.click(screen.getByRole("button", { name: "重试" }));
+      // No fake "重试" button
+      expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
 
-      await waitFor(() => {
-        expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_r8_retry_mat");
-      });
-
-      const urls = fetchMock.mock.calls.map(([url]) => String(url));
-      expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
-      expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
+      const alert = screen.getByRole("alert");
+      const buttons = alert.querySelectorAll("button");
+      expect(buttons).toHaveLength(2);
+      expect(buttons[0].textContent).toContain("选择其他文件");
+      expect(buttons[1].textContent).toContain("返回粘贴内容");
     });
 
-    it("clicking 重新选择文件 after failure clears the failed task and allows choosing a new file", async () => {
+    it("terminal failure action 选择其他文件 does not request pipeline-status or re-upload original file", async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
@@ -2411,12 +2346,183 @@ describe("阅读方案弹层", () => {
         expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
       });
 
-      // Click 重新选择文件 (exit action)
-      fireEvent.click(screen.getByRole("button", { name: "重新选择文件" }));
+      // Record call counts before clicking exit action
+      const callsBefore = fetchMock.mock.calls.length;
+
+      // Click 选择其他文件
+      fireEvent.click(screen.getByRole("button", { name: "选择其他文件" }));
+
+      // No further network calls are made
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
 
       // Workspace resets to idle and file is cleared
       expect(screen.queryByTestId("source-file-preview")).toBeNull();
       expect(screen.getByPlaceholderText("Paste an English article here")).toBeTruthy();
+    });
+
+    it("terminal failure action 返回粘贴内容 does not request pipeline-status or re-upload, and restores stashed draft", async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+        if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+        if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_restore"));
+        if (url.endsWith("/pipeline-status")) {
+          return jsonResponse({
+            ...makePipelineStableResponse("rec_r8_restore"),
+            outcome: "extraction_failed",
+            next_action: "show_error",
+            extraction_job: { status: "failed_terminal" },
+            materialization_job: null,
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <AnalyzeSubmitForm
+          readingGoal="daily_reading"
+          readingVariant="intermediate_reading"
+        />,
+      );
+
+      // Type initial text in editor
+      const textarea = screen.getByPlaceholderText("Paste an English article here");
+      fireEvent.change(textarea, {
+        target: { value: "My important draft before attaching file." },
+      });
+
+      // Attach file
+      fireEvent.change(screen.getByTestId("source-file-input"), {
+        target: { files: [makeFile("article.pdf", "application/pdf")] },
+      });
+
+      // Submit
+      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
+      });
+
+      const callsBefore = fetchMock.mock.calls.length;
+
+      // Click 返回粘贴内容
+      fireEvent.click(screen.getByRole("button", { name: "返回粘贴内容" }));
+
+      // No new network calls
+      expect(fetchMock.mock.calls.length).toBe(callsBefore);
+
+      // Draft is restored in editor
+      expect(screen.queryByRole("alert")).toBeNull();
+      const restoredInput = screen.getByPlaceholderText("Paste an English article here") as HTMLTextAreaElement;
+      expect(restoredInput.value).toBe("My important draft before attaching file.");
+    });
+
+    it("transient polling error still provides 重试, and clicking it makes exactly 1 new pipeline-status GET without re-upload", async () => {
+      let statusCount = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+        if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+        if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_transient"));
+        if (url.endsWith("/pipeline-status")) {
+          statusCount += 1;
+          if (statusCount === 1) {
+            // Transient BFF error (network / server glitch)
+            return jsonResponse({
+              ok: false,
+              message: "查询处理进度超时，请重试。",
+            });
+          }
+          return jsonResponse(makePipelineStableResponse("rec_r8_transient"));
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <AnalyzeSubmitForm
+          readingGoal="daily_reading"
+          readingVariant="intermediate_reading"
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("source-file-input"), {
+        target: { files: [makeFile("paper.pdf", "application/pdf")] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("查询处理进度超时，请重试。")).toBeTruthy();
+      });
+
+      // Transient error retains "重试" button
+      const retryBtn = screen.getByRole("button", { name: "重试" });
+      expect(retryBtn).toBeTruthy();
+
+      // Click 重试
+      fireEvent.click(retryBtn);
+
+      await waitFor(() => {
+        expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_r8_transient");
+      });
+
+      // Verify /init-upload was called only 1 time, and pipeline-status was called 2 times
+      const urls = fetchMock.mock.calls.map(([url]) => String(url));
+      expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
+      expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
+    });
+
+    it("single stage status owner: when waiting stage is active, AnalysisLoadingStatusBar is not rendered", async () => {
+      let resolveStatus!: (res: Response) => void;
+      const statusPromise = new Promise<Response>((resolve) => {
+        resolveStatus = resolve;
+      });
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+        if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+        if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_r8_single_owner"));
+        if (url.endsWith("/pipeline-status")) {
+          return await statusPromise;
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <AnalyzeSubmitForm
+          readingGoal="daily_reading"
+          readingVariant="intermediate_reading"
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("source-file-input"), {
+        target: { files: [makeFile("paper.pdf", "application/pdf")] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+      // Waiting stage is active in workspace
+      expect(screen.getByTestId("read-intake-waiting-stage")).toBeTruthy();
+
+      // Ensure NO duplicate AnalysisLoadingStatusBar is rendered
+      // AnalysisLoadingStatusBar uses messagePrefix paragraphs like "正在上传", "正在提取", "正在准备"
+      expect(screen.queryByText("后台已接管处理，可以离开本页；完成后会保存到阅读记录")).toBeNull();
+
+      // Only 1 element with role="status" in document (ReadIntakeWaitingStage)
+      const statusElements = screen.getAllByRole("status");
+      expect(statusElements).toHaveLength(1);
+      expect(statusElements[0]).toBe(screen.getByTestId("read-intake-waiting-stage"));
+
+      // Clean up in-flight promise
+      resolveStatus(jsonResponse(makePipelineStableResponse("rec_r8_single_owner")));
+      await waitFor(() => {
+        expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_r8_single_owner");
+      });
     });
 
     it("text submission failure renders 重试 and 返回修改", async () => {

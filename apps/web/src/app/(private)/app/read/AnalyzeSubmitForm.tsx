@@ -67,7 +67,11 @@ type SubmitState =
       nextAction?: PipelineNextAction | null;
     }
   | { kind: "success"; message: string }
-  | { kind: "error"; message: string }
+  | {
+      kind: "error";
+      message: string;
+      errorType?: "transient-polling" | "terminal-artifact" | "general";
+    }
   | {
       /** L2 同页 Content Check。Confirmed Source 404 走 resume-not-found。 */
       kind: "content-check";
@@ -563,10 +567,10 @@ export function AnalyzeSubmitForm({
   });
   // C1.3: Markdown 解析降级提示（非阻塞，初值/setValue 解析失败时显示）
   const [degradedMessage, setDegradedMessage] = useState<string | null>(null);
-  const isWaiting =
-    state.kind === "pending" ||
+  const isFileWaiting =
     state.kind === "artifact-uploading" ||
     state.kind === "artifact-polling";
+  const isWaiting = isFileWaiting || state.kind === "pending";
   const isSubmitting: boolean = isWaiting;
   const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
   // 状态栏只呈现近似词数（基于已 debounce 的 text，不恢复逐键 serialize）。
@@ -787,11 +791,15 @@ export function AnalyzeSubmitForm({
     void startArtifactFlow(file);
   }
 
-  function handleExitFile() {
+  function handleSelectAnotherFile() {
     stopPolling();
     lastPollingRef.current = null;
     clearAttachedSource();
     openFilePicker();
+  }
+
+  function handleReturnToEditor() {
+    clearAttachedSource();
   }
 
   async function postInitUpload(body: unknown): Promise<ReaderSourceArtifactUploadInitResult> {
@@ -849,7 +857,11 @@ export function AnalyzeSubmitForm({
         result = await fetchPipelineStatus(artifactId);
       } catch {
         if (pollGenerationRef.current === generation) {
-          setState({ kind: "error", message: "查询处理进度失败，请稍后重试。" });
+          setState({
+            kind: "error",
+            message: "查询处理进度失败，请稍后重试。",
+            errorType: "transient-polling",
+          });
         }
         return false;
       }
@@ -858,15 +870,18 @@ export function AnalyzeSubmitForm({
         setState({
           kind: "error",
           message: result.message || "查询处理进度失败，请稍后重试。",
+          errorType: "transient-polling",
         });
         return false;
       }
 
       const status = result;
       if (isArtifactPipelineWorkerStalled(status)) {
+        lastPollingRef.current = null;
         setState({
           kind: "error",
           message: "解析服务暂时没响应，请稍后重试或换个文件",
+          errorType: "terminal-artifact",
         });
         return false;
       }
@@ -879,13 +894,7 @@ export function AnalyzeSubmitForm({
         nextAction: status.next_action,
       });
       if (isTerminalOutcome(status.outcome) || isTerminalAction(status.next_action)) {
-        const isFailure =
-          status.outcome === "extraction_failed" ||
-          status.outcome === "materialization_failed" ||
-          status.next_action === "show_error";
-        if (!isFailure) {
-          lastPollingRef.current = null;
-        }
+        lastPollingRef.current = null;
         applyArtifactOutcome(status, currentFilename);
         return false;
       }
@@ -953,9 +962,11 @@ export function AnalyzeSubmitForm({
     }
 
     if (outcome === "input_rejected_or_action_required" || nextAction === "revise_input") {
+      lastPollingRef.current = null;
       setState({
         kind: "error",
         message: "系统没能识别这份文件，可以换一份文件或改用粘贴文本。",
+        errorType: "terminal-artifact",
       });
       return;
     }
@@ -967,9 +978,11 @@ export function AnalyzeSubmitForm({
           : outcome === "materialization_failed"
             ? "检查内容与排版失败，请稍后重试"
             : `处理失败（${summarizeOutcome(outcome)}），请稍后重试`;
+      lastPollingRef.current = null;
       setState({
         kind: "error",
         message: reason,
+        errorType: "terminal-artifact",
       });
     }
   }
@@ -1240,21 +1253,6 @@ export function AnalyzeSubmitForm({
 
   const waitingFileSize = attachedSource?.file.size ?? null;
 
-  const waitingMessagePrefix =
-    currentWaitingPhase === "upload"
-      ? "正在上传"
-      : currentWaitingPhase === "extract"
-        ? "正在提取"
-        : currentWaitingPhase === "check"
-          ? "正在检查"
-          : "正在准备";
-  const waitingDetail =
-    state.kind === "artifact-uploading" ||
-    state.kind === "artifact-polling" ||
-    state.kind === "pending"
-      ? state.message
-      : undefined;
-
   return (
     <TooltipProvider>
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -1359,7 +1357,7 @@ export function AnalyzeSubmitForm({
             </div>
           ) : null}
 
-          {isWaiting ? (
+          {isFileWaiting ? (
             <ReadIntakeWaitingStage
               phase={currentWaitingPhase}
               filename={waitingFilename}
@@ -1424,14 +1422,15 @@ export function AnalyzeSubmitForm({
             </Tooltip>
           )}
 
-          <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-8">
-            {isWaiting ? (
-              <AnalysisLoadingStatusBar
-                messagePrefix={waitingMessagePrefix}
-                detail={waitingDetail}
-                canLeave={canLeaveCurrentWaiting}
-              />
-            ) : (
+          {!isFileWaiting ? (
+            <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-8">
+              {state.kind === "pending" ? (
+                <AnalysisLoadingStatusBar
+                  messagePrefix="正在准备"
+                  detail={state.message}
+                  canLeave={false}
+                />
+              ) : (
               <div
                 data-testid="read-source-primary-actions"
                 className="min-w-0 space-y-2.5"
@@ -1561,8 +1560,9 @@ export function AnalyzeSubmitForm({
               </div>
             )}
           </div>
+        ) : null}
         </div>
-        )}
+      )}
       </div>
 
       {state.kind !== "idle" && !isWaiting && state.kind !== "content-check" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
@@ -1576,36 +1576,92 @@ export function AnalyzeSubmitForm({
           <p className="font-semibold">{state.message}</p>
           {state.kind === "error" ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 font-sans">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={retryLastFile}
-                className="min-h-[44px]"
-              >
-                重试
-                <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
-              </Button>
-              {attachedSource || lastFileRef.current ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleExitFile}
-                  className="min-h-[44px]"
-                >
-                  重新选择文件
-                </Button>
+              {state.errorType === "terminal-artifact" ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleSelectAnotherFile}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    选择其他文件
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReturnToEditor}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    返回粘贴内容
+                  </Button>
+                </>
+              ) : state.errorType === "transient-polling" ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={retryLastFile}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    重试
+                    <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReturnToEditor}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    返回粘贴内容
+                  </Button>
+                </>
+              ) : attachedSource || lastFileRef.current ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleSelectAnotherFile}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    选择其他文件
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReturnToEditor}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    返回粘贴内容
+                  </Button>
+                </>
               ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setState({ kind: "idle" })}
-                  className="min-h-[44px]"
-                >
-                  返回修改
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={retryLastFile}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    重试
+                    <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setState({ kind: "idle" })}
+                    className="min-h-[44px] min-w-[44px] px-3.5"
+                  >
+                    返回修改
+                  </Button>
+                </>
               )}
             </div>
           ) : null}
