@@ -13,8 +13,28 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readRejectedReasons, useContentCheck } from "./use-content-check";
+import type { ReaderContentCheckItemDto } from "@/types/api/reader-plate";
 
 const RECORD_ID = "rec_cc_1";
+
+function makeContentCheckItem(
+  issueId: string,
+  overrides: Partial<ReaderContentCheckItemDto> = {},
+): ReaderContentCheckItemDto {
+  return {
+    code: "source_type_review_default",
+    message: "technical detail",
+    classification: "content_check",
+    issue_id: issueId,
+    tier: "routine",
+    target_scope: "document",
+    source_anchor: null,
+    anchor_hash: null,
+    evidence: { excerpt_text: null, proposed_patch: null },
+    source_media_coordinate: null,
+    ...overrides,
+  };
+}
 
 function makeReadResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -213,7 +233,10 @@ describe("useContentCheck 编辑 → PUT reparse", () => {
               { code: "raw_html_block", message: "已清洗 HTML", classification: "adaptation_notice" },
             ],
             content_check: [
-              { code: "unclosed_fence", message: "代码块未闭合", classification: "content_check" },
+              makeContentCheckItem("1111111111111111", {
+                code: "has_unclosed_fence",
+                tier: "attention",
+              }),
             ],
           }),
         );
@@ -272,11 +295,10 @@ describe("useContentCheck 编辑 → PUT reparse", () => {
         json(
           makeReadResponse({
             content_check: [
-              {
-                code: "footnote_ref",
+              makeContentCheckItem("2222222222222222", {
+                code: "footnote_reference",
                 message: "旧版本脚注",
-                classification: "content_check",
-              },
+              }),
             ],
           }),
         ),
@@ -285,11 +307,10 @@ describe("useContentCheck 编辑 → PUT reparse", () => {
           makeUpdateResponse({
             revision: 2,
             content_check: [
-              {
-                code: "footnote_ref",
+              makeContentCheckItem("2222222222222222", {
+                code: "footnote_reference",
                 message: "新版本脚注",
-                classification: "content_check",
-              },
+              }),
             ],
           }),
         ),
@@ -297,8 +318,8 @@ describe("useContentCheck 编辑 → PUT reparse", () => {
     const { result } = renderContentCheck();
     await waitFor(() => expect(result.current.state.phase).toBe("ready"));
 
-    act(() => result.current.resolveCheckCode("footnote_ref"));
-    expect(result.current.resolvedCheckCodes.has("footnote_ref")).toBe(true);
+    act(() => result.current.confirmIssue("2222222222222222"));
+    expect(result.current.issueStates.get("2222222222222222")).toBe("confirmed");
 
     act(() => result.current.handleEdit("# Draft\n\nEdited."));
     await act(async () => {
@@ -306,7 +327,7 @@ describe("useContentCheck 编辑 → PUT reparse", () => {
     });
 
     expect(result.current.state.draft?.revision).toBe(2);
-    expect(result.current.resolvedCheckCodes.size).toBe(0);
+    expect(result.current.issueStates.size).toBe(0);
   });
 
   it("防抖自动保存触发一次 PUT", async () => {
@@ -649,14 +670,19 @@ describe("useContentCheck content_check 处置", () => {
     vi.unstubAllGlobals();
   });
 
-  it("resolveCheckCode / resolveAllCheckCodes", async () => {
+  it("tracks same-code items independently by issue_id and preserves modified state", async () => {
     installFetchMock({
       onGet: () =>
         json(
           makeReadResponse({
             content_check: [
-              { code: "unclosed_fence", message: "m1", classification: "content_check" },
-              { code: "footnote_ref", message: "m2", classification: "content_check" },
+              makeContentCheckItem("aaaaaaaaaaaaaaaa", {
+                code: "has_unclosed_fence",
+                tier: "attention",
+              }),
+              makeContentCheckItem("bbbbbbbbbbbbbbbb", {
+                code: "has_unclosed_fence",
+              }),
             ],
           }),
         ),
@@ -664,12 +690,18 @@ describe("useContentCheck content_check 处置", () => {
     const { result } = renderContentCheck();
     await waitFor(() => expect(result.current.state.phase).toBe("ready"));
 
-    act(() => result.current.resolveCheckCode("unclosed_fence"));
-    expect(result.current.resolvedCheckCodes.has("unclosed_fence")).toBe(true);
-    expect(result.current.resolvedCheckCodes.has("footnote_ref")).toBe(false);
+    act(() => result.current.confirmIssue("aaaaaaaaaaaaaaaa"));
+    expect(result.current.issueStates.get("aaaaaaaaaaaaaaaa")).toBe("confirmed");
+    expect(result.current.issueStates.has("bbbbbbbbbbbbbbbb")).toBe(false);
 
-    act(() => result.current.resolveAllCheckCodes());
-    expect(result.current.resolvedCheckCodes.has("footnote_ref")).toBe(true);
+    act(() => result.current.confirmIssues(["bbbbbbbbbbbbbbbb"]));
+    expect(result.current.issueStates.get("bbbbbbbbbbbbbbbb")).toBe("confirmed");
+
+    act(() => result.current.markIssueModified("aaaaaaaaaaaaaaaa"));
+    expect(result.current.issueStates.get("aaaaaaaaaaaaaaaa")).toBe("modified");
+
+    act(() => result.current.unconfirmIssue("bbbbbbbbbbbbbbbb"));
+    expect(result.current.issueStates.has("bbbbbbbbbbbbbbbb")).toBe(false);
   });
 });
 
@@ -684,11 +716,11 @@ describe("readRejectedReasons", () => {
         },
       },
       [
-        {
+        makeContentCheckItem("cccccccccccccccc", {
           code: "code_dominant",
           message: "Input appears to be code-dominant without Markdown prose structure.",
-          classification: "content_check",
-        },
+          tier: "attention",
+        }),
       ],
     );
     expect(reasons).toEqual([

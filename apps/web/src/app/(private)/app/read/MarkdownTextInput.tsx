@@ -225,7 +225,7 @@ function MarkdownCodeBlock({ children, attributes, element }: PlateElementProps)
           data-label={label}
           role="img"
           aria-label={`${label} 代码块`}
-          className="pointer-events-none absolute right-3 top-2 block select-none font-sans text-[0.7rem] font-medium tracking-wide text-muted-foreground/70 before:content-[attr(data-label)]"
+          className="pointer-events-none absolute right-3 top-2 block select-none font-sans text-xs font-medium tracking-wide text-muted-foreground/70 before:content-[attr(data-label)]"
         />
       ) : null}
       <code className={label ? "block pt-6" : undefined}>{children}</code>
@@ -256,7 +256,7 @@ function MarkdownHr({ children, attributes }: PlateElementProps) {
 function MarkdownTable({ children, attributes }: PlateElementProps) {
   return (
     <div {...attributes} className="my-4 overflow-x-auto rounded-[8px] border border-hairline/75">
-      <table className="w-full min-w-[36rem] border-collapse text-[0.875rem] leading-[1.55]">
+      <table className="w-full min-w-[36rem] border-collapse text-sm leading-[1.55]">
         <tbody>{children}</tbody>
       </table>
     </div>
@@ -570,6 +570,37 @@ function normalizeMarkdownDeserializeResult(
   };
 }
 
+function findUniqueExactTextLeaf(
+  nodes: Descendant[],
+  excerpt: string,
+): { path: number[]; index: number } | null {
+  if (!excerpt) return null;
+  let match: { path: number[]; index: number } | null = null;
+  let ambiguous = false;
+
+  const walk = (children: Descendant[], path: number[]) => {
+    for (let i = 0; i < children.length && !ambiguous; i += 1) {
+      const node = children[i] as { text?: string; children?: Descendant[] };
+      if (typeof node.text === "string") {
+        let index = node.text.indexOf(excerpt);
+        while (index >= 0) {
+          if (match) {
+            ambiguous = true;
+            break;
+          }
+          match = { path: [...path, i], index };
+          index = node.text.indexOf(excerpt, index + 1);
+        }
+      } else if (Array.isArray(node.children)) {
+        walk(node.children, [...path, i]);
+      }
+    }
+  };
+
+  walk(nodes, []);
+  return ambiguous ? null : match;
+}
+
 // ---------------------------------------------------------------------------
 // Ref handle：暴露给父组件用于提交/清空/恢复/聚焦
 // ---------------------------------------------------------------------------
@@ -598,6 +629,10 @@ export interface MarkdownTextInputHandle {
    * 以选区高亮）。找不到时返回 false。
    */
   reveal: (excerpt: string) => boolean;
+  /** 仅当完整文本唯一命中同一 Plate 文本叶时，才认为可精确定位。 */
+  canRevealExact: (excerpt: string) => boolean;
+  /** 精确定位完整文本；不剥离 Markdown 语法，也不做模糊或分行回退。 */
+  revealExact: (excerpt: string) => boolean;
   /**
    * 同步吸收 pending debounce，并返回 lint/提交共用的 Markdown 快照。
    */
@@ -928,6 +963,36 @@ export const MarkdownTextInput = forwardRef<
       focus: () => {
         if (!editor) return;
         editor.tf.focus();
+      },
+      canRevealExact: (excerpt: string) => {
+        if (!editor) return false;
+        return Boolean(
+          findUniqueExactTextLeaf(editor.children as Descendant[], excerpt),
+        );
+      },
+      revealExact: (excerpt: string) => {
+        if (!editor) return false;
+        const found = findUniqueExactTextLeaf(
+          editor.children as Descendant[],
+          excerpt,
+        );
+        if (!found) return false;
+        editor.tf.select({
+          anchor: { path: found.path, offset: found.index },
+          focus: {
+            path: found.path,
+            offset: found.index + excerpt.length,
+          },
+        });
+        editor.tf.focus();
+        window.setTimeout(() => {
+          const selection = window.getSelection();
+          const anchorNode = selection?.anchorNode;
+          const element =
+            anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement;
+          element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+        }, 60);
+        return true;
       },
       reveal: (excerpt: string) => {
         if (!editor) return false;

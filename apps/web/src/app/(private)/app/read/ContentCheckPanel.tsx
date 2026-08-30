@@ -1,46 +1,43 @@
 "use client";
 
-/**
- * ContentCheckPanel — 同页 Content Check（L2 Confirmed Source，mock BFF）。
- *
- * 提交后输入主区域在同一路由内平滑切换为 Content Check。展示结构化
- * Plate 预览（复用输入页 MarkdownTextInput 编辑器，WYSIWYG 形态，不展示
- * raw Markdown），编辑同一份 Source Draft，防抖自动保存（PUT
- * confirmed-source, expected_revision 乐观并发），服务端 reparse 后刷新
- * quality / adaptation_notice / content_check。
- *
- * 视觉原则：正文预览是主舞台；"需要你决定"的位置以安静卡片列在右侧
- * review 队列，按 tier 分层（attention = 高影响风险，routine = 常规过目），
- * 不使用警告色大片铺陈；后端英文诊断（code/message）只进「技术详情」
- * 折叠区，不上主屏。
- *
- * 操作层级：主"确认并开始阅读"、次"返回修改"、低噪"稍后处理"。
- */
-
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   Check,
   ChevronDown,
   FileText,
+  MapPin,
+  PanelRightOpen,
   RefreshCw,
   Wrench,
 } from "lucide-react";
 
 import { Button } from "@/components/primitives/button";
-import { cn } from "@/lib/cn";
-import type { ReaderAdaptationRecordDto } from "@/types/api/reader-plate";
 import {
-  applyContentCheckAutoFix,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/primitives/sheet";
+import { TextAction } from "@/components/primitives/text-action";
+import { cn } from "@/lib/cn";
+import type {
+  ReaderAdaptationRecordDto,
+  ReaderContentCheckItemDto,
+} from "@/types/api/reader-plate";
+import {
+  applyContentCheckProposedPatch,
+  type ContentCheckAnchorInspection,
   guidanceForContentCheckCode,
-  locateContentCheckExcerpt,
+  inspectContentCheckAnchor,
 } from "./content-check-guidance";
 import {
   MarkdownTextInput,
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
-import { TextAction } from "@/components/primitives/text-action";
 import { readRejectedReasons, useContentCheck } from "./use-content-check";
 
 export interface ContentCheckPanelDeferInfo {
@@ -52,68 +49,50 @@ export interface ContentCheckPanelDeferInfo {
 export interface ContentCheckPanelProps {
   recordId: string;
   filename?: string | null;
-  /** submit = 本页刚提交；resume = 从恢复入口进入（隐藏"返回修改"）。 */
   origin: "submit" | "resume";
   onOpenReader: (recordId: string) => void;
   onConfirmed: (recordId: string) => void;
-  /** 该 record 没有 Confirmed Source 行（L2 前存量记录）。 */
   onSourceMissing: () => void;
-  /** 返回修改：把当前草稿文本交回输入编辑器。 */
   onBackToInput: (markdown: string) => void;
-  /** 稍后处理：父组件负责持久化恢复入口并复位输入页。 */
   onDefer: (info: ContentCheckPanelDeferInfo) => void;
 }
 
-function AdaptationNoticeRail({
-  items,
-}: {
-  items: ReaderAdaptationRecordDto[];
-}) {
+const EMPTY_CONTENT_CHECK: ReaderContentCheckItemDto[] = [];
+
+function AdaptationNoticeRail({ items }: { items: ReaderAdaptationRecordDto[] }) {
   const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return null;
   return (
-    <div
-      data-testid="content-check-adaptation-notice"
-      className="rounded-[10px] border border-hairline/70 bg-surface/54 px-4 py-3 font-sans"
-    >
+    <div data-testid="content-check-adaptation-notice" className="border-b border-hairline pb-4">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
-        className="focus-ring flex w-full items-center justify-between gap-3 text-left"
+        className="focus-ring flex min-h-11 w-full items-center justify-between gap-3 text-left"
       >
-        <span className="inline-flex items-center gap-2 text-[0.78rem] font-medium text-muted-foreground">
-          <Check aria-hidden className="h-3.5 w-3.5 text-lens-blue" />
-          已自动处理 {items.length} 项格式问题，不影响阅读
+        <span className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Check aria-hidden className="size-4 text-lens-blue" />
+          已自动处理 {items.length} 项格式问题
         </span>
         <ChevronDown
           aria-hidden
           className={cn(
-            "h-3.5 w-3.5 text-subtle transition-transform duration-200",
+            "size-4 text-subtle transition-transform duration-[var(--cl-duration-fast)] motion-reduce:transition-none",
             expanded && "rotate-180",
           )}
         />
       </button>
       {expanded ? (
-        <ul className="mt-3 space-y-1.5 border-t border-hairline/60 pt-3 text-[0.76rem] leading-5 text-muted-foreground">
-          {items.map((item, index) => {
-            const guidance = guidanceForContentCheckCode(item.code);
-            return (
-              <li key={`${item.code}-${index}`}>
-                <span className="font-medium text-ink/80">{guidance.title}</span>
-                {item.message ? (
-                  <details className="mt-0.5 text-[0.72rem] text-subtle">
-                    <summary>技术详情</summary>
-                    <p className="mt-1 font-mono">
-                      {item.code}
-                      {item.message ? ` · ${item.message}` : ""}
-                      <span className="ml-1 font-sans">（诊断信息）</span>
-                    </p>
-                  </details>
-                ) : null}
-              </li>
-            );
-          })}
+        <ul className="space-y-2 pt-3 text-xs leading-5 text-muted-foreground">
+          {items.map((item, index) => (
+            <li key={`${item.code}-${index}`}>
+              {guidanceForContentCheckCode(item.code).title}
+              <details className="mt-1 text-subtle">
+                <summary className="cursor-pointer">技术详情</summary>
+                <code className="mt-1 block break-all">{item.code}</code>
+              </details>
+            </li>
+          ))}
         </ul>
       ) : null}
     </div>
@@ -131,97 +110,183 @@ export function ContentCheckPanel({
   onDefer,
 }: ContentCheckPanelProps) {
   const editorRef = useRef<MarkdownTextInputHandle | null>(null);
+  const [anchorInspections, setAnchorInspections] = useState<
+    ReadonlyMap<string, ContentCheckAnchorInspection>
+  >(new Map());
+  const [preciselyMappableIssueIds, setPreciselyMappableIssueIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
+  const [interactionMessage, setInteractionMessage] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(true);
   const {
     state,
     workingMarkdown,
-    resolvedCheckCodes,
+    issueStates,
     handleEdit,
     saveNow,
     confirmAndStart,
     reloadLatest,
     retryWithLatestRevision,
     retryLoad,
-    resolveCheckCode,
-    resolveAllCheckCodes,
-    unresolveCheckCode,
+    confirmIssue,
+    confirmIssues,
+    markIssueModified,
+    unconfirmIssue,
   } = useContentCheck({ recordId, onOpenReader, onSourceMissing, onConfirmed });
 
   const draft = state.draft;
-  const checkEntries =
-    draft?.contentCheck.map((item, index) => ({
-      item,
-      key: `${draft.revision}:${index}:${item.code}`,
-    })) ?? [];
-  const unresolvedChecks = checkEntries.filter(
-    (entry) => !resolvedCheckCodes.has(entry.key),
+  const contentCheck = draft?.contentCheck ?? EMPTY_CONTENT_CHECK;
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const media = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsDesktop(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    void Promise.all(
+      contentCheck.map(async (item) => [
+        item.issue_id,
+        await inspectContentCheckAnchor(item, workingMarkdown),
+      ] as const),
+    ).then((nextEntries) => {
+      if (!current) return;
+      setAnchorInspections(new Map(nextEntries));
+      setPreciselyMappableIssueIds(
+        new Set(
+          nextEntries
+            .filter(
+              ([, inspection]) =>
+                inspection.status === "valid" &&
+                Boolean(inspection.excerpt) &&
+                Boolean(
+                  editorRef.current?.canRevealExact(inspection.excerpt ?? ""),
+                ),
+            )
+            .map(([issueId]) => issueId),
+        ),
+      );
+    });
+    return () => {
+      current = false;
+    };
+  }, [contentCheck, workingMarkdown]);
+
+  const entries = contentCheck.map((item) => ({
+    item,
+    issueState: issueStates.get(item.issue_id),
+  }));
+  const unresolvedChecks = entries.filter(
+    ({ issueState }) => issueState !== "confirmed",
   );
-  const resolvedChecks = checkEntries.filter((entry) =>
-    resolvedCheckCodes.has(entry.key),
+  const resolvedChecks = entries.filter(
+    ({ issueState }) => issueState === "confirmed",
   );
-  const resolvedCount = resolvedChecks.length;
   const attentionChecks = unresolvedChecks.filter(
-    (entry) => guidanceForContentCheckCode(entry.item.code).tier === "attention",
+    ({ item }) => item.tier === "attention",
   );
   const routineChecks = unresolvedChecks.filter(
-    (entry) => guidanceForContentCheckCode(entry.item.code).tier === "routine",
+    ({ item }) => item.tier === "routine",
+  );
+  const markerEntries = entries.filter(({ item }) => {
+    const inspection = anchorInspections.get(item.issue_id);
+    return (
+      inspection?.status === "valid" &&
+      Boolean(inspection.excerpt) &&
+      preciselyMappableIssueIds.has(item.issue_id)
+    );
+  });
+
+  const flushEditor = useCallback(
+    () => editorRef.current?.flush() ?? workingMarkdown,
+    [workingMarkdown],
   );
 
-  const flushEditor = useCallback((): string => {
-    return editorRef.current?.flush() ?? workingMarkdown;
-  }, [workingMarkdown]);
+  const handleDocumentEdit = useCallback(
+    (markdown: string) => {
+      for (const item of contentCheck) markIssueModified(item.issue_id);
+      handleEdit(markdown);
+    },
+    [contentCheck, handleEdit, markIssueModified],
+  );
 
-  function handleAutoFix(code: string, resolutionKey: string) {
-    const current = flushEditor();
-    const fixed = applyContentCheckAutoFix(code, current);
-    if (fixed !== null) {
+  const activateIssue = useCallback((issueId: string) => {
+    setActiveIssueId(issueId);
+    document
+      .getElementById(`content-check-issue-${issueId}`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, []);
+
+  const revealIssue = useCallback(
+    (item: ReaderContentCheckItemDto) => {
+      const inspection = anchorInspections.get(item.issue_id);
+      activateIssue(item.issue_id);
+      if (
+        inspection?.status !== "valid" ||
+        !inspection.excerpt ||
+        !editorRef.current?.revealExact(inspection.excerpt)
+      ) {
+        setInteractionMessage("当前排版视图无法精确定位这项批注。");
+        return;
+      }
+      setInteractionMessage("已定位到正文中的对应位置。");
+      if (!isDesktop) setSheetOpen(false);
+    },
+    [activateIssue, anchorInspections, isDesktop],
+  );
+
+  const adoptSuggestion = useCallback(
+    async (item: ReaderContentCheckItemDto) => {
+      const fixed = await applyContentCheckProposedPatch(item, flushEditor());
+      if (fixed === null) {
+        setInteractionMessage("建议无法精确应用，正文没有改变。");
+        return;
+      }
       editorRef.current?.setValue(fixed);
       handleEdit(fixed);
-    }
-    resolveCheckCode(resolutionKey);
-  }
+      markIssueModified(item.issue_id);
+      activateIssue(item.issue_id);
+      setInteractionMessage("已采用建议。内容已修改，请确认当前内容。");
+    },
+    [activateIssue, flushEditor, handleEdit, markIssueModified],
+  );
 
   async function handleReloadLatest() {
     const latest = await reloadLatest();
-    if (latest !== null) {
-      editorRef.current?.setValue(latest);
-    }
+    if (latest !== null) editorRef.current?.setValue(latest);
   }
 
   const isBusy = state.phase === "saving" || state.phase === "confirming";
   const isStableReady = draft?.outcome === "stable_document_ready";
   const isRejected = draft?.outcome === "input_rejected_or_action_required";
-  // rejected/no-candidate 草稿在用户修改后仍需允许重新保存检查；只有
-  // “未修改且没有 candidate”才没有可执行的确认动作。
-  const canAttemptConfirm =
-    state.dirty || isStableReady || Boolean(draft?.candidate);
-  const primaryLabel = isStableReady
-    ? "开始阅读"
-    : state.phase === "confirming"
-      ? "确认中…"
-      : "确认并开始阅读";
+  const canAttemptConfirm = isStableReady || Boolean(draft?.candidate);
+  const primaryLabel =
+    state.phase === "confirming" ? "确认中…" : "确认正文并开始阅读";
   const handleConfirm = () => {
     if (
       isBusy ||
+      state.dirty ||
       (isRejected && !state.dirty) ||
       attentionChecks.length > 0 ||
       !canAttemptConfirm
     ) {
       return;
     }
-    void confirmAndStart(flushEditor());
+    void confirmAndStart();
   };
 
   const handleDefer = async () => {
     const text = flushEditor();
     const needsSave = text !== draft?.savedMarkdown || state.dirty;
-    if (needsSave) {
-      const saved = await saveNow(text);
-      if (!saved) return;
-    }
+    if (needsSave && !(await saveNow(text))) return;
     onDefer({
       recordId,
-      // A save may reparse the document and replace its candidate. Avoid
-      // persisting stale candidate metadata; recordId is the resume authority.
       candidateDocumentId: needsSave
         ? null
         : (draft?.candidate?.candidate_document_id ?? null),
@@ -235,10 +300,10 @@ export function ContentCheckPanel({
     return (
       <section
         data-testid="content-check-panel"
-        aria-live="polite"
-        className="flex min-h-[24rem] flex-1 items-center justify-center rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 motion-reduce:animate-none lg:min-h-[32rem]"
+        role="status"
+        className="flex min-h-96 flex-1 items-center justify-center bg-surface"
       >
-        <p className="font-sans text-[0.86rem] font-medium text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           正在载入待确认的内容…
         </p>
       </section>
@@ -250,106 +315,141 @@ export function ContentCheckPanel({
       <section
         data-testid="content-check-panel"
         role="alert"
-        className="flex min-h-[24rem] flex-1 flex-col items-center justify-center gap-4 rounded-[10px] bg-surface/40 px-8 ring-1 ring-hairline/35 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 motion-reduce:animate-none lg:min-h-[32rem]"
+        className="flex min-h-96 flex-1 flex-col items-center justify-center gap-4 bg-surface px-8"
       >
-        <p className="font-sans text-[0.9rem] font-medium text-feedback-error">
+        <p className="text-sm font-medium text-feedback-error">
           {state.errorMessage ?? "加载失败，请稍后重试。"}
         </p>
         <Button type="button" variant="secondary" size="sm" onClick={retryLoad}>
           重试加载
-          <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
+          <RefreshCw aria-hidden className="ml-1 size-4" />
         </Button>
       </section>
     );
   }
 
   const hasRail =
-    unresolvedChecks.length > 0 ||
-    resolvedCount > 0 ||
-    Boolean(draft && draft.adaptationNotice.length > 0) ||
-    isRejected;
-
+    entries.length > 0 ||
+    Boolean(draft?.adaptationNotice.length) ||
+    Boolean(isRejected);
   const statusSummary =
-    unresolvedChecks.length === 0
-      ? "正文已就绪，确认后开始阅读"
-      : attentionChecks.length > 0
-        ? `有 ${attentionChecks.length} 处需要你决定${
-            routineChecks.length > 0 ? `，另有 ${routineChecks.length} 处建议过目` : ""
-          }`
-        : `有 ${routineChecks.length} 处建议你看一眼`;
+    attentionChecks.length > 0
+      ? `${attentionChecks.length} 项需要确认${
+          routineChecks.length > 0 ? `，${routineChecks.length} 项普通建议` : ""
+        }`
+      : routineChecks.length > 0
+        ? `${routineChecks.length} 项普通建议，不阻塞确认`
+        : "所有需要确认的批注均已处理";
 
   function renderCheckCard({
     item,
-    key,
+    issueState,
   }: {
-    item: ReaderAdaptationRecordDto;
-    key: string;
+    item: ReaderContentCheckItemDto;
+    issueState: "confirmed" | "modified" | undefined;
   }) {
     const guidance = guidanceForContentCheckCode(item.code);
-    const isAttention = guidance.tier === "attention";
-    const excerpt = draft
-      ? locateContentCheckExcerpt(item.code, workingMarkdown)
-      : null;
+    const inspection = anchorInspections.get(item.issue_id);
+    const isAttention = item.tier === "attention";
+    const canReveal =
+      inspection?.status === "valid" &&
+      Boolean(inspection.excerpt) &&
+      preciselyMappableIssueIds.has(item.issue_id);
+    const hasPatch = canReveal && Boolean(item.evidence.proposed_patch?.trim());
     return (
       <article
-        key={key}
+        id={`content-check-issue-${item.issue_id}`}
+        key={item.issue_id}
         data-testid="content-check-risk-item"
         data-code={item.code}
-        className="rounded-[10px] border border-hairline/70 bg-surface/60 px-4 py-3"
+        data-issue-id={item.issue_id}
+        aria-current={activeIssueId === item.issue_id ? "true" : undefined}
+        className={cn(
+          "border-b border-hairline py-4 last:border-b-0",
+          activeIssueId === item.issue_id && "bg-surface-raised/70",
+        )}
       >
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-[0.8rem] font-semibold leading-5 text-ink">
-            {guidance.title}
-          </p>
-          <span
-            className={cn(
-              "shrink-0 rounded-full px-2 py-0.5 text-[0.64rem] font-semibold tracking-[0.05em]",
-              isAttention
-                ? "bg-feedback-warning-soft text-ink/75"
-                : "bg-surface-raised text-subtle",
-            )}
-          >
-            {isAttention ? "需要决定" : "建议过目"}
-          </span>
-        </div>
-        <p className="mt-1.5 text-[0.76rem] leading-5 text-muted-foreground">
-          {guidance.suggestion}
-        </p>
-        {excerpt ? (
-          <button
-            type="button"
-            data-testid="content-check-reveal"
-            title={undefined}
-            onClick={() => editorRef.current?.reveal(excerpt)}
-            className="focus-ring mt-2 block w-full cursor-pointer rounded-[8px] text-left transition-colors hover:ring-1 hover:ring-lens-blue/30"
-          >
-            <pre className="overflow-x-auto whitespace-pre-wrap rounded-[8px] border border-hairline/60 bg-surface/54 px-3 py-2 font-mono text-[0.72rem] leading-5 text-ink/78">
-              {excerpt}
-            </pre>
-            <span className="mt-1 inline-block font-sans text-[0.68rem] font-medium text-subtle">
-              点击在正文中定位
+        <button
+          type="button"
+          onClick={() => (canReveal ? revealIssue(item) : activateIssue(item.issue_id))}
+          className="focus-ring flex min-h-11 w-full items-start justify-between gap-3 text-left"
+        >
+          <span>
+            <span className="block text-sm font-semibold text-ink">
+              {guidance.title}
             </span>
-          </button>
-        ) : null}
-        {item.message ? (
-          <details className="mt-2 text-[0.72rem] text-subtle">
-            <summary>技术详情</summary>
-            <p className="mt-1 font-mono leading-5">
-              {item.code} · {item.message}
-              <span className="ml-1 font-sans">（诊断信息）</span>
-            </p>
+            <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+              {guidance.suggestion}
+            </span>
+          </span>
+          <span className="shrink-0 text-xs font-medium text-subtle">
+            {isAttention ? "需要确认" : "普通建议"}
+          </span>
+        </button>
+
+        <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+          {item.target_scope === "document" ? (
+            <span className="text-muted-foreground">全文检查</span>
+          ) : null}
+          {inspection?.status === "changed" ? (
+            <span className="text-feedback-warning">位置已变化</span>
+          ) : null}
+          {issueState === "modified" ? (
+            <span className="text-ink">内容已修改，待确认</span>
+          ) : null}
+        </div>
+
+        <details className="mt-3 text-xs text-muted-foreground">
+          <summary className="focus-ring min-h-11 cursor-pointer py-3 font-medium text-ink">
+            查看审查详情
+          </summary>
+          {item.evidence.excerpt_text ? (
+            <pre className="overflow-x-auto whitespace-pre-wrap border-y border-hairline bg-surface-raised px-3 py-2 font-mono leading-5 text-ink">
+              {item.evidence.excerpt_text}
+            </pre>
+          ) : (
+            <p className="py-2">后端没有提供可精确展示的局部片段。</p>
+          )}
+          {item.evidence.excerpt_text && item.evidence.proposed_patch?.trim() ? (
+            <div className="mt-3 space-y-1 border-y border-hairline bg-surface-raised px-3 py-2 font-mono leading-5 text-ink">
+              <p>
+                <span aria-hidden className="mr-2 text-subtle">−</span>
+                {item.evidence.excerpt_text}
+              </p>
+              <p>
+                <span aria-hidden className="mr-2 text-subtle">+</span>
+                {item.evidence.proposed_patch}
+              </p>
+            </div>
+          ) : null}
+          <details className="mt-3 text-subtle">
+            <summary className="cursor-pointer py-2">技术详情</summary>
+            <code className="block break-all">{item.code}</code>
           </details>
-        ) : null}
+        </details>
+
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {guidance.hasAutoFix ? (
+          {canReveal ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="max-lg:min-h-11 max-lg:min-w-11"
+              onClick={() => revealIssue(item)}
+            >
+              <MapPin aria-hidden className="mr-1 size-4" />
+              查看位置
+            </Button>
+          ) : null}
+          {hasPatch ? (
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              className="max-sm:min-h-11"
-              onClick={() => handleAutoFix(item.code, key)}
+              className="max-lg:min-h-11 max-lg:min-w-11"
+              onClick={() => void adoptSuggestion(item)}
             >
-              <Wrench aria-hidden className="mr-1 h-3 w-3" />
+              <Wrench aria-hidden className="mr-1 size-4" />
               采用建议
             </Button>
           ) : null}
@@ -357,66 +457,97 @@ export function ContentCheckPanel({
             type="button"
             variant="secondary"
             size="sm"
-            className="max-sm:min-h-11"
-            onClick={() => resolveCheckCode(key)}
+            className="max-lg:min-h-11 max-lg:min-w-11"
+            onClick={() => {
+              confirmIssue(item.issue_id);
+              setInteractionMessage("已确认当前内容。");
+            }}
           >
-            确认无误
+            确认当前内容
           </Button>
         </div>
       </article>
     );
   }
 
+  const reviewRail = (
+    <div className="flex min-h-0 flex-col gap-4 font-sans">
+      {draft?.adaptationNotice.length ? (
+        <AdaptationNoticeRail items={draft.adaptationNotice} />
+      ) : null}
+      {unresolvedChecks.length > 0 ? (
+        <div data-testid="content-check-risk-list">
+          {attentionChecks.map(renderCheckCard)}
+          {routineChecks.map(renderCheckCard)}
+        </div>
+      ) : null}
+      {resolvedChecks.length > 0 ? (
+        <div data-testid="content-check-resolved-summary" className="border-t border-hairline pt-4">
+          <p className="text-xs font-medium text-subtle">
+            已处理 {resolvedChecks.length} 项
+          </p>
+          <ul className="mt-2 space-y-2">
+            {resolvedChecks.map(({ item }) => (
+              <li key={item.issue_id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {guidanceForContentCheckCode(item.code).title}
+                </span>
+                <TextAction
+                  onClick={() => unconfirmIssue(item.issue_id)}
+                  className="min-h-11 px-2 text-xs"
+                >
+                  撤销
+                </TextAction>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {isRejected ? (
+        <div data-testid="content-check-rejected" role="alert" className="border-t border-hairline pt-4">
+          <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink">
+            <AlertTriangle aria-hidden className="size-4 text-feedback-warning" />
+            当前内容无法生成阅读版本
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
+            {readRejectedReasons(draft?.quality ?? null, contentCheck)
+              .slice(0, 3)
+              .map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     <section
       data-testid="content-check-panel"
       aria-labelledby="content-check-title"
-      className="flex h-[calc(100dvh-8rem)] min-h-[24rem] max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200 motion-reduce:animate-none lg:min-h-[32rem]"
+      className="flex h-[calc(100dvh-12rem)] min-h-96 max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden bg-surface motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 motion-reduce:animate-none lg:h-[calc(100dvh-8rem)]"
     >
-      <header className="shrink-0 border-b border-hairline/68 px-5 pb-4 pt-5 sm:px-8">
-        <p className="text-[0.68rem] font-bold tracking-[0.14em] text-lens-blue">
-          Content Check
-        </p>
-        <h2
-          id="content-check-title"
-          className="mt-1.5 font-headline text-[1.45rem] font-semibold leading-tight tracking-[-0.015em] text-ink sm:text-[1.62rem]"
-        >
-          确认识别出的正文
-        </h2>
-        <p className="mt-2 inline-flex items-center gap-1.5 font-sans text-[0.74rem] font-medium text-subtle">
-          <FileText aria-hidden className="h-3.5 w-3.5" />
-          {filename?.trim() ? `来源：${filename.trim()}` : "来源：粘贴文本"}
-          <span aria-hidden>·</span>
-          <span>正文可直接修改，修改会自动保存</span>
-        </p>
+      <header className="shrink-0 border-b border-hairline px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="content-check-title" className="font-sans text-lg font-semibold text-ink">
+            确认识别出的正文
+          </h2>
+          <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <FileText aria-hidden className="size-4" />
+            {filename?.trim() ? `来源：${filename.trim()}` : "来源：粘贴文本"}
+          </p>
+        </div>
+        <p className="mt-1 text-xs text-subtle">正文可直接修改，修改会自动保存</p>
       </header>
 
       {state.phase === "conflict" ? (
-        <div
-          data-testid="content-check-conflict"
-          role="alert"
-          className="mx-5 mt-4 shrink-0 rounded-[10px] border border-feedback-warning/40 bg-feedback-warning-soft px-4 py-3 font-sans sm:mx-8"
-        >
-          <p className="text-[0.8rem] font-semibold text-ink/80">
+        <div data-testid="content-check-conflict" role="alert" className="shrink-0 border-b border-feedback-warning/40 bg-feedback-warning-soft px-4 py-3 sm:px-6">
+          <p className="text-sm font-semibold text-ink">
             {state.errorMessage ?? "草稿已被其他更新抢先保存。"}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void handleReloadLatest()}
-              className="max-sm:min-h-11"
-            >
+            <Button type="button" variant="secondary" size="sm" onClick={() => void handleReloadLatest()} className="max-lg:min-h-11">
               载入最新版本（放弃我的修改）
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void retryWithLatestRevision()}
-              className="max-sm:min-h-11"
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => void retryWithLatestRevision()} className="max-lg:min-h-11">
               以我的修改重试
             </Button>
           </div>
@@ -424,18 +555,13 @@ export function ContentCheckPanel({
       ) : null}
 
       {draft ? (
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-hairline/60 px-5 py-2.5 font-sans sm:px-8">
-          <p className="inline-flex items-center gap-2 text-[0.76rem] font-medium text-muted-foreground">
-            {unresolvedChecks.length === 0 ? (
-              <Check aria-hidden className="h-3.5 w-3.5 text-lens-blue" />
-            ) : null}
-            {statusSummary}
-          </p>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-hairline px-4 py-2 sm:px-6">
+          <p className="text-xs font-medium text-muted-foreground">{statusSummary}</p>
           {routineChecks.length > 0 ? (
             <TextAction
               data-testid="content-check-keep-all-plain"
-              className="max-sm:min-h-11"
-              onClick={() => resolveAllCheckCodes(routineChecks.map((entry) => entry.key))}
+              className="max-lg:min-h-11"
+              onClick={() => confirmIssues(routineChecks.map(({ item }) => item.issue_id))}
             >
               确认全部普通建议
             </TextAction>
@@ -443,182 +569,148 @@ export function ContentCheckPanel({
         </div>
       ) : null}
 
-      <div
-        className={cn(
-          "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 sm:px-8",
-          hasRail &&
-            "xl:grid xl:grid-cols-[minmax(0,1fr)_19.5rem] xl:grid-rows-[minmax(0,1fr)] xl:gap-8",
-        )}
-      >
-        <div className="order-2 min-h-[18rem] flex-1 xl:order-1 xl:col-start-1 xl:row-start-1">
+      <div className={cn(
+        "flex min-h-0 flex-1 overflow-hidden",
+        isDesktop && hasRail && "grid grid-cols-[minmax(0,1fr)_21rem]",
+      )}>
+        <div
+          data-testid="content-check-document"
+          inert={sheetOpen || undefined}
+          className="min-w-0 overflow-y-auto px-4 py-4 sm:px-6"
+        >
           <label htmlFor="content-check-editor" className="sr-only">
             待确认正文预览与编辑
           </label>
           {draft ? (
-            <MarkdownTextInput
-              ref={editorRef}
-              key={draft.sourceDocumentId}
-              id="content-check-editor"
-              ariaLabelledBy="content-check-title"
-              initialValue={draft.savedMarkdown}
-              onChange={handleEdit}
-              onSubmit={handleConfirm}
-              className="mx-auto h-full min-h-[18rem] w-full max-w-[52rem] overflow-y-auto rounded-[12px] border border-hairline/70 bg-surface px-6 py-6 font-sans text-base leading-[1.68] text-ink shadow-[var(--app-panel-shadow-quiet)] selection:bg-lens-blue/15 selection:text-ink max-sm:h-auto max-sm:overflow-visible sm:px-10 sm:py-8"
-            />
+            <div className="mx-auto flex min-h-full w-full max-w-[75ch] items-stretch">
+              {markerEntries.length > 0 ? (
+                <nav aria-label="正文批注标记" className="w-11 shrink-0 border-r border-hairline pr-2">
+                  {markerEntries.map(({ item }) => (
+                    <button
+                      key={item.issue_id}
+                      type="button"
+                      data-testid="content-check-gutter-marker"
+                      data-issue-id={item.issue_id}
+                      aria-label={`定位批注：${guidanceForContentCheckCode(item.code).title}`}
+                      onClick={() => revealIssue(item)}
+                      className="focus-ring mb-2 inline-flex size-11 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-lens-blue hover:bg-surface-raised"
+                    >
+                      <MapPin aria-hidden className="size-4" />
+                    </button>
+                  ))}
+                </nav>
+              ) : null}
+              <MarkdownTextInput
+                ref={editorRef}
+                key={draft.sourceDocumentId}
+                id="content-check-editor"
+                ariaLabelledBy="content-check-title"
+                initialValue={draft.savedMarkdown}
+                onChange={handleDocumentEdit}
+                onSubmit={handleConfirm}
+                className="min-h-[28rem] flex-1 bg-reader-stage px-5 py-6 font-sans text-base leading-[1.68] text-reader-reading-ink selection:bg-lens-blue/15 selection:text-ink sm:px-8"
+              />
+            </div>
           ) : null}
         </div>
 
-        {hasRail ? (
-          <aside
-            data-testid="content-check-summary-rail"
-            className="order-1 flex flex-col gap-4 xl:order-2 xl:col-start-2 xl:row-start-1 xl:self-start xl:sticky xl:top-0"
-          >
-            {draft && draft.adaptationNotice.length > 0 ? (
-              <AdaptationNoticeRail items={draft.adaptationNotice} />
-            ) : null}
-
-            {unresolvedChecks.length > 0 ? (
-              <div
-                data-testid="content-check-risk-list"
-                className="space-y-3 font-sans"
-              >
-                {attentionChecks.map((entry) => renderCheckCard(entry))}
-                {routineChecks.map((entry) => renderCheckCard(entry))}
-              </div>
-            ) : null}
-
-            {resolvedCount > 0 ? (
-              <div
-                data-testid="content-check-resolved-summary"
-                className="rounded-[10px] border border-hairline/60 bg-surface/40 px-4 py-3 font-sans"
-              >
-                <p className="text-[0.74rem] font-medium text-subtle">
-                  已处理 {resolvedCount} 项
-                </p>
-                <ul className="mt-2 space-y-1.5">
-                  {resolvedChecks.map(({ item, key }) => (
-                    <li
-                      key={key}
-                      className="flex items-center justify-between gap-2 text-[0.74rem]"
-                    >
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {guidanceForContentCheckCode(item.code).title}
-                      </span>
-                      <TextAction
-                        onClick={() => unresolveCheckCode(key)}
-                        className="min-h-0 px-0 text-[0.72rem]"
-                      >
-                        撤销
-                      </TextAction>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {isRejected ? (
-              <div
-                data-testid="content-check-rejected"
-                role="alert"
-                className="rounded-[10px] border border-feedback-warning/40 bg-feedback-warning-soft px-4 py-3 font-sans"
-              >
-                <p className="inline-flex items-center gap-2 text-[0.8rem] font-semibold text-ink/80">
-                  <AlertTriangle
-                    aria-hidden
-                    className="h-3.5 w-3.5 text-feedback-warning"
-                  />
-                  当前内容无法生成阅读版本
-                </p>
-                <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[0.76rem] leading-5 text-ink/78">
-                  {(draft
-                    ? readRejectedReasons(draft.quality, draft.contentCheck)
-                    : []
-                  )
-                    .slice(0, 3)
-                    .map((reason) => <li key={reason}>{reason}</li>)}
-                </ul>
-              </div>
-            ) : null}
+        {isDesktop && hasRail ? (
+          <aside data-testid="content-check-summary-rail" aria-label="审查批注" className="min-h-0 w-[21rem] overflow-y-auto border-l border-hairline bg-surface-raised px-4 py-3">
+            {reviewRail}
           </aside>
         ) : null}
       </div>
 
-      <footer className="shrink-0 border-t border-hairline/68 px-5 py-3.5 sm:px-8">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p
-            data-testid="content-check-save-status"
-            aria-live="polite"
-            className="min-w-0 font-sans text-[0.74rem] font-medium text-muted-foreground"
-          >
-            {state.phase === "saving"
-              ? "正在保存并重新检查…"
-              : state.errorMessage && state.phase !== "conflict"
-                ? state.errorMessage
-                : state.infoMessage
-                  ? state.infoMessage
-                  : state.dirty
-                    ? "有未保存的修改…"
-                    : draft
-                      ? "已自动保存"
-                      : ""}
-          </p>
-          <div className="flex shrink-0 flex-col items-stretch gap-1.5 sm:items-end">
-            {draft ? (
-              <p className="font-sans text-[0.72rem] font-medium text-subtle">
-                确认后正文冻结，将进入阅读
-              </p>
-            ) : null}
-            <div className="flex flex-wrap items-center gap-2">
-              <TextAction
-                disabled={isBusy}
-                className="max-sm:min-h-11"
-                onClick={() => void handleDefer()}
-              >
-                稍后处理
-              </TextAction>
-              {origin === "submit" ? (
-                <TextAction
-                  disabled={isBusy}
-                  className="max-sm:min-h-11"
-                  onClick={() => onBackToInput(flushEditor())}
-                >
-                  重新输入
-                </TextAction>
-              ) : null}
-              {state.errorMessage && state.dirty && state.phase === "ready" ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={isBusy}
-                  className="max-sm:min-h-11"
-                  onClick={() => void saveNow()}
-                >
-                  重试保存
-                </Button>
-              ) : null}
+      {!isDesktop && hasRail ? (
+        <div className="shrink-0 border-t border-hairline bg-surface px-3 py-2 lg:hidden">
+          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+            <SheetTrigger asChild>
               <Button
                 type="button"
-                variant="primary-ink"
-                size="sm"
-                data-testid="content-check-confirm-button"
-                disabled={
-                  isBusy ||
-                  (isRejected && !state.dirty) ||
-                  attentionChecks.length > 0 ||
-                  !canAttemptConfirm
-                }
-                className="max-sm:min-h-11"
-                onClick={handleConfirm}
+                variant="secondary"
+                aria-expanded={sheetOpen}
+                className="min-h-11 w-full justify-between"
               >
-                {primaryLabel}
-                {state.phase !== "confirming" ? (
-                  <ArrowRight aria-hidden className="ml-1 h-3.5 w-3.5" />
-                ) : null}
+                <span>
+                  {sheetOpen
+                    ? "收起审查批注面板"
+                    : `展开审查批注面板，还有 ${attentionChecks.length} 项需要确认`}
+                </span>
+                <PanelRightOpen aria-hidden className="size-4" />
               </Button>
-            </div>
+            </SheetTrigger>
+            <SheetContent
+              side="bottom"
+              aria-modal="true"
+              className="max-h-[85dvh] overflow-hidden p-0 sm:inset-y-0 sm:left-auto sm:right-0 sm:mt-0 sm:h-dvh sm:max-h-none sm:w-[24rem] sm:rounded-none sm:border-l sm:border-t-0"
+            >
+              <SheetHeader className="shrink-0 border-b border-hairline px-5 py-4 pr-14">
+                <SheetTitle className="font-sans text-lg">审查批注</SheetTitle>
+                <SheetDescription>{statusSummary}</SheetDescription>
+              </SheetHeader>
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+                {reviewRail}
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+      ) : null}
+
+      <footer className="shrink-0 border-t border-hairline px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p data-testid="content-check-save-status" aria-live="polite" className="min-w-0 text-xs font-medium text-muted-foreground">
+            {interactionMessage ??
+              (state.phase === "saving"
+                ? "正在保存并重新检查…"
+                : state.errorMessage && state.phase !== "conflict"
+                  ? state.errorMessage
+                  : state.infoMessage
+                    ? state.infoMessage
+                    : state.dirty
+                      ? "有未保存的修改…"
+                      : draft
+                        ? "已自动保存"
+                        : "")}
+          </p>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <TextAction disabled={isBusy} className="max-lg:min-h-11" onClick={() => void handleDefer()}>
+              稍后处理
+            </TextAction>
+            {origin === "submit" ? (
+              <TextAction disabled={isBusy} className="max-lg:min-h-11" onClick={() => onBackToInput(flushEditor())}>
+                重新输入
+              </TextAction>
+            ) : null}
+            {state.errorMessage && state.dirty && state.phase === "ready" ? (
+              <Button type="button" variant="secondary" size="sm" disabled={isBusy} className="max-lg:min-h-11" onClick={() => void saveNow()}>
+                重试保存
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="primary-ink"
+              size="sm"
+              data-testid="content-check-confirm-button"
+              disabled={
+                isBusy ||
+                state.dirty ||
+                (isRejected && !state.dirty) ||
+                attentionChecks.length > 0 ||
+                !canAttemptConfirm
+              }
+              className="max-lg:min-h-11"
+              onClick={handleConfirm}
+            >
+              {primaryLabel}
+              {state.phase !== "confirming" ? (
+                <ArrowRight aria-hidden className="ml-1 size-4" />
+              ) : null}
+            </Button>
           </div>
         </div>
+        <p className="mt-1 text-right text-xs text-subtle">
+          确认后正文冻结，将进入阅读
+        </p>
       </footer>
     </section>
   );

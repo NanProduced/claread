@@ -685,6 +685,20 @@ describe("workbench scroll & placeholder contract", () => {
 });
 
 describe("reveal 定位", () => {
+  it("精确定位只接受完整且唯一的文本叶命中", async () => {
+    const { ref } = renderEditor();
+    await act(async () => {
+      ref.current?.setValue(
+        "Unique anchor text.\n\nRepeated anchor text.\n\nRepeated anchor text.",
+      );
+    });
+
+    expect(ref.current?.canRevealExact("Unique anchor text.")).toBe(true);
+    expect(ref.current?.revealExact("Unique anchor text.")).toBe(true);
+    expect(ref.current?.canRevealExact("Repeated anchor text.")).toBe(false);
+    expect(ref.current?.revealExact("Repeated anchor text.")).toBe(false);
+  });
+
   it("剥掉 link/image 语法后选中可见文本；无匹配返回 false", async () => {
     const { ref } = renderEditor();
     await act(async () => {

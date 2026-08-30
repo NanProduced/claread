@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { userFacingErrorCopy } from "@/lib/user-facing-error";
 import type {
   ReaderAdaptationRecordDto,
+  ReaderContentCheckItemDto,
   ReaderConfirmedSourceCandidateSummaryDto,
   ReaderConfirmedSourceReadResponseDto,
   ReaderConfirmedSourceUpdateOutcomeDto,
@@ -52,7 +53,7 @@ export interface ContentCheckDraft {
    */
   quality: Record<string, unknown> | null;
   adaptationNotice: ReaderAdaptationRecordDto[];
-  contentCheck: ReaderAdaptationRecordDto[];
+  contentCheck: ReaderContentCheckItemDto[];
   outcome: ReaderConfirmedSourceUpdateOutcomeDto | null;
 }
 
@@ -64,7 +65,7 @@ export interface ContentCheckDraft {
  */
 export function readRejectedReasons(
   quality: Record<string, unknown> | null,
-  contentCheck: ReaderAdaptationRecordDto[],
+  contentCheck: ReaderContentCheckItemDto[],
 ): string[] {
   const suitability = quality?.suitability;
   const flags =
@@ -126,7 +127,7 @@ export interface ContentCheckController {
   state: ContentCheckState;
   /** 编辑器当前文本（工作副本）。 */
   workingMarkdown: string;
-  resolvedCheckCodes: ReadonlySet<string>;
+  issueStates: ReadonlyMap<string, ContentCheckIssueState>;
   /** 编辑器 onChange 入口：更新工作副本、标脏、调度防抖自动保存。 */
   handleEdit: (markdown: string) => void;
   /** 显式保存（confirm 前 flush 也走这里）。成功返回 true。 */
@@ -139,11 +140,14 @@ export interface ContentCheckController {
   retryWithLatestRevision: () => Promise<boolean>;
   /** 重试加载（initial GET 失败）。 */
   retryLoad: () => void;
-  resolveCheckCode: (code: string) => void;
-  resolveAllCheckCodes: (resolutionKeys?: readonly string[]) => void;
-  /** 撤销某项已决（恢复为待决）。 */
-  unresolveCheckCode: (code: string) => void;
+  confirmIssue: (issueId: string) => void;
+  confirmIssues: (issueIds: readonly string[]) => void;
+  markIssueModified: (issueId: string) => void;
+  /** 撤销某项确认（恢复为待确认）。 */
+  unconfirmIssue: (issueId: string) => void;
 }
+
+export type ContentCheckIssueState = "confirmed" | "modified";
 
 function buildDraftFromRead(
   recordId: string,
@@ -207,8 +211,10 @@ export function useContentCheck({
     infoMessage: null,
   });
   const [workingMarkdown, setWorkingMarkdown] = useState("");
-  const [resolvedCheckCodes, setResolvedCheckCodes] = useState<ReadonlySet<string>>(
-    new Set(),
+  const [issueStates, setIssueStates] = useState<
+    ReadonlyMap<string, ContentCheckIssueState>
+  >(
+    new Map(),
   );
 
   const draftRef = useRef<ContentCheckDraft | null>(null);
@@ -257,7 +263,7 @@ export function useContentCheck({
         previous.revision !== draft.revision ||
         previous.contentSha256 !== draft.contentSha256
       ) {
-        setResolvedCheckCodes(new Set());
+        setIssueStates(new Map());
       }
       return draft;
     }
@@ -369,7 +375,7 @@ export function useContentCheck({
             next.revision !== draft.revision ||
             next.contentSha256 !== draft.contentSha256
           ) {
-            setResolvedCheckCodes(new Set());
+            setIssueStates(new Map());
           }
           patchState({
             phase: "ready",
@@ -582,31 +588,36 @@ export function useContentCheck({
     runInitialLoad();
   }, [runInitialLoad]);
 
-  const resolveCheckCode = useCallback((code: string) => {
-    setResolvedCheckCodes((current) => {
-      const next = new Set(current);
-      next.add(code);
+  const confirmIssue = useCallback((issueId: string) => {
+    setIssueStates((current) => {
+      const next = new Map(current);
+      next.set(issueId, "confirmed");
       return next;
     });
   }, []);
 
-  const resolveAllCheckCodes = useCallback((resolutionKeys?: readonly string[]) => {
-    const codes =
-      resolutionKeys ??
-      draftRef.current?.contentCheck.map((item) => item.code) ??
-      [];
-    setResolvedCheckCodes((current) => {
-      const next = new Set(current);
-      for (const code of codes) next.add(code);
+  const confirmIssues = useCallback((issueIds: readonly string[]) => {
+    setIssueStates((current) => {
+      const next = new Map(current);
+      for (const issueId of issueIds) next.set(issueId, "confirmed");
       return next;
     });
   }, []);
 
-  const unresolveCheckCode = useCallback((code: string) => {
-    setResolvedCheckCodes((current) => {
-      if (!current.has(code)) return current;
-      const next = new Set(current);
-      next.delete(code);
+  const markIssueModified = useCallback((issueId: string) => {
+    setIssueStates((current) => {
+      if (current.get(issueId) === "modified") return current;
+      const next = new Map(current);
+      next.set(issueId, "modified");
+      return next;
+    });
+  }, []);
+
+  const unconfirmIssue = useCallback((issueId: string) => {
+    setIssueStates((current) => {
+      if (!current.has(issueId)) return current;
+      const next = new Map(current);
+      next.delete(issueId);
       return next;
     });
   }, []);
@@ -614,15 +625,16 @@ export function useContentCheck({
   return {
     state,
     workingMarkdown,
-    resolvedCheckCodes,
+    issueStates,
     handleEdit,
     saveNow,
     confirmAndStart,
     reloadLatest,
     retryWithLatestRevision,
     retryLoad,
-    resolveCheckCode,
-    resolveAllCheckCodes,
-    unresolveCheckCode,
+    confirmIssue,
+    confirmIssues,
+    markIssueModified,
+    unconfirmIssue,
   };
 }

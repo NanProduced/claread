@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContentCheckPanel } from "./ContentCheckPanel";
+import type { ReaderContentCheckItemDto } from "@/types/api/reader-plate";
 
 // 与 AnalyzeSubmitForm.test.tsx 相同的 Plate 编辑器桩：textarea + ref handle。
 vi.mock("./MarkdownTextInput", async (importOriginal) => {
@@ -23,6 +24,9 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
     focus: () => void;
     clear: () => void;
     setValue: (markdown: string) => void;
+    reveal: (excerpt: string) => boolean;
+    canRevealExact: (excerpt: string) => boolean;
+    revealExact: (excerpt: string) => boolean;
     flush: () => string;
   };
 
@@ -54,6 +58,9 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
         setValue(markdown);
         valueRef.current = markdown;
       },
+      reveal: () => true,
+      canRevealExact: () => true,
+      revealExact: () => true,
       flush: () => valueRef.current,
     }));
     return React.createElement("textarea", {
@@ -78,6 +85,25 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
 });
 
 const DRAFT_MARKDOWN = "# Title\n\n```python\ndef f():\n    pass\n";
+
+function makeContentCheckItem(
+  issueId: string,
+  overrides: Partial<ReaderContentCheckItemDto> = {},
+): ReaderContentCheckItemDto {
+  return {
+    code: "source_type_review_default",
+    message: "technical detail",
+    classification: "content_check",
+    issue_id: issueId,
+    tier: "routine",
+    target_scope: "document",
+    source_anchor: null,
+    anchor_hash: null,
+    evidence: { excerpt_text: null, proposed_patch: null },
+    source_media_coordinate: null,
+    ...overrides,
+  };
+}
 
 function makeReadResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,16 +135,22 @@ function makeReadResponse(overrides: Record<string, unknown> = {}) {
       },
     ],
     content_check: [
-      {
+      makeContentCheckItem("1111111111111111", {
         code: "has_unclosed_fence",
         message: "Fenced code block is missing its closing fence.",
-        classification: "content_check" as const,
-      },
-      {
+        tier: "attention",
+        target_scope: "range",
+        source_anchor: { start_utf16: 9, end_utf16: 18 },
+        anchor_hash: "b839d1b2b703576919548db08bd100e7c9be17820b76bd5bbe386a36507ec127",
+        evidence: {
+          excerpt_text: "```python",
+          proposed_patch: "```python\n```",
+        },
+      }),
+      makeContentCheckItem("2222222222222222", {
         code: "footnote_reference",
         message: "Footnote reference encountered.",
-        classification: "content_check" as const,
-      },
+      }),
     ],
     ...overrides,
   };
@@ -236,10 +268,10 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const fenceItem = items.find(
       (item) => item.getAttribute("data-code") === "has_unclosed_fence",
     )!;
-    // 原文上下文（excerpt 从草稿派生）+ 明确建议。不直接渲染后端 message。
+    // 原文上下文来自后端 structured evidence，不再由客户端猜测。
     expect(fenceItem.textContent).toContain("```python");
     expect(fenceItem.textContent).toContain("建议补上");
-    expect(fenceItem.textContent).toContain("采用建议");
+    await waitFor(() => expect(fenceItem.textContent).toContain("采用建议"));
     expect(fenceItem.textContent).toContain("代码块未闭合");
 
     // 保留普通文字：处置单条风险。
@@ -248,7 +280,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     )!;
     fireEvent.click(
       Array.from(footnoteItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
+        (button) => button.textContent === "确认当前内容",
       )!,
     );
     await waitFor(() =>
@@ -259,7 +291,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
   });
 
-  it("采用建议对 has_unclosed_fence 机械补全围栏并写回编辑器", async () => {
+  it("采用后端 proposed_patch 后仍标记内容已修改、待用户确认", async () => {
     installFetchMock();
     renderPanel();
     await waitForPanelReady();
@@ -267,23 +299,81 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const fenceItem = screen
       .getAllByTestId("content-check-risk-item")
       .find((item) => item.getAttribute("data-code") === "has_unclosed_fence")!;
-    fireEvent.click(
-      Array.from(fenceItem.querySelectorAll("button")).find(
+    let adoptButton: HTMLButtonElement | undefined;
+    await waitFor(() => {
+      adoptButton = Array.from(fenceItem.querySelectorAll("button")).find(
         (button) => button.textContent?.includes("采用建议"),
-      )!,
-    );
+      );
+      expect(adoptButton).toBeTruthy();
+    });
+    fireEvent.click(adoptButton!);
 
     const editor = document.getElementById(
       "content-check-editor",
     ) as HTMLTextAreaElement;
-    expect(editor.value).toBe(`${DRAFT_MARKDOWN}\`\`\`\n`);
+    await waitFor(() => expect(editor.value).toContain("```python\n```"));
+    await waitFor(() => expect(fenceItem.textContent).toContain("内容已修改，待确认"));
+    expect(
+      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("只为可精确映射的 range issue 显示 gutter marker，document scope 不伪造 marker", async () => {
+    installFetchMock();
+    renderPanel();
+    await waitForPanelReady();
+
     await waitFor(() =>
-      expect(
-        screen
-          .getAllByTestId("content-check-risk-item")
-          .some((item) => item.getAttribute("data-code") === "has_unclosed_fence"),
-      ).toBe(false),
+      expect(screen.getAllByTestId("content-check-gutter-marker")).toHaveLength(1),
     );
+    expect(
+      screen
+        .getByTestId("content-check-gutter-marker")
+        .getAttribute("data-issue-id"),
+    ).toBe("1111111111111111");
+    expect(
+      screen.queryByTestId("content-check-gutter-marker-2222222222222222"),
+    ).toBeNull();
+  });
+
+  it("锚点 hash 失效后停止旧定位，并显示位置变化与待确认状态", async () => {
+    installFetchMock();
+    renderPanel();
+    await waitForPanelReady();
+
+    const editor = document.getElementById(
+      "content-check-editor",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: { value: DRAFT_MARKDOWN.replace("```python", "```typescript") },
+    });
+
+    await waitFor(() => expect(screen.getByText("位置已变化")).toBeTruthy());
+    expect(screen.queryByTestId("content-check-gutter-marker")).toBeNull();
+    expect(screen.getAllByText("内容已修改，待确认").length).toBeGreaterThan(0);
+  });
+
+  it("正文存在未保存修改时，即使 Attention 已确认也禁用最终 CTA", async () => {
+    installFetchMock();
+    renderPanel();
+    await waitForPanelReady();
+
+    const attentionItem = screen
+      .getAllByTestId("content-check-risk-item")
+      .find((item) => item.getAttribute("data-code") === "has_unclosed_fence")!;
+    fireEvent.click(
+      Array.from(attentionItem.querySelectorAll("button")).find(
+        (button) => button.textContent === "确认当前内容",
+      )!,
+    );
+    const editor = document.getElementById(
+      "content-check-editor",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: `${DRAFT_MARKDOWN}\nExtra` } });
+
+    expect(
+      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("批量确认只处理 routine，attention 仍需逐项决定", async () => {
@@ -308,11 +398,10 @@ describe("ContentCheckPanel 三级提示渲染", () => {
   it("routine 建议不阻塞确认，attention 风险才阻塞", async () => {
     installFetchMock({
       content_check: [
-        {
+        makeContentCheckItem("3333333333333333", {
           code: "footnote_reference",
           message: "Footnote reference encountered.",
-          classification: "content_check",
-        },
+        }),
       ],
     });
     renderPanel();
@@ -326,16 +415,16 @@ describe("ContentCheckPanel 三级提示渲染", () => {
   it("未逐项处理风险前禁止确认；同 code 的风险必须逐项处理", async () => {
     installFetchMock({
       content_check: [
-        {
+        makeContentCheckItem("4444444444444444", {
           code: "has_unclosed_fence",
           message: "第一处未闭合代码块",
-          classification: "content_check",
-        },
-        {
+          tier: "attention",
+        }),
+        makeContentCheckItem("5555555555555555", {
           code: "has_unclosed_fence",
           message: "第二处未闭合代码块",
-          classification: "content_check",
-        },
+          tier: "attention",
+        }),
       ],
     });
     renderPanel();
@@ -349,7 +438,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const firstItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(firstItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
+        (button) => button.textContent === "确认当前内容",
       )!,
     );
     await waitFor(() =>
@@ -360,7 +449,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const remainingItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(remainingItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
+        (button) => button.textContent === "确认当前内容",
       )!,
     );
     await waitFor(() => expect(confirm.disabled).toBe(false));
@@ -387,7 +476,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(attentionItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
+        (button) => button.textContent === "确认当前内容",
       )!,
     );
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
@@ -454,25 +543,10 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const saveButton = await screen.findByTestId("content-check-confirm-button");
     expect((saveButton as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
-    await waitFor(() =>
-      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
-    );
-    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
-    fireEvent.click(
-      Array.from(attentionItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
-      )!,
-    );
-    await waitFor(() =>
-      expect((saveButton as HTMLButtonElement).disabled).toBe(false),
-    );
-
-    // 风险已处置后 Ctrl+Enter → confirm 前 flush 保存 → PUT 返回 rejected。
-    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
+    // 最终 CTA 不负责 flush 未保存正文；自动保存 PUT 返回 rejected。
+    await waitFor(
+      () => expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
+      { timeout: 2_000 },
     );
     expect(screen.getByTestId("content-check-rejected").textContent).toContain(
       "英文内容太短，补充成一段完整的英文文章再试。",
@@ -499,11 +573,11 @@ describe("ContentCheckPanel 三级提示渲染", () => {
             quality: { suitability: { reasons: [] } },
             adaptation_notice: [],
             content_check: [
-              {
+              makeContentCheckItem("6666666666666666", {
                 code: "code_dominant",
                 message: "代码占比过高，不适合透读",
-                classification: "content_check",
-              },
+                tier: "attention",
+              }),
             ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -525,27 +599,9 @@ describe("ContentCheckPanel 三级提示渲染", () => {
       "content-check-editor",
     ) as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: "abc" } });
-    fireEvent.click(screen.getByTestId("content-check-keep-all-plain"));
-    await waitFor(() =>
-      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
-    );
-    const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
-    fireEvent.click(
-      Array.from(attentionItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
-      )!,
-    );
-    await waitFor(() =>
-      expect(
-        (screen.getByTestId(
-          "content-check-confirm-button",
-        ) as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
-    fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
+    await waitFor(
+      () => expect(screen.getByTestId("content-check-rejected")).toBeTruthy(),
+      { timeout: 2_000 },
     );
     expect(screen.getByTestId("content-check-rejected").textContent).toContain(
       "这份内容以代码为主，批注价值有限，建议确认是否继续。",
@@ -574,7 +630,7 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     const attentionItem = screen.getAllByTestId("content-check-risk-item")[0];
     fireEvent.click(
       Array.from(attentionItem.querySelectorAll("button")).find(
-        (button) => button.textContent === "确认无误",
+        (button) => button.textContent === "确认当前内容",
       )!,
     );
     await waitFor(() =>
