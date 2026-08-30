@@ -1885,6 +1885,131 @@ describe("reader-plate BFF confirmed source update", () => {
     expect(getWebSession).not.toHaveBeenCalled();
     expect(putUpstreamReaderConfirmedSource).not.toHaveBeenCalled();
   });
+
+  it("preserves the structured content-check contract and strips undeclared fields", async () => {
+    vi.mocked(putUpstreamReaderConfirmedSource).mockResolvedValue({
+      ok: true,
+      data: {
+        revision: 2,
+        content_sha256: "c".repeat(64),
+        outcome: "candidate_document_required",
+        candidate: {
+          candidate_document_id: "cand_2",
+          status: "ready",
+          canonical_text_preview: "Hello world",
+        },
+        quality: {},
+        adaptation_notice: [
+          {
+            code: "raw_html_block",
+            message: "technical detail",
+            classification: "adaptation_notice",
+            forbidden: "drop me",
+          },
+        ],
+        content_check: [
+          {
+            code: "has_unclosed_fence",
+            message: "technical detail",
+            classification: "content_check",
+            issue_id: "0123456789abcdef",
+            tier: "attention",
+            target_scope: "range",
+            source_anchor: { start_utf16: 6, end_utf16: 11, forbidden: true },
+            anchor_hash: "a".repeat(64),
+            evidence: {
+              excerpt_text: "world",
+              proposed_patch: "earth",
+              forbidden: true,
+            },
+            source_media_coordinate: {
+              page_number: 2,
+              bbox: [10, 20, 30, 40],
+              forbidden: true,
+            },
+            forbidden: "drop me",
+          },
+        ],
+        forbidden: "drop me",
+      },
+    } as never);
+
+    const result = await updateReaderConfirmedSourceFromWeb("rec_1", {
+      expectedRevision: 1,
+      markdownText: "Hello world",
+      editSource: "content_check",
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error("expected structured content check");
+    expect(result.adaptation_notice).toEqual([
+      {
+        code: "raw_html_block",
+        message: "technical detail",
+        classification: "adaptation_notice",
+      },
+    ]);
+    expect(result.content_check).toEqual([
+      {
+        code: "has_unclosed_fence",
+        message: "technical detail",
+        classification: "content_check",
+        issue_id: "0123456789abcdef",
+        tier: "attention",
+        target_scope: "range",
+        source_anchor: { start_utf16: 6, end_utf16: 11 },
+        anchor_hash: "a".repeat(64),
+        evidence: {
+          excerpt_text: "world",
+          proposed_patch: "earth",
+        },
+        source_media_coordinate: {
+          page_number: 2,
+          bbox: [10, 20, 30, 40],
+        },
+      },
+    ]);
+  });
+
+  it("fails closed when a content-check blocker violates the structured contract", async () => {
+    vi.mocked(putUpstreamReaderConfirmedSource).mockResolvedValue({
+      ok: true,
+      data: {
+        revision: 2,
+        content_sha256: "c".repeat(64),
+        outcome: "candidate_document_required",
+        candidate: null,
+        quality: {},
+        adaptation_notice: [],
+        content_check: [
+          {
+            code: "has_unclosed_fence",
+            message: "technical detail",
+            classification: "content_check",
+            issue_id: "not-a-stable-id",
+            tier: "attention",
+            target_scope: "range",
+            source_anchor: { start_utf16: 6, end_utf16: 11 },
+            anchor_hash: null,
+            evidence: { excerpt_text: "world", proposed_patch: null },
+            source_media_coordinate: null,
+          },
+        ],
+      },
+    } as never);
+
+    const result = await updateReaderConfirmedSourceFromWeb("rec_1", {
+      expectedRevision: 1,
+      markdownText: "Hello world",
+      editSource: "content_check",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

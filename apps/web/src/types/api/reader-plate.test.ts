@@ -8,6 +8,7 @@ import {
   type ReaderPhraseGlossMarkDto,
   type ReaderGrammarNoteMarkDto,
   type ReaderEventResponseDto,
+  type ReaderContentCheckItemDto,
   type ReaderStableSegmentTextLeafDto,
   type ReaderPlateSnapshotDto,
   type ReaderPlateValueDto,
@@ -416,6 +417,25 @@ function makePollResponse(): ReaderEventPollResponseDto {
 }
 
 describe("Reader Plate DTO shapes", () => {
+  it("keeps structured content checks distinct from three-field adaptation notices", () => {
+    const contentCheck = {
+      code: "has_unclosed_fence",
+      message: "technical detail",
+      classification: "content_check",
+      issue_id: "0123456789abcdef",
+      tier: "attention",
+      target_scope: "range",
+      source_anchor: { start_utf16: 1, end_utf16: 4 },
+      anchor_hash: "a".repeat(64),
+      evidence: { excerpt_text: "abc", proposed_patch: "abcd" },
+      source_media_coordinate: { page_number: 2, bbox: [1, 2, 3, 4] },
+    } satisfies ReaderContentCheckItemDto;
+
+    expect(contentCheck.issue_id).toBe("0123456789abcdef");
+    expect(contentCheck.source_anchor).toEqual({ start_utf16: 1, end_utf16: 4 });
+    expect(contentCheck.evidence.proposed_patch).toBe("abcd");
+  });
+
   it("ReaderPlateSnapshotDto has schema_kind = reader_plate_snapshot", () => {
     const snapshot = makeSnapshot();
     expect(snapshot.schema_kind).toBe(READER_PLATE_SNAPSHOT_SCHEMA_KIND);

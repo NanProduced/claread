@@ -52,6 +52,9 @@ import type {
   ReaderCandidateDocumentReadResponse,
   ReaderCandidateDocumentRiskItem,
   ReaderAdaptationRecordDto,
+  ReaderContentCheckItemDto,
+  ReaderContentCheckMediaCoordinateDto,
+  ReaderContentCheckSourceAnchorDto,
   ReaderConfirmedSourceCandidateSummaryDto,
   ReaderConfirmedSourceReadResponseDto,
   ReaderConfirmedSourceUpdateRequestDto,
@@ -1021,6 +1024,9 @@ const ADAPTATION_RECORD_ALLOWED_KEYS = [
   "classification",
 ] as const;
 
+const CONTENT_CHECK_ISSUE_ID = /^[0-9a-f]{16}$/;
+const CONTENT_CHECK_ANCHOR_HASH = /^[0-9a-f]{64}$/;
+
 const CONFIRMED_SOURCE_EDIT_SOURCES = new Set([
   "initial",
   "extraction",
@@ -1029,14 +1035,148 @@ const CONFIRMED_SOURCE_EDIT_SOURCES = new Set([
   "content_check",
 ]);
 
-/** 透传 code/message/classification。message 仅供技术详情，UI 不得当正文渲染。 */
+/** 独立通知合同；message 仅供技术详情，UI 不得当正文渲染。 */
 function sanitizeAdaptationRecords(value: unknown): ReaderAdaptationRecordDto[] {
   if (!Array.isArray(value)) return [];
   return (value as unknown[])
-    .map((item) =>
-      pickAllowed<ReaderAdaptationRecordDto>(item, ADAPTATION_RECORD_ALLOWED_KEYS),
-    )
+    .map((item) => {
+      const record = pickAllowed<ReaderAdaptationRecordDto>(
+        item,
+        ADAPTATION_RECORD_ALLOWED_KEYS,
+      );
+      return record &&
+        typeof record.code === "string" &&
+        record.code.length > 0 &&
+        typeof record.message === "string" &&
+        record.classification === "adaptation_notice"
+        ? record
+        : null;
+    })
     .filter((item): item is ReaderAdaptationRecordDto => item !== null);
+}
+
+function sanitizeContentCheckSourceAnchor(
+  value: unknown,
+): ReaderContentCheckSourceAnchorDto | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const hasBlock = source.block_id !== undefined && source.block_id !== null;
+  const hasRange =
+    (source.start_utf16 !== undefined && source.start_utf16 !== null) ||
+    (source.end_utf16 !== undefined && source.end_utf16 !== null);
+  if (hasBlock === hasRange) return null;
+  if (hasBlock) {
+    return typeof source.block_id === "string" && source.block_id.trim().length > 0
+      ? { block_id: source.block_id }
+      : null;
+  }
+  return Number.isInteger(source.start_utf16) &&
+    Number.isInteger(source.end_utf16) &&
+    (source.start_utf16 as number) >= 0 &&
+    (source.end_utf16 as number) > (source.start_utf16 as number)
+    ? {
+        start_utf16: source.start_utf16 as number,
+        end_utf16: source.end_utf16 as number,
+      }
+    : null;
+}
+
+function sanitizeContentCheckMediaCoordinate(
+  value: unknown,
+): ReaderContentCheckMediaCoordinateDto | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const pageNumber = source.page_number;
+  const bbox = source.bbox;
+  if (
+    !(
+      pageNumber === null ||
+      (Number.isInteger(pageNumber) && (pageNumber as number) >= 1)
+    ) ||
+    !(
+      bbox === null ||
+      (Array.isArray(bbox) && bbox.every((coordinate) => Number.isInteger(coordinate)))
+    )
+  ) {
+    return null;
+  }
+  return {
+    page_number: pageNumber as number | null,
+    bbox: bbox as number[] | null,
+  };
+}
+
+/** Strict, allowlisted R8 review-item projection. Null means fail closed. */
+function sanitizeContentCheckItems(
+  value: unknown,
+): ReaderContentCheckItemDto[] | null {
+  if (!Array.isArray(value)) return null;
+  const items: ReaderContentCheckItemDto[] = [];
+  for (const valueItem of value) {
+    if (!valueItem || typeof valueItem !== "object" || Array.isArray(valueItem)) {
+      return null;
+    }
+    const item = valueItem as Record<string, unknown>;
+    if (
+      typeof item.code !== "string" ||
+      item.code.length === 0 ||
+      typeof item.message !== "string" ||
+      item.classification !== "content_check" ||
+      typeof item.issue_id !== "string" ||
+      !CONTENT_CHECK_ISSUE_ID.test(item.issue_id) ||
+      (item.tier !== "attention" && item.tier !== "routine") ||
+      (item.target_scope !== "document" && item.target_scope !== "range") ||
+      !(item.anchor_hash === null ||
+        (typeof item.anchor_hash === "string" &&
+          CONTENT_CHECK_ANCHOR_HASH.test(item.anchor_hash))) ||
+      !item.evidence ||
+      typeof item.evidence !== "object" ||
+      Array.isArray(item.evidence)
+    ) {
+      return null;
+    }
+    const evidence = item.evidence as Record<string, unknown>;
+    if (
+      !(evidence.excerpt_text === null || typeof evidence.excerpt_text === "string") ||
+      !(evidence.proposed_patch === null || typeof evidence.proposed_patch === "string")
+    ) {
+      return null;
+    }
+    const sourceAnchor =
+      item.source_anchor === null
+        ? null
+        : sanitizeContentCheckSourceAnchor(item.source_anchor);
+    const mediaCoordinate = sanitizeContentCheckMediaCoordinate(
+      item.source_media_coordinate,
+    );
+    if (
+      (item.source_anchor !== null && sourceAnchor === null) ||
+      (item.source_media_coordinate !== null && mediaCoordinate === null) ||
+      (item.target_scope === "range" &&
+        (sourceAnchor === null || typeof item.anchor_hash !== "string")) ||
+      (item.target_scope === "document" &&
+        (sourceAnchor !== null || item.anchor_hash !== null))
+    ) {
+      return null;
+    }
+    items.push({
+      code: item.code,
+      message: item.message,
+      classification: "content_check",
+      issue_id: item.issue_id,
+      tier: item.tier,
+      target_scope: item.target_scope,
+      source_anchor: sourceAnchor,
+      anchor_hash: item.anchor_hash,
+      evidence: {
+        excerpt_text: evidence.excerpt_text,
+        proposed_patch: evidence.proposed_patch,
+      },
+      source_media_coordinate: mediaCoordinate,
+    });
+  }
+  return items;
 }
 
 function sanitizeConfirmedSourceCandidate(
@@ -1157,12 +1297,17 @@ export async function getReaderConfirmedSourceFromWeb(
     return upstreamError(502, "upstream returned no data");
   }
 
+  const contentCheck = sanitizeContentCheckItems(raw.content_check);
+  if (contentCheck === null) {
+    return upstreamError(502, "upstream returned invalid content check");
+  }
+
   return {
     ok: true,
     ...top,
     candidate: sanitizeConfirmedSourceCandidate(raw.candidate),
     adaptation_notice: sanitizeAdaptationRecords(raw.adaptation_notice),
-    content_check: sanitizeAdaptationRecords(raw.content_check),
+    content_check: contentCheck,
   };
 }
 
@@ -1237,12 +1382,17 @@ export async function updateReaderConfirmedSourceFromWeb(
     return upstreamError(502, "upstream returned no data");
   }
 
+  const contentCheck = sanitizeContentCheckItems(raw.content_check);
+  if (contentCheck === null) {
+    return upstreamError(502, "upstream returned invalid content check");
+  }
+
   return {
     ok: true,
     ...top,
     candidate: sanitizeConfirmedSourceCandidate(raw.candidate),
     adaptation_notice: sanitizeAdaptationRecords(raw.adaptation_notice),
-    content_check: sanitizeAdaptationRecords(raw.content_check),
+    content_check: contentCheck,
   };
 }
 

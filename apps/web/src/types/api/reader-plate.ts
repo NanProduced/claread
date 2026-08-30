@@ -998,7 +998,46 @@ export type ReaderAdaptationClassificationDto =
 export interface ReaderAdaptationRecordDto {
   code: string;
   message: string;
-  classification: ReaderAdaptationClassificationDto;
+  classification: "adaptation_notice";
+}
+
+export type ReaderContentCheckTierDto = "attention" | "routine";
+export type ReaderContentCheckTargetScopeDto = "document" | "range";
+
+export type ReaderContentCheckSourceAnchorDto =
+  | {
+      block_id: string;
+      start_utf16?: never;
+      end_utf16?: never;
+    }
+  | {
+      block_id?: never;
+      start_utf16: number;
+      end_utf16: number;
+    };
+
+export interface ReaderContentCheckEvidenceDto {
+  excerpt_text: string | null;
+  proposed_patch: string | null;
+}
+
+export interface ReaderContentCheckMediaCoordinateDto {
+  page_number: number | null;
+  bbox: number[] | null;
+}
+
+/** Strict R8 review-item contract for the blocking Content Check surface. */
+export interface ReaderContentCheckItemDto {
+  code: string;
+  message: string;
+  classification: "content_check";
+  issue_id: string;
+  tier: ReaderContentCheckTierDto;
+  target_scope: ReaderContentCheckTargetScopeDto;
+  source_anchor: ReaderContentCheckSourceAnchorDto | null;
+  anchor_hash: string | null;
+  evidence: ReaderContentCheckEvidenceDto;
+  source_media_coordinate: ReaderContentCheckMediaCoordinateDto | null;
 }
 
 export type ReaderConfirmedSourceEditSourceDto =
@@ -1027,15 +1066,10 @@ export interface ReaderConfirmedSourceReadResponseDto {
   edit_source: ReaderConfirmedSourceEditSourceDto;
   updated_at: string;
   candidate: ReaderConfirmedSourceCandidateSummaryDto | null;
-  /**
-   * 正式合同（真实后端已落地，与 mock 假设一致）：GET 200 始终携带这三个
-   * 字段（后端 DTO 默认值 quality={}、adaptation_notice=[]、content_check=[]，
-   * 取自最新 candidate 的 quality_json.suitability.adaptations）。TS 侧保持
-   * 可选以容忍联调期旧响应，BFF sanitize 统一归一为 []。
-   */
-  quality?: Record<string, unknown> | null;
-  adaptation_notice?: ReaderAdaptationRecordDto[];
-  content_check?: ReaderAdaptationRecordDto[];
+  /** 后端与 BFF 的正式 GET 200 合同；缺失 content_check 必须 fail closed。 */
+  quality: Record<string, unknown> | null;
+  adaptation_notice: ReaderAdaptationRecordDto[];
+  content_check: ReaderContentCheckItemDto[];
 }
 
 /** Request body of `PUT /reader/records/{record_id}/confirmed-source` (design — Confirmed Source 生命周期 / “PUT whole-document update”). */
@@ -1068,7 +1102,7 @@ export interface ReaderConfirmedSourceUpdateResponseDto {
    */
   quality: Record<string, unknown> | null;
   adaptation_notice: ReaderAdaptationRecordDto[];
-  content_check: ReaderAdaptationRecordDto[];
+  content_check: ReaderContentCheckItemDto[];
 }
 
 /**
