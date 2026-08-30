@@ -147,7 +147,7 @@ flowchart TD
     D --> E[等待界面: 四真实阶段推进]
     E -->|无需确认: stable_document_ready| F[直达 Reader]
     E -->|需要确认: candidate_document_required| G[进入 Content Check 工作区]
-    E -->|处理失败 / 拒绝| H[失败状态: 单句原因 + 单一恢复动作]
+    E -->|处理失败 / 拒绝| H[失败状态: 单句原因 + 显式恢复类型]
     G -->|就地编辑正文| I[防抖自动保存 PUT confirmed-source]
     I -->|服务端 Reparse| G
     G -->|点击「稍后处理」| J[本地记录恢复凭据并返回]
@@ -185,7 +185,7 @@ flowchart TD
 | `S5_WAIT_EXTRACT` | 阶段二：提取正文 | `submit-input` 已完成，提取 Worker 运行中 | 居中文件卡，展示阶段二呼吸细点；指示“正在提取正文…”；副标提示可离开 | 允许离开页面 | - | 后端接管，生成 reading_record_id |
 | `S6_WAIT_CHECK` | 阶段三：检查内容 | 提取成功，材料化 Worker 运行中 | 居中文件卡，展示阶段三呼吸细点；指示“正在检查内容与排版…” | 允许离开页面 | - | 适用性门控执行中 |
 | `S7_WAIT_PREPARE` | 阶段四：准备阅读 | 冻结就绪或确认完毕 | 居中文件卡，展示阶段四呼吸细点；指示“正在准备阅读环境…” | - | - | 即将跳转进入 Reader |
-| `S8_WAIT_FAILED` | 等待失败/超时 | `outcome IN ('extraction_failed', 'materialization_failed')` 且 `next_action == 'show_error'`（嵌套 job.status 仅作辅助诊断） | 工作区展示红/灰色弱警示框；仅展示一句用户语言失败原因 | 单一恢复动作（「重试」） | 单一退出动作（「重新选择文件」或「返回修改」） | 禁止展示 Python 堆栈、worker lease 或 OSS 错误码 |
+| `S8_WAIT_FAILED` | 失败恢复分流 | 1. 上传阶段或状态查询出现临时网络/BFF 错误；<br>2. queued job 长时间未被 Worker 领取；<br>3. `outcome IN ('extraction_failed', 'materialization_failed')` 或 `next_action IN ('show_error', 'revise_input')`（嵌套 job.status 仅作辅助诊断） | 工作区展示单一 alert/live region 与一句用户语言原因 | 临时错误/queued stalled：「重试」当前阶段；failed_terminal/show_error/revise_input：「选择其他文件」 | 文件路径统一提供「返回粘贴内容」 | 恢复类型必须由 error state 显式声明，禁止依据附件或历史 ref 猜测；终态当前无 requeue API，禁止虚假重试 |
 | `S9_CHECK_READY` | 审查待办态 | `outcome == 'candidate_document_required'` | 拓扑完全展开：正文画布 + 右侧批注栏。存在未决的“需要确认”项 | 逐项审阅批注卡 | 稍后处理 / 重新输入（仅初次提交） | 主按钮文案为“确认正文并开始阅读”，保持 disabled 状态 |
 | `S10_CHECK_EDITING` | 审查就地编辑态 | 用户在 Candidate 画布键入修改 | 正文直接输入，底部状态栏显示“保存中…”；1200ms 防抖后发起 PUT；关联批注标记转为“内容已修改，待确认” | 继续编辑 / 点击保存 | 稍后处理 | 严禁自动将问题标记为已解决；PUT 乐观锁带 `expected_revision` |
 | `S11_CHECK_CONFLICT` | 审查并发冲突 | PUT 接口返回 HTTP 409（公开错误码 `stale_source_revision`；仓储内部 `stale_revision` 仅作后端日志记录） | 顶部横幅提示“检测到内容在其他位置有更新” | 「以我的修改重试」（自动拉取最新 revision 重放本地文本） | 「载入最新版本」（放弃本地修改） | 服务端永不静默覆盖；本地编辑内容绝对不丢失 |
@@ -416,8 +416,13 @@ interface StoredIntakeTask {
 | | 阶段三（检查） | “正在检查内容与排版…” | 真实阶段三 |
 | | 阶段四（准备） | “正在准备阅读环境…” | 真实阶段四 |
 | | 离开承诺副标 | “离开本页不会影响透读，完成后会保存到阅读记录” | 承诺副标 |
-| | 失败主说明 | “暂时没能识别这份文件，请换一个格式重试” | 失败单句说明 |
-| | 失败主动作 | “重新上传” / “以文本粘贴” | 恢复入口 |
+| | 本地格式/大小校验失败 | “暂不支持这份文件…” / “文件太大…” | 仅「选择其他文件」与「返回粘贴内容」，不显示重试 |
+| | 上传阶段临时失败 | “无法开始上传，请稍后重试。” / “文件上传失败，请检查网络后重试。” / “确认上传失败，请稍后重试。” / “提交文件失败，请稍后重试。” | 「重试」只继续 init、当前 PUT、相同 artifactId 的 complete 或相同 artifactId 的 submit |
+| | 状态查询临时失败 | “查询处理进度失败，请稍后重试。” | 「重试」只新增当前 artifact 的一次 `pipeline-status` GET |
+| | queued job 未被 Worker 领取 | “解析服务暂时没响应，请重试。” | 保留轮询恢复上下文；「重试」只查询当前 pipeline，不重新上传 |
+| | 提取终态失败 | “这份文件的正文提取失败。” | 不显示重试；仅「选择其他文件」与「返回粘贴内容」 |
+| | 材料化终态失败 | “这份文件的内容检查未能完成。” | 不显示重试；仅「选择其他文件」与「返回粘贴内容」 |
+| | 其他 `show_error` 终态 | “这份文件未能完成处理。” | 不显示重试；仅「选择其他文件」与「返回粘贴内容」 |
 | **Content Check** | 审查页头 | “确认识别出的正文” ｜ “来源：{文件名}” | 主标题与来源 |
 | | 待办概览 | “共 {total} 项内容需要过目，还有 {attention} 项需要确认” | 顶部计数 |
 | | 长文结构导航 | “文档结构概览” ｜ “§{N} {标题} · {count} 项待确认” | 结构项与徽章 |
@@ -486,22 +491,26 @@ interface StoredIntakeTask {
    - **安全容错降级**：若无法安全取得原件（如网络异常、OSS 访问故障或该文件类型不支持预览），原件抽屉仅展示：“**暂时无法打开原件供对比，正文可继续编辑与确认**”；Candidate 正文的就地修改、批注确认与最终开始阅读流程**绝对不被阻断**；
    - 缺少页面或 BBox 坐标时，抽屉展示参考全页，并明确标记“未能精确定位”。
 
-#### 3. 正文三点版本持久化缺口（Backend Gap）
+#### 3. failed_terminal OCR / 材料化重新执行能力（Backend Gap）
+- **确认事实**：当前没有针对 `extraction_failed`、`materialization_failed` 或 `show_error` 的 owner-scoped requeue API；重复 `pipeline-status` 只会读取同一终态，不能重新执行 OCR 或材料化。
+- **依赖要求**：后端需定义幂等、可审计且受 attempt budget 约束的重新执行接口，明确 successor job / generation 语义。该能力落地前，前端终态必须 fail-closed，只允许选择其他文件或返回粘贴内容。
+
+#### 4. 正文三点版本持久化缺口（Backend Gap）
 - **事实**：`confirmed_source_documents` 当前原地覆盖更新，初始提取版本（v0）与上一个已保存版本（v_prev）均未入库。
 - **依赖要求**：后端需扩展数据表结构，保存不可变初始提取正文快照及上一版本快照指针，并在 `GET /confirmed-source` 响应中下发版本元数据，支撑产品级版本回滚。
 
-#### 4. 可信大纲与长文元数据下发（Backend Gap）
+#### 5. 可信大纲与长文元数据下发（Backend Gap）
 - **事实**：当前材料化输出尚未下发结构化章节 outline、PDF 页码边界或 long-document 标识。
 - **依赖要求**：后端解析管线需增强大纲提取能力，提供可信的 `document_structure_outline` 与分页元数据；在未下发前，前端结构概览默认折叠或不渲染，不进行盲目猜测。
 
-#### 5. 单活动任务管理与 LocalStorage 统一（Frontend Task）
+#### 6. 单活动任务管理与 LocalStorage 统一（Frontend Task）
 - **依赖要求**：重构并扩展现有 `pending-candidate.ts`，建立标准 `read-intake-recovery-store`：
   - 实现 `claread:intake_task:${accountId}:v1` 键名规范；
   - 封装 24h 默认 TTL 校验与过期清理；
   - 绑定 `window.storage` 事件实现跨标签页状态同步；
   - 拦截新输入，弹出“继续旧任务”或“替换并开始新任务”的仲裁对话框。
 
-#### 6. Shiki Tokenizer 的 Plate Transient Decoration 插件（Frontend Task）
+#### 7. Shiki Tokenizer 的 Plate Transient Decoration 插件（Frontend Task）
 - **依赖要求**：将 Reader 现存的 Shiki 词法着色器封装为适配 Plate 可编辑状态的轻量 transient decoration 插件，确保大段编辑时不破坏光标状态且不卡顿。
 
 ---
@@ -520,7 +529,7 @@ interface StoredIntakeTask {
 
 | 验证项编号 | 测试/验收场景 | 前置条件与输入 | 预期表现与验收标准 | 平台与环境 |
 |---|---|---|---|---|
-| **TC-01** | **四阶段真实状态映射与失败覆盖** | 上传一个复杂或损坏的文件 | 1. 正常路径严格经历“上传文件”→“提取正文”→“检查内容”→“准备阅读/审查”，阶段状态与 `outcome`/`next_action` 完全吻合，无虚假百分比，无不存在字段；<br>2. 提取失败 (`extraction_failed` + `show_error`) 或材料化失败 (`materialization_failed` + `show_error`) 正确进入 S8 失败状态，展示单句说明与单一重试动作。 | 全平台 |
+| **TC-01** | **四阶段真实状态映射与失败恢复覆盖** | 上传一个复杂或损坏的文件，并分别模拟各阶段临时错误、queued stalled 与 failed_terminal | 1. 正常路径严格经历“上传文件”→“提取正文”→“检查内容”→“准备阅读/审查”，阶段状态与 `outcome`/`next_action` 完全吻合，无虚假百分比，无不存在字段；<br>2. init、OSS PUT、complete-upload、submit-input、pipeline-status 的临时错误只重试当前阶段，已经成功的前置请求不得重复；queued stalled 重试仅新增一次 `pipeline-status` GET，成功响应继续进入 Reader 或 Content Check；<br>3. `extraction_failed`、`materialization_failed`、`show_error`、`revise_input` 进入 S8 终态，清除轮询恢复上下文，文案与按钮均不得出现“重试”，只提供「选择其他文件」与「返回粘贴内容」；<br>4. 全程只有一个 alert/live region，恢复动作触控区不小于 44px，返回粘贴内容后恢复原草稿。 | 全平台 |
 | **TC-02** | **Silent 分类绝对不上屏** | 输入包含删除线 `~~strikethrough~~` 的 Markdown | 后端下发 `strikethrough_extension`（silent）；界面正常渲染删除线文本，批注栏中绝对不出现该项卡片，通知轨亦不出现。 | Desktop / Mobile |
 | **TC-03** | **Adaptation Notice 仅进通知轨** | 输入包含 `<script>` 标签与 `javascript:` 链接 | 后端下发 `raw_html_block` 与 `unsafe_link_protocol`；仅在顶层折叠通知栏提示已自动清理，严禁作为待解决问题出现在批注卡片流中。 | Desktop / Mobile |
 | **TC-04** | **同 Code 多 Issue 独立性** | 输入包含两处不同未闭合代码块 | 后端下发两条 `has_unclosed_fence`；批注栏展现两张独立的卡片，分别对应各自的行号与文本范围，严禁合并为一张卡片。 | Desktop |

@@ -934,6 +934,9 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(screen.queryByTestId("source-file-preview")).toBeNull();
     expect(screen.getByText(/暂不支持/).textContent).toContain("archive.zip");
     expect(screen.getByText(/PDF \/ Markdown \/ TXT \/ PNG \/ JPG \/ WEBP/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+    expect(screen.getByRole("button", { name: "选择其他文件" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "返回粘贴内容" })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1031,6 +1034,94 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
   });
 
+  it.each([
+    {
+      failedStage: "init",
+      message: "初始化上传暂时失败",
+      expectedCounts: [2, 1, 1, 1, 1],
+    },
+    {
+      failedStage: "put",
+      message: "文件上传失败，请检查网络后重试。",
+      expectedCounts: [1, 2, 1, 1, 1],
+    },
+    {
+      failedStage: "complete",
+      message: "确认上传暂时失败",
+      expectedCounts: [1, 1, 2, 1, 1],
+    },
+    {
+      failedStage: "submit",
+      message: "提交文件暂时失败",
+      expectedCounts: [1, 1, 1, 2, 1],
+    },
+  ])(
+    "retries only the failed $failedStage upload stage",
+    async ({ failedStage, message, expectedCounts }) => {
+      const attempts = { init: 0, put: 0, complete: 0, submit: 0, status: 0 };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/init-upload")) {
+          attempts.init += 1;
+          return failedStage === "init" && attempts.init === 1
+            ? jsonResponse({ ok: false, message }, 503)
+            : jsonResponse(makeInitResponse());
+        }
+        if (url.startsWith("https://oss.example.com/")) {
+          attempts.put += 1;
+          return new Response(null, {
+            status: failedStage === "put" && attempts.put === 1 ? 503 : 200,
+          });
+        }
+        if (url.endsWith("/complete-upload")) {
+          attempts.complete += 1;
+          return failedStage === "complete" && attempts.complete === 1
+            ? jsonResponse({ ok: false, message }, 503)
+            : jsonResponse(makeCompleteResponse());
+        }
+        if (url.endsWith("/submit-input")) {
+          attempts.submit += 1;
+          return failedStage === "submit" && attempts.submit === 1
+            ? jsonResponse({ ok: false, message }, 503)
+            : jsonResponse(makeArtifactSubmitResponse(`rec_retry_${failedStage}`));
+        }
+        if (url.endsWith("/pipeline-status")) {
+          attempts.status += 1;
+          return jsonResponse(makePipelineStableResponse(`rec_retry_${failedStage}`));
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <AnalyzeSubmitForm
+          readingGoal="daily_reading"
+          readingVariant="intermediate_reading"
+        />,
+      );
+      fireEvent.change(screen.getByTestId("source-file-input"), {
+        target: { files: [makeFile(`${failedStage}.pdf`, "application/pdf")] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+      await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+      const retry = screen.getByRole("button", { name: "重试" });
+      expect(retry.className).toContain("min-h-[44px]");
+      fireEvent.click(retry);
+
+      await waitFor(() => {
+        expect(navigationMock.push).toHaveBeenCalledWith(`/app/reader/rec_retry_${failedStage}`);
+      });
+      expect([
+        attempts.init,
+        attempts.put,
+        attempts.complete,
+        attempts.submit,
+        attempts.status,
+      ]).toEqual(expectedCounts);
+    },
+  );
+
   it("waits for each status response before scheduling the next poll", async () => {
     vi.useFakeTimers();
     let resolveFirstStatus!: (response: Response) => void;
@@ -1127,7 +1218,8 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(calls.some((url) => url.endsWith("/pipeline-status"))).toBe(true);
   });
 
-  it("stops indefinite waiting when an artifact job has never been claimed", async () => {
+  it("stalled worker retries exactly one pipeline GET and continues to Reader without re-uploading", async () => {
+    let statusAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/init-upload")) {
@@ -1143,7 +1235,10 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
         return jsonResponse(makeArtifactSubmitResponse("rec_artifact_stalled"));
       }
       if (url.endsWith("/pipeline-status")) {
-        return jsonResponse(makePipelineStalledResponse());
+        statusAttempts += 1;
+        return statusAttempts === 1
+          ? jsonResponse(makePipelineStalledResponse())
+          : jsonResponse(makePipelineStableResponse("rec_artifact_stalled"));
       }
       throw new Error(`Unexpected fetch ${url}`);
     });
@@ -1161,9 +1256,21 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
     await waitFor(() => {
-      expect(screen.getByText("解析服务暂时没响应，请稍后重试或换个文件")).toBeTruthy();
+      expect(screen.getByText("解析服务暂时没响应，请重试。")).toBeTruthy();
     });
-    expect(navigationMock.push).not.toHaveBeenCalled();
+    const callsBeforeRetry = fetchMock.mock.calls.map(([url]) => String(url));
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_artifact_stalled");
+    });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
+    expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
+    expect(urls.filter((url) => url.startsWith("https://oss.example.com/"))).toHaveLength(1);
+    expect(urls.filter((url) => url.endsWith("/complete-upload"))).toHaveLength(1);
+    expect(urls.filter((url) => url.endsWith("/submit-input"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.length - callsBeforeRetry.length).toBe(1);
   });
 
   it("removes legacy analysis-task polling from AnalyzeSubmitForm", () => {
@@ -1635,10 +1742,11 @@ describe("unified read intake source guards", () => {
     const source = readFormSource();
     expect(source).toContain("ReaderArtifactPipelineStatusSafeDto");
     expect(source).toContain("startArtifactFlow");
-    expect(source).toContain("lastFileRef");
-    expect(source).toMatch(/lastFileRef\.current\s*=\s*file/);
+    expect(source).toContain("ArtifactRetryContext");
+    expect(source).toContain("artifactRetryRef");
+    expect(source).toContain('stage: "pipeline"');
     expect(source).toContain("clearTimeout(pollTimerRef.current)");
-    expect(source).toMatch(/pollUntilTerminal\(\s*artifactId,\s*file\.name/);
+    expect(source).toMatch(/pollUntilTerminal\(\s*context\.artifactId,\s*context\.filename/);
     expect(source).toMatch(/applyArtifactOutcome\(\s*status,\s*currentFilename\s*\)/);
   });
 
@@ -2247,13 +2355,14 @@ describe("阅读方案弹层", () => {
       });
 
       // Single sentence cause
-      expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
+      expect(screen.getByText("这份文件的正文提取失败。")).toBeTruthy();
 
       // No fake "重试" button on terminal failure
       expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
 
       // Only 2 buttons in the alert: primary recovery (选择其他文件) and exit action (返回粘贴内容)
       const alert = screen.getByRole("alert");
+      expect(alert.textContent).not.toContain("重试");
       const buttons = alert.querySelectorAll("button");
       expect(buttons).toHaveLength(2);
       expect(buttons[0].textContent).toContain("选择其他文件");
@@ -2297,13 +2406,14 @@ describe("阅读方案弹层", () => {
       fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
       await waitFor(() => {
-        expect(screen.getByText("检查内容与排版失败，请稍后重试")).toBeTruthy();
+        expect(screen.getByText("这份文件的内容检查未能完成。")).toBeTruthy();
       });
 
       // No fake "重试" button
       expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
 
       const alert = screen.getByRole("alert");
+      expect(alert.textContent).not.toContain("重试");
       const buttons = alert.querySelectorAll("button");
       expect(buttons).toHaveLength(2);
       expect(buttons[0].textContent).toContain("选择其他文件");
@@ -2343,7 +2453,7 @@ describe("阅读方案弹层", () => {
       fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
       await waitFor(() => {
-        expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
+        expect(screen.getByText("这份文件的正文提取失败。")).toBeTruthy();
       });
 
       // Record call counts before clicking exit action
@@ -2402,7 +2512,7 @@ describe("阅读方案弹层", () => {
       fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
       await waitFor(() => {
-        expect(screen.getByText("提取正文失败，请稍后重试")).toBeTruthy();
+        expect(screen.getByText("这份文件的正文提取失败。")).toBeTruthy();
       });
 
       const callsBefore = fetchMock.mock.calls.length;
@@ -2473,6 +2583,59 @@ describe("阅读方案弹层", () => {
       const urls = fetchMock.mock.calls.map(([url]) => String(url));
       expect(urls.filter((url) => url.endsWith("/init-upload"))).toHaveLength(1);
       expect(urls.filter((url) => url.endsWith("/pipeline-status"))).toHaveLength(2);
+    });
+
+    it.each([
+      {
+        label: "show_error",
+        status: {
+          outcome: "upload_pending",
+          next_action: "show_error",
+        },
+        message: "这份文件未能完成处理。",
+      },
+      {
+        label: "revise_input",
+        status: {
+          outcome: "input_rejected_or_action_required",
+          next_action: "revise_input",
+        },
+        message: "系统没能识别这份文件，可以换一份文件或改用粘贴文本。",
+      },
+    ])("$label is terminal and never promises retry", async ({ status, message }) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/init-upload")) return jsonResponse(makeInitResponse());
+        if (url.startsWith("https://oss.example.com/")) return new Response(null, { status: 200 });
+        if (url.endsWith("/complete-upload")) return jsonResponse(makeCompleteResponse());
+        if (url.endsWith("/submit-input")) return jsonResponse(makeArtifactSubmitResponse("rec_terminal"));
+        if (url.endsWith("/pipeline-status")) {
+          return jsonResponse({
+            ...makePipelineStableResponse("rec_terminal"),
+            ...status,
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <AnalyzeSubmitForm
+          readingGoal="daily_reading"
+          readingVariant="intermediate_reading"
+        />,
+      );
+      fireEvent.change(screen.getByTestId("source-file-input"), {
+        target: { files: [makeFile("terminal.pdf", "application/pdf")] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+      await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).not.toContain("重试");
+      expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+      expect(screen.getByRole("button", { name: "选择其他文件" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "返回粘贴内容" })).toBeTruthy();
     });
 
     it("single stage status owner: when waiting stage is active, AnalysisLoadingStatusBar is not rendered", async () => {

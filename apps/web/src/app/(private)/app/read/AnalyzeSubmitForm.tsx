@@ -70,7 +70,12 @@ type SubmitState =
   | {
       kind: "error";
       message: string;
-      errorType?: "transient-polling" | "terminal-artifact" | "general";
+      recovery:
+        | "retry-pipeline"
+        | "retry-upload-stage"
+        | "terminal-file"
+        | "retry-text"
+        | "edit-text";
     }
   | {
       /** L2 同页 Content Check。Confirmed Source 404 走 resume-not-found。 */
@@ -106,6 +111,21 @@ interface AttachedSource {
   sourceKind: ArtifactSourceKind;
   descriptor: SourceFileDescriptor;
 }
+
+type ArtifactRetryContext =
+  | { stage: "init"; file: File; contentType: string }
+  | {
+      stage: "put";
+      file: File;
+      artifactId: string;
+      contentType: string;
+      presignedUrl: string;
+      presignedMethod: string;
+      presignedHeaders: Record<string, string>;
+    }
+  | { stage: "complete"; file: File; artifactId: string; contentType: string }
+  | { stage: "submit"; file: File; artifactId: string }
+  | { stage: "pipeline"; artifactId: string; filename: string };
 
 type PipelineOutcome = ReaderArtifactPipelineStatusSafeDto["outcome"];
 type PipelineNextAction = ReaderArtifactPipelineStatusSafeDto["next_action"];
@@ -155,7 +175,7 @@ function describeNextAction(action: PipelineNextAction, outcome: PipelineOutcome
     return "暂时没能识别这份来源，可以换一个文件或改用粘贴文本";
   }
   if (action === "show_error") {
-    return "处理过程中出现错误，可以重试或重新选择文件";
+    return "这份文件未能完成处理";
   }
   if (action === "submit_input") {
     return "正在提交文件";
@@ -183,17 +203,6 @@ function isTerminalAction(action: PipelineNextAction): boolean {
     action === "revise_input" ||
     action === "show_error"
   );
-}
-
-function summarizeOutcome(outcome: PipelineOutcome): string {
-  switch (outcome) {
-    case "extraction_failed":
-      return "文本提取失败";
-    case "materialization_failed":
-      return "排版失败";
-    default:
-      return "处理失败";
-  }
 }
 
 function formatFileSize(bytes: number): string {
@@ -545,10 +554,9 @@ export function AnalyzeSubmitForm({
   const router = useRouter();
   const markdownEditorRef = useRef<MarkdownTextInputHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const lastFileRef = useRef<File | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollGenerationRef = useRef(0);
-  const lastPollingRef = useRef<{ artifactId: string; filename: string } | null>(null);
+  const artifactRetryRef = useRef<ArtifactRetryContext | null>(null);
   const dragDepthRef = useRef(0);
   const attachedSourceRef = useRef<AttachedSource | null>(null);
   const stashedEditorTextRef = useRef<string | null>(null);
@@ -668,9 +676,8 @@ export function AnalyzeSubmitForm({
 
   function clearAttachedSource() {
     stopPolling();
-    lastPollingRef.current = null;
+    artifactRetryRef.current = null;
     clearPendingCandidate();
-    lastFileRef.current = null;
     setCurrentAttachedSource(null);
     const stashed = stashedEditorTextRef.current;
     stashedEditorTextRef.current = null;
@@ -691,11 +698,12 @@ export function AnalyzeSubmitForm({
 
     const validation = validateSourceFile(file);
     if (!validation.ok) {
-      lastFileRef.current = null;
+      artifactRetryRef.current = null;
       setCurrentAttachedSource(null);
       setState({
         kind: "error",
         message: validation.message,
+        recovery: "terminal-file",
       });
       return;
     }
@@ -705,7 +713,7 @@ export function AnalyzeSubmitForm({
       stashedEditorTextRef.current = live;
     }
 
-    lastFileRef.current = file;
+    artifactRetryRef.current = null;
     setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
     setState({ kind: "idle" });
   }
@@ -766,34 +774,28 @@ export function AnalyzeSubmitForm({
     }
   }
 
-  function retryLastFile() {
-    const polling = lastPollingRef.current;
-    if (polling) {
-      setState({
-        kind: "artifact-polling",
-        filename: polling.filename,
-        message: "正在重新查询处理进度…",
-        outcome: null,
-        nextAction: null,
-      });
-      pollUntilTerminal(polling.artifactId, polling.filename);
+  function handleRetry() {
+    if (state.kind !== "error") {
       return;
     }
-    const file = lastFileRef.current;
-    if (!file) {
-      if (text.trim().length > 0) {
-        void handleSubmit();
-        return;
-      }
-      openFilePicker();
+
+    if (state.recovery === "retry-text") {
+      void handleSubmit();
       return;
     }
-    void startArtifactFlow(file);
+
+    const context = artifactRetryRef.current;
+    if (
+      context &&
+      (state.recovery === "retry-pipeline" || state.recovery === "retry-upload-stage")
+    ) {
+      void runArtifactStage(context);
+    }
   }
 
   function handleSelectAnotherFile() {
     stopPolling();
-    lastPollingRef.current = null;
+    artifactRetryRef.current = null;
     clearAttachedSource();
     openFilePicker();
   }
@@ -860,7 +862,7 @@ export function AnalyzeSubmitForm({
           setState({
             kind: "error",
             message: "查询处理进度失败，请稍后重试。",
-            errorType: "transient-polling",
+            recovery: "retry-pipeline",
           });
         }
         return false;
@@ -870,18 +872,17 @@ export function AnalyzeSubmitForm({
         setState({
           kind: "error",
           message: result.message || "查询处理进度失败，请稍后重试。",
-          errorType: "transient-polling",
+          recovery: "retry-pipeline",
         });
         return false;
       }
 
       const status = result;
       if (isArtifactPipelineWorkerStalled(status)) {
-        lastPollingRef.current = null;
         setState({
           kind: "error",
-          message: "解析服务暂时没响应，请稍后重试或换个文件",
-          errorType: "terminal-artifact",
+          message: "解析服务暂时没响应，请重试。",
+          recovery: "retry-pipeline",
         });
         return false;
       }
@@ -894,7 +895,7 @@ export function AnalyzeSubmitForm({
         nextAction: status.next_action,
       });
       if (isTerminalOutcome(status.outcome) || isTerminalAction(status.next_action)) {
-        lastPollingRef.current = null;
+        artifactRetryRef.current = null;
         applyArtifactOutcome(status, currentFilename);
         return false;
       }
@@ -912,12 +913,14 @@ export function AnalyzeSubmitForm({
 
   function applyArtifactOutcome(status: ReaderArtifactPipelineStatusSafeDto, currentFilename: string) {
     const { outcome, next_action: nextAction, record } = status;
+    artifactRetryRef.current = null;
     if (outcome === "stable_document_ready" || nextAction === "open_reader") {
       const readingRecordId = record?.reading_record_id;
       if (!readingRecordId) {
         setState({
           kind: "error",
-          message: "文档已就绪，但缺少阅读记录信息，请重新提交。",
+          message: "文档已就绪，但暂时无法打开阅读记录。",
+          recovery: "terminal-file",
         });
         return;
       }
@@ -933,6 +936,7 @@ export function AnalyzeSubmitForm({
         setState({
           kind: "error",
           message: "已生成候选文档，但缺少阅读记录信息。",
+          recovery: "terminal-file",
         });
         return;
       }
@@ -940,7 +944,8 @@ export function AnalyzeSubmitForm({
       if (!candidateDocumentId) {
         setState({
           kind: "error",
-          message: "已生成候选文档，但暂时无法打开确认窗口，请稍后重试。",
+          message: "已生成候选文档，但暂时无法打开内容检查。",
+          recovery: "terminal-file",
         });
         return;
       }
@@ -962,11 +967,10 @@ export function AnalyzeSubmitForm({
     }
 
     if (outcome === "input_rejected_or_action_required" || nextAction === "revise_input") {
-      lastPollingRef.current = null;
       setState({
         kind: "error",
         message: "系统没能识别这份文件，可以换一份文件或改用粘贴文本。",
-        errorType: "terminal-artifact",
+        recovery: "terminal-file",
       });
       return;
     }
@@ -974,110 +978,127 @@ export function AnalyzeSubmitForm({
     if (nextAction === "show_error" || outcome === "extraction_failed" || outcome === "materialization_failed") {
       const reason =
         outcome === "extraction_failed"
-          ? "提取正文失败，请稍后重试"
+          ? "这份文件的正文提取失败。"
           : outcome === "materialization_failed"
-            ? "检查内容与排版失败，请稍后重试"
-            : `处理失败（${summarizeOutcome(outcome)}），请稍后重试`;
-      lastPollingRef.current = null;
+            ? "这份文件的内容检查未能完成。"
+            : "这份文件未能完成处理。";
       setState({
         kind: "error",
         message: reason,
-        errorType: "terminal-artifact",
+        recovery: "terminal-file",
       });
     }
   }
 
-  async function startArtifactFlow(file: File) {
-    const validation = validateSourceFile(file);
-    if (!validation.ok) {
+  async function runArtifactStage(context: ArtifactRetryContext) {
+    artifactRetryRef.current = context;
+
+    if (context.stage === "pipeline") {
       setState({
-        kind: "error",
-        message: validation.message,
+        kind: "artifact-polling",
+        filename: context.filename,
+        message: "正在重新查询处理进度…",
+        outcome: null,
+        nextAction: null,
       });
+      pollUntilTerminal(context.artifactId, context.filename);
       return;
     }
 
-    lastPollingRef.current = null;
-    lastFileRef.current = file;
-    setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
+    const { file } = context;
     setState({
       kind: "artifact-uploading",
       filename: file.name,
-      message: "正在准备上传…",
+      message:
+        context.stage === "init"
+          ? "正在准备上传…"
+          : context.stage === "put"
+            ? "正在上传文件…"
+            : context.stage === "complete"
+              ? "正在确认上传…"
+              : "正在提交文件…",
     });
 
     try {
-      const contentType = uploadContentType(file, validation.descriptor);
-      const initResult = await postInitUpload({
-        artifactKind: "original_upload",
-        sourceFilename: file.name,
-        contentType,
-        byteSize: file.size,
-      });
-      if (!initResult.ok) {
-        setState({
-          kind: "error",
-          message: initResult.message || "无法开始上传，请稍后重试。",
+      if (context.stage === "init") {
+        const initResult = await postInitUpload({
+          artifactKind: "original_upload",
+          sourceFilename: file.name,
+          contentType: context.contentType,
+          byteSize: file.size,
+        });
+        if (!initResult.ok) {
+          setState({
+            kind: "error",
+            message: initResult.message || "无法开始上传，请稍后重试。",
+            recovery: "retry-upload-stage",
+          });
+          return;
+        }
+
+        const artifactId = initResult.artifact_id;
+        const presignedUrl = initResult.presigned_url;
+        if (!artifactId || !presignedUrl) {
+          setState({
+            kind: "error",
+            message: "上传服务暂时不可用，请稍后重试。",
+            recovery: "retry-upload-stage",
+          });
+          return;
+        }
+        void runArtifactStage({
+          stage: "put",
+          file,
+          artifactId,
+          contentType: context.contentType,
+          presignedUrl,
+          presignedMethod: initResult.presigned_method ?? "PUT",
+          presignedHeaders: initResult.headers ?? {},
         });
         return;
       }
 
-      const artifactId = initResult.artifact_id;
-      const presignedUrl = initResult.presigned_url;
-      const presignedMethod = initResult.presigned_method ?? "PUT";
-      const presignedHeaders = initResult.headers ?? {};
-      if (!artifactId || !presignedUrl) {
-        setState({
-          kind: "error",
-          message: "上传服务暂时不可用，请稍后重试或重新选择文件。",
-        });
-        return;
-      }
-
-      setState({
-        kind: "artifact-uploading",
-        filename: file.name,
-        message: "正在上传文件…",
-      });
-
-      let putOk = false;
-      try {
-        const putResponse = await fetch(presignedUrl, {
-          method: presignedMethod,
-          headers: presignedHeaders,
+      if (context.stage === "put") {
+        const putResponse = await fetch(context.presignedUrl, {
+          method: context.presignedMethod,
+          headers: context.presignedHeaders,
           body: file,
         });
-        putOk = putResponse.ok;
-      } catch {
-        putOk = false;
-      }
-      if (!putOk) {
-        setState({
-          kind: "error",
-          message: "文件上传失败，请检查网络后重试。",
+        if (!putResponse.ok) {
+          setState({
+            kind: "error",
+            message: "文件上传失败，请检查网络后重试。",
+            recovery: "retry-upload-stage",
+          });
+          return;
+        }
+        void runArtifactStage({
+          stage: "complete",
+          file,
+          artifactId: context.artifactId,
+          contentType: context.contentType,
         });
         return;
       }
 
-      const completeResult = await postCompleteUpload(artifactId, {
-        contentType,
-        byteSize: file.size,
-      });
-      if (!completeResult.ok) {
-        setState({
-          kind: "error",
-          message: completeResult.message || "确认上传失败，请稍后重试。",
+      if (context.stage === "complete") {
+        const completeResult = await postCompleteUpload(context.artifactId, {
+          contentType: context.contentType,
+          byteSize: file.size,
         });
+        if (!completeResult.ok) {
+          setState({
+            kind: "error",
+            message: completeResult.message || "确认上传失败，请稍后重试。",
+            recovery: "retry-upload-stage",
+          });
+          return;
+        }
+        void runArtifactStage({ stage: "submit", file, artifactId: context.artifactId });
         return;
       }
 
-      setState({
-        kind: "artifact-uploading",
-        filename: file.name,
-        message: "正在提交文件…",
-      });
-
-      const submitResult = await postSubmitInput(artifactId, {
+      const submitResult = await postSubmitInput(context.artifactId, {
         title: file.name,
         language: "en",
         readingGoal,
@@ -1087,23 +1108,42 @@ export function AnalyzeSubmitForm({
         setState({
           kind: "error",
           message: submitResult.message || "提交文件失败，请稍后重试。",
+          recovery: "retry-upload-stage",
         });
         return;
       }
-
-      setState({
-        kind: "artifact-polling",
+      void runArtifactStage({
+        stage: "pipeline",
+        artifactId: context.artifactId,
         filename: file.name,
-        message: "已提交，正在等待后台处理...",
       });
-      lastPollingRef.current = { artifactId, filename: file.name };
-      pollUntilTerminal(artifactId, file.name);
     } catch (error: unknown) {
       setState({
         kind: "error",
         message: userFacingErrorCopy(error, "文件处理失败，请稍后重试。"),
+        recovery: "retry-upload-stage",
       });
     }
+  }
+
+  function startArtifactFlow(file: File) {
+    const validation = validateSourceFile(file);
+    if (!validation.ok) {
+      artifactRetryRef.current = null;
+      setState({
+        kind: "error",
+        message: validation.message,
+        recovery: "terminal-file",
+      });
+      return;
+    }
+
+    setCurrentAttachedSource(makeAttachedSource(file, validation.descriptor));
+    void runArtifactStage({
+      stage: "init",
+      file,
+      contentType: uploadContentType(file, validation.descriptor),
+    });
   }
 
   async function handleSubmit() {
@@ -1146,7 +1186,11 @@ export function AnalyzeSubmitForm({
     const submitText = markdownEditorRef.current?.flush() ?? text;
     const trimmed = submitText.trim();
     if (trimmed.length === 0) {
-      setState({ kind: "error", message: "请先粘贴一段需要透读的英文内容。" });
+      setState({
+        kind: "error",
+        message: "请先粘贴一段需要透读的英文内容。",
+        recovery: "edit-text",
+      });
       return;
     }
 
@@ -1154,6 +1198,7 @@ export function AnalyzeSubmitForm({
     // submitText 重新计算并刷新 badge；不阻断、服务端权威清洗。
     setLintResult(lintMarkdownInput(submitText));
 
+    artifactRetryRef.current = null;
     setState({ kind: "pending", message: "正在提交，准备解析…" });
 
     try {
@@ -1174,6 +1219,7 @@ export function AnalyzeSubmitForm({
         setState({
           kind: "error",
           message: payload.message || "提交失败，请稍后重试。",
+          recovery: "retry-text",
         });
         return;
       }
@@ -1219,6 +1265,7 @@ export function AnalyzeSubmitForm({
       setState({
         kind: "error",
         message: userFacingErrorCopy(error, "提交失败，请稍后重试。"),
+        recovery: "retry-text",
       });
     }
   }
@@ -1576,93 +1623,47 @@ export function AnalyzeSubmitForm({
           <p className="font-semibold">{state.message}</p>
           {state.kind === "error" ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 font-sans">
-              {state.errorType === "terminal-artifact" ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleSelectAnotherFile}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    选择其他文件
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleReturnToEditor}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    返回粘贴内容
-                  </Button>
-                </>
-              ) : state.errorType === "transient-polling" ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={retryLastFile}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    重试
-                    <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleReturnToEditor}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    返回粘贴内容
-                  </Button>
-                </>
-              ) : attachedSource || lastFileRef.current ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleSelectAnotherFile}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    选择其他文件
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleReturnToEditor}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    返回粘贴内容
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={retryLastFile}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    重试
-                    <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setState({ kind: "idle" })}
-                    className="min-h-[44px] min-w-[44px] px-3.5"
-                  >
-                    返回修改
-                  </Button>
-                </>
-              )}
+              {state.recovery === "terminal-file" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleSelectAnotherFile}
+                  className="min-h-[44px] min-w-[44px] px-3.5"
+                >
+                  选择其他文件
+                </Button>
+              ) : state.recovery !== "edit-text" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRetry}
+                  className="min-h-[44px] min-w-[44px] px-3.5"
+                >
+                  重试
+                  <RefreshCw aria-hidden className="ml-1 h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={
+                  state.recovery === "terminal-file" ||
+                  state.recovery === "retry-pipeline" ||
+                  state.recovery === "retry-upload-stage"
+                    ? handleReturnToEditor
+                    : () => setState({ kind: "idle" })
+                }
+                className="min-h-[44px] min-w-[44px] px-3.5"
+              >
+                {state.recovery === "terminal-file" ||
+                state.recovery === "retry-pipeline" ||
+                state.recovery === "retry-upload-stage"
+                  ? "返回粘贴内容"
+                  : "返回修改"}
+              </Button>
             </div>
           ) : null}
         </div>
