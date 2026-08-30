@@ -16,7 +16,7 @@ import type { ReaderContentCheckItemDto } from "@/types/api/reader-plate";
 vi.mock("./MarkdownTextInput", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./MarkdownTextInput")>();
   const React = await import("react");
-  const { forwardRef, useImperativeHandle, useRef, useState } = React;
+  const { forwardRef, useEffect, useImperativeHandle, useRef, useState } = React;
 
   type MockHandle = {
     getSubmitText: () => string;
@@ -27,6 +27,7 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
     reveal: (excerpt: string) => boolean;
     canRevealExact: (excerpt: string) => boolean;
     revealExact: (excerpt: string) => boolean;
+    measureExact: (excerpt: string) => { top: number; documentHeight: number } | null;
     flush: () => string;
   };
 
@@ -42,7 +43,14 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
   >(function MockMarkdownTextInput(props, ref) {
     const [value, setValue] = useState(props.initialValue ?? "");
     const valueRef = useRef(value);
+    const serializeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     valueRef.current = value;
+    useEffect(
+      () => () => {
+        if (serializeTimerRef.current) clearTimeout(serializeTimerRef.current);
+      },
+      [],
+    );
     useImperativeHandle(ref, () => ({
       getSubmitText: () => valueRef.current,
       getMarkdown: () => valueRef.current,
@@ -59,9 +67,28 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
         valueRef.current = markdown;
       },
       reveal: () => true,
-      canRevealExact: () => true,
-      revealExact: () => true,
-      flush: () => valueRef.current,
+      canRevealExact: (excerpt: string) => !excerpt.includes("Ambiguous"),
+      revealExact: (excerpt: string) => {
+        if (excerpt.includes("Ambiguous")) return false;
+        const el = document.getElementById(props.id ?? "");
+        if (el) el.dataset.revealedExcerpt = excerpt;
+        return true;
+      },
+      measureExact: (excerpt: string) => {
+        if (excerpt.includes("Ambiguous")) return null;
+        return {
+          top: excerpt === "Second exact anchor." ? 880 : excerpt === "First exact anchor." ? 96 : 120,
+          documentHeight: 1_100,
+        };
+      },
+      flush: () => {
+        if (serializeTimerRef.current) {
+          clearTimeout(serializeTimerRef.current);
+          serializeTimerRef.current = null;
+        }
+        props.onChange(valueRef.current);
+        return valueRef.current;
+      },
     }));
     return React.createElement("textarea", {
       id: props.id,
@@ -70,7 +97,11 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
       onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => {
         setValue(event.target.value);
         valueRef.current = event.target.value;
-        props.onChange(event.target.value);
+        if (serializeTimerRef.current) clearTimeout(serializeTimerRef.current);
+        serializeTimerRef.current = setTimeout(() => {
+          serializeTimerRef.current = null;
+          props.onChange(valueRef.current);
+        }, 150);
       },
       onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -313,27 +344,94 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     ) as HTMLTextAreaElement;
     await waitFor(() => expect(editor.value).toContain("```python\n```"));
     await waitFor(() => expect(fenceItem.textContent).toContain("内容已修改，待确认"));
-    expect(
-      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+          .disabled,
+      ).toBe(true),
+    );
   });
 
-  it("只为可精确映射的 range issue 显示 gutter marker，document scope 不伪造 marker", async () => {
-    installFetchMock();
+  it("两个远距 range marker 对齐各自精确锚点；changed/document/ambiguous 不伪造 marker", async () => {
+    const first = "First exact anchor.";
+    const second = "Second exact anchor.";
+    const ambiguous = "Ambiguous exact anchor.";
+    const markdown = [
+      first,
+      ...Array.from({ length: 24 }, (_, index) => `Filler paragraph ${index + 1}.`),
+      second,
+      ambiguous,
+      ambiguous,
+    ].join("\n\n");
+    const rangeItem = (
+      issueId: string,
+      excerpt: string,
+      anchorHash: string,
+      start = markdown.indexOf(excerpt),
+    ) =>
+      makeContentCheckItem(issueId, {
+        code: "has_unclosed_fence",
+        tier: "attention",
+        target_scope: "range",
+        source_anchor: { start_utf16: start, end_utf16: start + excerpt.length },
+        anchor_hash: anchorHash,
+        evidence: { excerpt_text: excerpt, proposed_patch: null },
+      });
+
+    installFetchMock({
+      markdown_text: markdown,
+      content_check: [
+        rangeItem(
+          "1111111111111111",
+          first,
+          "362a72f735558633213bdcda7899f1cb4520d0ee8b64358b6ceab03e502a9657",
+        ),
+        rangeItem(
+          "2222222222222222",
+          second,
+          "b9ac0655df5ea0742c776455d217a0d3958236d580bf8ae8c5ff83c3ffcdaef0",
+        ),
+        makeContentCheckItem("3333333333333333"),
+        rangeItem("4444444444444444", first, "0".repeat(64)),
+        rangeItem(
+          "5555555555555555",
+          ambiguous,
+          "d8504669cfd611bd15eeae3521ec87682d1a673ce082fd4fa2154ff27f3cac46",
+        ),
+      ],
+    });
     renderPanel();
     await waitForPanelReady();
 
-    await waitFor(() =>
-      expect(screen.getAllByTestId("content-check-gutter-marker")).toHaveLength(1),
-    );
+    let markers: HTMLElement[] = [];
+    await waitFor(() => {
+      markers = screen.getAllByTestId("content-check-gutter-marker");
+      expect(markers).toHaveLength(2);
+    });
+    expect(markers.map((marker) => marker.getAttribute("data-issue-id"))).toEqual([
+      "1111111111111111",
+      "2222222222222222",
+    ]);
+    const firstTop = Number.parseFloat(markers[0]?.style.top ?? "NaN");
+    const secondTop = Number.parseFloat(markers[1]?.style.top ?? "NaN");
+    expect(firstTop).toBeLessThan(secondTop);
+    expect(secondTop - firstTop).toBeGreaterThan(500);
+
+    const editor = document.getElementById("content-check-editor")!;
+    fireEvent.click(markers[1]!);
+    expect(editor.dataset.revealedExcerpt).toBe(second);
     expect(
-      screen
-        .getByTestId("content-check-gutter-marker")
-        .getAttribute("data-issue-id"),
-    ).toBe("1111111111111111");
-    expect(
-      screen.queryByTestId("content-check-gutter-marker-2222222222222222"),
-    ).toBeNull();
+      document
+        .getElementById("content-check-issue-2222222222222222")
+        ?.getAttribute("aria-current"),
+    ).toBe("true");
+
+    const firstCard = document.getElementById(
+      "content-check-issue-1111111111111111",
+    )!;
+    fireEvent.click(firstCard.querySelector("button")!);
+    expect(editor.dataset.revealedExcerpt).toBe(first);
+    expect(firstCard.getAttribute("aria-current")).toBe("true");
   });
 
   it("锚点 hash 失效后停止旧定位，并显示位置变化与待确认状态", async () => {
@@ -371,9 +469,12 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     ) as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: `${DRAFT_MARKDOWN}\nExtra` } });
 
-    expect(
-      (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+          .disabled,
+      ).toBe(true),
+    );
   });
 
   it("批量确认只处理 routine，attention 仍需逐项决定", async () => {
@@ -488,6 +589,125 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     );
     expect(confirmCallsAfterResolution).toHaveLength(1);
   });
+
+  it.each(["button", "shortcut"] as const)(
+    "pending debounce 后立即 %s：flush 最新正文，只 PUT；新 Attention 处理后第二次才 confirm",
+    async (entry) => {
+      const latestMarkdown = "# Draft\n\nLatest keystroke.";
+      const fetchMock = installFetchMock({
+        adaptation_notice: [],
+        content_check: [],
+      });
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/confirmed-source") && method === "GET") {
+          return new Response(
+            JSON.stringify(
+              makeReadResponse({ adaptation_notice: [], content_check: [] }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.includes("/confirmed-source") && method === "PUT") {
+          expect(JSON.parse(String(init?.body))).toMatchObject({
+            markdown_text: latestMarkdown,
+          });
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: 2,
+              content_sha256: "b".repeat(64),
+              outcome: "candidate_document_required",
+              candidate: {
+                candidate_document_id: "cand_2",
+                status: "ready",
+                canonical_text_preview: "Latest keystroke.",
+              },
+              quality: null,
+              adaptation_notice: [],
+              content_check: [
+                makeContentCheckItem("9999999999999999", {
+                  code: "has_unclosed_fence",
+                  tier: "attention",
+                }),
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.includes("/confirm") && method === "POST") {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected fetch ${method} ${url}`);
+      });
+
+      const props = renderPanel();
+      await waitForPanelReady();
+      const editor = document.getElementById(
+        "content-check-editor",
+      ) as HTMLTextAreaElement;
+      fireEvent.change(editor, { target: { value: latestMarkdown } });
+
+      if (entry === "button") {
+        fireEvent.click(screen.getByTestId("content-check-confirm-button"));
+      } else {
+        fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+      }
+
+      await waitFor(() =>
+        expect(
+          document.getElementById("content-check-issue-9999999999999999"),
+        ).toBeTruthy(),
+      );
+      const putCalls = fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          String(input).includes("/confirmed-source") &&
+          (init?.method ?? "GET").toUpperCase() === "PUT",
+      );
+      const confirmCalls = fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/candidate-documents/"),
+      );
+      expect(putCalls).toHaveLength(1);
+      expect(confirmCalls).toHaveLength(0);
+      expect(props.onConfirmed).not.toHaveBeenCalled();
+      expect(
+        (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+
+      const newAttention = document.getElementById(
+        "content-check-issue-9999999999999999",
+      )!;
+      fireEvent.click(
+        Array.from(newAttention.querySelectorAll("button")).find(
+          (button) => button.textContent === "确认当前内容",
+        )!,
+      );
+      await waitFor(() =>
+        expect(
+          (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+            .disabled,
+        ).toBe(false),
+      );
+
+      if (entry === "button") {
+        fireEvent.click(screen.getByTestId("content-check-confirm-button"));
+      } else {
+        fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+      }
+
+      await waitFor(() => expect(props.onConfirmed).toHaveBeenCalledTimes(1));
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/candidate-documents/"),
+        ),
+      ).toHaveLength(1);
+    },
+  );
 
   it("rejected outcome 显示原因（quality.suitability.reasons 通道）并禁用主 CTA", async () => {
     // 用 PUT 结果驱动 rejected：先编辑再保存。真实后端合同：无顶层

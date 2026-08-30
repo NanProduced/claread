@@ -631,6 +631,10 @@ export interface MarkdownTextInputHandle {
   reveal: (excerpt: string) => boolean;
   /** 仅当完整文本唯一命中同一 Plate 文本叶时，才认为可精确定位。 */
   canRevealExact: (excerpt: string) => boolean;
+  /** 返回精确文本范围相对编辑器正文的纵向中心；无法唯一映射时 fail-closed。 */
+  measureExact: (
+    excerpt: string,
+  ) => { top: number; documentHeight: number } | null;
   /** 精确定位完整文本；不剥离 Markdown 语法，也不做模糊或分行回退。 */
   revealExact: (excerpt: string) => boolean;
   /**
@@ -969,6 +973,38 @@ export const MarkdownTextInput = forwardRef<
         return Boolean(
           findUniqueExactTextLeaf(editor.children as Descendant[], excerpt),
         );
+      },
+      measureExact: (excerpt: string) => {
+        if (!editor || !contentElRef.current) return null;
+        const found = findUniqueExactTextLeaf(
+          editor.children as Descendant[],
+          excerpt,
+        );
+        if (!found) return null;
+        try {
+          const domRange = editor.api.toDOMRange({
+            anchor: { path: found.path, offset: found.index },
+            focus: {
+              path: found.path,
+              offset: found.index + excerpt.length,
+            },
+          });
+          if (!domRange) return null;
+          const rect = domRange.getBoundingClientRect();
+          const root = contentElRef.current;
+          const top =
+            rect.top -
+            root.getBoundingClientRect().top +
+            root.scrollTop +
+            rect.height / 2;
+          if (!Number.isFinite(top)) return null;
+          return {
+            top,
+            documentHeight: Math.max(root.scrollHeight, root.clientHeight),
+          };
+        } catch {
+          return null;
+        }
       },
       revealExact: (excerpt: string) => {
         if (!editor) return false;

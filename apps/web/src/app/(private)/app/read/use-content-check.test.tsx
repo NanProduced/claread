@@ -552,18 +552,21 @@ describe("useContentCheck confirm 流程", () => {
     expect(callbacks.onConfirmed).toHaveBeenCalledWith(RECORD_ID);
   });
 
-  it("脏状态先 flush 保存再 confirm", async () => {
-    const order: string[] = [];
-    installFetchMock({
+  it("脏快照首次动作只保存并重审，新 Attention 处理后第二次才 confirm", async () => {
+    const { calls } = installFetchMock({
       onGet: () => json(makeReadResponse()),
-      onPut: () => {
-        order.push("put");
-        return json(makeUpdateResponse());
-      },
-      onConfirm: () => {
-        order.push("confirm");
-        return json({ ok: true });
-      },
+      onPut: () =>
+        json(
+          makeUpdateResponse({
+            content_check: [
+              makeContentCheckItem("cccccccccccccccc", {
+                code: "has_unclosed_fence",
+                tier: "attention",
+              }),
+            ],
+          }),
+        ),
+      onConfirm: () => json({ ok: true }),
     });
     const { result, callbacks } = renderContentCheck();
     await waitFor(() => expect(result.current.state.phase).toBe("ready"));
@@ -572,7 +575,20 @@ describe("useContentCheck confirm 流程", () => {
     await act(async () => {
       await result.current.confirmAndStart();
     });
-    expect(order).toEqual(["put", "confirm"]);
+
+    expect(calls.put).toBe(1);
+    expect(calls.confirm).toBe(0);
+    expect(result.current.state.draft?.contentCheck).toHaveLength(1);
+    expect(result.current.state.dirty).toBe(false);
+    expect(callbacks.onConfirmed).not.toHaveBeenCalled();
+
+    act(() => result.current.confirmIssue("cccccccccccccccc"));
+    await act(async () => {
+      await result.current.confirmAndStart();
+    });
+
+    expect(calls.put).toBe(1);
+    expect(calls.confirm).toBe(1);
     expect(callbacks.onConfirmed).toHaveBeenCalledWith(RECORD_ID);
   });
 
@@ -628,8 +644,8 @@ describe("useContentCheck confirm 流程", () => {
     expect(confirmUrls).toHaveLength(2);
   });
 
-  it("outcome=stable_document_ready → 不发 confirm，直接 onConfirmed", async () => {
-    installFetchMock({
+  it("脏快照保存得到 stable_document_ready 后，第二次干净动作才进入 Reader", async () => {
+    const { calls } = installFetchMock({
       onGet: () => json(makeReadResponse()),
       onPut: () =>
         json(
@@ -646,6 +662,17 @@ describe("useContentCheck confirm 流程", () => {
     await act(async () => {
       await result.current.confirmAndStart();
     });
+
+    expect(calls.put).toBe(1);
+    expect(calls.confirm).toBe(0);
+    expect(callbacks.onConfirmed).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.confirmAndStart();
+    });
+
+    expect(calls.put).toBe(1);
+    expect(calls.confirm).toBe(0);
     expect(callbacks.onConfirmed).toHaveBeenCalledWith(RECORD_ID);
   });
 

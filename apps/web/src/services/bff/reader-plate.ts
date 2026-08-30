@@ -1113,6 +1113,7 @@ function sanitizeContentCheckItems(
 ): ReaderContentCheckItemDto[] | null {
   if (!Array.isArray(value)) return null;
   const items: ReaderContentCheckItemDto[] = [];
+  const issueIds = new Set<string>();
   for (const valueItem of value) {
     if (!valueItem || typeof valueItem !== "object" || Array.isArray(valueItem)) {
       return null;
@@ -1137,6 +1138,8 @@ function sanitizeContentCheckItems(
       return null;
     }
     const evidence = item.evidence as Record<string, unknown>;
+    if (issueIds.has(item.issue_id)) return null;
+    issueIds.add(item.issue_id);
     if (
       !(evidence.excerpt_text === null || typeof evidence.excerpt_text === "string") ||
       !(evidence.proposed_patch === null || typeof evidence.proposed_patch === "string")

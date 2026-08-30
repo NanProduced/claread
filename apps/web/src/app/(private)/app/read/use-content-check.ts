@@ -496,6 +496,7 @@ export function useContentCheck({
       if (dirty) {
         const saved = await saveNow(text);
         if (!saved) return;
+        return;
       }
 
       const draft = draftRef.current;

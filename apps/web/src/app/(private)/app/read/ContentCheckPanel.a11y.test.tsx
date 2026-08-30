@@ -30,6 +30,9 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
       flush: () => string;
       reveal: (excerpt: string) => boolean;
       canRevealExact: (excerpt: string) => boolean;
+      measureExact: (
+        excerpt: string,
+      ) => { top: number; documentHeight: number } | null;
       revealExact: (excerpt: string) => boolean;
     },
     {
@@ -61,6 +64,7 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
       flush: () => valueRef.current,
       reveal: () => true,
       canRevealExact: () => true,
+      measureExact: () => ({ top: 120, documentHeight: 600 }),
       revealExact: () => true,
     }));
     return React.createElement("textarea", {

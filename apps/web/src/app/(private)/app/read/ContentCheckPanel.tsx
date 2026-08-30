@@ -113,9 +113,9 @@ export function ContentCheckPanel({
   const [anchorInspections, setAnchorInspections] = useState<
     ReadonlyMap<string, ContentCheckAnchorInspection>
   >(new Map());
-  const [preciselyMappableIssueIds, setPreciselyMappableIssueIds] = useState<
-    ReadonlySet<string>
-  >(new Set());
+  const [markerPositions, setMarkerPositions] = useState<
+    ReadonlyMap<string, { top: number; documentHeight: number }>
+  >(new Map());
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
   const [interactionMessage, setInteractionMessage] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -158,20 +158,16 @@ export function ContentCheckPanel({
     ).then((nextEntries) => {
       if (!current) return;
       setAnchorInspections(new Map(nextEntries));
-      setPreciselyMappableIssueIds(
-        new Set(
-          nextEntries
-            .filter(
-              ([, inspection]) =>
-                inspection.status === "valid" &&
-                Boolean(inspection.excerpt) &&
-                Boolean(
-                  editorRef.current?.canRevealExact(inspection.excerpt ?? ""),
-                ),
-            )
-            .map(([issueId]) => issueId),
-        ),
-      );
+      const positions = new Map<
+        string,
+        { top: number; documentHeight: number }
+      >();
+      for (const [issueId, inspection] of nextEntries) {
+        if (inspection.status !== "valid" || !inspection.excerpt) continue;
+        const position = editorRef.current?.measureExact(inspection.excerpt);
+        if (position) positions.set(issueId, position);
+      }
+      setMarkerPositions(positions);
     });
     return () => {
       current = false;
@@ -199,9 +195,15 @@ export function ContentCheckPanel({
     return (
       inspection?.status === "valid" &&
       Boolean(inspection.excerpt) &&
-      preciselyMappableIssueIds.has(item.issue_id)
+      markerPositions.has(item.issue_id)
     );
   });
+  const markerDocumentHeight = Math.max(
+    0,
+    ...Array.from(markerPositions.values(), ({ documentHeight }) =>
+      documentHeight,
+    ),
+  );
 
   const flushEditor = useCallback(
     () => editorRef.current?.flush() ?? workingMarkdown,
@@ -269,16 +271,21 @@ export function ContentCheckPanel({
   const primaryLabel =
     state.phase === "confirming" ? "确认中…" : "确认正文并开始阅读";
   const handleConfirm = () => {
+    const text = flushEditor();
+    const needsSave = text !== draft?.savedMarkdown || state.dirty;
+    if (isBusy) return;
+    if (needsSave) {
+      void confirmAndStart(text);
+      return;
+    }
     if (
-      isBusy ||
-      state.dirty ||
       (isRejected && !state.dirty) ||
       attentionChecks.length > 0 ||
       !canAttemptConfirm
     ) {
       return;
     }
-    void confirmAndStart();
+    void confirmAndStart(text);
   };
 
   const handleDefer = async () => {
@@ -354,7 +361,7 @@ export function ContentCheckPanel({
     const canReveal =
       inspection?.status === "valid" &&
       Boolean(inspection.excerpt) &&
-      preciselyMappableIssueIds.has(item.issue_id);
+      markerPositions.has(item.issue_id);
     const hasPatch = canReveal && Boolean(item.evidence.proposed_patch?.trim());
     return (
       <article
@@ -584,7 +591,11 @@ export function ContentCheckPanel({
           {draft ? (
             <div className="mx-auto flex min-h-full w-full max-w-[75ch] items-stretch">
               {markerEntries.length > 0 ? (
-                <nav aria-label="正文批注标记" className="w-11 shrink-0 border-r border-hairline pr-2">
+                <nav
+                  aria-label="正文批注标记"
+                  className="relative w-11 shrink-0 border-r border-hairline pr-2"
+                  style={{ minHeight: markerDocumentHeight }}
+                >
                   {markerEntries.map(({ item }) => (
                     <button
                       key={item.issue_id}
@@ -593,7 +604,8 @@ export function ContentCheckPanel({
                       data-issue-id={item.issue_id}
                       aria-label={`定位批注：${guidanceForContentCheckCode(item.code).title}`}
                       onClick={() => revealIssue(item)}
-                      className="focus-ring mb-2 inline-flex size-11 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-lens-blue hover:bg-surface-raised"
+                      style={{ top: markerPositions.get(item.issue_id)?.top }}
+                      className="focus-ring absolute left-0 inline-flex size-11 -translate-y-1/2 items-center justify-center rounded-[var(--cl-radius-control-sm)] text-lens-blue hover:bg-surface-raised"
                     >
                       <MapPin aria-hidden className="size-4" />
                     </button>

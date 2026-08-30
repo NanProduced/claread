@@ -686,7 +686,7 @@ describe("workbench scroll & placeholder contract", () => {
 
 describe("reveal 定位", () => {
   it("精确定位只接受完整且唯一的文本叶命中", async () => {
-    const { ref } = renderEditor();
+    const { ref, editorEl } = renderEditor();
     await act(async () => {
       ref.current?.setValue(
         "Unique anchor text.\n\nRepeated anchor text.\n\nRepeated anchor text.",
@@ -697,6 +697,51 @@ describe("reveal 定位", () => {
     expect(ref.current?.revealExact("Unique anchor text.")).toBe(true);
     expect(ref.current?.canRevealExact("Repeated anchor text.")).toBe(false);
     expect(ref.current?.revealExact("Repeated anchor text.")).toBe(false);
+
+    const rect = (top: number, height: number) =>
+      ({
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 0,
+        x: 0,
+        y: top,
+        width: 0,
+        height,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const originalRangeRect = Range.prototype.getBoundingClientRect;
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => rect(260, 20),
+    });
+    vi.spyOn(editorEl, "getBoundingClientRect").mockReturnValue(
+      rect(100, 400),
+    );
+    Object.defineProperty(editorEl, "scrollHeight", {
+      configurable: true,
+      value: 900,
+    });
+
+    expect(ref.current?.measureExact("Unique anchor text.")).toEqual({
+      top: 170,
+      documentHeight: 900,
+    });
+    expect(ref.current?.measureExact("Repeated anchor text.")).toBeNull();
+
+    await act(async () => {
+      ref.current?.setValue("Split **exact** anchor across leaves.");
+    });
+    expect(ref.current?.measureExact("Split exact anchor across leaves.")).toBeNull();
+
+    if (originalRangeRect) {
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: originalRangeRect,
+      });
+    } else {
+      delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+    }
   });
 
   it("剥掉 link/image 语法后选中可见文本；无匹配返回 false", async () => {

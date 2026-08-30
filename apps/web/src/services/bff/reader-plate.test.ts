@@ -23,6 +23,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   getUpstreamReaderArtifactPipelineStatus: vi.fn(),
   confirmUpstreamReaderCandidateDocument: vi.fn(),
   getUpstreamReaderCandidateDocument: vi.fn(),
+  getUpstreamReaderConfirmedSource: vi.fn(),
   getUpstreamReaderStableDocument: vi.fn(),
   getUpstreamReaderArticleRagIndexStatus: vi.fn(),
   ensureUpstreamReaderArticleRagIndex: vi.fn(),
@@ -39,6 +40,7 @@ import {
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderCandidateDocument,
+  getUpstreamReaderConfirmedSource,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
@@ -59,6 +61,7 @@ import {
   getReaderArticleRagIndexStatusFromWeb,
   getReaderArtifactPipelineStatusFromWeb,
   getReaderCandidateDocumentFromWeb,
+  getReaderConfirmedSourceFromWeb,
   getReaderPlateSnapshotFromWeb,
   getReaderStableDocumentFromWeb,
   initReaderSourceArtifactUploadFromWeb,
@@ -2003,6 +2006,92 @@ describe("reader-plate BFF confirmed source update", () => {
       markdownText: "Hello world",
       editSource: "content_check",
     });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+
+  it("fails closed when PUT returns duplicate issue_id values", async () => {
+    const duplicate = {
+      code: "has_unclosed_fence",
+      message: "technical detail",
+      classification: "content_check",
+      issue_id: "0123456789abcdef",
+      tier: "attention",
+      target_scope: "document",
+      source_anchor: null,
+      anchor_hash: null,
+      evidence: { excerpt_text: null, proposed_patch: null },
+      source_media_coordinate: null,
+    };
+    vi.mocked(putUpstreamReaderConfirmedSource).mockResolvedValue({
+      ok: true,
+      data: {
+        revision: 2,
+        content_sha256: "c".repeat(64),
+        outcome: "candidate_document_required",
+        candidate: null,
+        quality: {},
+        adaptation_notice: [],
+        content_check: [duplicate, { ...duplicate }],
+      },
+    } as never);
+
+    const result = await updateReaderConfirmedSourceFromWeb("rec_1", {
+      expectedRevision: 1,
+      markdownText: "Hello world",
+      editSource: "content_check",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 503,
+      code: "upstream_unavailable",
+    });
+  });
+});
+
+describe("reader-plate BFF confirmed source read", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("fails closed when GET returns duplicate issue_id values", async () => {
+    const duplicate = {
+      code: "has_unclosed_fence",
+      message: "technical detail",
+      classification: "content_check",
+      issue_id: "fedcba9876543210",
+      tier: "attention",
+      target_scope: "document",
+      source_anchor: null,
+      anchor_hash: null,
+      evidence: { excerpt_text: null, proposed_patch: null },
+      source_media_coordinate: null,
+    };
+    vi.mocked(getUpstreamReaderConfirmedSource).mockResolvedValue({
+      ok: true,
+      data: {
+        source_document_id: "cs_1",
+        record_generation: 1,
+        revision: 1,
+        status: "draft",
+        markdown_text: "Hello world",
+        content_sha256: "a".repeat(64),
+        edit_source: "initial",
+        updated_at: "2026-08-31T00:00:00.000Z",
+        candidate: null,
+        quality: null,
+        adaptation_notice: [],
+        content_check: [duplicate, { ...duplicate }],
+      },
+    } as never);
+
+    const result = await getReaderConfirmedSourceFromWeb("rec_1");
 
     expect(result).toMatchObject({
       ok: false,
