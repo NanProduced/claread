@@ -255,6 +255,43 @@ function installObjectUrlMock(objectUrls = ["blob:source-preview"]) {
   return { createObjectURL, revokeObjectURL };
 }
 
+function installMatchMedia(initialMatches: boolean) {
+  let matches = initialMatches;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const mediaQueryList = {
+    get matches() {
+      return matches;
+    },
+    media: "(min-width: 1024px)",
+    onchange: null,
+    addEventListener: vi.fn(
+      (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.add(listener);
+      },
+    ),
+    removeEventListener: vi.fn(
+      (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.delete(listener);
+      },
+    ),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  } as unknown as MediaQueryList;
+
+  vi.stubGlobal("matchMedia", vi.fn(() => mediaQueryList));
+  return {
+    change(nextMatches: boolean) {
+      matches = nextMatches;
+      const event = {
+        matches: nextMatches,
+        media: mediaQueryList.media,
+      } as MediaQueryListEvent;
+      listeners.forEach((listener) => listener(event));
+    },
+  };
+}
+
 function renderPanel(overrides: Partial<Parameters<typeof ContentCheckPanel>[0]> = {}) {
   const props: Parameters<typeof ContentCheckPanel>[0] = {
     recordId: "rec_cc_1",
@@ -678,6 +715,159 @@ describe("ContentCheckPanel 三级提示渲染", () => {
     });
     await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
     expect(frame.getAttribute("src")).toBe("blob:current-preview#page=4");
+  });
+
+  it("Mobile review Sheet 切到 Desktop 后关闭 dialog、解除 inert 并恢复编辑", async () => {
+    const media = installMatchMedia(false);
+    installFetchMock();
+    renderPanel();
+    await waitForPanelReady();
+    const documentSurface = screen.getByTestId("content-check-document");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /展开审查批注面板/ }),
+    );
+    await screen.findByRole("dialog", { name: "审查批注" });
+    expect(documentSurface.hasAttribute("inert")).toBe(true);
+
+    act(() => media.change(true));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(documentSurface.hasAttribute("inert")).toBe(false);
+    const editor = document.getElementById("content-check-editor") as HTMLTextAreaElement;
+    editor.focus();
+    fireEvent.change(editor, { target: { value: "# Desktop remains editable" } });
+    expect(document.activeElement).toBe(editor);
+    expect(editor.value).toBe("# Desktop remains editable");
+  });
+
+  it("Mobile source loading 切到 Desktop 后 abort，并移除 dialog、inert 与 live region", async () => {
+    const media = installMatchMedia(false);
+    installObjectUrlMock();
+    let previewSignal: AbortSignal | undefined;
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("responsive-loading")],
+      },
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          previewSignal = init?.signal ?? undefined;
+          previewSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    renderPanel();
+    await waitForPanelReady();
+    const documentSurface = screen.getByTestId("content-check-document");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /展开审查批注面板/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    await screen.findByText("正在载入原件预览…");
+
+    act(() => media.change(true));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(previewSignal?.aborted).toBe(true);
+    expect(documentSurface.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByTestId("source-preview-live-region")).toBeNull();
+  });
+
+  it("Mobile source ready 切到 Desktop 后按 abort → revoke 释放 Blob", async () => {
+    const media = installMatchMedia(false);
+    const { revokeObjectURL } = installObjectUrlMock(["blob:mobile-breakpoint"]);
+    const cleanupOrder: string[] = [];
+    revokeObjectURL.mockImplementation((objectUrl) => {
+      cleanupOrder.push(`revoke:${objectUrl}`);
+    });
+    let previewSignal: AbortSignal | undefined;
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("responsive-mobile-ready")],
+      },
+      (_input, init) => {
+        previewSignal = init?.signal ?? undefined;
+        previewSignal?.addEventListener(
+          "abort",
+          () => cleanupOrder.push("abort"),
+          { once: true },
+        );
+        return new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      },
+    );
+    renderPanel();
+    await waitForPanelReady();
+    const documentSurface = screen.getByTestId("content-check-document");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /展开审查批注面板/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    await screen.findByTitle("原件 PDF 预览");
+
+    act(() => media.change(true));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(previewSignal?.aborted).toBe(true);
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(cleanupOrder).toEqual(["abort", "revoke:blob:mobile-breakpoint"]);
+    expect(documentSurface.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByTestId("source-preview-live-region")).toBeNull();
+  });
+
+  it("Desktop source drawer 切到 Mobile 后释放资源且不自动打开 Dialog", async () => {
+    const media = installMatchMedia(true);
+    const { revokeObjectURL } = installObjectUrlMock(["blob:desktop-breakpoint"]);
+    const cleanupOrder: string[] = [];
+    revokeObjectURL.mockImplementation((objectUrl) => {
+      cleanupOrder.push(`revoke:${objectUrl}`);
+    });
+    let previewSignal: AbortSignal | undefined;
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("responsive-desktop-ready")],
+      },
+      (_input, init) => {
+        previewSignal = init?.signal ?? undefined;
+        previewSignal?.addEventListener(
+          "abort",
+          () => cleanupOrder.push("abort"),
+          { once: true },
+        );
+        return new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      },
+    );
+    renderPanel();
+    await waitForPanelReady();
+    const documentSurface = screen.getByTestId("content-check-document");
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    await screen.findByTitle("原件 PDF 预览");
+
+    act(() => media.change(false));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("source-preview-drawer")).toBeNull(),
+    );
+    expect(previewSignal?.aborted).toBe(true);
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(cleanupOrder).toEqual(["abort", "revoke:blob:desktop-breakpoint"]);
+    expect(documentSurface.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByTestId("source-preview-live-region")).toBeNull();
   });
 
   it("标题、来源与确认后果清楚；说明文案不集中堆砌；不展示 raw Markdown 标记", async () => {

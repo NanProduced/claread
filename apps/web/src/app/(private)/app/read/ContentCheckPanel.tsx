@@ -194,7 +194,7 @@ export function ContentCheckPanel({
     sourcePreview.identity === currentPreviewIdentity;
   const visibleMobileSheet =
     mobileSheet === "source" && !sourcePreviewIsCurrent ? null : mobileSheet;
-  const sheetOpen = visibleMobileSheet !== null;
+  const sheetOpen = !isDesktop && visibleMobileSheet !== null;
 
   const releaseSourcePreview = useCallback(() => {
     const controller = previewAbortRef.current;
@@ -342,11 +342,19 @@ export function ContentCheckPanel({
   useEffect(() => {
     if (!window.matchMedia) return;
     const media = window.matchMedia("(min-width: 1024px)");
-    const sync = () => setIsDesktop(media.matches);
+    const sync = (event?: MediaQueryListEvent) => {
+      if (event) {
+        releaseSourcePreview();
+        setSourcePreview(EMPTY_SOURCE_PREVIEW);
+        setMobileSheet(null);
+        setDesktopSourceOpen(false);
+      }
+      setIsDesktop(media.matches);
+    };
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
-  }, []);
+  }, [releaseSourcePreview]);
 
   useEffect(() => {
     let current = true;
