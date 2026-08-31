@@ -6,7 +6,7 @@
  * 状态机细节由 use-content-check.test.tsx 覆盖；这里锁 DOM 合同。
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContentCheckPanel } from "./ContentCheckPanel";
@@ -187,10 +187,23 @@ function makeReadResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function installFetchMock(readOverrides: Record<string, unknown> = {}) {
+function installFetchMock(
+  readOverrides: Record<string, unknown> = {},
+  previewResponse: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Response | Promise<Response> = () =>
+    new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+      status: 200,
+      headers: { "content-type": "application/pdf" },
+    }),
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
+    if (url.includes("/source-preview") && method === "GET") {
+      return previewResponse(input, init);
+    }
     if (url.includes("/confirmed-source") && method === "GET") {
       return new Response(JSON.stringify(makeReadResponse(readOverrides)), {
         status: 200,
@@ -228,6 +241,20 @@ function installFetchMock(readOverrides: Record<string, unknown> = {}) {
   return fetchMock;
 }
 
+function installObjectUrlMock(objectUrls = ["blob:source-preview"]) {
+  const NativeUrl = globalThis.URL;
+  const remainingUrls = [...objectUrls];
+  const createObjectURL = vi.fn(
+    () => remainingUrls.shift() ?? "blob:source-preview",
+  );
+  const revokeObjectURL = vi.fn();
+  class PreviewUrl extends NativeUrl {}
+  PreviewUrl.createObjectURL = createObjectURL;
+  PreviewUrl.revokeObjectURL = revokeObjectURL;
+  vi.stubGlobal("URL", PreviewUrl);
+  return { createObjectURL, revokeObjectURL };
+}
+
 function renderPanel(overrides: Partial<Parameters<typeof ContentCheckPanel>[0]> = {}) {
   const props: Parameters<typeof ContentCheckPanel>[0] = {
     recordId: "rec_cc_1",
@@ -240,8 +267,8 @@ function renderPanel(overrides: Partial<Parameters<typeof ContentCheckPanel>[0]>
     onDefer: vi.fn(),
     ...overrides,
   };
-  render(<ContentCheckPanel {...props} />);
-  return props;
+  const view = render(<ContentCheckPanel {...props} />);
+  return { ...props, ...view };
 }
 
 async function waitForPanelReady() {
@@ -256,6 +283,401 @@ describe("ContentCheckPanel 三级提示渲染", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("默认不预取；打开原件后只请求当前 record + generation 并安全渲染 PDF 页", async () => {
+    const { createObjectURL } = installObjectUrlMock();
+    const fetchMock = installFetchMock({
+      adaptation_notice: [],
+      content_check: [
+        makeContentCheckItem("preview-pdf-page", {
+          source_media_coordinate: { page_number: 3, bbox: null },
+        }),
+      ],
+    });
+    renderPanel();
+    await waitForPanelReady();
+
+    expect(
+      fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/source-preview"),
+      ),
+    ).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+
+    const frame = await screen.findByTitle("原件 PDF 预览");
+    const previewCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/source-preview"),
+    );
+    expect(previewCalls).toHaveLength(1);
+    expect(String(previewCalls[0]?.[0])).toBe(
+      "/api/web/reader/records/rec_cc_1/source-preview?expected_generation=1",
+    );
+    expect(previewCalls[0]?.[1]?.signal).toBeTruthy();
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("src")).toBe("blob:source-preview#page=3");
+  });
+
+  it.each(["image/png", "image/jpeg", "image/webp"])(
+    "%s 只通过 Blob URL 安全渲染完整图片",
+    async (mime) => {
+      const { createObjectURL } = installObjectUrlMock(["blob:safe-image"]);
+      installFetchMock(
+        {
+          adaptation_notice: [],
+          content_check: [makeContentCheckItem("preview-image")],
+        },
+        () =>
+          new Response(new Blob(["image"], { type: mime }), {
+            status: 200,
+            headers: { "content-type": mime },
+          }),
+      );
+      renderPanel();
+      await waitForPanelReady();
+
+      fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+
+      const image = await screen.findByRole("img", {
+        name: "当前材料的原件预览",
+      });
+      expect(image.getAttribute("src")).toBe("blob:safe-image");
+      expect(image.className).toContain("object-contain");
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("未能精确定位，以下为原件参考页")).toBeTruthy();
+      expect(screen.queryByTitle("原件 PDF 预览")).toBeNull();
+    },
+  );
+
+  it.each([
+    "image/svg+xml",
+    "image/gif",
+    "image/tiff",
+    "text/html",
+    "application/octet-stream",
+  ])(
+    "%s 非白名单 MIME fail-closed，且失败不改变编辑与确认状态",
+    async (unsupportedMime) => {
+      const { createObjectURL } = installObjectUrlMock();
+      installFetchMock(
+        {
+          adaptation_notice: [],
+          content_check: [makeContentCheckItem("preview-unsupported")],
+        },
+        () =>
+          new Response(new Blob(["unsafe"], { type: unsupportedMime }), {
+            status: 200,
+            headers: { "content-type": unsupportedMime },
+          }),
+      );
+      renderPanel();
+      await waitForPanelReady();
+      const confirm = screen.getByTestId(
+        "content-check-confirm-button",
+      ) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+
+      expect(
+        await screen.findByText(
+          "该原件暂不支持安全预览，正文可继续编辑与确认。",
+        ),
+      ).toBeTruthy();
+      expect(screen.getAllByTestId("source-preview-live-region")).toHaveLength(1);
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(screen.queryByTitle("原件 PDF 预览")).toBeNull();
+      expect(confirm.disabled).toBe(false);
+
+      const editor = document.getElementById(
+        "content-check-editor",
+      ) as HTMLTextAreaElement;
+      fireEvent.change(editor, { target: { value: "# Still editable" } });
+      expect(editor.value).toBe("# Still editable");
+    },
+  );
+
+  it("临时预览失败只提供紧凑重试，并由同一个 live region 恢复", async () => {
+    installObjectUrlMock(["blob:retry-preview"]);
+    let attempt = 0;
+    const previewSignals: AbortSignal[] = [];
+    const fetchMock = installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("preview-retry")],
+      },
+      (_input, init) => {
+        if (init?.signal) previewSignals.push(init.signal);
+        attempt += 1;
+        return attempt === 1
+          ? new Response(null, { status: 503 })
+          : new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+              status: 200,
+              headers: { "content-type": "application/pdf" },
+            });
+      },
+    );
+    renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    expect(
+      await screen.findByText("原件暂时无法预览，正文可继续编辑与确认。"),
+    ).toBeTruthy();
+    expect(previewSignals[0]?.aborted).toBe(true);
+    expect(screen.getAllByTestId("source-preview-live-region")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByTitle("原件 PDF 预览")).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/source-preview"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("预览失败不改变 Attention、Routine、defer、返回输入或最终确认", async () => {
+    installObjectUrlMock();
+    installFetchMock({}, () => new Response(null, { status: 503 }));
+    const props = renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(screen.getAllByTestId("source-preview-trigger")[0]!);
+    await screen.findByText("原件暂时无法预览，正文可继续编辑与确认。");
+
+    fireEvent.click(screen.getByRole("button", { name: "稍后处理" }));
+    expect(props.onDefer).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "重新输入" }));
+    expect(props.onBackToInput).toHaveBeenCalledWith(DRAFT_MARKDOWN);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "确认当前内容" })[0]!);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("content-check-risk-item")).toHaveLength(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "确认当前内容" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("content-check-confirm-button") as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+
+    fireEvent.click(screen.getByTestId("content-check-confirm-button"));
+    await waitFor(() => expect(props.onConfirmed).toHaveBeenCalledWith("rec_cc_1"));
+  });
+
+  it("关闭、重开与 unmount 逐个 revoke 已创建的 Blob URL，并返回触发器焦点", async () => {
+    const { revokeObjectURL } = installObjectUrlMock([
+      "blob:first-preview",
+      "blob:second-preview",
+    ]);
+    const cleanupOrder: string[] = [];
+    revokeObjectURL.mockImplementation((objectUrl) => {
+      cleanupOrder.push(`revoke:${objectUrl}`);
+    });
+    const previewSignals: AbortSignal[] = [];
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("preview-lifecycle")],
+      },
+      (_input, init) => {
+        if (init?.signal) {
+          const index = previewSignals.push(init.signal);
+          init.signal.addEventListener(
+            "abort",
+            () => cleanupOrder.push(`abort:${index}`),
+            { once: true },
+          );
+        }
+        return new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      },
+    );
+    const view = renderPanel();
+    await waitForPanelReady();
+    const trigger = screen.getByRole("button", { name: "查看原件" });
+
+    fireEvent.click(trigger);
+    expect((await screen.findByTitle("原件 PDF 预览")).getAttribute("src")).toBe(
+      "blob:first-preview#page=1",
+    );
+    expect(screen.getByText("未能精确定位，以下为原件参考页")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "关闭原件预览" }));
+    await waitFor(() => expect(screen.queryByTestId("source-preview-drawer")).toBeNull());
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(1, "blob:first-preview");
+    expect(previewSignals[0]?.aborted).toBe(true);
+    expect(cleanupOrder.slice(0, 2)).toEqual([
+      "abort:1",
+      "revoke:blob:first-preview",
+    ]);
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+    fireEvent.click(trigger);
+    expect((await screen.findByTitle("原件 PDF 预览")).getAttribute("src")).toBe(
+      "blob:second-preview#page=1",
+    );
+    view.unmount();
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(2, "blob:second-preview");
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(previewSignals[1]?.aborted).toBe(true);
+    expect(cleanupOrder).toEqual([
+      "abort:1",
+      "revoke:blob:first-preview",
+      "abort:2",
+      "revoke:blob:second-preview",
+    ]);
+  });
+
+  it("关闭 pending 请求会 abort，且未创建 URL 时不 revoke", async () => {
+    const { revokeObjectURL } = installObjectUrlMock();
+    let previewSignal: AbortSignal | undefined;
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [makeContentCheckItem("preview-pending")],
+      },
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          previewSignal = init?.signal ?? undefined;
+          previewSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    expect(await screen.findByText("正在载入原件预览…")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "关闭原件预览" }));
+
+    expect(previewSignal?.aborted).toBe(true);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("recordId / recordGeneration 身份切换会 abort 并 revoke 旧预览", async () => {
+    const { revokeObjectURL } = installObjectUrlMock(["blob:old-record"]);
+    let generation = 1;
+    let previewSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/source-preview")) {
+        previewSignal = init?.signal ?? undefined;
+        return new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      }
+      if (url.includes("/confirmed-source")) {
+        return new Response(
+          JSON.stringify(
+            makeReadResponse({
+              source_document_id: `cs_${generation}`,
+              record_generation: generation,
+              adaptation_notice: [],
+              content_check: [makeContentCheckItem(`preview-record-${generation}`)],
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = renderPanel();
+    await waitForPanelReady();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    await screen.findByTitle("原件 PDF 预览");
+    generation = 2;
+    view.rerender(
+      <ContentCheckPanel
+        recordId="rec_cc_2"
+        filename={null}
+        origin="submit"
+        onOpenReader={view.onOpenReader}
+        onConfirmed={view.onConfirmed}
+        onSourceMissing={view.onSourceMissing}
+        onBackToInput={view.onBackToInput}
+        onDefer={view.onDefer}
+      />,
+    );
+
+    await waitFor(() => expect(screen.queryByTestId("source-preview-drawer")).toBeNull());
+    expect(previewSignal?.aborted).toBe(true);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:old-record");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/records/rec_cc_2/confirmed-source"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("请求替换会 abort 旧请求，late completion 不得覆盖当前预览", async () => {
+    const { createObjectURL } = installObjectUrlMock(["blob:current-preview"]);
+    const pending: Array<{
+      resolve: (response: Response) => void;
+      signal: AbortSignal | undefined;
+    }> = [];
+    installFetchMock(
+      {
+        adaptation_notice: [],
+        content_check: [
+          makeContentCheckItem("preview-old", {
+            source_media_coordinate: { page_number: 2, bbox: null },
+          }),
+          makeContentCheckItem("preview-current", {
+            source_media_coordinate: { page_number: 4, bbox: null },
+          }),
+        ],
+      },
+      (_input, init) =>
+        new Promise<Response>((resolve) => {
+          pending.push({ resolve, signal: init?.signal ?? undefined });
+        }),
+    );
+    renderPanel();
+    await waitForPanelReady();
+    const triggers = screen.getAllByTestId("source-preview-trigger");
+
+    fireEvent.click(triggers[0]!);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.click(triggers[1]!);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[0]?.signal?.aborted).toBe(true);
+
+    await act(async () => {
+      pending[1]?.resolve(
+        new Response(new Blob(["current"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        }),
+      );
+    });
+    const frame = await screen.findByTitle("原件 PDF 预览");
+    expect(frame.getAttribute("src")).toBe("blob:current-preview#page=4");
+
+    await act(async () => {
+      pending[0]?.resolve(
+        new Response(new Blob(["late"], { type: "application/pdf" }), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        }),
+      );
+    });
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expect(frame.getAttribute("src")).toBe("blob:current-preview#page=4");
   });
 
   it("标题、来源与确认后果清楚；说明文案不集中堆砌；不展示 raw Markdown 标记", async () => {

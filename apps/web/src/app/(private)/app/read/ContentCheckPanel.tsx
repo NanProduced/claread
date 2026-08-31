@@ -6,11 +6,13 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
+  FileSearch,
   FileText,
   MapPin,
   PanelRightOpen,
   RefreshCw,
   Wrench,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/primitives/button";
@@ -58,6 +60,43 @@ export interface ContentCheckPanelProps {
 }
 
 const EMPTY_CONTENT_CHECK: ReaderContentCheckItemDto[] = [];
+
+type SourcePreviewMime =
+  | "application/pdf"
+  | "image/png"
+  | "image/jpeg"
+  | "image/webp";
+
+type SourcePreviewState = {
+  identity: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+  objectUrl: string | null;
+  mime: SourcePreviewMime | null;
+  pageNumber: number;
+  hasPageNumber: boolean;
+  message: string | null;
+  retryable: boolean;
+};
+
+type MobileSheet = "review" | "source" | null;
+
+const SOURCE_PREVIEW_MIMES = new Set<SourcePreviewMime>([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+
+const EMPTY_SOURCE_PREVIEW: SourcePreviewState = {
+  identity: null,
+  status: "idle",
+  objectUrl: null,
+  mime: null,
+  pageNumber: 1,
+  hasPageNumber: false,
+  message: null,
+  retryable: false,
+};
 
 function AdaptationNoticeRail({ items }: { items: ReaderAdaptationRecordDto[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -118,8 +157,17 @@ export function ContentCheckPanel({
   >(new Map());
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
   const [interactionMessage, setInteractionMessage] = useState<string | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [mobileSheet, setMobileSheet] = useState<MobileSheet>(null);
   const [isDesktop, setIsDesktop] = useState(true);
+  const [desktopSourceOpen, setDesktopSourceOpen] = useState(false);
+  const [sourcePreview, setSourcePreview] =
+    useState<SourcePreviewState>(EMPTY_SOURCE_PREVIEW);
+  const sourceTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const sourceCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileSourceBackRef = useRef<HTMLButtonElement | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
+  const previewObjectUrlRef = useRef<string | null>(null);
+  const previewRequestTokenRef = useRef(0);
   const {
     state,
     workingMarkdown,
@@ -138,6 +186,158 @@ export function ContentCheckPanel({
 
   const draft = state.draft;
   const contentCheck = draft?.contentCheck ?? EMPTY_CONTENT_CHECK;
+  const currentPreviewIdentity = draft
+    ? `${recordId}:${draft.recordGeneration}`
+    : null;
+  const sourcePreviewIsCurrent =
+    currentPreviewIdentity !== null &&
+    sourcePreview.identity === currentPreviewIdentity;
+  const visibleMobileSheet =
+    mobileSheet === "source" && !sourcePreviewIsCurrent ? null : mobileSheet;
+  const sheetOpen = visibleMobileSheet !== null;
+
+  const releaseSourcePreview = useCallback(() => {
+    const controller = previewAbortRef.current;
+    previewAbortRef.current = null;
+    controller?.abort();
+    const objectUrl = previewObjectUrlRef.current;
+    previewObjectUrlRef.current = null;
+    if (objectUrl && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(objectUrl);
+    }
+    previewRequestTokenRef.current += 1;
+  }, []);
+
+  const loadSourcePreview = useCallback(
+    async (requestedPage: number | null | undefined) => {
+      const generation = draft?.recordGeneration;
+      if (!Number.isSafeInteger(generation) || !generation || generation < 1) return;
+      const identity = `${recordId}:${generation}`;
+
+      releaseSourcePreview();
+      const requestToken = previewRequestTokenRef.current;
+      const controller = new AbortController();
+      previewAbortRef.current = controller;
+      const hasPageNumber =
+        Number.isSafeInteger(requestedPage) && Boolean(requestedPage && requestedPage > 0);
+      const pageNumber = hasPageNumber ? Number(requestedPage) : 1;
+      setSourcePreview({
+        ...EMPTY_SOURCE_PREVIEW,
+        identity,
+        status: "loading",
+        pageNumber,
+        hasPageNumber,
+      });
+
+      let failureStatus: number | null = null;
+      try {
+        const response = await fetch(
+          `/api/web/reader/records/${encodeURIComponent(recordId)}/source-preview?expected_generation=${generation}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) {
+          failureStatus = response.status;
+          throw new Error("source preview request rejected");
+        }
+        const normalizedMime = response.headers
+          .get("content-type")
+          ?.split(";", 1)[0]
+          ?.trim()
+          .toLowerCase();
+        if (!normalizedMime || !SOURCE_PREVIEW_MIMES.has(normalizedMime as SourcePreviewMime)) {
+          failureStatus = 415;
+          throw new Error("source preview MIME rejected");
+        }
+        const blob = await response.blob();
+        if (controller.signal.aborted || requestToken !== previewRequestTokenRef.current) return;
+        if (
+          typeof URL.createObjectURL !== "function" ||
+          typeof URL.revokeObjectURL !== "function"
+        ) {
+          throw new Error("source preview object URLs unavailable");
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        if (controller.signal.aborted || requestToken !== previewRequestTokenRef.current) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        previewObjectUrlRef.current = objectUrl;
+        setSourcePreview({
+          identity,
+          status: "ready",
+          objectUrl,
+          mime: normalizedMime as SourcePreviewMime,
+          pageNumber,
+          hasPageNumber,
+          message: null,
+          retryable: false,
+        });
+      } catch {
+        if (controller.signal.aborted || requestToken !== previewRequestTokenRef.current) return;
+        releaseSourcePreview();
+        const unsupported = failureStatus === 413 || failureStatus === 415;
+        setSourcePreview({
+          ...EMPTY_SOURCE_PREVIEW,
+          identity,
+          status: "error",
+          pageNumber,
+          hasPageNumber,
+          message: unsupported
+            ? "该原件暂不支持安全预览，正文可继续编辑与确认。"
+            : "原件暂时无法预览，正文可继续编辑与确认。",
+          retryable:
+            failureStatus === null ||
+            failureStatus === 502 ||
+            failureStatus === 503 ||
+            failureStatus === 504,
+        });
+      }
+    },
+    [draft?.recordGeneration, recordId, releaseSourcePreview],
+  );
+
+  const closeSourcePreview = useCallback(() => {
+    releaseSourcePreview();
+    setSourcePreview(EMPTY_SOURCE_PREVIEW);
+    if (isDesktop) {
+      setDesktopSourceOpen(false);
+      queueMicrotask(() => sourceTriggerRef.current?.focus());
+    } else {
+      setMobileSheet(null);
+    }
+  }, [isDesktop, releaseSourcePreview]);
+
+  const openSourcePreview = useCallback(
+    (item: ReaderContentCheckItemDto, trigger: HTMLButtonElement) => {
+      sourceTriggerRef.current = trigger;
+      if (isDesktop) setDesktopSourceOpen(true);
+      else setMobileSheet("source");
+      void loadSourcePreview(item.source_media_coordinate?.page_number);
+    },
+    [isDesktop, loadSourcePreview],
+  );
+
+  useEffect(() => {
+    releaseSourcePreview();
+  }, [currentPreviewIdentity, releaseSourcePreview]);
+
+  useEffect(() => () => releaseSourcePreview(), [releaseSourcePreview]);
+
+  useEffect(() => {
+    if (!desktopSourceOpen) return;
+    sourceCloseButtonRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeSourcePreview();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [closeSourcePreview, desktopSourceOpen]);
+
+  useEffect(() => {
+    if (visibleMobileSheet === "source") mobileSourceBackRef.current?.focus();
+  }, [visibleMobileSheet]);
 
   useEffect(() => {
     if (!window.matchMedia) return;
@@ -238,7 +438,7 @@ export function ContentCheckPanel({
         return;
       }
       setInteractionMessage("已定位到正文中的对应位置。");
-      if (!isDesktop) setSheetOpen(false);
+      if (!isDesktop) setMobileSheet(null);
     },
     [activateIssue, anchorInspections, isDesktop],
   );
@@ -448,6 +648,17 @@ export function ContentCheckPanel({
               查看位置
             </Button>
           ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="source-preview-trigger"
+            className="min-h-11 min-w-11"
+            onClick={(event) => openSourcePreview(item, event.currentTarget)}
+          >
+            <FileSearch aria-hidden className="mr-1 size-4" />
+            查看原件
+          </Button>
           {hasPatch ? (
             <Button
               type="button"
@@ -526,6 +737,78 @@ export function ContentCheckPanel({
     </div>
   );
 
+  const sourcePreviewContent = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {sourcePreview.status === "loading" || sourcePreview.status === "error" ? (
+        <div
+          data-testid="source-preview-live-region"
+          role="status"
+          aria-live="polite"
+          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center"
+        >
+          <p className="text-sm leading-6 text-muted-foreground">
+            {sourcePreview.status === "loading"
+              ? "正在载入原件预览…"
+              : sourcePreview.message}
+          </p>
+          {sourcePreview.status === "error" ? (
+            <div className="flex flex-wrap justify-center gap-2">
+              {sourcePreview.retryable ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="min-h-11 min-w-11"
+                  onClick={() => void loadSourcePreview(
+                    sourcePreview.hasPageNumber ? sourcePreview.pageNumber : null,
+                  )}
+                >
+                  重试
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="min-h-11 min-w-11"
+                onClick={closeSourcePreview}
+              >
+                关闭，继续编辑
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {sourcePreview.status === "ready" && sourcePreview.objectUrl ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4">
+          {!sourcePreview.hasPageNumber ? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              未能精确定位，以下为原件参考页
+            </p>
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-hidden bg-surface-raised">
+            {sourcePreview.mime === "application/pdf" ? (
+              <iframe
+                title="原件 PDF 预览"
+                sandbox=""
+                src={`${sourcePreview.objectUrl}#page=${sourcePreview.pageNumber}`}
+                className="h-full min-h-[24rem] w-full border-0"
+              />
+            ) : (
+              // Browser-owned Blob URLs must bypass Next's remote image optimizer.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={sourcePreview.objectUrl}
+                alt={filename?.trim() ? `${filename.trim()} 原件预览` : "当前材料的原件预览"}
+                className="h-full min-h-[24rem] w-full object-contain"
+              />
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     <section
       data-testid="content-check-panel"
@@ -577,9 +860,35 @@ export function ContentCheckPanel({
       ) : null}
 
       <div className={cn(
+        "relative",
         "flex min-h-0 flex-1 overflow-hidden",
         isDesktop && hasRail && "grid grid-cols-[minmax(0,1fr)_21rem]",
       )}>
+        {isDesktop && desktopSourceOpen && sourcePreviewIsCurrent ? (
+          <aside
+            data-testid="source-preview-drawer"
+            aria-labelledby="source-preview-title"
+            className="absolute inset-y-0 left-0 z-20 flex w-[clamp(20rem,32vw,30rem)] max-w-full flex-col border-r border-hairline bg-surface shadow-[var(--cl-shadow-3)] motion-safe:animate-in motion-safe:slide-in-from-left-4 motion-safe:duration-200 motion-reduce:animate-none"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline px-4 py-3">
+              <h3 id="source-preview-title" className="text-sm font-semibold text-ink">
+                参考原件对比
+              </h3>
+              <Button
+                ref={sourceCloseButtonRef}
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="关闭原件预览"
+                className="size-11 p-0"
+                onClick={closeSourcePreview}
+              >
+                <X aria-hidden className="size-4" />
+              </Button>
+            </div>
+            {sourcePreviewContent}
+          </aside>
+        ) : null}
         <div
           data-testid="content-check-document"
           inert={sheetOpen || undefined}
@@ -635,7 +944,20 @@ export function ContentCheckPanel({
 
       {!isDesktop && hasRail ? (
         <div className="shrink-0 border-t border-hairline bg-surface px-3 py-2 lg:hidden">
-          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <Sheet
+            open={sheetOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                setMobileSheet(visibleMobileSheet ?? "review");
+                return;
+              }
+              if (visibleMobileSheet === "source") {
+                releaseSourcePreview();
+                setSourcePreview(EMPTY_SOURCE_PREVIEW);
+              }
+              setMobileSheet(null);
+            }}
+          >
             <SheetTrigger asChild>
               <Button
                 type="button"
@@ -654,15 +976,41 @@ export function ContentCheckPanel({
             <SheetContent
               side="bottom"
               aria-modal="true"
-              className="max-h-[85dvh] overflow-hidden p-0 sm:inset-y-0 sm:left-auto sm:right-0 sm:mt-0 sm:h-dvh sm:max-h-none sm:w-[24rem] sm:rounded-none sm:border-l sm:border-t-0"
+              className="max-h-[85dvh] overflow-hidden p-0 [&>button]:size-11 sm:inset-y-0 sm:left-auto sm:right-0 sm:mt-0 sm:h-dvh sm:max-h-none sm:w-[24rem] sm:rounded-none sm:border-l sm:border-t-0"
             >
-              <SheetHeader className="shrink-0 border-b border-hairline px-5 py-4 pr-14">
-                <SheetTitle className="font-sans text-lg">审查批注</SheetTitle>
-                <SheetDescription>{statusSummary}</SheetDescription>
-              </SheetHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-                {reviewRail}
-              </div>
+              {visibleMobileSheet === "source" ? (
+                <>
+                  <SheetHeader className="shrink-0 border-b border-hairline px-5 py-4 pr-14">
+                    <SheetTitle className="font-sans text-lg">参考原件对比</SheetTitle>
+                    <SheetDescription>原件仅供比对，不影响正文编辑与确认。</SheetDescription>
+                    <Button
+                      ref={mobileSourceBackRef}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="min-h-11 w-fit"
+                      onClick={() => {
+                        releaseSourcePreview();
+                        setSourcePreview(EMPTY_SOURCE_PREVIEW);
+                        setMobileSheet("review");
+                      }}
+                    >
+                      返回审查批注
+                    </Button>
+                  </SheetHeader>
+                  {sourcePreviewContent}
+                </>
+              ) : (
+                <>
+                  <SheetHeader className="shrink-0 border-b border-hairline px-5 py-4 pr-14">
+                    <SheetTitle className="font-sans text-lg">审查批注</SheetTitle>
+                    <SheetDescription>{statusSummary}</SheetDescription>
+                  </SheetHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+                    {reviewRail}
+                  </div>
+                </>
+              )}
             </SheetContent>
           </Sheet>
         </div>

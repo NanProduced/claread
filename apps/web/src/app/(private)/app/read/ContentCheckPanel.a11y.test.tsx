@@ -126,13 +126,23 @@ function makeReadResponse() {
     adaptation_notice: [
       { code: "raw_html_block", message: "已移除原始 HTML 块", classification: "adaptation_notice" as const },
     ],
-    content_check: [makeContentCheckItem("aaaaaaaaaaaaaaaa")],
+    content_check: [
+      makeContentCheckItem("aaaaaaaaaaaaaaaa", {
+        source_media_coordinate: { page_number: 2, bbox: null },
+      }),
+    ],
   };
 }
 
 function installFetchMock() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/source-preview")) {
+      return new Response(new Blob(["pdf"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      });
+    }
     if (url.includes("/confirmed-source")) {
       return new Response(JSON.stringify(makeReadResponse()), {
         status: 200,
@@ -142,6 +152,14 @@ function installFetchMock() {
     throw new Error(`Unexpected fetch ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
+}
+
+function installObjectUrlMock() {
+  const NativeUrl = globalThis.URL;
+  class PreviewUrl extends NativeUrl {}
+  PreviewUrl.createObjectURL = vi.fn(() => "blob:mobile-source-preview");
+  PreviewUrl.revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", PreviewUrl);
 }
 
 function renderPanel() {
@@ -245,6 +263,36 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(panel.className).toContain("motion-safe:duration-200");
   });
 
+  it("Desktop 原件 drawer 是不占栏宽的 overlay，焦点进入且 Esc 返回 44px 触发器", async () => {
+    installObjectUrlMock();
+    installFetchMock();
+    renderPanel();
+    await waitForReady();
+
+    const documentSurface = screen.getByTestId("content-check-document");
+    const layout = documentSurface.parentElement!;
+    const layoutClassBefore = layout.className;
+    const trigger = screen.getByRole("button", { name: "查看原件" });
+    expect(trigger.className).toContain("min-h-11");
+    expect(screen.queryByTestId("source-preview-drawer")).toBeNull();
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    const drawer = await screen.findByTestId("source-preview-drawer");
+    const close = screen.getByRole("button", { name: "关闭原件预览" });
+    expect(drawer.className).toContain("absolute");
+    expect(drawer.className).toContain("w-[clamp(20rem,32vw,30rem)]");
+    expect(drawer.className).toContain("motion-reduce:animate-none");
+    expect(layout.className).toBe(layoutClassBefore);
+    expect(documentSurface.hasAttribute("inert")).toBe(false);
+    expect(close.className).toContain("size-11");
+    expect(document.activeElement).toBe(close);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("source-preview-drawer")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("低噪说明自动保存，移动端由面板滚动且主要操作满足 44px 目标", async () => {
     installFetchMock();
     renderPanel();
@@ -291,6 +339,7 @@ describe("ContentCheckPanel a11y 合同", () => {
         dispatchEvent: vi.fn(),
       }),
     );
+    installObjectUrlMock();
     installFetchMock();
     renderPanel();
 
@@ -312,6 +361,29 @@ describe("ContentCheckPanel a11y 合同", () => {
     expect(dialog.className).toContain("sm:mt-0");
     expect(documentSurface.hasAttribute("inert")).toBe(true);
     expect(dialog.contains(document.activeElement)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    expect(screen.getByRole("button", { name: "返回审查批注" }).className).toContain(
+      "min-h-11",
+    );
+    const sourceDialog = await screen.findByRole("dialog", {
+      name: "参考原件对比",
+    });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(sourceDialog.contains(document.activeElement)).toBe(true);
+    expect(sourceDialog.className).toContain("[&>button]:size-11");
+    const frame = await screen.findByTitle("原件 PDF 预览");
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("src")).toBe(
+      "blob:mobile-source-preview#page=2",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "返回审查批注" }));
+    await screen.findByRole("dialog", { name: "审查批注" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原件" }));
+    await screen.findByRole("dialog", { name: "参考原件对比" });
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
