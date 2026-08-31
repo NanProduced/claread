@@ -92,6 +92,7 @@ _migration_prep/
 .mcp.json
 .superpowers/
 .qoder/
+.workbuddy/
 
 RTK.md
 skills-lock.json
