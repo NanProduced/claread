@@ -11,6 +11,7 @@ import {
   getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderCandidateDocument,
   getUpstreamReaderConfirmedSource,
+  getUpstreamReaderSourcePreview,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
@@ -22,6 +23,7 @@ import {
   submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
+  type ReaderSourcePreviewMetadata,
 } from "@/services/api/reader-plate";
 import { appReaderRoute } from "@/lib/routes";
 import {
@@ -285,6 +287,297 @@ async function requireSession(): Promise<
   }
 
   return { ok: true, sessionToken: session.sessionToken };
+}
+
+const SOURCE_PREVIEW_SECURITY_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+  "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+  "Cross-Origin-Resource-Policy": "same-origin",
+} as const;
+
+const SOURCE_PREVIEW_FILENAMES: Record<string, string> = {
+  "application/pdf": "source-preview.pdf",
+  "image/png": "source-preview.png",
+  "image/jpeg": "source-preview.jpg",
+  "image/webp": "source-preview.webp",
+};
+
+const SOURCE_PREVIEW_OSS_HOST =
+  /^[a-z0-9][a-z0-9-]{0,62}\.oss-[a-z0-9-]+\.aliyuncs\.com$/;
+
+const SOURCE_PREVIEW_MAX_BYTES = 26_214_400;
+
+function sourcePreviewError(status: number): Response {
+  return new Response(null, { status, headers: SOURCE_PREVIEW_SECURITY_HEADERS });
+}
+
+function parseExpectedGeneration(request: Request): number | null {
+  const raw = new URL(request.url).searchParams.get("expected_generation");
+  if (!raw || !/^[1-9]\d*$/.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function normalizeSourcePreviewMime(value: string | null): string {
+  return value?.split(";", 1)[0].trim().toLowerCase() ?? "";
+}
+
+function isReaderSourcePreviewMetadata(
+  value: unknown,
+): value is ReaderSourcePreviewMetadata {
+  if (!value || typeof value !== "object") return false;
+  const metadata = value as Record<string, unknown>;
+  return (
+    metadata.ok === true &&
+    typeof metadata.degraded === "boolean" &&
+    (typeof metadata.preview_url === "string" || metadata.preview_url === null) &&
+    (typeof metadata.expires_at === "string" || metadata.expires_at === null) &&
+    (typeof metadata.content_type === "string" || metadata.content_type === null)
+  );
+}
+
+function isAdmittedSourcePreviewUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const authority = value.match(/^https:\/\/([^/?#]*)/i)?.[1] ?? "";
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !/:\d+$/.test(authority) &&
+      !url.port &&
+      !value.includes("#") &&
+      SOURCE_PREVIEW_OSS_HOST.test(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function createSourcePreviewOperation(requestSignal: AbortSignal) {
+  const controller = new AbortController();
+  const deadlineSignal = AbortSignal.timeout(30_000);
+  let timedOut = false;
+  let closed = false;
+  const abortFromRequest = () => controller.abort(requestSignal.reason);
+  const abortFromDeadline = () => {
+    timedOut = true;
+    controller.abort(deadlineSignal.reason);
+  };
+
+  requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+  deadlineSignal.addEventListener("abort", abortFromDeadline, { once: true });
+  if (requestSignal.aborted) abortFromRequest();
+  if (deadlineSignal.aborted) abortFromDeadline();
+
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    close() {
+      if (closed) return;
+      closed = true;
+      requestSignal.removeEventListener("abort", abortFromRequest);
+      deadlineSignal.removeEventListener("abort", abortFromDeadline);
+      if (!controller.signal.aborted) controller.abort();
+    },
+  };
+}
+
+export async function getReaderSourcePreviewFromWeb(
+  request: Request,
+  recordId: string,
+): Promise<Response> {
+  const expectedGeneration = parseExpectedGeneration(request);
+  if (!recordId || expectedGeneration === null) {
+    return sourcePreviewError(400);
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sourcePreviewError(401);
+  }
+
+  const operation = createSourcePreviewOperation(request.signal);
+  const { signal } = operation;
+  const closeOperation = () => operation.close();
+
+  let upstream;
+  try {
+    upstream = await getUpstreamReaderSourcePreview(
+      recordId,
+      expectedGeneration,
+      sessionResult.sessionToken,
+      signal,
+    );
+  } catch {
+    closeOperation();
+    return sourcePreviewError(operation.timedOut() ? 504 : 503);
+  }
+
+  if (!upstream.ok) {
+    const timedOut = operation.timedOut();
+    closeOperation();
+    if (timedOut) {
+      return sourcePreviewError(504);
+    }
+    if (upstream.status === 401 || upstream.status === 404) {
+      return sourcePreviewError(upstream.status);
+    }
+    return sourcePreviewError(upstream.status === 0 || upstream.status >= 500 ? 503 : 502);
+  }
+
+  const metadata = upstream.data as unknown;
+  if (!isReaderSourcePreviewMetadata(metadata)) {
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  if (metadata.degraded || !metadata.preview_url) {
+    closeOperation();
+    return sourcePreviewError(503);
+  }
+
+  const mime = normalizeSourcePreviewMime(metadata.content_type);
+  const filename = SOURCE_PREVIEW_FILENAMES[mime];
+  if (!filename) {
+    closeOperation();
+    return sourcePreviewError(415);
+  }
+
+  const previewUrl = metadata.preview_url;
+  if (!isAdmittedSourcePreviewUrl(previewUrl)) {
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  let response: unknown;
+  try {
+    response = await fetch(previewUrl, {
+      method: "GET",
+      cache: "no-store",
+      redirect: "error",
+      headers: {
+        Accept: mime,
+        "Accept-Encoding": "identity",
+      },
+      signal,
+    });
+  } catch {
+    closeOperation();
+    return sourcePreviewError(operation.timedOut() ? 504 : 502);
+  }
+
+  if (!(response instanceof Response)) {
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  if (response.status !== 200 || !response.body) {
+    await response.body?.cancel().catch(() => {});
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch {
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  const responseMime = normalizeSourcePreviewMime(
+    response.headers.get("content-type"),
+  );
+  if (responseMime !== mime) {
+    await reader.cancel().catch(() => {});
+    closeOperation();
+    return sourcePreviewError(502);
+  }
+
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declaredBytes = /^\d+$/.test(contentLength)
+      ? Number(contentLength)
+      : Number.NaN;
+    if (!Number.isSafeInteger(declaredBytes)) {
+      await reader.cancel().catch(() => {});
+      closeOperation();
+      return sourcePreviewError(502);
+    }
+    if (declaredBytes > SOURCE_PREVIEW_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      closeOperation();
+      return sourcePreviewError(413);
+    }
+  }
+
+  let finished = false;
+  let streamedBytes = 0;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    signal.removeEventListener("abort", abortStream);
+    closeOperation();
+  };
+  const failStream = () => {
+    if (finished) return;
+    void reader.cancel().catch(() => {});
+    finish();
+    streamController?.error(new Error("source preview stream failed"));
+  };
+  const abortStream = () => failStream();
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      signal.addEventListener("abort", abortStream, { once: true });
+      if (signal.aborted) abortStream();
+    },
+    async pull(controller) {
+      if (finished) return;
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          finish();
+          controller.close();
+        } else {
+          streamedBytes += chunk.value.byteLength;
+          if (streamedBytes > SOURCE_PREVIEW_MAX_BYTES) {
+            void reader.cancel().catch(() => {});
+            finish();
+            controller.error(
+              new Error("source preview stream exceeded byte limit"),
+            );
+            return;
+          }
+          controller.enqueue(chunk.value);
+        }
+      } catch {
+        failStream();
+      }
+    },
+    async cancel(reason) {
+      if (!finished) {
+        await reader.cancel(reason).catch(() => {});
+        finish();
+      }
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      ...SOURCE_PREVIEW_SECURITY_HEADERS,
+      "Content-Type": mime,
+      "Content-Disposition": `inline; filename="${filename}"`,
+    },
+  });
 }
 
 /**

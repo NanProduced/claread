@@ -245,6 +245,26 @@ export function getUpstreamReaderConfirmedSource(
   );
 }
 
+export interface ReaderSourcePreviewMetadata {
+  ok: true;
+  preview_url: string | null;
+  expires_at: string | null;
+  content_type: string | null;
+  degraded: boolean;
+}
+
+export function getUpstreamReaderSourcePreview(
+  recordId: string,
+  expectedGeneration: number,
+  sessionToken: string,
+  signal: AbortSignal,
+): Promise<UpstreamResult<ReaderSourcePreviewMetadata>> {
+  return fastApiFetch<ReaderSourcePreviewMetadata>(
+    `/reader/records/${encodeURIComponent(recordId)}/source-preview?expected_generation=${expectedGeneration}`,
+    { sessionToken, signal },
+  );
+}
+
 export function putUpstreamReaderConfirmedSource(
   recordId: string,
   payload: ReaderConfirmedSourceUpdateRequestDto,

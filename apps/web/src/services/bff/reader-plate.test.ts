@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -24,6 +24,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   confirmUpstreamReaderCandidateDocument: vi.fn(),
   getUpstreamReaderCandidateDocument: vi.fn(),
   getUpstreamReaderConfirmedSource: vi.fn(),
+  getUpstreamReaderSourcePreview: vi.fn(),
   getUpstreamReaderStableDocument: vi.fn(),
   getUpstreamReaderArticleRagIndexStatus: vi.fn(),
   ensureUpstreamReaderArticleRagIndex: vi.fn(),
@@ -41,6 +42,7 @@ import {
   getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderCandidateDocument,
   getUpstreamReaderConfirmedSource,
+  getUpstreamReaderSourcePreview,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
@@ -62,6 +64,7 @@ import {
   getReaderArtifactPipelineStatusFromWeb,
   getReaderCandidateDocumentFromWeb,
   getReaderConfirmedSourceFromWeb,
+  getReaderSourcePreviewFromWeb,
   getReaderPlateSnapshotFromWeb,
   getReaderStableDocumentFromWeb,
   initReaderSourceArtifactUploadFromWeb,
@@ -97,6 +100,744 @@ const mockSession = {
   sessionToken: "session-token",
   source: "cookie" as const,
 };
+
+describe("reader-plate BFF source preview auth and metadata", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it.each([
+    { kind: "anonymous" as const, source: "none" as const },
+    {
+      kind: "mock_phone" as const,
+      source: "mock" as const,
+      phone: "13800138000",
+    },
+  ])("returns an empty 401 without upstream access for $kind", async (session) => {
+    vi.mocked(getWebSession).mockResolvedValue(session);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=7",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toBe("");
+    expect(getUpstreamReaderSourcePreview).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("forwards the exact record and generation and returns empty 503 for degraded metadata", async () => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: null,
+        expires_at: null,
+        content_type: "application/pdf",
+        degraded: true,
+      },
+    });
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/record%2Fexact/source-preview?expected_generation=7",
+      ),
+      "record/exact",
+    );
+
+    expect(getUpstreamReaderSourcePreview).toHaveBeenCalledWith(
+      "record/exact",
+      7,
+      "session-token",
+      expect.any(AbortSignal),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("");
+  });
+
+  it.each([
+    "",
+    "0",
+    "-1",
+    "1.5",
+    "01",
+    "1e2",
+    "9007199254740992",
+  ])("rejects invalid expected_generation %s before session or upstream", async (generation) => {
+    const separator = generation ? `?expected_generation=${generation}` : "";
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        `http://localhost/api/web/reader/records/rec_1/source-preview${separator}`,
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(getUpstreamReaderSourcePreview).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty recordId before session or upstream", async () => {
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/empty/source-preview?expected_generation=1",
+      ),
+      "",
+    );
+
+    expect(response.status).toBe(400);
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(getUpstreamReaderSourcePreview).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 401],
+    [404, 404],
+    [0, 503],
+    [500, 503],
+    [422, 502],
+  ])("maps metadata status %s to an empty %s", async (upstreamStatus, status) => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: false,
+      status: upstreamStatus,
+      message: "sensitive backend detail",
+    });
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=1",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(status);
+    expect(await response.text()).toBe("");
+    expect(Object.fromEntries(response.headers)).toEqual({
+      "cache-control": "private, no-store, max-age=0",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+      "cross-origin-resource-policy": "same-origin",
+      "x-content-type-options": "nosniff",
+    });
+  });
+
+  it("rejects malformed metadata with an empty 502", async () => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: null as never,
+    });
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=1",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+  });
+});
+
+describe("reader source preview server-only metadata client", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("encodes the exact record and forwards generation, auth, signal, and no-store", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        ok: true,
+        preview_url: null,
+        expires_at: null,
+        content_type: "application/pdf",
+        degraded: true,
+      }),
+    );
+    const actual = await vi.importActual<
+      typeof import("@/services/api/reader-plate")
+    >("@/services/api/reader-plate");
+    const signal = new AbortController().signal;
+
+    const result = await actual.getUpstreamReaderSourcePreview(
+      "record/exact",
+      17,
+      "metadata-session-token",
+      signal,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(String(input)).toMatch(
+      /\/reader\/records\/record%2Fexact\/source-preview\?expected_generation=17$/,
+    );
+    expect(init).toMatchObject({ cache: "no-store", signal });
+    const headers = new Headers(init?.headers);
+    expect(headers.get("accept")).toBe("application/json");
+    expect(headers.get("authorization")).toBe(
+      "Bearer metadata-session-token",
+    );
+  });
+
+  it("keeps preview_url out of the shared browser DTO module", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/types/api/reader-plate.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("preview_url");
+  });
+});
+
+describe("reader-plate BFF source preview binary admission", () => {
+  const rawUrl =
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com/private/source.pdf?X-Oss-Signature=RAW_URL_CANARY";
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: rawUrl,
+        expires_at: "2026-08-31T03:00:00Z",
+        content_type: "Application/PDF; charset=binary",
+        degraded: false,
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("streams binary bytes with exact safe headers and no raw URL or upstream headers", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValue(
+      new Response(Uint8Array.from([0x25, 0x50, 0x44, 0x46]), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf; version=1.7",
+          "Set-Cookie": "attacker=1",
+          ETag: '"secret"',
+          "Last-Modified": "Sun, 31 Aug 2026 00:00:00 GMT",
+          Location: "https://evil.example/redirect",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(200);
+    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([
+      0x25, 0x50, 0x44, 0x46,
+    ]);
+    expect(Object.fromEntries(response.headers)).toEqual({
+      "cache-control": "private, no-store, max-age=0",
+      "content-disposition": 'inline; filename="source-preview.pdf"',
+      "content-security-policy": "default-src 'none'; frame-ancestors 'self'; sandbox",
+      "content-type": "application/pdf",
+      "cross-origin-resource-policy": "same-origin",
+      "x-content-type-options": "nosniff",
+    });
+    expect(JSON.stringify([...response.headers])).not.toContain("RAW_URL_CANARY");
+    expect(consoleError).not.toHaveBeenCalled();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(rawUrl);
+    expect(init).toMatchObject({
+      method: "GET",
+      cache: "no-store",
+      redirect: "error",
+      signal: expect.any(AbortSignal),
+    });
+    const requestHeaders = new Headers(init?.headers);
+    expect(requestHeaders.get("accept")).toBe("application/pdf");
+    expect(requestHeaders.get("accept-encoding")).toBe("identity");
+    expect(requestHeaders.has("authorization")).toBe(false);
+    expect(requestHeaders.has("cookie")).toBe(false);
+  });
+
+  it.each([
+    "not a URL",
+    "http://source-bucket.oss-cn-hangzhou.aliyuncs.com/source.pdf",
+    "https://user:password@source-bucket.oss-cn-hangzhou.aliyuncs.com/source.pdf",
+    "https://127.0.0.1/source.pdf",
+    "https://localhost/source.pdf",
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com:443/source.pdf",
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com:8443/source.pdf",
+    "https://source-bucket.example.com/source.pdf",
+    "https://preview.example.com/source.pdf",
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com/source.pdf#",
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com/source.pdf#fragment",
+  ])("rejects an inadmissible URL before OSS fetch: %s", async (previewUrl) => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: previewUrl,
+        expires_at: null,
+        content_type: "application/pdf",
+        degraded: false,
+      },
+    });
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "image/tiff",
+    "image/svg+xml",
+    "image/gif",
+    "text/html",
+    "application/octet-stream",
+    null,
+  ])("returns empty 415 without fetching unsupported metadata MIME %s", async (contentType) => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: rawUrl,
+        expires_at: null,
+        content_type: contentType,
+        degraded: false,
+      },
+    });
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(415);
+    expect(await response.text()).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on redirect without forwarding Location", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { Location: `${rawUrl}&redirect=1` },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response.headers.get("location")).toBeNull();
+    expect(JSON.stringify([...response.headers])).not.toContain("RAW_URL_CANARY");
+  });
+
+  it.each([
+    ["application/pdf", "source-preview.pdf"],
+    ["image/png", "source-preview.png"],
+    ["image/jpeg", "source-preview.jpg"],
+    ["image/webp", "source-preview.webp"],
+  ])("admits %s with its fixed filename", async (contentType, filename) => {
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: rawUrl,
+        expires_at: null,
+        content_type: contentType,
+        degraded: false,
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(Uint8Array.of(1), {
+        headers: { "Content-Type": `${contentType}; ignored=parameter` },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(contentType);
+    expect(response.headers.get("content-disposition")).toBe(
+      `inline; filename="${filename}"`,
+    );
+    await response.arrayBuffer();
+  });
+
+  it.each([null, "text/html", "image/png"])(
+    "returns empty 502 when OSS MIME is missing or mismatched: %s",
+    async (contentType) => {
+      const cancelSpy = vi.fn();
+      const upstreamBody = new ReadableStream<Uint8Array>({ cancel: cancelSpy });
+      fetchMock.mockResolvedValue(
+        new Response(upstreamBody, {
+          headers: contentType ? { "Content-Type": contentType } : undefined,
+        }),
+      );
+
+      const response = await getReaderSourcePreviewFromWeb(
+        new Request(
+          "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+        ),
+        "rec_1",
+      );
+
+      expect(response.status).toBe(502);
+      expect(await response.text()).toBe("");
+      expect(cancelSpy).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("drops a URL-bearing OSS fetch error without response or log leakage", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error(`fetch failed for ${rawUrl}`));
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+    expect(JSON.stringify([...response.headers])).not.toContain("RAW_URL_CANARY");
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("returns empty 502 for a missing OSS body", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+  });
+
+  it("returns empty 502 for a malformed OSS transport response", async () => {
+    fetchMock.mockResolvedValue(undefined as never);
+
+    const response = await getReaderSourcePreviewFromWeb(
+      new Request(
+        "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      ),
+      "rec_1",
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("");
+  });
+});
+
+describe("reader-plate BFF source preview stream guards", () => {
+  const maxBytes = 26_214_400;
+  const rawUrl =
+    "https://source-bucket.oss-cn-hangzhou.aliyuncs.com/private/source.pdf?X-Oss-Signature=STREAM_CANARY";
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+    vi.mocked(getUpstreamReaderSourcePreview).mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        preview_url: rawUrl,
+        expires_at: null,
+        content_type: "application/pdf",
+        degraded: false,
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function request(signal?: AbortSignal) {
+    return new Request(
+      "http://localhost/api/web/reader/records/rec_1/source-preview?expected_generation=3",
+      signal ? { signal } : undefined,
+    );
+  }
+
+  it("returns empty 413 and cancels before exposing a declared oversized body", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const req = request();
+    const requestRemove = vi.spyOn(req.signal, "removeEventListener");
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({ cancel }), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Length": String(maxBytes + 1),
+        },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(req, "rec_1");
+
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(requestRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it.each(["-1", "1.5", "not-a-number", "9007199254740992"])(
+    "returns empty 502 and cancels an invalid Content-Length %s",
+    async (contentLength) => {
+      const cancel = vi.fn();
+      fetchMock.mockResolvedValue(
+        new Response(new ReadableStream<Uint8Array>({ cancel }), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Length": contentLength,
+          },
+        }),
+      );
+
+      const response = await getReaderSourcePreviewFromWeb(request(), "rec_1");
+
+      expect(response.status).toBe(502);
+      expect(await response.text()).toBe("");
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps status 200 but fails and cancels a chunked stream that crosses the cap", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const req = request();
+    const requestRemove = vi.spyOn(req.signal, "removeEventListener");
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(maxBytes));
+            controller.enqueue(Uint8Array.of(1));
+          },
+          cancel,
+        }),
+        { headers: { "Content-Type": "application/pdf" } },
+      ),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(req, "rec_1");
+
+    expect(response.status).toBe(200);
+    const browserReader = response.body!.getReader();
+    const firstChunk = await browserReader.read();
+    expect(firstChunk.value?.byteLength).toBe(maxBytes);
+    await expect(browserReader.read()).rejects.toThrow("byte limit");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(requestRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("returns empty 504 when the total deadline expires before metadata", async () => {
+    const deadline = new AbortController();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(deadline.signal);
+    vi.mocked(getUpstreamReaderSourcePreview).mockImplementation(
+      async (_recordId, _generation, _token, signal) =>
+        await new Promise((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                ok: false,
+                status: 0,
+                message: "URL-bearing abort detail must be discarded",
+              }),
+            { once: true },
+          );
+        }),
+    );
+
+    const responsePromise = getReaderSourcePreviewFromWeb(request(), "rec_1");
+    await vi.waitFor(() =>
+      expect(getUpstreamReaderSourcePreview).toHaveBeenCalledOnce(),
+    );
+    deadline.abort(new DOMException("deadline", "TimeoutError"));
+    const response = await responsePromise;
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+    expect(response.status).toBe(504);
+    expect(await response.text()).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels and fails an already-started stream on deadline without rewriting status", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({ cancel }), {
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(request(), "rec_1");
+    const readPromise = response.body!.getReader().read();
+    deadline.abort(new DOMException("deadline", "TimeoutError"));
+
+    expect(response.status).toBe(200);
+    await expect(readPromise).rejects.toThrow("stream failed");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("cancels and fails an already-started stream on client abort", async () => {
+    const client = new AbortController();
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const req = request(client.signal);
+    const requestRemove = vi.spyOn(req.signal, "removeEventListener");
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({ cancel }), {
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(
+      req,
+      "rec_1",
+    );
+    const readPromise = response.body!.getReader().read();
+    client.abort(new DOMException("client closed", "AbortError"));
+
+    await expect(readPromise).rejects.toThrow("stream failed");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(requestRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("removes request and deadline listeners after normal completion", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const req = request();
+    const requestAdd = vi.spyOn(req.signal, "addEventListener");
+    const requestRemove = vi.spyOn(req.signal, "removeEventListener");
+    const deadlineAdd = vi.spyOn(deadline.signal, "addEventListener");
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    fetchMock.mockResolvedValue(
+      new Response(Uint8Array.of(1), {
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(req, "rec_1");
+    await response.arrayBuffer();
+
+    expect(requestAdd).toHaveBeenCalledWith("abort", expect.any(Function), {
+      once: true,
+    });
+    expect(deadlineAdd).toHaveBeenCalledWith("abort", expect.any(Function), {
+      once: true,
+    });
+    expect(requestRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("turns a late URL-bearing upstream failure into a generic stream error", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const req = request();
+    const requestRemove = vi.spyOn(req.signal, "removeEventListener");
+    const deadlineRemove = vi.spyOn(deadline.signal, "removeEventListener");
+    const readerCancel = vi.spyOn(
+      ReadableStreamDefaultReader.prototype,
+      "cancel",
+    );
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(Uint8Array.of(1));
+            controller.error(new Error(`late failure ${rawUrl}`));
+          },
+        }),
+        { headers: { "Content-Type": "application/pdf" } },
+      ),
+    );
+
+    const response = await getReaderSourcePreviewFromWeb(req, "rec_1");
+
+    expect(response.status).toBe(200);
+    const error = await response.arrayBuffer().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("stream failed");
+    expect((error as Error).message).not.toContain("STREAM_CANARY");
+    expect(readerCancel).toHaveBeenCalled();
+    expect(requestRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(deadlineRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+});
 
 function makeSnapshot(): ReaderPlateSnapshotDto {
   return {
