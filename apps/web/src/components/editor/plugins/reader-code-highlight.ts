@@ -474,7 +474,8 @@ function inputCodeLineText(line: unknown): string {
         ? (child as { text: string }).text
         : "",
     )
-    .join("");
+    .join("")
+    .replace(/\r$/, "");
 }
 
 function inputCodeBlockText(codeBlock: unknown): string {

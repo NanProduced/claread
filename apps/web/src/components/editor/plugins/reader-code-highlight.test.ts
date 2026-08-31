@@ -6,8 +6,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { deserializeMarkdownToBlocksWithStatus } from "@/lib/reader-plate/markdown/deserialize";
+
 import {
   __inputCodeHighlightSchedulerState,
+  INPUT_CODE_TOKEN_DECORATION_PROP,
   inputCodeBlockDecorate,
   readerCodeLanguageLabel,
   readerCodeToTokens,
@@ -132,6 +135,43 @@ describe("input code highlight scheduling (latest-wins, path-slot)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("highlights the CRLF code_line shape produced by clipboard Markdown deserialization", async () => {
+    const markdown =
+      "# Clipboard heading\r\n\r\n" +
+      "```python\r\n" +
+      "def square(x):\r\n" +
+      "    return x * x\r\n" +
+      "```";
+    const result = deserializeMarkdownToBlocksWithStatus(markdown);
+    expect(result.status).toBe("success");
+    const codeBlock = result.blocks.find(
+      (block) => (block as { type?: string }).type === "code_block",
+    ) as { children: Array<{ children: Array<{ text: string }> }> };
+    const lineTexts = codeBlock.children.map((line) => line.children[0].text);
+    expect(lineTexts).toEqual(["def square(x):\r", "    return x * x"]);
+
+    const fake = makeFakeEditor(result.blocks);
+    const blockIndex = result.blocks.indexOf(codeBlock as never);
+    decorateLine(fake, blockIndex, 0, lineTexts[0]);
+    await pollUntil(
+      () => __inputCodeHighlightSchedulerState().pendingKeys.length === 0,
+      "CRLF clipboard code tokenized",
+    );
+
+    const ranges = decorateLine(fake, blockIndex, 0, lineTexts[0]);
+    expect(ranges.length).toBeGreaterThan(0);
+    expect(
+      ranges.some(
+        (range) =>
+          range[INPUT_CODE_TOKEN_DECORATION_PROP] ===
+          "reader-record-plate-code-token reader-record-plate-code-token--keyword",
+      ),
+    ).toBe(true);
+    expect(codeBlock.children.map((line) => line.children[0].text)).toEqual(
+      lineTexts,
+    );
   });
 
   it("burst edits A→B→C with Slate object replacement tokenize only the latest version", async () => {
