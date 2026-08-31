@@ -168,6 +168,12 @@ CONSTRAINT source_artifacts_status_check CHECK ((status = ANY (ARRAY['pending'::
 
 **重要事实**：`failed` 与 `deleted` 是 schema-allowed 但当前无生产 writer 的状态。`artifact_input_status_query_service.py` line 573 注释明确：`artifact.status == "deleted" cannot reach here because of the deleted_at IS NULL filter`。当前若出现 extraction/materialization terminal failure，失败事实记录在 `reader_jobs.failure_class` / `failure_code` / `failure_message`，**不**回写 `source_artifacts.status = 'failed'`；当前若出现孤立 pending row，按后台诊断处理，不手工伪造 `failed` / `deleted`。
 
+### Source Preview 运维入口
+
+- `GET /reader/records/{record_id}/source-preview`：record-scoped、owner-scoped 预览元数据，从持久化 record lineage 解析。
+- `GET /reader/source-artifacts/{artifact_id}/preview`：artifact-scoped 短期只读 presigned URL；仅 owner 且未软删、`available`、OSS 存储、PDF/允许图片 MIME 才可预览，其余一律 404 collapse；presigner 不可用时返回 `preview_url=null` + `degraded=true`，不阻塞 `pipeline-status` 之后的其它操作。
+- Web 消费走 BFF `GET /api/web/reader/records/[recordId]/source-preview` 的受控同源二进制流代理；presigned URL 是敏感临时交付值，不得直接写入普通 DOM。交付安全合同见 `apps/web/docs/design/surface-read-intake-content-check.md`。
+
 ### 重复 submit 锁与绑定语义（concurrency/duplicate fence，非 idempotent-success API）
 
 `submit-input` 是 **concurrency/duplicate fence**，不是 idempotent-success API。首次 submit 成功后，重复 submit 不会返回原 record，而是返回 409。

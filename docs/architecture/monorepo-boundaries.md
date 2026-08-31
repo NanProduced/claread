@@ -1,12 +1,14 @@
 # Monorepo 边界
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
+
 本文说明 Claread monorepo 的目录职责和共享边界。
 
 ## 总原则
 
 Claread 是多端产品，但不是多端共享 UI 项目。
 
-不同客户端应分别使用最适合自身平台的技术栈、交互和 UI 实现。当前只确定微信小程序使用 Taro/React；Web 端和未来 App 端技术栈尚未确定，后续在对应阶段单独决策。
+不同客户端分别使用最适合自身平台的技术栈、交互和 UI 实现：微信小程序使用 Taro/React，Web 使用 Next.js App Router；未来 App 端技术栈在对应阶段单独决策。
 
 跨端共享只发生在非 UI 层：
 
@@ -25,7 +27,6 @@ packages/   # 跨端非 UI 共享包
 infra/      # 本地环境、migration、部署材料
 evals/      # 评测、rubric、judge run、样本集
 docs/       # 产品、架构、运维、设计和参考资料
-scripts/    # 仓库级辅助脚本
 ```
 
 ## apps/
@@ -34,9 +35,9 @@ scripts/    # 仓库级辅助脚本
 
 当前：
 
-- `apps/miniprogram/`：微信小程序客户端。
-- `apps/web/`：Web 客户端预留目录，技术栈未定。
-- `apps/directus/`：Directus 内部工具预留目录。
+- `apps/miniprogram/`：微信小程序客户端（稳定基线）。
+- `apps/web/`：Web 产品客户端（Next.js App Router + BFF `/api/web/*`），当前是 Reader orchestration 提交主链的唯一客户端。
+- `apps/directus/`：Claread Console（Directus runtime 与控制面扩展：通用 metadata 展示 module、LLM Config、reader-orch 只读诊断 endpoint、Example Lab Collection）。
 
 未来可增加：
 
@@ -58,7 +59,7 @@ scripts/    # 仓库级辅助脚本
 - `services/api/`：通用 FastAPI 后端。
 - `services/worker/`：后台异步任务服务预留目录。
 
-`services/api/` 当前包含 HTTP API、分析任务 worker、workflow、词典、用户资产、Daily Reader 等能力。后续如果后台任务变重，可逐步把长任务拆到 `services/worker/`。
+`services/api/` 当前包含 HTTP API、Reader orchestration 与进程级 worker entrypoint、Ask Claread、词典、用户资产、Daily Reader 等能力。后续如果后台任务变重，可逐步把长任务拆到 `services/worker/`。
 
 规则：
 
@@ -70,11 +71,9 @@ scripts/    # 仓库级辅助脚本
 
 `packages/` 放跨端非 UI 共享包。
 
-当前目录是预留结构，具体实现后续逐步建立。
-
-- `packages/contracts/`：API 契约和生成类型。
-- `packages/shared-utils/`：纯业务工具函数。
-- `packages/design-tokens/`：跨端设计 token。
+- `packages/contracts/`：已落地，承载跨端契约常量与轻量类型（批注 / 收藏 / text range），Web 已接入；完整 OpenAPI DTO 生成后续再评估。
+- `packages/design-tokens/`：已落地，承载品牌资产与设计 token。
+- `packages/shared-utils/`：纯业务工具函数，预留尚未落地。
 
 不应放入：
 
@@ -102,9 +101,9 @@ scripts/    # 仓库级辅助脚本
 
 ## evals/
 
-`evals/` 是后续 LLM-as-a-Judge、样本集、rubric 和运行记录的位置。
+`evals/` 是 LLM-as-a-Judge、样本集、rubric 和运行记录的位置，当前已有可离线运行的评测基线（Daily Reader 回归与教学合同、Reader Record Ask、vocabulary、translation grouping 等）。
 
-当前不迁入旧脚本式 regression suite。后续评测应与 Directus、LangSmith 和 Zilliz 形成闭环：
+旧脚本式 regression suite 不属于当前验证入口。后续评测应与 Directus、LangSmith 和 Zilliz 形成闭环：
 
 - Directus 管理样本和审核状态。
 - LangSmith 观察单次运行 trace。

@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-08
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -55,8 +55,7 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 测试治理当前合同：
 
-- Playwright portfolio：18 permanent / 11 core
-- naming guards 保留
+- naming guards 保留（API 与 Web 两条静态 guard）
 - offline gate 要求 provider attempts 必须为 `0`
 
 任务编号是历史追踪信息，不是业务身份，不应出现在新测试文件名、测试标识符或生产符号中。仓库提供两条静态 guard 阻止其回流：
@@ -84,6 +83,13 @@ pnpm --filter @claread/web test
 ## evals 离线门禁
 
 `evals/` 是独立 pytest 项目，不继承 API conftest；`evals/tests/conftest.py` 声明 `real_llm` marker，真实 provider 调用必须显式 opt-in，离线门禁默认 fail-closed 不调用 provider。
+
+## 测试套件规模与性能基线
+
+- 当前不存在统一的全仓完整测试命令；后端、Web、evals、小程序是独立验证入口，均以各自当前运行结果为准。
+- 历史测试性能任务线已以 `DEFERRED_NO_PRODUCTION_CHANGE` 关闭：旧 HEAD 的 API pytest collection 为 7418 items，这是 collection 规模事实，不是完整套件耗时，也不能解释任何完整 suite wall time。
+- fixture-scope 性能假设没有可信的 measured paired A/B 支撑；不得写成“该 fixture 范围无收益”，也不得写成“耗时问题已解决”。
+- 未来重启性能工作的前提：phase runner 对 PASS 和 FAIL 都输出可验证的 cleanup contract，并由单一 direct runner 按冻结 paired A/B 协议执行一次；任何协议漂移、异常、超时、清理失败或样本不等量都 fail-closed。
 
 ## 后端静态检查
 
@@ -135,8 +141,6 @@ Web vitest 门禁以当前运行结果为准：
 cd apps/web
 pnpm exec vitest run
 ```
-
-基线修复全部为测试契约同步（toolbar FloatingPortal 落 body、MessageChannel 延迟 commit 需 `await act`、Ask 侧栏容量在 jsdom 为 false 时隐藏入口、混合选区关闭工具栏、`-foreground` mark 类名、AppShell 需 `SettingsDialogProvider` 等），零生产代码改动。
 
 Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 

@@ -6,7 +6,7 @@
 
 - 先判断设计规则是跨端事实还是客户端实现细节。
 - 跨端事实写入 `docs/design/` 或 `docs/product/`。
-- 微信小程序实现限制写入 `apps/miniprogram/docs/`。
+- 微信小程序实现限制写入 `apps/miniprogram/`（README / AGENTS）。
 - Web 实现规则写入 `apps/web/docs/`。
 - 全局规则和客户端规则冲突时，以全局业务契约为准，客户端 UI 表现按自身能力分别定义。
 - 小程序端降级 UI 不作为 Web 端设计上限。

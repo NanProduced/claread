@@ -112,16 +112,7 @@
 | `TEXT_RANGE_HASH_ALGORITHM` | `fnv1a32-utf16` | 前端 selected text hash 与后端校验一致 |
 | API DTO 生成 | 未接入 | 后续再评估 OpenAPI -> contracts 生成，避免继续手写漂移 |
 
-## 文档取舍
-
-以下文档不再作为长期事实来源：
-
-- `apps/miniprogram/docs/freeze-baseline.md`：冻结口径已过期，文件已不存在。小程序不是冻结客户端，当前能力以代码和本文为准。
-- `apps/web/docs/backend-adaptation-plan.md`：后端多端化适配的关键结论已沉淀到 `docs/architecture/multi-client.md` 和本文，文件已不存在。
-- `apps/web/docs/baseline-adaptation-plan.md`：Web baseline 对齐任务已完成，文件已不存在；剩余事项应进入具体 Web Reader、API audit 或 annotation 文档，而不是保留 baseline tracker。
-
-仍保留的相关文档：
+## 相关文档
 
 - `docs/architecture/multi-client.md`：多端架构原则。
-- `apps/web/docs/api-contract-audit.md`：Web 接口审计。
 - `apps/web/docs/reader-ia.md`：Web Reader 信息架构。

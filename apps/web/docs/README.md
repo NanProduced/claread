@@ -15,7 +15,8 @@ Web 端共享 `services/api/`、PostgreSQL 数据、API contracts、纯业务 ut
 | `api-contract-audit.md` | **HISTORICAL**：cutover 前旧 API 面的首期审计，仅供回看，不是当前接口事实源 |
 | `reader-ia.md` | Web Reader 信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统、历史回看 |
 | `../../../docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
-| `design/` | Reader 专项规范与本地评审参考；稳定设计结论以 `../DESIGN.md` 为准 |
+| `design/` | Reader 专项规范与 surface 契约（Read Intake / Content Check、Daily Reader）；稳定设计结论以 `../DESIGN.md` 为准 |
+| `research/` | 带日期的研究记录，结论吸收进正式文档后按清理规则处理，不是长期事实来源 |
 
 ## 文档边界
 

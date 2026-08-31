@@ -1,5 +1,7 @@
 # Claread 产品概览
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
+
 ## 产品定位
 
 Claread 是阅读优先的英文辅助产品。
@@ -27,11 +29,12 @@ Claread 不应该像应试英语 App、通用词典 App 或 AI dashboard。阅�
 ## 核心链路
 
 ```text
-用户提交英文文本
-  -> 后端 workflow 执行结构化分析
-  -> 生成 canonical analysis result
-  -> 按客户端能力生成 render snapshot
-  -> 客户端展示阅读、批注、词典、生词、反馈等交互
+用户提交英文文本 / 文件
+  -> Reader orchestration：候选确认或稳定冻结（Reading Record + Stable Reading Document）
+  -> 确定性生成 Reading Units / Anchor Segments
+  -> 渐进生成 Enhancement Layers（译文、词汇、语法、长难句、语义大纲）
+  -> snapshot projection 供各端渲染
+  -> 客户端展示阅读、批注、词典、生词、Ask Claread、反馈等交互
 ```
 
 首期核心能力：
@@ -52,8 +55,8 @@ Claread 不应该像应试英语 App、通用词典 App 或 AI dashboard。阅�
 当前和计划中的客户端：
 
 - `apps/miniprogram/`：微信小程序，功能子集，受小程序渲染和平台能力限制。
-- `apps/web/`：Web baseline 已接入真实后端，后续推进高保真阅读体验和更强交互。
-- `apps/directus/`：内部控制面，当前已承接解析观察、Eval Center、Example Lab 和一批治理型工作流，后续继续扩展运营与数据治理能力。
+- `apps/web/`：Web baseline 已接入真实后端，当前是 Reader 提交主链的唯一客户端，后续推进高保真阅读体验和更强交互。
+- `apps/directus/`：内部控制面（Claread Console），当前承载通用 metadata 展示、LLM Config、reader-orch 只读诊断和 Example Lab Collection；治理化控制面仍在建设中。
 
 后端服务、数据库、workflow、词典和评测体系应尽量复用。
 

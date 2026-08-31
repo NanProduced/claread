@@ -14,22 +14,23 @@
 根目录/               # 全局总纲：AGENTS.md、README.md、PRODUCT.md、DESIGN.md
 ├── docs/
 │   ├── product/      # 产品定位、当前状态、竞品、设计上下文
-│   ├── architecture/ # 架构总览、monorepo 边界、workflow、多端策略、词典
+│   ├── architecture/ # 架构总览、monorepo 边界、Reader orchestration、多端策略、词典
 │   ├── design/       # 跨端设计 Agent 指令（AGENTS.md + README.md）
 │   ├── development/  # 开发主线
-│   ├── operations/   # 本地开发、测试、prompt 版本、模型配置、LangSmith
-│   ├── reference/    # 参考资料（非实现规范）
-│   │   └── differentiated/  # 差异化分析：学术阅读、每日精读、各类考试
-│   └── tmp/          # 根级 TMP 过程文档（任务后清理）
+│   ├── operations/   # 本地开发、测试、prompt 版本、模型配置、LangSmith、Reader 运行时
+│   └── reference/    # 参考资料（非实现规范）
+│       ├── differentiated/  # 差异化分析：每日精读、各类考试
+│       └── grammar-xray/   # 语法 X-Ray 参考
 │
 ├── apps/miniprogram/ # 小程序：README + AGENTS + PRODUCT + DESIGN
 ├── apps/web/         # Web：README + AGENTS + PRODUCT + DESIGN + docs/
 │   └── docs/
-│       ├── design/   # UI 方向探索、Mockups
+│       ├── design/   # surface 契约（Read Intake / Daily Reader）与 Reader 组件规范
+│       ├── research/ # 带日期的研究记录（结论吸收进正式文档后清理）
 │       ├── tmp/      # 临时过程文档（任务后清理）
-│       └── *.md      # 实施计划、API 审计、Reader IA、技术栈等
+│       └── *.md      # 实施计划、Reader IA、技术栈等
 │
-├── services/api/     # 后端：README + AGENTS
+├── services/api/     # 后端：README + AGENTS + docs/（API 契约、数据库、Daily Reader）
 ├── services/worker/  # Worker 预留（仅有 README.md）
 └── packages/
     ├── contracts/      # 已落地：跨端契约常量和类型，后续接 OpenAPI 生成

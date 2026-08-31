@@ -47,6 +47,7 @@ Claread Web 现在采用三段式路由结构：
 | 解析进度 | `/app/reader/:recordId` | `GET /api/web/reader/records/[recordId]/snapshot` + `/events` 轮询推进 | 已接入 |
 | 解析失败恢复 | `/app/reader/:recordId` | BFF `POST /api/web/reader/records/[recordId]/recovery` → 上游 `POST /reader/records/{record_id}/recovery`；无请求 body（trigger 服务端固定 manual）；pending 期间禁止重复提交；`recovery_started` / `nothing_to_recover` 均触发 Snapshot reload；section-only failure 继续使用 section retry，不显示 record-level 恢复；401/404/409/503、网络失败、未知 outcome 与畸形上游响应一律使用固定安全文案，敏感上游内容不进 DTO/DOM | 已接入 |
 | 结果阅读 | `/app/reader/:recordId` | snapshot / stable-document / candidate-document(s) / section-translation / confirmed-source BFF | 已接入 |
+| 原件预览 | `/app/read`（Content Check） | BFF `GET /api/web/reader/records/[recordId]/source-preview` → 上游 record-scoped preview 元数据；以受控同源二进制流代理交付，presigned URL 不直接进普通 DOM | 已接入 |
 | 历史记录 | `/app/library` | `GET /api/web/reader/records` | 已接入 |
 | Ask Claread | `/app/reader/:recordId` | `ask/threads`、`ask/threads/[threadId]/messages/stream`、citations navigate、model-options BFF | 已接入 |
 | 词典查词 | Reader | `/api/web/dict/lookup` / `/dict/entry` / `/dict/ai` | 已接入 |

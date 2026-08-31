@@ -11,7 +11,7 @@
   - 当前开发主线见 `docs/development/mainline.md`
   - 本文描述当前可用边界，不记录重构过程
 
-## Ask module and sidecar boundary与 sidecar 边界（含编排交叉引用）
+## Ask module 与 sidecar 边界
 Ask 是 Reader 内 sidecar / floating surface，不拥有编排控制面。长会话记忆走 compaction 产品语义；操作入口见 `docs/operations/reader-runtime.md`。
 
 Ask Claread 是 Reader 内、绑定当前文章的阅读助手。它的当前定位是：

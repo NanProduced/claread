@@ -2,7 +2,7 @@
 
 > **状态**: `CURRENT` | **最后更新**: 2026-05-23
 
-本文记录 Claread Web 端当前使用的技术栈。决策过程和备选评估已归档；路由结构见 `implementation-plan.md`；后端接口契约见 `api-contract-audit.md`；验证命令见 `AGENTS.md` 和 `README.md`。
+本文记录 Claread Web 端当前使用的技术栈。决策过程和备选评估已归档；路由结构见 `implementation-plan.md`；后端接口契约见 `services/api/docs/api-contracts.md`；验证命令见 `AGENTS.md` 和 `README.md`。
 
 ## 主框架
 

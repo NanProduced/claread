@@ -45,6 +45,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力差异 |
 | `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab 控制面契约 |
 | `docs/architecture/reader-rag.md` | Reader RAG 总契约：per-record Article RAG 与 Grammar few-shot RAG 的独立边界，以及 Grammar 的 output_fragment、retrieval_text、grammar_tags 归一化、Zilliz schema 与联动更新清单 |
+| `docs/architecture/file-upload-parse-chain-markdown.md` | 文件上传→解析完整业务链路：upload API 契约、artifact 生命周期与 Markdown 适配 |
 | `docs/architecture/dictionary.md` | 词典架构：数据来源、查询链路与增强方向 |
 | `docs/architecture/ai-usage-audit-and-billing.md` | AI 使用审计与积分结算底座 |
 
@@ -54,6 +55,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 |------|------|
 | `docs/operations/local-dev.md` | 本地开发环境 |
 | `docs/operations/testing.md` | 测试与验证入口 |
+| `docs/operations/reader-runtime.md` | Reader orchestration 本地运行方式、worker 入口与 Artifact Input Operations Contract |
 | `docs/operations/directus-local-dev.md` | Directus 本地开发与热更新说明 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
 | `docs/operations/model-config.md` | 模型 profile / preset 配置 |

@@ -10,7 +10,7 @@
 ### 1.1 `init-upload`（初始化上传）
 
 **路由**: `POST /source-artifacts/init-upload`  
-**文件**: [app/api/routes/reader_orchestration.py](file://c:/Users/nanpr/claread/claread/services/api/app/api/routes/reader_orchestration.py#L504-L578)
+**文件**: [app/api/routes/reader_orchestration.py](../../services/api/app/api/routes/reader_orchestration.py#L504-L578)
 
 **请求字段** (`ReaderSourceArtifactUploadInitRequest`):
 ```python
@@ -48,7 +48,7 @@
 ### 1.2 `complete-upload`（完成上传）
 
 **路由**: `POST /source-artifacts/{artifact_id}/complete-upload`  
-**文件**: [app/api/routes/reader_orchestration.py](file://c:/Users/nanpr/claread/claread/services/api/app/api/routes/reader_orchestration.py#L588-L614)
+**文件**: [app/api/routes/reader_orchestration.py](../../services/api/app/api/routes/reader_orchestration.py#L588-L614)
 
 **请求字段** (`ReaderSourceArtifactUploadCompleteRequest`):
 ```python
@@ -79,7 +79,7 @@
 ### 1.3 `submit-input`（提交输入）
 
 **路由**: `POST /source-artifacts/{artifact_id}/submit-input`  
-**文件**: [app/api/routes/reader_orchestration.py](file://c:/Users/nanpr/claread/claread/services/api/app/api/routes/reader_orchestration.py#L617-L643)
+**文件**: [app/api/routes/reader_orchestration.py](../../services/api/app/api/routes/reader_orchestration.py#L617-L643)
 
 **请求字段** (`ReaderSourceArtifactSubmitInputRequest`):
 ```python
@@ -113,7 +113,7 @@
 
 ### 2.1 入口脚本
 
-**文件**: [scripts/run_reader_artifact_pipeline_worker.py](file://c:/Users/nanpr/claread/claread/services/api/scripts/run_reader_artifact_pipeline_worker.py)
+**文件**: [scripts/run_reader_artifact_pipeline_worker.py](../../services/api/scripts/run_reader_artifact_pipeline_worker.py)
 
 ### 2.2 `build_storage_reader()` (L70-L106)
 
@@ -146,7 +146,7 @@ def build_storage_reader(settings: Settings) -> StorageObjectReader | None:
 
 ### 2.3 `build_default_extraction_provider_router()` (L113-L147)
 
-**文件**: [artifact_extraction_provider_router.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/artifact_extraction_provider_router.py#L113-L147)
+**文件**: [artifact_extraction_provider_router.py](../../services/api/app/services/reader_orchestration/artifact_extraction_provider_router.py#L113-L147)
 
 ```python
 def build_default_extraction_provider_router(
@@ -180,7 +180,7 @@ def build_default_extraction_provider_router(
 
 ## 3. ExtractionProviderRouter 路由规则
 
-**文件**: [artifact_extraction_provider_router.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/artifact_extraction_provider_router.py#L51-L110)
+**文件**: [artifact_extraction_provider_router.py](../../services/api/app/services/reader_orchestration/artifact_extraction_provider_router.py#L51-L110)
 
 ### 3.1 路由矩阵
 
@@ -240,7 +240,7 @@ OCTET_STREAM_ALLOWED_EXTENSIONS = frozenset({".txt", ".md"})
 
 ### 4.1 Input Suitability Gate（适用性门控）
 
-**文件**: [input_suitability_gate.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/input_suitability_gate.py#L126-L349)
+**文件**: [input_suitability_gate.py](../../services/api/app/services/reader_orchestration/input_suitability_gate.py#L126-L349)
 
 #### 4.1.1 `evaluate_input_suitability()` (L344-L349)
 
@@ -357,7 +357,7 @@ def _has_math_syntax(text: str) -> bool:
 
 ### 4.2 Markdown Source Parser（Markdown 源码解析器）
 
-**文件**: [markdown_source_parser.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/markdown_source_parser.py)
+**文件**: [markdown_source_parser.py](../../services/api/app/services/reader_orchestration/markdown_source_parser.py)
 
 #### 4.2.1 身份标识 (L57-L59)
 
@@ -426,7 +426,7 @@ class MarkdownSourceParser:
 
 ### 4.3 Input Document Normalizer（输入文档规范化器）
 
-**文件**: [input_document_normalizer.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/input_document_normalizer.py)
+**文件**: [input_document_normalizer.py](../../services/api/app/services/reader_orchestration/input_document_normalizer.py)
 
 #### 4.3.1 `normalize()` (L87-L185)
 
@@ -553,7 +553,7 @@ def _normalize_markdown_blocks(
 
 ## 5. 提取 Provider：Text Artifact Extraction
 
-**文件**: [text_artifact_extraction_provider.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/text_artifact_extraction_provider.py)
+**文件**: [text_artifact_extraction_provider.py](../../services/api/app/services/reader_orchestration/text_artifact_extraction_provider.py)
 
 ### 5.1 `TextArtifactExtractionProvider.extract()` (L254-L355)
 
@@ -657,7 +657,7 @@ def _decode_utf8(data: bytes) -> tuple[str | None, str]:
 
 ## 6. Materialization 阶段
 
-**文件**: [extracted_artifact_materialization_service.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/extracted_artifact_materialization_service.py)
+**文件**: [extracted_artifact_materialization_service.py](../../services/api/app/services/reader_orchestration/extracted_artifact_materialization_service.py)
 
 ### 6.1 `materialize_extracted_artifact()` (L449-L543)
 
@@ -758,7 +758,7 @@ async def _materialize_stable(self, ...) -> MaterializationResult:
 
 ### 6.3 Reading Base 构建
 
-**文件**: [base_builder.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/base_builder.py)
+**文件**: [base_builder.py](../../services/api/app/services/reader_orchestration/base_builder.py)
 
 #### 6.3.1 `build_low_impact_reading_base()` (L314-L329)
 
@@ -855,7 +855,7 @@ def _classify_unit_type(block_text: str) -> str:
 
 ## 7. PDF 提取
 
-**文件**: [pdf_artifact_extraction_provider.py](file://c:/Users/nanpr/claread/claread/services/api/app/services/reader_orchestration/pdf_artifact_extraction_provider.py)
+**文件**: [pdf_artifact_extraction_provider.py](../../services/api/app/services/reader_orchestration/pdf_artifact_extraction_provider.py)
 
 ### 7.1 `PdfArtifactExtractionProvider.extract()` (L141-L263)
 

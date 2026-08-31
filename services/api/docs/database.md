@@ -1,5 +1,7 @@
 # 数据库
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
+
 Claread 后端使用 PostgreSQL 作为业务事实源。Redis 用于缓存和任务辅助能力。
 
 ## Migration Baseline
@@ -80,13 +82,13 @@ infra/migrations/0001_initial.sql
 
 `ai_model_execution_journal` 补入 reset / checker 合同后，任何已存在的开发 volume 都必须先执行 `reset_full_keep_dict.sql`，再重放 fresh baseline（`0001_initial.sql`）完成恢复；仅靠 Docker init 不会自动升级已有 volume。
 
-R8 基线事实：
+基线事实：
 
 - `confirmed_source_revisions` 是不可变 revision snapshot 表（初始提取 /
   每次成功保存 / 版本恢复，`snapshot_reason ∈ initial | save | restore`），
   与 `confirmed_source_documents` 当前行同事务写入，绝不回写历史。
-- `stable_image_source_overrides` 的 checker / reset 对齐缺口已在 R8 一并补齐
-  （此前 main 的 reconcile 测试已处于 RED 存量漂移态）。
+- `stable_image_source_overrides` 的 checker / reset 对齐已补齐，
+  与 reset 表清单和 baseline 断言保持一致。
 
 ## Directus 本地配置与业务表 reset
 

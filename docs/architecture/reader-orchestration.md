@@ -1,6 +1,6 @@
 # Reader 编排架构
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-19
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
 >
 > 符号与代码路径优先；过期行号不是当前 authority。
 >
@@ -83,7 +83,7 @@
 
 | 层 | Authority 类型 | 谁写 | 谁不能改写 |
 |---|---|---|---|
-| (1) Confirmed Source | 单一 generation 全库唯一正文 | `confirmed_source_application_service` + migration 0025 | enhancement worker / publisher / Plate |
+| (1) Confirmed Source | 单一 generation 全库唯一正文 | `confirmed_source_application_service` + `0001_initial.sql` baseline（原 migration 0025 已在合入前 squash 并入） | enhancement worker / publisher / Plate |
 | (2) Input Artifact / plain-text / Markdown | 用户提交的原始载体 | `init-upload` / `complete-upload` / `submit-input` API + plain-text submit route | worker / publisher / Plate |
 | (3) Candidate Document | 高影响适配的可预览候选 | `candidate_document_creation_service`（仅 high-impact 路径） | worker / publisher / Plate；用户未 confirm 前不得升级为 stable |
 | (3') Stable Reading Document / Stable Blocks / Canonical Text Layer | record/base 内文档事实源 | `extracted_artifact_materialization_service` / `article_ready_service`（low-impact 直接冻结） | enhancement worker / publisher / Plate；需修正来源事实时创建新 generation/base 或 supersede 旧 record |
@@ -108,8 +108,8 @@
 - Original Input（`original_inputs` 表）保留原始提交，但**默认不作为 Reader/Ask truth**；Reader truth 由 Confirmed Source + Stable Reading Document 表达。
 - Source Artifact（`source_artifacts` 表）是 OSS-backed 文件载体；其 `status` schema 允许 `pending | available | failed | deleted`（migration 0001 §`source_artifacts_status_check` line 1445），但当前生产 writer 只稳定到达 `pending` 与 `available`；`failed` 与 `deleted` schema-allowed 但当前无生产 writer（详见 `docs/operations/reader-runtime.md` §Artifact Input Operations Contract）。
 - Reading Base（`reading_bases` 表）是同一 generation 内的 stable 文档载体；`record_generation` + `active_base_id` 是 record 的 stable identity；新 generation 或新 base 必须通过 supersede 路径创建，不得原地覆盖。
-- Confirmed Source（migration 0025）是 single-per-(record, generation) 的规范化正文，由 DB CHECK 自校验 `content_sha256`；revision 乐观并发演进采用原地 UPDATE 当前行（`confirmed_source_documents`），**同时每个 durable 写入在同一事务内持久化不可变 revision snapshot（`confirmed_source_revisions`，`snapshot_reason ∈ initial | save | restore`）**；版本恢复（restore）把目标 snapshot 正文写成新 revision（单调递增），**绝不回写历史行**。版本列表 / 单版本读取 / 恢复均为 owner-scoped API，冲突沿用 409 `stale_source_revision` 公开错误码。
-- Source Preview（`GET /reader/source-artifacts/{artifact_id}/preview`）是 owner-scoped、短期、只读 GET presigned URL：仅 owner 且未软删、`available`、`oss` 存储、PDF/允许图片 MIME 才可预览，其余一律 404 collapse；响应不含独立存储坐标字段（object_key / bucket / endpoint / 凭据）。**冻结的 Web 消费合同：presigned URL 值是敏感临时交付值，不得直接写入普通 DOM**；后续 Web 交付必须经受控同源 BFF（proxy/redirect）或同源 fetch 后的安全 Blob URL 或等价受控方式（该前端消费为待办依赖，不由后端本任务实现）。
+- Confirmed Source（`0001_initial.sql` baseline，原 migration 0025 已在合入前 squash 并入）是 single-per-(record, generation) 的规范化正文，由 DB CHECK 自校验 `content_sha256`；revision 乐观并发演进采用原地 UPDATE 当前行（`confirmed_source_documents`），**同时每个 durable 写入在同一事务内持久化不可变 revision snapshot（`confirmed_source_revisions`，`snapshot_reason ∈ initial | save | restore`）**；版本恢复（restore）把目标 snapshot 正文写成新 revision（单调递增），**绝不回写历史行**。版本列表 / 单版本读取 / 恢复均为 owner-scoped API，冲突沿用 409 `stale_source_revision` 公开错误码。
+- Source Preview 有两个 owner-scoped 入口：record-scoped `GET /reader/records/{record_id}/source-preview` 从持久化 record lineage 解析预览元数据；artifact-scoped `GET /reader/source-artifacts/{artifact_id}/preview` 返回短期只读 GET presigned URL——仅 owner 且未软删、`available`、`oss` 存储、PDF/允许图片 MIME 才可预览，其余一律 404 collapse，presigner 不可用时返回 `preview_url=null` + `degraded=true`；响应不含独立存储坐标字段（object_key / bucket / endpoint / 凭据）。**冻结的 Web 消费合同：presigned URL 值是敏感临时交付值，不得直接写入普通 DOM**；Web 端已由受控同源 BFF（`/api/web/reader/records/[recordId]/source-preview`，受控二进制流代理）交付，满足该合同；交付安全合同见 `apps/web/docs/design/surface-read-intake-content-check.md`。
 
 ### Anchor / Unit / Layer 职责
 

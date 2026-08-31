@@ -8,7 +8,7 @@
 - 文件名必须能看出临时性，例如 `tmp-2026-05-agent-task-prompts.md`。
 - 本目录内容不作为长期事实来源。
 - 任务完成后，应删除临时文档，或把仍然有效的结论压缩回正式文档。
-- 正式事实以 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`implementation-plan.md`、`backend-adaptation-plan.md`、`api-contract-audit.md`、`reader-ia.md` 为准。
+- 正式事实以 `apps/web/PRODUCT.md`、`apps/web/DESIGN.md`、`implementation-plan.md`、`reader-ia.md` 和后端 `services/api/docs/api-contracts.md` 为准。
 
 ## 清理节奏
 

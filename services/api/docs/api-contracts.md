@@ -1,5 +1,7 @@
 # API 契约
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-31
+
 本文记录当前必须保持稳定的后端契约。
 
 ## 冻结原则
@@ -50,6 +52,11 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 | Reader 读取 | `GET /reader/records/{record_id}/stable-document`、`/candidate-document`、`/confirmed-source` | Plate 投影事实源 |
 | Reader 读取 | `POST /reader/records/{record_id}/opened` | 记录打开时间戳 |
 | Reader 恢复 | `POST /reader/records/{record_id}/recovery` | failed record 手动恢复；无 body，trigger 服务端固定 `manual` |
+| Source Preview | `GET /reader/records/{record_id}/source-preview` | record-scoped 原件预览元数据；owner-scoped，从持久化 record lineage 解析 |
+| Source Preview | `GET /reader/source-artifacts/{artifact_id}/preview` | artifact-scoped 短期只读 presigned URL；仅 owner 且未软删、`available`、OSS 存储、PDF/允许图片 MIME 才可预览，其余一律 404 collapse；presigner 不可用时返回 `preview_url=null` + `degraded=true` |
+| Confirmed Source | `PUT /reader/records/{record_id}/confirmed-source` | 整篇更新并触发重解析；`expected_revision` 乐观并发，冲突 409 `stale_source_revision` |
+| Confirmed Source | `GET /reader/records/{record_id}/confirmed-source/revisions` | 不可变 revision 快照列表（metadata only） |
+| Confirmed Source | `GET /reader/records/{record_id}/confirmed-source/revisions/{revision}`、`POST .../revisions/{revision}/restore` | 单版本读取；把目标快照恢复为新的 current revision，绝不回写历史 |
 | Reader 增强 | `POST /reader/records/{record_id}/section-translation` | 显式段落同步翻译 |
 | Article RAG | `GET /reader/records/{record_id}/article-rag-index/status`、`POST /ensure` | 文章 RAG 索引生命周期 |
 | Ask | `GET /reader/records/{reading_record_id}/ask/threads`、`POST .../threads/default`、`GET .../threads/{thread_id}` | 当前文章 Ask 线程 |
@@ -88,6 +95,8 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 
 ## 当前契约状态
 
+- Confirmed Source 版本历史：`confirmed_source_documents` 原地演进当前行，每个 durable 写入在同一事务内持久化不可变 `confirmed_source_revisions` 快照（`snapshot_reason ∈ initial | save | restore`）；版本列表 / 单版本读取 / 恢复均为 owner-scoped API，恢复产生单调递增新 revision，绝不回写历史行。409 冲突码族语义：`stale_source_revision`（save / restore 乐观并发冲突）、`stale_candidate_revision`（candidate 引用过期 source revision，重取 confirmed-source 后可恢复）、`source_frozen`、`record_state_advanced`。
+- Source Preview 的 Web 消费走 BFF `/api/web/reader/records/[recordId]/source-preview` 受控二进制流代理；presigned URL 是敏感临时交付值，不得直接写入普通 DOM。交付安全合同见 `apps/web/docs/design/surface-read-intake-content-check.md`。
 - `POST /reader/records/{record_id}/recovery` 是 failed Reading Record 的手动恢复入口：要求认证；无请求 body（trigger 由服务端固定为 `manual`，客户端不能传递或伪造 trigger）；HTTP 200 outcomes 为 `recovery_started` / `nothing_to_recover`；response 字段仅 `record_id`、`outcome`、`previous_product_state`、`next_product_state`、`record_generation`、`successor_job_count`，不暴露 base/job/run/event 内部 ID；404 = 不存在或非 owner，409 = 当前状态不可恢复，503 = 后端暂不可用。Web 经 BFF `POST /api/web/reader/records/[recordId]/recovery` 接入，同样无 body。
 - `/dict`、`/dict/entry` 和 `POST /dict/ai` 都声明了 response model。
 - 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。

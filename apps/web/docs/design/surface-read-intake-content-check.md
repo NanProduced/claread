@@ -495,13 +495,12 @@ interface StoredIntakeTask {
 - **确认事实**：当前没有针对 `extraction_failed`、`materialization_failed` 或 `show_error` 的 owner-scoped requeue API；重复 `pipeline-status` 只会读取同一终态，不能重新执行 OCR 或材料化。
 - **依赖要求**：后端需定义幂等、可审计且受 attempt budget 约束的重新执行接口，明确 successor job / generation 语义。该能力落地前，前端终态必须 fail-closed，只允许选择其他文件或返回粘贴内容。
 
-#### 4. 正文三点版本持久化缺口（Backend Gap）
-- **事实**：`confirmed_source_documents` 当前原地覆盖更新，初始提取版本（v0）与上一个已保存版本（v_prev）均未入库。
-- **依赖要求**：后端需扩展数据表结构，保存不可变初始提取正文快照及上一版本快照指针，并在 `GET /confirmed-source` 响应中下发版本元数据，支撑产品级版本回滚。
+#### 4. 正文版本历史（已由后端解决）
+- `confirmed_source_documents` 原地演进当前行，但每个 durable 写入在同一事务内持久化不可变 revision 快照（`confirmed_source_revisions`，`snapshot_reason ∈ initial | save | restore`）；初始提取、每次保存与恢复版本均有快照。版本列表 / 单版本读取 / 恢复均为 owner-scoped API（`GET /reader/records/{record_id}/confirmed-source/revisions` 等），恢复把目标快照写成新 revision，绝不回写历史；`GET /confirmed-source` 响应携带当前 `revision` 版本元数据。
 
-#### 5. 可信大纲与长文元数据下发（Backend Gap）
-- **事实**：当前材料化输出尚未下发结构化章节 outline、PDF 页码边界或 long-document 标识。
-- **依赖要求**：后端解析管线需增强大纲提取能力，提供可信的 `document_structure_outline` 与分页元数据；在未下发前，前端结构概览默认折叠或不渲染，不进行盲目猜测。
+#### 5. 可信大纲与长文元数据下发（部分解决）
+- **已落地**：candidate 响应下发 `document_outline`（`order_index` / `block_type_label` / `heading_text` / `char_count`）；超长内容 preview 按 `preview_mode: outline_only` 降级；snapshot 侧有 semantic_outline 增强层。
+- **仍缺**：PDF 页码边界与 long-document 显式标识元数据。在分页元数据下发前，前端结构概览继续按现有 outline 投影渲染，不猜测页码。
 
 #### 6. 单活动任务管理与 LocalStorage 统一（Frontend Task）
 - **依赖要求**：重构并扩展现有 `pending-candidate.ts`，建立标准 `read-intake-recovery-store`：
