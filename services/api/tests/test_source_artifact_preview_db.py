@@ -15,7 +15,6 @@ Isolated per-test schema. Security coverage:
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -176,7 +175,7 @@ async def _insert_original_input(
             """,
             record_id,
             user_id,
-            json.dumps(source_ref),
+            source_ref,
             "0" * 64,
         )
     assert isinstance(original_input_id, UUID)
@@ -216,7 +215,7 @@ async def _insert_confirmed_source(
 async def _insert_record_lineage(
     pool: asyncpg.Pool,
     *,
-    object_key: str = "original-inputs/chosen.pdf",
+    object_key: str | None = None,
 ) -> tuple[UUID, UUID, UUID, UUID]:
     user_id = await _insert_user(pool)
     record_id = await _insert_record(pool, user_id=user_id)
@@ -239,7 +238,7 @@ async def _insert_record_lineage(
         reading_record_id=record_id,
         original_input_id=original_input_id,
         user_id=user_id,
-        object_key=object_key,
+        object_key=object_key or f"original-inputs/{artifact_id}/source.pdf",
         source_filename="source.pdf",
     )
     return user_id, record_id, original_input_id, artifact_id
@@ -387,13 +386,18 @@ async def test_preview_never_exposes_storage_field_names(
 async def test_record_preview_uses_exact_persisted_artifact_reference_with_decoy(
     db_env: asyncpg.Pool,
 ) -> None:
-    user_id, record_id, original_input_id, _ = await _insert_record_lineage(db_env)
+    chosen_key = f"original-inputs/{uuid4()}/chosen.pdf"
+    decoy_key = f"original-inputs/{uuid4()}/newer-decoy.pdf"
+    user_id, record_id, original_input_id, _ = await _insert_record_lineage(
+        db_env,
+        object_key=chosen_key,
+    )
     await _insert_artifact(
         db_env,
         user_id=user_id,
         reading_record_id=record_id,
         original_input_id=original_input_id,
-        object_key="original-inputs/newer-decoy.pdf",
+        object_key=decoy_key,
         source_filename="source.pdf",
         content_type="application/pdf",
     )
@@ -408,8 +412,8 @@ async def test_record_preview_uses_exact_persisted_artifact_reference_with_decoy
     )
 
     assert result.preview_url is not None
-    assert "/original-inputs/chosen.pdf?" in result.preview_url
-    assert "newer-decoy.pdf" not in result.preview_url
+    assert f"/{chosen_key}?" in result.preview_url
+    assert decoy_key not in result.preview_url
 
 
 async def test_record_preview_security_failures_collapse(
@@ -516,7 +520,7 @@ async def test_record_preview_security_failures_collapse(
                     WHERE id = $1
                     """,
                     original_input_id,
-                    json.dumps({"kind": "upload"}),
+                    {"kind": "upload"},
                 )
             elif case == "malformed_artifact_ref":
                 await conn.execute(
@@ -526,7 +530,7 @@ async def test_record_preview_security_failures_collapse(
                     WHERE id = $1
                     """,
                     original_input_id,
-                    json.dumps({"artifact_id": "not-a-uuid"}),
+                    {"artifact_id": "not-a-uuid"},
                 )
             elif case == "input_owner_mismatch":
                 assert other_user_id is not None
