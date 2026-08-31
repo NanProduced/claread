@@ -24,6 +24,8 @@ AUTH_HEADERS = {"Authorization": "Bearer test-token"}
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000000731")
 USER_ID = UUID("00000000-0000-0000-0000-000000000732")
+RECORD_ID = UUID("00000000-0000-0000-0000-000000000733")
+EXPECTED_GENERATION = 3
 
 
 def _build_app() -> FastAPI:
@@ -76,6 +78,153 @@ def _patch_preview_error(exc: Exception) -> tuple:
         new=AsyncMock(side_effect=exc),
     )
     return init_patch, method_patch
+
+
+def _patch_record_preview(result) -> tuple:
+    init_patch = patch.object(
+        reader_orchestration.SourceArtifactPreviewService,
+        "__init__",
+        return_value=None,
+    )
+    method_patch = patch.object(
+        reader_orchestration.SourceArtifactPreviewService,
+        "create_record_preview",
+        new=AsyncMock(return_value=result),
+    )
+    return init_patch, method_patch
+
+
+def _patch_record_preview_error(exc: Exception) -> tuple:
+    init_patch = patch.object(
+        reader_orchestration.SourceArtifactPreviewService,
+        "__init__",
+        return_value=None,
+    )
+    method_patch = patch.object(
+        reader_orchestration.SourceArtifactPreviewService,
+        "create_record_preview",
+        new=AsyncMock(side_effect=exc),
+    )
+    return init_patch, method_patch
+
+
+def test_record_preview_resolves_from_record_and_expected_generation() -> None:
+    app = _build_app()
+    result = SourceArtifactPreviewResult(
+        preview_url="https://fake-oss-signer.test/source.pdf?Signature=fake",
+        expires_at=NOW + timedelta(seconds=900),
+        content_type="application/pdf",
+        degraded=False,
+    )
+    init_patch, method_patch = _patch_record_preview(result)
+    with (
+        _mock_auth(),
+        init_patch,
+        method_patch as preview_mock,
+        TestClient(app) as client,
+    ):
+        response = client.get(
+            f"/reader/records/{RECORD_ID}/source-preview",
+            params={"expected_generation": EXPECTED_GENERATION},
+            headers=AUTH_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "preview_url": result.preview_url,
+        "expires_at": result.expires_at.isoformat().replace("+00:00", "Z"),
+        "content_type": "application/pdf",
+        "degraded": False,
+    }
+    preview_mock.assert_awaited_once_with(
+        record_id=RECORD_ID,
+        expected_generation=EXPECTED_GENERATION,
+        user_id=USER_ID,
+    )
+
+
+def test_record_preview_degrades_without_storage_fields() -> None:
+    app = _build_app()
+    result = SourceArtifactPreviewResult(
+        preview_url=None,
+        expires_at=None,
+        content_type="application/pdf",
+        degraded=True,
+    )
+    init_patch, method_patch = _patch_record_preview(result)
+    with (
+        _mock_auth(),
+        init_patch,
+        method_patch,
+        TestClient(app) as client,
+    ):
+        response = client.get(
+            f"/reader/records/{RECORD_ID}/source-preview",
+            params={"expected_generation": EXPECTED_GENERATION},
+            headers=AUTH_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "preview_url": None,
+        "expires_at": None,
+        "content_type": "application/pdf",
+        "degraded": True,
+    }
+
+
+def test_record_preview_collapses_all_resolution_denials() -> None:
+    app = _build_app()
+    init_patch, method_patch = _patch_record_preview_error(
+        SourceArtifactPreviewNotFoundError("hidden reason")
+    )
+    with (
+        _mock_auth(),
+        init_patch,
+        method_patch,
+        TestClient(app) as client,
+    ):
+        response = client.get(
+            f"/reader/records/{RECORD_ID}/source-preview",
+            params={"expected_generation": EXPECTED_GENERATION},
+            headers=AUTH_HEADERS,
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Source artifact not found"}
+
+
+def test_record_preview_requires_positive_expected_generation() -> None:
+    app = _build_app()
+    result = SourceArtifactPreviewResult(None, None, None, True)
+    init_patch, method_patch = _patch_record_preview(result)
+    with (
+        _mock_auth(),
+        init_patch,
+        method_patch as preview_mock,
+        TestClient(app) as client,
+    ):
+        responses = [
+            client.get(
+                f"/reader/records/{RECORD_ID}/source-preview",
+                headers=AUTH_HEADERS,
+            ),
+            client.get(
+                f"/reader/records/{RECORD_ID}/source-preview",
+                params={"expected_generation": 0},
+                headers=AUTH_HEADERS,
+            ),
+            client.get(
+                f"/reader/records/{RECORD_ID}/source-preview",
+                params={"expected_generation": "not-an-integer"},
+                headers=AUTH_HEADERS,
+            ),
+        ]
+
+    assert [response.status_code for response in responses] == [422, 422, 422]
+    preview_mock.assert_not_awaited()
 
 
 def test_preview_returns_short_lived_url_without_storage_fields() -> None:

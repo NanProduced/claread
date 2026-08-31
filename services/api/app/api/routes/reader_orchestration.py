@@ -788,6 +788,38 @@ async def get_reader_source_artifact_pipeline_status(
 
 
 @router.get(
+    "/records/{record_id}/source-preview",
+    response_model=ReaderSourceArtifactPreviewResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {"description": "Collapsed source preview denial (no state leak)."},
+    },
+    summary="Owner-scoped source preview resolved from persisted record lineage",
+)
+async def get_reader_record_source_preview(
+    record_id: UUID,
+    current_user: AuthUserDep,
+    expected_generation: int = Query(..., ge=1),
+) -> ReaderSourceArtifactPreviewResponse:
+    service = SourceArtifactPreviewService()
+    try:
+        result = await service.create_record_preview(
+            record_id=record_id,
+            expected_generation=expected_generation,
+            user_id=UUID(current_user.user_id),
+        )
+    except SourceArtifactPreviewNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Source artifact not found") from exc
+
+    return ReaderSourceArtifactPreviewResponse(
+        preview_url=result.preview_url,
+        expires_at=result.expires_at,
+        content_type=result.content_type,
+        degraded=result.degraded,
+    )
+
+
+@router.get(
     "/source-artifacts/{artifact_id}/preview",
     response_model=ReaderSourceArtifactPreviewResponse,
     responses={

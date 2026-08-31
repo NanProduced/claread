@@ -113,6 +113,59 @@ class SourceArtifactPreviewService:
             raise RuntimeError("database pool is not initialized")
         return DB_POOL
 
+    async def create_record_preview(
+        self,
+        *,
+        record_id: UUID,
+        expected_generation: int,
+        user_id: UUID,
+    ) -> SourceArtifactPreviewResult:
+        """Resolve the persisted original upload lineage, then preview it."""
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                artifact_id = await conn.fetchval(
+                    """
+                    SELECT artifact.id
+                    FROM reading_records AS record
+                    JOIN confirmed_source_documents AS confirmed
+                      ON confirmed.reading_record_id = record.id
+                     AND confirmed.user_id = record.user_id
+                     AND confirmed.record_generation = record.generation
+                     AND confirmed.status = 'draft'
+                    JOIN original_inputs AS original_input
+                      ON original_input.id = confirmed.original_input_id
+                     AND original_input.reading_record_id = record.id
+                     AND original_input.user_id = record.user_id
+                    JOIN source_artifacts AS artifact
+                      ON artifact.id::text =
+                         original_input.source_ref_json ->> 'artifact_id'
+                     AND artifact.reading_record_id = record.id
+                     AND artifact.original_input_id = original_input.id
+                     AND artifact.user_id = record.user_id
+                     AND artifact.artifact_kind = 'original_upload'
+                    WHERE record.id = $1
+                      AND record.user_id = $2
+                      AND record.deleted_at IS NULL
+                      AND record.lifecycle_status = 'active'
+                      AND record.generation = $3
+                      AND record.product_state IN (
+                          'processing',
+                          'needs_confirmation',
+                          'action_required'
+                      )
+                    """,
+                    record_id,
+                    user_id,
+                    expected_generation,
+                )
+        if artifact_id is None:
+            raise SourceArtifactPreviewNotFoundError("source artifact not found")
+        return await self.create_preview(
+            artifact_id=artifact_id,
+            user_id=user_id,
+        )
+
     async def create_preview(
         self,
         *,
