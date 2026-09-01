@@ -55,6 +55,21 @@ async def lookup_email_account(email: str) -> EmailCredentialLookup | None:
     )
 
 
+async def _upsert_password_credential(conn: Any, user_id: UUID, password_hash: str) -> None:
+    await conn.execute(
+        """
+        INSERT INTO user_password_credentials
+            (user_id, password_hash, password_changed_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id) DO UPDATE
+        SET password_hash = EXCLUDED.password_hash,
+            password_changed_at = NOW()
+        """,
+        user_id,
+        password_hash,
+    )
+
+
 async def set_email_password(user_id: UUID, raw_password: str) -> None:
     pool = db_connection.DB_POOL
     if pool is None:
@@ -62,18 +77,27 @@ async def set_email_password(user_id: UUID, raw_password: str) -> None:
 
     password_hash = hash_password(raw_password)
     async with pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO user_password_credentials
-                (user_id, password_hash, password_changed_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (user_id) DO UPDATE
-            SET password_hash = EXCLUDED.password_hash,
-                password_changed_at = NOW()
-            """,
-            user_id,
-            password_hash,
-        )
+        await _upsert_password_credential(conn, user_id, password_hash)
+
+
+async def reset_email_password_and_revoke_sessions(user_id: UUID, raw_password: str) -> None:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    password_hash = hash_password(raw_password)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _upsert_password_credential(conn, user_id, password_hash)
+            await conn.fetch(
+                """
+                UPDATE user_sessions
+                SET status = 'revoked', revoked_at = NOW()
+                WHERE user_id = $1 AND status = 'active'
+                RETURNING id
+                """,
+                user_id,
+            )
 
 
 async def verify_email_password(user_id: UUID, raw_password: str) -> PasswordVerification:

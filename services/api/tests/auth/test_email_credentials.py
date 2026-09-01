@@ -11,6 +11,7 @@ from app.services.auth.email_credentials import (
     EmailCredentialLookup,
     get_or_create_user_by_verified_email,
     lookup_email_account,
+    reset_email_password_and_revoke_sessions,
     set_email_password,
     verify_email_password,
 )
@@ -243,3 +244,90 @@ async def test_all_database_operations_fail_closed_without_pool() -> None:
             await set_email_password(USER_ID, RAW_PASSWORD)
         with pytest.raises(RuntimeError, match="Database pool not initialized"):
             await verify_email_password(USER_ID, RAW_PASSWORD)
+        with pytest.raises(RuntimeError, match="Database pool not initialized"):
+            await reset_email_password_and_revoke_sessions(USER_ID, RAW_PASSWORD)
+
+
+class _RecordingTransaction:
+    def __init__(self, events: list[object]) -> None:
+        self._events = events
+
+    async def __aenter__(self) -> _RecordingTransaction:
+        self._events.append("begin")
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._events.append("commit" if exc_type is None else "rollback")
+
+
+class _RecordingConnection:
+    def __init__(self, events: list[object], *, fail_on_revoke: bool = False) -> None:
+        self._events = events
+        self._fail_on_revoke = fail_on_revoke
+        self.execute = AsyncMock(side_effect=self._execute)
+        self.fetch = AsyncMock(side_effect=self._fetch)
+
+    def transaction(self) -> _RecordingTransaction:
+        return _RecordingTransaction(self._events)
+
+    async def _execute(self, query: str, *args: object) -> str:
+        self._events.append(("execute", query, args))
+        return "INSERT 0 1"
+
+    async def _fetch(self, query: str, *args: object) -> list[object]:
+        self._events.append(("fetch", query, args))
+        if self._fail_on_revoke:
+            raise RuntimeError("session revoke failed")
+        return []
+
+
+async def test_reset_password_and_revoke_sessions_share_one_transaction() -> None:
+    events: list[object] = []
+    conn = _RecordingConnection(events)
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = conn
+    hasher = Mock(return_value=PASSWORD_HASH)
+
+    with (
+        patch("app.services.auth.email_credentials.db_connection.DB_POOL", pool),
+        patch("app.services.auth.email_credentials.hash_password", hasher),
+    ):
+        await reset_email_password_and_revoke_sessions(USER_ID, RAW_PASSWORD)
+
+    assert events[0] == "begin"
+    assert events[-1] == "commit"
+    assert events[1][0] == "execute"
+    assert events[2][0] == "fetch"
+    execute_query = events[1][1]
+    revoke_query = events[2][1]
+    assert "INSERT INTO user_password_credentials" in execute_query
+    assert "password_changed_at = NOW()" in execute_query
+    assert "updated_at" not in execute_query.lower()
+    assert "UPDATE user_sessions" in revoke_query
+    assert "status = 'revoked'" in revoke_query
+    assert "WHERE user_id = $1 AND status = 'active'" in revoke_query
+    assert conn.execute.await_count == 1
+    assert conn.fetch.await_count == 1
+    assert RAW_PASSWORD not in repr(events)
+    hasher.assert_called_once_with(RAW_PASSWORD)
+
+
+async def test_reset_password_and_revoke_sessions_roll_back_on_revoke_failure() -> None:
+    events: list[object] = []
+    conn = _RecordingConnection(events, fail_on_revoke=True)
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = conn
+
+    with (
+        patch("app.services.auth.email_credentials.db_connection.DB_POOL", pool),
+        patch(
+            "app.services.auth.email_credentials.hash_password",
+            Mock(return_value=PASSWORD_HASH),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="session revoke failed"):
+            await reset_email_password_and_revoke_sessions(USER_ID, RAW_PASSWORD)
+
+    assert events[0] == "begin"
+    assert events[-1] == "rollback"
+    assert "commit" not in events
