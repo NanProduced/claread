@@ -42,6 +42,12 @@ dependencies = [
     # candidate / gate can import markdown_source_parser without a dev extra.
     "markdown-it-py>=3.0.0,<4.0.0",
     "mdit-py-plugins>=0.4.0,<1.0.0",
+    # AUTH-F2A: email auth primitives. email-validator previously entered the
+    # graph only transitively (pydantic[email] via pydantic-ai); auth code now
+    # imports it directly, so it is promoted to a direct dependency.
+    "email-validator>=2.3.0,<3.0.0",
+    # AUTH-F2A: Argon2id password hashing.
+    "argon2-cffi>=23.1.0,<26.0.0",
 ]
 
 # OSS-backed artifact IO (AliyunOssObjectReader / AliyunOssPresigner).
