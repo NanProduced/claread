@@ -50,6 +50,8 @@ def _validate_email_auth_preflight(settings: Settings) -> None:
         raise RuntimeError("Email auth HMAC secret is not configured securely") from None
     if len(secret_bytes) < 32:
         raise RuntimeError("Email auth HMAC secret is not configured securely")
+    if not settings.resend_api_key.get_secret_value().strip():
+        raise RuntimeError("Email auth Resend API key is not configured")
 
 
 async def _warm_dict_cache() -> None:

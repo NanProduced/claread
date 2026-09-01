@@ -25,6 +25,7 @@ pytestmark = [
 SECRET_DSN_TOKEN = "super-secret-dsn-token"
 LEAKY_REDIS_URL = f"redis://leaky-user:{SECRET_DSN_TOKEN}@203.0.113.10:6379/3"
 VALID_HMAC_SECRET = SecretStr("s" * 32)
+VALID_RESEND_API_KEY = SecretStr("re_test_" + "k" * 32)
 
 
 class FakeRedis:
@@ -78,6 +79,9 @@ def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAIL_AUTH_IP_HOURLY_LIMIT", raising=False)
     monkeypatch.delenv("REDIS_ENABLED", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("RESEND_FROM", raising=False)
+    monkeypatch.delenv("RESEND_REPLY_TO", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +104,9 @@ def test_email_auth_disabled_by_default(isolate_settings_env: None) -> None:
     assert settings.email_auth_email_cooldown_seconds == 60
     assert settings.email_auth_email_hourly_limit == 5
     assert settings.email_auth_ip_hourly_limit == 30
+    assert settings.resend_api_key.get_secret_value() == ""
+    assert settings.resend_from == "Claread <login@auth.claread.com>"
+    assert settings.resend_reply_to == ""
 
 
 def test_email_auth_hmac_secret_is_masked_in_settings_repr(isolate_settings_env: None) -> None:
@@ -112,12 +119,20 @@ def test_email_auth_hmac_secret_is_masked_in_settings_repr(isolate_settings_env:
     assert raw_secret not in repr(settings)
 
 
+def test_resend_api_key_is_masked_in_settings_repr(isolate_settings_env: None) -> None:
+    raw_secret = "re_test_masked-secret"
+    settings = Settings(_env_file=None, resend_api_key=SecretStr(raw_secret))
+
+    assert raw_secret not in repr(settings)
+
+
 def _startup_settings(
     *,
     email_auth_enabled: bool,
     redis_enabled: bool,
     redis_url: str = LEAKY_REDIS_URL,
     email_auth_code_hmac_secret: SecretStr = VALID_HMAC_SECRET,
+    resend_api_key: SecretStr = VALID_RESEND_API_KEY,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         database_url="postgresql://claread:unused@127.0.0.1:5432/claread",
@@ -129,6 +144,7 @@ def _startup_settings(
         redis_enabled=redis_enabled,
         email_auth_enabled=email_auth_enabled,
         email_auth_code_hmac_secret=email_auth_code_hmac_secret,
+        resend_api_key=resend_api_key,
         grammar_rag_enabled=False,
         langsmith_enabled=False,
     )
@@ -220,6 +236,27 @@ async def test_email_auth_on_rejects_unsafe_hmac_secret_before_stores(
     if secret_value:
         assert secret_value not in _exception_text(caught.value)
         assert secret_value not in _log_text(caplog)
+
+
+async def test_email_auth_on_without_resend_key_fails_before_stores(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _startup_settings(
+        email_auth_enabled=True,
+        redis_enabled=True,
+        resend_api_key=SecretStr(""),
+    )
+    state = _patch_lifespan_stores(monkeypatch, settings)
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(RuntimeError, match="Email auth Resend API key is not configured"):
+        await _enter_lifespan(state)
+
+    assert state["yielded"] is False
+    assert state["opened"] == []
+    assert state["closed"] == []
+    assert VALID_RESEND_API_KEY.get_secret_value() not in _log_text(caplog)
 
 
 async def test_email_auth_off_allows_disabled_redis(
