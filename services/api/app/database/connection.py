@@ -2,7 +2,7 @@
 PostgreSQL 连接池和 Redis 连接管理。
 
 使用 asyncpg 实现 PostgreSQL async 连接池（与 FastAPI 异步模型匹配）。
-Redis 作为可选增强，通过 redis_enabled 标志控制。
+Redis 默认可选；required=True（邮箱认证启用）时启动探测失败则抛错，且不记录 DSN。
 """
 
 from __future__ import annotations
@@ -113,37 +113,57 @@ async def is_db_ready() -> bool:
         return False
 
 
-async def init_redis(redis_url: str, enabled: bool) -> redis.Redis | None:
+async def init_redis(
+    redis_url: str,
+    enabled: bool,
+    *,
+    required: bool = False,
+) -> redis.Redis | None:
     """
-    初始化 Redis 连接（可选）。
+    初始化 Redis 连接。
 
     Args:
-        redis_url: Redis DSN
+        redis_url: Redis DSN（不得写入日志或异常消息）
         enabled:   是否启用，False 时跳过连接
+        required:  True 时禁用或探测失败必须抛错，不得继续启动
 
     Returns:
         redis.Redis 实例或 None
     """
     global RedisPool
     if not enabled:
+        if required:
+            raise RuntimeError("Redis is required but disabled")
         logger.info("Redis disabled, skipping connection")
         return None
 
+    client: redis.Redis | None = None
     try:
         import redis.asyncio as redis
 
-        RedisPool = redis.from_url(  # type: ignore[no-untyped-call]
+        client = redis.from_url(  # type: ignore[no-untyped-call]
             redis_url,
             decode_responses=True,
             socket_connect_timeout=5,
         )
-        # 探测连接
-        await RedisPool.ping()
+        await client.ping()
+        RedisPool = client
         logger.info("Redis connection established")
         return RedisPool
     except Exception as e:
-        logger.warning("Redis connection failed (非阻塞，继续启动): %s", e)
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
         RedisPool = None
+        if required:
+            logger.error("Redis startup probe failed: %s", type(e).__name__)
+            raise RuntimeError("Redis startup probe failed") from None
+        logger.warning(
+            "Redis connection failed (非阻塞，继续启动): %s",
+            type(e).__name__,
+        )
         return None
 
 

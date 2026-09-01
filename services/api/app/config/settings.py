@@ -113,9 +113,10 @@ class Settings(BaseSettings):
     database_pool_timeout: int = 30
     database_max_inactive_connection_lifetime: int = 3600
 
-    # Redis（可选，第二阶段增强）
+    # Redis（可选缓存；email_auth_enabled 时升级为启动必需依赖）
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_enabled: bool = False
+    email_auth_enabled: bool = False
 
     # 微信认证
     wechat_app_id: str = ""

@@ -65,7 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     应用生命周期管理上下文管理器。
 
-    启动时：初始化 PostgreSQL 连接池（必选）、Redis 连接（可选）
+    启动时：初始化 PostgreSQL 连接池（必选）、Redis 连接（默认可选）。
+    邮箱认证启用时 Redis 为必需依赖：配置矛盾或探测失败则在 yield 前 fail closed，
+    并关闭本次已打开的 DB/Redis 资源。
     关闭时：清理所有连接池
     """
     settings = get_settings()
@@ -84,8 +86,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("Failed to initialize PostgreSQL pool: %s", e)
         raise
 
-    # 2. 初始化 Redis（可选，第二阶段增强）
-    await init_redis(redis_url=settings.redis_url, enabled=settings.redis_enabled)
+    # 2. Redis：默认可选；email_auth_enabled 时必需且探测必须成功
+    try:
+        await init_redis(
+            redis_url=settings.redis_url,
+            enabled=settings.redis_enabled,
+            required=settings.email_auth_enabled,
+        )
+    except BaseException:
+        await close_redis()
+        await close_db()
+        raise
 
     # 2.5 初始化 Zilliz（可选，Grammar RAG 依赖）
     if settings.grammar_rag_enabled:
