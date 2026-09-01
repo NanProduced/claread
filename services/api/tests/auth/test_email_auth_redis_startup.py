@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from app.config.settings import Settings
 from app.database import connection as db_connection
@@ -23,6 +24,7 @@ pytestmark = [
 
 SECRET_DSN_TOKEN = "super-secret-dsn-token"
 LEAKY_REDIS_URL = f"redis://leaky-user:{SECRET_DSN_TOKEN}@203.0.113.10:6379/3"
+VALID_HMAC_SECRET = SecretStr("s" * 32)
 
 
 class FakeRedis:
@@ -70,6 +72,10 @@ def _assert_no_redis_secrets(text: str) -> None:
 @pytest.fixture
 def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAIL_AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_CODE_HMAC_SECRET", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_EMAIL_COOLDOWN_SECONDS", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_EMAIL_HOURLY_LIMIT", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_IP_HOURLY_LIMIT", raising=False)
     monkeypatch.delenv("REDIS_ENABLED", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
 
@@ -90,6 +96,20 @@ def restore_redis_pool() -> Iterator[None]:
 def test_email_auth_disabled_by_default(isolate_settings_env: None) -> None:
     settings = Settings(_env_file=None)
     assert settings.email_auth_enabled is False
+    assert settings.email_auth_code_hmac_secret.get_secret_value() == ""
+    assert settings.email_auth_email_cooldown_seconds == 60
+    assert settings.email_auth_email_hourly_limit == 5
+    assert settings.email_auth_ip_hourly_limit == 30
+
+
+def test_email_auth_hmac_secret_is_masked_in_settings_repr(isolate_settings_env: None) -> None:
+    raw_secret = "masked-secret-with-at-least-thirty-two-bytes"
+    settings = Settings(
+        _env_file=None,
+        email_auth_code_hmac_secret=SecretStr(raw_secret),
+    )
+
+    assert raw_secret not in repr(settings)
 
 
 def _startup_settings(
@@ -97,6 +117,7 @@ def _startup_settings(
     email_auth_enabled: bool,
     redis_enabled: bool,
     redis_url: str = LEAKY_REDIS_URL,
+    email_auth_code_hmac_secret: SecretStr = VALID_HMAC_SECRET,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         database_url="postgresql://claread:unused@127.0.0.1:5432/claread",
@@ -107,6 +128,7 @@ def _startup_settings(
         redis_url=redis_url,
         redis_enabled=redis_enabled,
         email_auth_enabled=email_auth_enabled,
+        email_auth_code_hmac_secret=email_auth_code_hmac_secret,
         grammar_rag_enabled=False,
         langsmith_enabled=False,
     )
@@ -169,6 +191,35 @@ async def _enter_lifespan(state: dict[str, object]) -> None:
         state["yielded"] = True
         state["closed_at_yield"] = list(state["closed"])  # type: ignore[arg-type]
         state["redis_at_yield"] = db_connection.RedisPool
+
+
+@pytest.mark.parametrize("secret", [SecretStr(""), SecretStr("s" * 31)])
+async def test_email_auth_on_rejects_unsafe_hmac_secret_before_stores(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    secret: SecretStr,
+) -> None:
+    settings = _startup_settings(
+        email_auth_enabled=True,
+        redis_enabled=True,
+        email_auth_code_hmac_secret=secret,
+    )
+    state = _patch_lifespan_stores(monkeypatch, settings)
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Email auth HMAC secret is not configured securely",
+    ) as caught:
+        await _enter_lifespan(state)
+
+    assert state["yielded"] is False
+    assert state["opened"] == []
+    assert state["closed"] == []
+    secret_value = secret.get_secret_value()
+    if secret_value:
+        assert secret_value not in _exception_text(caught.value)
+        assert secret_value not in _log_text(caplog)
 
 
 async def test_email_auth_off_allows_disabled_redis(

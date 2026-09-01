@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
@@ -117,6 +118,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_enabled: bool = False
     email_auth_enabled: bool = False
+    email_auth_code_hmac_secret: SecretStr = SecretStr("")
+    email_auth_email_cooldown_seconds: int = Field(default=60, gt=0)
+    email_auth_email_hourly_limit: int = Field(default=5, gt=0)
+    email_auth_ip_hourly_limit: int = Field(default=30, gt=0)
 
     # 微信认证
     wechat_app_id: str = ""

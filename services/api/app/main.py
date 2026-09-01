@@ -41,6 +41,17 @@ _WARMUP_WORDS = [
 ]
 
 
+def _validate_email_auth_preflight(settings: Settings) -> None:
+    if not settings.email_auth_enabled:
+        return
+    try:
+        secret_bytes = settings.email_auth_code_hmac_secret.get_secret_value().encode("utf-8")
+    except UnicodeEncodeError:
+        raise RuntimeError("Email auth HMAC secret is not configured securely") from None
+    if len(secret_bytes) < 32:
+        raise RuntimeError("Email auth HMAC secret is not configured securely")
+
+
 async def _warm_dict_cache() -> None:
     from app.services.dictionary import cache as dict_cache
     from app.services.dictionary.db_pg import fetch_entry, lookup_candidates_batch
@@ -71,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     关闭时：清理所有连接池
     """
     settings = get_settings()
+    _validate_email_auth_preflight(settings)
 
     # 1. 初始化 PostgreSQL（必选）
     try:
@@ -216,9 +228,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.url.path,
             exc.detail,
         )
-        content: dict = {"detail": exc.detail}
+        content: dict[str, object] = {"detail": exc.detail}
         if hasattr(exc, "error_code"):
-            content["error"] = exc.error_code  # type: ignore[attr-defined]
+            content["error"] = exc.error_code
         return JSONResponse(
             status_code=exc.status_code,
             content=content,
