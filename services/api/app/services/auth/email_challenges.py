@@ -16,8 +16,11 @@ from app.config.settings import Settings
 from app.services.auth.email_address import normalize_email_address
 
 Purpose = Literal["register", "password_reset"]
+AuthAttemptFlow = Literal["login", "register", "password_reset"]
+AuthAttemptSubjectKind = Literal["email", "ticket"]
 
 _PURPOSES = frozenset({"register", "password_reset"})
+_AUTH_ATTEMPT_FLOWS = frozenset({"login", "register", "password_reset"})
 _RATE_LIMIT_CODES = frozenset({"email_cooldown", "email_hourly_limit", "ip_hourly_limit"})
 _CHALLENGE_TTL_SECONDS = 10 * 60
 _TICKET_TTL_SECONDS = 15 * 60
@@ -123,6 +126,45 @@ redis.call('DEL', KEYS[1])
 return {'ok', email}
 """
 
+_AUTH_ATTEMPT_LUA = """-- email-auth:attempt-limit:v1
+local now_parts = redis.call('TIME')
+local now = tonumber(now_parts[1]) + tonumber(now_parts[2]) / 1000000
+local window = tonumber(ARGV[1])
+local cutoff = now - window
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff)
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', cutoff)
+
+local retry_after = 0
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+    local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+    retry_after = math.max(
+        retry_after,
+        math.ceil(tonumber(oldest[2]) + window - now)
+    )
+end
+if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) then
+    local oldest = redis.call('ZRANGE', KEYS[2], 0, 0, 'WITHSCORES')
+    retry_after = math.max(
+        retry_after,
+        math.ceil(tonumber(oldest[2]) + window - now)
+    )
+end
+if retry_after > 0 then
+    return {'rate_limited', tostring(math.max(1, retry_after))}
+end
+
+redis.call('ZADD', KEYS[1], now, ARGV[4] .. ':subject')
+redis.call('ZADD', KEYS[2], now, ARGV[4] .. ':ip')
+redis.call('EXPIRE', KEYS[1], math.ceil(window))
+redis.call('EXPIRE', KEYS[2], math.ceil(window))
+return {'ok'}
+"""
+
+_CLEAR_LOGIN_ATTEMPTS_LUA = """-- email-auth:clear-login-attempts:v1
+redis.call('DEL', KEYS[1])
+return {'ok'}
+"""
+
 
 class EmailAuthStateError(RuntimeError):
     """Stable, non-sensitive email-auth state-machine failure."""
@@ -159,6 +201,9 @@ class EmailAuthChallengeService:
         self._email_cooldown_seconds = settings.email_auth_email_cooldown_seconds
         self._email_hourly_limit = settings.email_auth_email_hourly_limit
         self._ip_hourly_limit = settings.email_auth_ip_hourly_limit
+        self._attempt_window_seconds = settings.email_auth_attempt_window_seconds
+        self._attempt_limit = settings.email_auth_attempt_limit
+        self._ip_attempt_limit = settings.email_auth_ip_attempt_limit
 
     async def create_challenge(
         self,
@@ -291,6 +336,62 @@ class EmailAuthChallengeService:
         if status != "ok" or len(response) != 2:
             raise EmailAuthStateError("backend_unavailable")
         return self._text(response[1])
+
+    async def check_auth_attempt(
+        self,
+        *,
+        subject: str,
+        subject_kind: AuthAttemptSubjectKind,
+        flow: AuthAttemptFlow,
+        client_ip: str,
+    ) -> None:
+        if flow not in _AUTH_ATTEMPT_FLOWS:
+            raise EmailAuthStateError("invalid_purpose")
+        if subject_kind == "email":
+            subject_value = normalize_email_address(subject)
+            subject_digest = self._digest("auth-attempt-email", subject_value)
+        elif subject_kind == "ticket":
+            subject_digest = self._digest("auth-attempt-ticket", flow, subject)
+        else:
+            raise EmailAuthStateError("invalid_purpose")
+        try:
+            normalized_ip = ip_address(client_ip).compressed
+        except ValueError:
+            raise EmailAuthStateError("invalid_client_ip") from None
+        ip_digest = self._digest("auth-attempt-ip", normalized_ip)
+        response = await self._eval(
+            _AUTH_ATTEMPT_LUA,
+            [
+                f"{_KEY_PREFIX}attempt:v1:{flow}:subject:{subject_digest}",
+                f"{_KEY_PREFIX}attempt:v1:{flow}:ip:{ip_digest}",
+            ],
+            [
+                self._attempt_window_seconds,
+                self._attempt_limit,
+                self._ip_attempt_limit,
+                secrets.token_hex(16),
+            ],
+        )
+        status = self._text(response[0]) if response else ""
+        if status == "rate_limited" and len(response) == 2:
+            try:
+                retry_after = max(1, int(self._text(response[1])))
+            except ValueError:
+                raise EmailAuthStateError("backend_unavailable") from None
+            raise EmailAuthStateError("auth_attempt_limit", retry_after=retry_after)
+        if status != "ok":
+            raise EmailAuthStateError("backend_unavailable")
+
+    async def clear_login_email_attempts(self, email: str) -> None:
+        normalized_email = normalize_email_address(email)
+        subject_digest = self._digest("auth-attempt-email", normalized_email)
+        response = await self._eval(
+            _CLEAR_LOGIN_ATTEMPTS_LUA,
+            [f"{_KEY_PREFIX}attempt:v1:login:subject:{subject_digest}"],
+            [],
+        )
+        if not response or self._text(response[0]) != "ok":
+            raise EmailAuthStateError("backend_unavailable")
 
     async def _hgetall(self, key: str) -> dict[str, str]:
         if self._redis is None:

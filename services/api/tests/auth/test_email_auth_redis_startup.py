@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import traceback
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -70,6 +71,30 @@ def _assert_no_redis_secrets(text: str) -> None:
     assert "203.0.113.10" not in text
 
 
+def test_env_example_contains_email_attempt_limit_defaults_once() -> None:
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+    names = {
+        "EMAIL_AUTH_ATTEMPT_WINDOW_SECONDS",
+        "EMAIL_AUTH_ATTEMPT_LIMIT",
+        "EMAIL_AUTH_IP_ATTEMPT_LIMIT",
+    }
+    expected = {
+        "EMAIL_AUTH_ATTEMPT_WINDOW_SECONDS=900",
+        "EMAIL_AUTH_ATTEMPT_LIMIT=5",
+        "EMAIL_AUTH_IP_ATTEMPT_LIMIT=30",
+    }
+    assignments = [
+        line.strip()
+        for line in env_example.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and line.split("=", 1)[0] in names
+    ]
+
+    assert set(assignments) == expected
+    assert len(assignments) == len(expected)
+
+
 @pytest.fixture
 def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAIL_AUTH_ENABLED", raising=False)
@@ -77,6 +102,9 @@ def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAIL_AUTH_EMAIL_COOLDOWN_SECONDS", raising=False)
     monkeypatch.delenv("EMAIL_AUTH_EMAIL_HOURLY_LIMIT", raising=False)
     monkeypatch.delenv("EMAIL_AUTH_IP_HOURLY_LIMIT", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_ATTEMPT_WINDOW_SECONDS", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_ATTEMPT_LIMIT", raising=False)
+    monkeypatch.delenv("EMAIL_AUTH_IP_ATTEMPT_LIMIT", raising=False)
     monkeypatch.delenv("REDIS_ENABLED", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
@@ -104,6 +132,9 @@ def test_email_auth_disabled_by_default(isolate_settings_env: None) -> None:
     assert settings.email_auth_email_cooldown_seconds == 60
     assert settings.email_auth_email_hourly_limit == 5
     assert settings.email_auth_ip_hourly_limit == 30
+    assert settings.email_auth_attempt_window_seconds == 900
+    assert settings.email_auth_attempt_limit == 5
+    assert settings.email_auth_ip_attempt_limit == 30
     assert settings.resend_api_key.get_secret_value() == ""
     assert settings.resend_from == "Claread <login@auth.claread.com>"
     assert settings.resend_reply_to == ""

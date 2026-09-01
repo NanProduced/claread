@@ -13,7 +13,11 @@ from app.services.auth.email_auth import (
     EmailAuthService,
     EmailResetRequestResult,
 )
-from app.services.auth.email_challenges import ChallengeCreated, TicketIssued
+from app.services.auth.email_challenges import (
+    ChallengeCreated,
+    EmailAuthStateError,
+    TicketIssued,
+)
 from app.services.auth.email_credentials import EmailCredentialLookup
 from app.services.auth.identity import IdentityLookupResult
 from app.services.auth.passwords import PasswordVerification
@@ -187,6 +191,15 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
         events.append("safety")
         return safety_result
 
+    async def check_attempt(**kwargs: object) -> None:
+        assert kwargs == {
+            "subject": "T" * 43,
+            "subject_kind": "ticket",
+            "flow": "register",
+            "client_ip": "198.51.100.7",
+        }
+        events.append("limit")
+
     async def consume_ticket(ticket: str, *, expected_purpose: str) -> str:
         assert ticket == "T" * 43
         assert expected_purpose == "register"
@@ -205,6 +218,7 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
 
     expires_at = datetime(2030, 1, 1, tzinfo=UTC)
     create_session = AsyncMock(return_value=("session-token", expires_at))
+    challenges.check_auth_attempt.side_effect = check_attempt
 
     with (
         patch("app.services.auth.email_auth.evaluate_password_safety", safety_check),
@@ -220,7 +234,7 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
         )
 
     assert result == ("session-token", expires_at)
-    assert events == ["safety", "consume", "identity", "password"]
+    assert events == ["limit", "safety", "consume", "identity", "password"]
     create_session.assert_awaited_once_with(
         USER_ID,
         provider="email",
@@ -228,6 +242,133 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
         client_platform="web",
         ip_address="198.51.100.7",
     )
+
+
+async def test_password_login_limits_before_verification_and_clears_email_bucket() -> None:
+    challenges = _challenge_service()
+    events: list[str] = []
+
+    async def check_attempt(**kwargs: object) -> None:
+        assert kwargs == {
+            "subject": NORMALIZED_EMAIL,
+            "subject_kind": "email",
+            "flow": "login",
+            "client_ip": "198.51.100.7",
+        }
+        events.append("limit")
+
+    async def lookup(email: str) -> EmailCredentialLookup:
+        assert email == NORMALIZED_EMAIL
+        events.append("lookup")
+        return EmailCredentialLookup(user_id=USER_ID, has_password=True)
+
+    async def verify(user_id: UUID, raw_password: str) -> PasswordVerification:
+        assert user_id == USER_ID
+        assert raw_password == RAW_PASSWORD
+        events.append("verify")
+        return PasswordVerification(valid=True, needs_rehash=False)
+
+    async def clear_attempts(email: str) -> None:
+        assert email == NORMALIZED_EMAIL
+        events.append("clear")
+
+    expires_at = datetime(2030, 1, 1, tzinfo=UTC)
+
+    async def create_web_session(*args: object, **kwargs: object) -> tuple[str, datetime]:
+        assert args == (USER_ID,)
+        assert kwargs["ip_address"] == "198.51.100.7"
+        events.append("session")
+        return "session-token", expires_at
+
+    challenges.check_auth_attempt.side_effect = check_attempt
+    challenges.clear_login_email_attempts.side_effect = clear_attempts
+    with (
+        patch("app.services.auth.email_auth.lookup_email_account", lookup),
+        patch("app.services.auth.email_auth.verify_email_password", verify),
+        patch("app.services.auth.email_auth.create_session", create_web_session),
+    ):
+        result = await EmailAuthService(challenges).login_with_password(
+            email=EMAIL,
+            raw_password=RAW_PASSWORD,
+            client_ip="198.51.100.7",
+        )
+
+    assert result == ("session-token", expires_at)
+    assert events == ["limit", "lookup", "verify", "clear", "session"]
+
+
+async def test_login_attempt_limit_precedes_argon2_verification() -> None:
+    challenges = _challenge_service()
+    limit_error = EmailAuthStateError("auth_attempt_limit", retry_after=19)
+    challenges.check_auth_attempt.side_effect = limit_error
+    verifier = AsyncMock()
+
+    with (
+        patch(
+            "app.services.auth.email_auth.lookup_email_account",
+            AsyncMock(return_value=EmailCredentialLookup(user_id=USER_ID, has_password=True)),
+        ),
+        patch("app.services.auth.email_auth.verify_email_password", verifier),
+    ):
+        with pytest.raises(EmailAuthStateError) as caught:
+            await EmailAuthService(challenges).login_with_password(
+                email=EMAIL,
+                raw_password=RAW_PASSWORD,
+                client_ip="198.51.100.7",
+            )
+
+    assert caught.value.code == "auth_attempt_limit"
+    assert caught.value.retry_after == 19
+    verifier.assert_not_awaited()
+
+
+@pytest.mark.parametrize("method_name", ["register_with_ticket", "reset_with_ticket"])
+async def test_ticket_attempt_limit_precedes_hibp_for_fake_ticket(method_name: str) -> None:
+    challenges = _challenge_service()
+    limit_error = EmailAuthStateError("auth_attempt_limit", retry_after=23)
+    challenges.check_auth_attempt.side_effect = limit_error
+    safety_check = AsyncMock()
+
+    with patch("app.services.auth.email_auth.evaluate_password_safety", safety_check):
+        with pytest.raises(EmailAuthStateError) as caught:
+            await getattr(EmailAuthService(challenges), method_name)(
+                ticket="T" * 43,
+                raw_password=RAW_PASSWORD,
+                client_ip="198.51.100.7",
+            )
+
+    assert caught.value.code == "auth_attempt_limit"
+    assert caught.value.retry_after == 23
+    safety_check.assert_not_awaited()
+    challenges.consume_ticket.assert_not_awaited()
+
+
+@pytest.mark.parametrize("method_name", ["register_with_ticket", "reset_with_ticket"])
+async def test_repeated_fake_ticket_stops_before_a_third_hibp_check(method_name: str) -> None:
+    challenges = _challenge_service()
+    limit_error = EmailAuthStateError("auth_attempt_limit", retry_after=23)
+    challenges.check_auth_attempt.side_effect = [None, None, limit_error]
+    challenges.consume_ticket.side_effect = EmailAuthStateError("ticket_invalid_or_expired")
+    safety_check = AsyncMock(return_value="hibp_unavailable")
+
+    with patch("app.services.auth.email_auth.evaluate_password_safety", safety_check):
+        for _ in range(2):
+            with pytest.raises(EmailAuthStateError) as invalid_ticket:
+                await getattr(EmailAuthService(challenges), method_name)(
+                    ticket="T" * 43,
+                    raw_password=RAW_PASSWORD,
+                    client_ip="198.51.100.7",
+                )
+            assert invalid_ticket.value.code == "ticket_invalid_or_expired"
+        with pytest.raises(EmailAuthStateError) as limited:
+            await getattr(EmailAuthService(challenges), method_name)(
+                ticket="T" * 43,
+                raw_password=RAW_PASSWORD,
+                client_ip="198.51.100.7",
+            )
+
+    assert limited.value.code == "auth_attempt_limit"
+    assert safety_check.await_count == 2
 
 
 @pytest.mark.parametrize("safety_result", ["common", "compromised"])

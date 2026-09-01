@@ -100,6 +100,12 @@ class EmailAuthService:
         raw_password: str,
         client_ip: str | None = None,
     ) -> tuple[str, datetime]:
+        await self._challenges.check_auth_attempt(
+            subject=ticket,
+            subject_kind="ticket",
+            flow="register",
+            client_ip=client_ip or "",
+        )
         safety = await evaluate_password_safety(raw_password)
         if safety in ("common", "compromised"):
             raise EmailAuthError(safety)
@@ -131,6 +137,12 @@ class EmailAuthService:
         except InvalidEmailAddressError:
             raise EmailAuthError("invalid_credentials") from None
 
+        await self._challenges.check_auth_attempt(
+            subject=normalized_email,
+            subject_kind="email",
+            flow="login",
+            client_ip=client_ip or "",
+        )
         account = await lookup_email_account(normalized_email)
         if account is None or not account.has_password:
             raise EmailAuthError("invalid_credentials")
@@ -138,6 +150,7 @@ class EmailAuthService:
         verification = await verify_email_password(account.user_id, raw_password)
         if not verification.valid:
             raise EmailAuthError("invalid_credentials")
+        await self._challenges.clear_login_email_attempts(normalized_email)
         return await create_session(
             account.user_id,
             provider="email",
@@ -180,6 +193,12 @@ class EmailAuthService:
         raw_password: str,
         client_ip: str | None = None,
     ) -> tuple[str, datetime]:
+        await self._challenges.check_auth_attempt(
+            subject=ticket,
+            subject_kind="ticket",
+            flow="password_reset",
+            client_ip=client_ip or "",
+        )
         safety = await evaluate_password_safety(raw_password)
         if safety in ("common", "compromised"):
             raise EmailAuthError(safety)

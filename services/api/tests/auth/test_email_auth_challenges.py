@@ -75,6 +75,10 @@ class FakeRedis:
                 return self._verify_challenge(keys, args)
             if script.startswith("-- email-auth:consume-ticket:v1"):
                 return self._consume_ticket(keys, args)
+            if script.startswith("-- email-auth:attempt-limit:v1"):
+                return self._check_auth_attempt(keys, args)
+            if script.startswith("-- email-auth:clear-login-attempts:v1"):
+                return self._clear_login_email_attempts(keys, args)
             raise AssertionError("unexpected Lua script")
 
     async def hgetall(self, key: str) -> dict[str, str]:
@@ -222,6 +226,36 @@ class FakeRedis:
         self.hashes.pop(ticket_key, None)
         self.expires_at.pop(ticket_key, None)
         return ["ok", email]
+
+    def _check_auth_attempt(self, keys: list[str], args: list[str]) -> list[object]:
+        subject_key, ip_key = keys
+        window, subject_limit, ip_limit, member = args
+        window_seconds = float(window)
+        cutoff = self.now - window_seconds
+        for key in (subject_key, ip_key):
+            members = self.zsets.setdefault(key, {})
+            self.zsets[key] = {
+                value: score for value, score in members.items() if score > cutoff
+            }
+
+        retry_after = 0
+        for key, limit in ((subject_key, subject_limit), (ip_key, ip_limit)):
+            scores = sorted(self.zsets[key].values())
+            if scores and len(scores) >= int(limit):
+                retry_after = max(retry_after, math.ceil(scores[0] + window_seconds - self.now))
+        if retry_after:
+            return ["rate_limited", max(1, retry_after)]
+
+        self.zsets[subject_key][f"{member}:subject"] = self.now
+        self.zsets[ip_key][f"{member}:ip"] = self.now
+        self._expire((subject_key, ip_key), int(window_seconds))
+        return ["ok"]
+
+    def _clear_login_email_attempts(self, keys: list[str], args: list[str]) -> list[object]:
+        (subject_key,) = keys
+        self.zsets.pop(subject_key, None)
+        self.expires_at.pop(subject_key, None)
+        return ["ok"]
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -579,6 +613,200 @@ async def test_ip_hourly_limit_is_shared_across_deidentified_emails() -> None:
     )
 
 
+async def test_auth_attempt_limit_is_atomic_and_uses_deidentified_sliding_buckets() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(
+        redis,
+        _settings(
+            email_auth_attempt_window_seconds=60,
+            email_auth_attempt_limit=2,
+            email_auth_ip_attempt_limit=30,
+        ),
+    )
+
+    for _ in range(2):
+        await service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+
+    with pytest.raises(EmailAuthStateError) as limited:
+        await service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+
+    assert limited.value.code == "auth_attempt_limit"
+    assert limited.value.retry_after == 60
+    keys = redis.keys()
+    assert any(":attempt:v1:login:subject:" in key for key in keys)
+    assert any(":attempt:v1:login:ip:" in key for key in keys)
+    assert all(EMAIL not in key and IP_ADDRESS not in key for key in keys)
+    assert all("{email-auth}" in key for key in keys)
+
+    redis.advance(59)
+    with pytest.raises(EmailAuthStateError) as almost_ready:
+        await service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+    assert almost_ready.value.retry_after == 1
+    redis.advance(1)
+    await service.check_auth_attempt(
+        subject=EMAIL,
+        subject_kind="email",
+        flow="login",
+        client_ip=IP_ADDRESS,
+    )
+
+
+async def test_concurrent_auth_attempts_admit_only_the_configured_count() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(
+        redis,
+        _settings(
+            email_auth_attempt_window_seconds=60,
+            email_auth_attempt_limit=3,
+            email_auth_ip_attempt_limit=30,
+        ),
+    )
+
+    results = await asyncio.gather(
+        *(
+            service.check_auth_attempt(
+                subject=EMAIL,
+                subject_kind="email",
+                flow="login",
+                client_ip=IP_ADDRESS,
+            )
+            for _ in range(10)
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(result is None for result in results) == 3
+    limited = [result for result in results if isinstance(result, EmailAuthStateError)]
+    assert len(limited) == 7
+    assert all(result.code == "auth_attempt_limit" for result in limited)
+    assert all(result.retry_after == 60 for result in limited)
+
+
+async def test_attempt_buckets_share_subject_across_ips_and_ip_across_subjects() -> None:
+    subject_redis = FakeRedis()
+    subject_service = EmailAuthChallengeService(
+        subject_redis,
+        _settings(email_auth_attempt_limit=2, email_auth_ip_attempt_limit=30),
+    )
+    for client_ip in ("198.51.100.1", "198.51.100.2"):
+        await subject_service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=client_ip,
+        )
+    with pytest.raises(EmailAuthStateError) as subject_limited:
+        await subject_service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip="198.51.100.3",
+        )
+    assert subject_limited.value.code == "auth_attempt_limit"
+
+    ip_redis = FakeRedis()
+    ip_service = EmailAuthChallengeService(
+        ip_redis,
+        _settings(email_auth_attempt_limit=30, email_auth_ip_attempt_limit=2),
+    )
+    for email in ("one@example.com", "two@example.com"):
+        await ip_service.check_auth_attempt(
+            subject=email,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+    with pytest.raises(EmailAuthStateError) as ip_limited:
+        await ip_service.check_auth_attempt(
+            subject="three@example.com",
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+    assert ip_limited.value.code == "auth_attempt_limit"
+
+
+async def test_successful_login_clear_removes_only_email_bucket() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(
+        redis,
+        _settings(email_auth_attempt_limit=30, email_auth_ip_attempt_limit=2),
+    )
+    await service.check_auth_attempt(
+        subject=EMAIL,
+        subject_kind="email",
+        flow="login",
+        client_ip=IP_ADDRESS,
+    )
+    await service.check_auth_attempt(
+        subject="other@example.com",
+        subject_kind="email",
+        flow="login",
+        client_ip=IP_ADDRESS,
+    )
+
+    await service.clear_login_email_attempts(EMAIL)
+
+    with pytest.raises(EmailAuthStateError) as ip_limited:
+        await service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+    assert ip_limited.value.code == "auth_attempt_limit"
+
+
+async def test_ticket_attempts_are_purpose_bound_and_fake_ticket_is_limited() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(
+        redis,
+        _settings(email_auth_attempt_limit=2, email_auth_ip_attempt_limit=30),
+    )
+    ticket = "T" * 43
+    for _ in range(2):
+        await service.check_auth_attempt(
+            subject=ticket,
+            subject_kind="ticket",
+            flow="register",
+            client_ip=IP_ADDRESS,
+        )
+    with pytest.raises(EmailAuthStateError) as limited:
+        await service.check_auth_attempt(
+            subject=ticket,
+            subject_kind="ticket",
+            flow="register",
+            client_ip=IP_ADDRESS,
+        )
+    assert limited.value.code == "auth_attempt_limit"
+    assert all(ticket not in key for key in redis.keys())
+
+
+def test_attempt_lua_uses_redis_time_and_declared_cluster_keys() -> None:
+    key_arguments = re.findall(
+        r"redis\.call\(\s*'[^']+'\s*,\s*([^,\)\r\n]+)",
+        email_challenges_module._AUTH_ATTEMPT_LUA,
+    )
+    assert "redis.call('TIME')" in email_challenges_module._AUTH_ATTEMPT_LUA
+    assert key_arguments
+    assert all(re.fullmatch(r"KEYS\[\d+\]", argument.strip()) for argument in key_arguments)
+
+
 async def test_missing_redis_fails_closed_for_every_public_transition() -> None:
     service = EmailAuthChallengeService(None, _settings())
 
@@ -590,12 +818,23 @@ async def test_missing_redis_fails_closed_for_every_public_transition() -> None:
         await service.verify_challenge(challenge_id="A" * 32, code=FIXED_CODE)
     with pytest.raises(EmailAuthStateError) as consume_error:
         await service.consume_ticket("B" * 43, expected_purpose="register")
+    with pytest.raises(EmailAuthStateError) as attempt_error:
+        await service.check_auth_attempt(
+            subject=EMAIL,
+            subject_kind="email",
+            flow="login",
+            client_ip=IP_ADDRESS,
+        )
+    with pytest.raises(EmailAuthStateError) as clear_error:
+        await service.clear_login_email_attempts(EMAIL)
 
     assert {
         create_error.value.code,
         discard_error.value.code,
         verify_error.value.code,
         consume_error.value.code,
+        attempt_error.value.code,
+        clear_error.value.code,
     } == {"backend_unavailable"}
 
 

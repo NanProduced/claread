@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     email_auth_email_cooldown_seconds: int = Field(default=60, gt=0)
     email_auth_email_hourly_limit: int = Field(default=5, gt=0)
     email_auth_ip_hourly_limit: int = Field(default=30, gt=0)
+    email_auth_attempt_window_seconds: int = Field(default=900, gt=0)
+    email_auth_attempt_limit: int = Field(default=5, gt=0)
+    email_auth_ip_attempt_limit: int = Field(default=30, gt=0)
 
     # 微信认证
     wechat_app_id: str = ""

@@ -35,7 +35,7 @@ from app.services.auth.passwords import InvalidPasswordError
 router = APIRouter(prefix="/auth/email", tags=["auth"])
 
 _RATE_LIMIT_CODES = frozenset(
-    {"email_cooldown", "email_hourly_limit", "ip_hourly_limit"}
+    {"auth_attempt_limit", "email_cooldown", "email_hourly_limit", "ip_hourly_limit"}
 )
 _INVALID_STATE_CODES = frozenset(
     {

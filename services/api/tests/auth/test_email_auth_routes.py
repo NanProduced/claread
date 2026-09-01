@@ -375,6 +375,15 @@ def test_email_domain_validation_stays_in_service_layer(
             "23",
         ),
         (
+            "login_with_password",
+            "/auth/email/password/login",
+            {"email": EMAIL, "password": "safe password"},
+            EmailAuthStateError("auth_attempt_limit", retry_after=17),
+            429,
+            {"code": "auth_attempt_limit", "retry_after": 17},
+            "17",
+        ),
+        (
             "verify_email_otp",
             "/auth/email/otp/verify",
             {"challenge_id": CHALLENGE_ID, "code": CODE},
