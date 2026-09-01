@@ -13,7 +13,7 @@
 -- 且 exam_tags 字段需额外脚本标注,因此重置时必须保留。
 -- eval_example_lab_entries 是受保护的 Example Lab 数据,同样保留。
 -- DATA-SCHEMA-BASELINE: DROP 清单与单一基线精确对齐
--- (49 张非保护表;无 legacy analysis / Eval 表残留)。
+-- (52 张非保护表;无 legacy analysis / Eval 表残留)。
 -- ============================================================
 
 BEGIN;
@@ -67,6 +67,7 @@ DROP TABLE IF EXISTS
   user_credit_accounts,
   user_credit_ledger,
   user_identities,
+  user_password_credentials,
   user_sessions,
   users,
   vocabulary_book

@@ -117,99 +117,12 @@ async def get_or_create_user_by_identity(
     app_id: str | None = None,
     auth_payload: dict[str, Any] | None = None,
 ) -> IdentityLookupResult:
-    """Find or create a Claread user by provider identity."""
-    if db_connection.DB_POOL is None:
-        raise RuntimeError("Database pool not initialized")
+    """Find or create a Claread user by provider identity.
 
-    identity_lock_key = _stable_lock_key(f"identity:{provider}:{provider_user_id}")
-    auth_payload_json = dict(auth_payload or {})
-
-    async with db_connection.DB_POOL.acquire() as conn:
-        if unionid:
-            await conn.execute(
-                "SELECT pg_advisory_xact_lock($1)",
-                _stable_lock_key(f"unionid:{unionid}"),
-            )
-        await conn.execute("SELECT pg_advisory_xact_lock($1)", identity_lock_key)
-
-        identity_user_id = await _find_identity_user_id(
-            conn,
-            provider=provider,
-            provider_user_id=provider_user_id,
-        )
-        if identity_user_id is not None:
-            await _ensure_unionid_available_for_user(
-                conn,
-                unionid=unionid,
-                user_id=identity_user_id,
-                provider=provider,
-                provider_user_id=provider_user_id,
-            )
-            await conn.execute(
-                """
-                UPDATE user_identities
-                SET unionid = COALESCE($3, unionid),
-                    app_id = COALESCE($4, app_id),
-                    auth_payload_json = $5
-                WHERE provider = $1 AND provider_user_id = $2
-                """,
-                provider,
-                    provider_user_id,
-                    unionid,
-                    app_id,
-                    jsonb_param(auth_payload_json),
-                )
-            return IdentityLookupResult(user_id=identity_user_id, created=False)
-
-        unionid_user_id = await _find_unionid_user_id(conn, unionid)
-        if unionid_user_id is not None:
-            await _insert_identity(
-                conn,
-                user_id=unionid_user_id,
-                provider=provider,
-                provider_user_id=provider_user_id,
-                unionid=unionid,
-                app_id=app_id,
-                auth_payload_json=auth_payload_json,
-            )
-            return IdentityLookupResult(user_id=unionid_user_id, created=False)
-
-        user_id: UUID = await conn.fetchval(
-            """
-            INSERT INTO users (display_name, metadata_json)
-            VALUES ($1, '{}'::jsonb)
-            RETURNING id
-            """,
-            _generate_default_display_name(),
-        )
-
-        await _insert_identity(
-            conn,
-            user_id=user_id,
-            provider=provider,
-            provider_user_id=provider_user_id,
-            unionid=unionid,
-            app_id=app_id,
-            auth_payload_json=auth_payload_json,
-        )
-
-        return IdentityLookupResult(user_id=user_id, created=True)
-
-
-async def bind_identity_to_user(
-    *,
-    user_id: UUID,
-    provider: str,
-    provider_user_id: str,
-    unionid: str | None = None,
-    app_id: str | None = None,
-    auth_payload: dict[str, Any] | None = None,
-) -> IdentityBindResult:
-    """Bind a provider identity to an existing Claread user.
-
-    Binding is idempotent for the same user and fails explicitly when the
-    identity belongs to another user. Asset merging is intentionally not done
-    here.
+    The advisory transaction locks, all lookups and all writes run inside
+    one explicit transaction, so a failure rolls back partially created
+    users or half-bound identities and concurrent registration of the
+    same identity can only produce one user.
     """
     if db_connection.DB_POOL is None:
         raise RuntimeError("Database pool not initialized")
@@ -218,24 +131,24 @@ async def bind_identity_to_user(
     auth_payload_json = dict(auth_payload or {})
 
     async with db_connection.DB_POOL.acquire() as conn:
-        if unionid:
-            await conn.execute(
-                "SELECT pg_advisory_xact_lock($1)",
-                _stable_lock_key(f"unionid:{unionid}"),
-            )
-        await conn.execute("SELECT pg_advisory_xact_lock($1)", identity_lock_key)
+        async with conn.transaction():
+            if unionid:
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock($1)",
+                    _stable_lock_key(f"unionid:{unionid}"),
+                )
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", identity_lock_key)
 
-        existing_user_id = await _find_identity_user_id(
-            conn,
-            provider=provider,
-            provider_user_id=provider_user_id,
-        )
-        if existing_user_id is not None:
-            if existing_user_id == user_id:
+            identity_user_id = await _find_identity_user_id(
+                conn,
+                provider=provider,
+                provider_user_id=provider_user_id,
+            )
+            if identity_user_id is not None:
                 await _ensure_unionid_available_for_user(
                     conn,
                     unionid=unionid,
-                    user_id=user_id,
+                    user_id=identity_user_id,
                     provider=provider,
                     provider_user_id=provider_user_id,
                 )
@@ -253,26 +166,122 @@ async def bind_identity_to_user(
                     app_id,
                     jsonb_param(auth_payload_json),
                 )
-                return "already_bound"
+                return IdentityLookupResult(user_id=identity_user_id, created=False)
 
-            raise IdentityConflictError(provider, provider_user_id, existing_user_id)
+            unionid_user_id = await _find_unionid_user_id(conn, unionid)
+            if unionid_user_id is not None:
+                await _insert_identity(
+                    conn,
+                    user_id=unionid_user_id,
+                    provider=provider,
+                    provider_user_id=provider_user_id,
+                    unionid=unionid,
+                    app_id=app_id,
+                    auth_payload_json=auth_payload_json,
+                )
+                return IdentityLookupResult(user_id=unionid_user_id, created=False)
 
-        await _ensure_unionid_available_for_user(
-            conn,
-            unionid=unionid,
-            user_id=user_id,
-            provider=provider,
-            provider_user_id=provider_user_id,
-        )
+            user_id: UUID = await conn.fetchval(
+                """
+                INSERT INTO users (display_name, metadata_json)
+                VALUES ($1, '{}'::jsonb)
+                RETURNING id
+                """,
+                _generate_default_display_name(),
+            )
 
-        await _insert_identity(
-            conn,
-            user_id=user_id,
-            provider=provider,
-            provider_user_id=provider_user_id,
-            unionid=unionid,
-            app_id=app_id,
-            auth_payload_json=auth_payload_json,
-        )
+            await _insert_identity(
+                conn,
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                unionid=unionid,
+                app_id=app_id,
+                auth_payload_json=auth_payload_json,
+            )
 
-        return "created"
+            return IdentityLookupResult(user_id=user_id, created=True)
+
+
+async def bind_identity_to_user(
+    *,
+    user_id: UUID,
+    provider: str,
+    provider_user_id: str,
+    unionid: str | None = None,
+    app_id: str | None = None,
+    auth_payload: dict[str, Any] | None = None,
+) -> IdentityBindResult:
+    """Bind a provider identity to an existing Claread user.
+
+    Binding is idempotent for the same user and fails explicitly when the
+    identity belongs to another user. Asset merging is intentionally not done
+    here. The advisory transaction locks, all lookups and all writes run
+    inside one explicit transaction.
+    """
+    if db_connection.DB_POOL is None:
+        raise RuntimeError("Database pool not initialized")
+
+    identity_lock_key = _stable_lock_key(f"identity:{provider}:{provider_user_id}")
+    auth_payload_json = dict(auth_payload or {})
+
+    async with db_connection.DB_POOL.acquire() as conn:
+        async with conn.transaction():
+            if unionid:
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock($1)",
+                    _stable_lock_key(f"unionid:{unionid}"),
+                )
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", identity_lock_key)
+
+            existing_user_id = await _find_identity_user_id(
+                conn,
+                provider=provider,
+                provider_user_id=provider_user_id,
+            )
+            if existing_user_id is not None:
+                if existing_user_id == user_id:
+                    await _ensure_unionid_available_for_user(
+                        conn,
+                        unionid=unionid,
+                        user_id=user_id,
+                        provider=provider,
+                        provider_user_id=provider_user_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE user_identities
+                        SET unionid = COALESCE($3, unionid),
+                            app_id = COALESCE($4, app_id),
+                            auth_payload_json = $5
+                        WHERE provider = $1 AND provider_user_id = $2
+                        """,
+                        provider,
+                        provider_user_id,
+                        unionid,
+                        app_id,
+                        jsonb_param(auth_payload_json),
+                    )
+                    return "already_bound"
+
+                raise IdentityConflictError(provider, provider_user_id, existing_user_id)
+
+            await _ensure_unionid_available_for_user(
+                conn,
+                unionid=unionid,
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+            )
+
+            await _insert_identity(
+                conn,
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                unionid=unionid,
+                app_id=app_id,
+                auth_payload_json=auth_payload_json,
+            )
+
+            return "created"

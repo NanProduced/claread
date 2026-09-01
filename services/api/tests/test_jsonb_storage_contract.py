@@ -184,7 +184,7 @@ class TestJsonbWriteContracts:
     @pytest.mark.anyio
     async def test_auth_identity_writes_native_auth_payload_json(self):
         user_id = UUID("22222222-2222-4222-8222-222222222222")
-        mock_conn = AsyncMock()
+        mock_conn = _make_mock_conn_with_tx()
         mock_conn.fetchrow.return_value = None
         mock_conn.fetchval.return_value = user_id
         mock_pool = _make_mock_pool(mock_conn)

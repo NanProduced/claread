@@ -10,6 +10,7 @@ from app.services.auth.session import (
     SessionInfo,
     create_session,
     get_or_create_user_by_wechat,
+    revoke_all_sessions,
     revoke_session,
     validate_session,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "create_session",
     "validate_session",
     "revoke_session",
+    "revoke_all_sessions",
     "get_or_create_user_by_wechat",
     "PhoneAuthError",
     "request_phone_code",

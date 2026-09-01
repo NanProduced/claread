@@ -1,7 +1,7 @@
 -- DATA-SCHEMA-BASELINE fail-closed guard for the single fresh baseline.
 -- Run with: psql -v ON_ERROR_STOP=1 -f check_schema_baseline.sql
 -- Verifies infra/migrations/0001_initial.sql end state:
---   1. exactly the 53 baseline application tables exist
+--   1. exactly the 56 baseline application tables exist
 --      (directus_* tables are Directus-managed and always allowed, so the
 --      guard passes both before and after Directus bootstrap),
 --   2. legacy analysis / Eval control-plane tables are absent,
@@ -64,6 +64,7 @@ DECLARE
         'user_credit_accounts',
         'user_credit_ledger',
         'user_identities',
+        'user_password_credentials',
         'user_sessions',
         'users',
         'vocabulary_book'
@@ -417,6 +418,63 @@ BEGIN
     END IF;
     IF cardinality(missing) > 0 THEN
         RAISE EXCEPTION 'confirmed_source_revisions contract missing from the baseline: %', missing;
+    END IF;
+END
+$guard$;
+
+-- AUTH-F1A — user_password_credentials contract:
+-- one credential row max per user (user_id PK), cascade-deleted with the
+-- user, and the updated_at trigger parity of the other auth tables.
+DO $guard$
+DECLARE
+    expected_columns text[] := ARRAY[
+        'user_password_credentials.user_id',
+        'user_password_credentials.password_hash',
+        'user_password_credentials.password_changed_at',
+        'user_password_credentials.created_at',
+        'user_password_credentials.updated_at'
+    ];
+    marker text;
+    missing text[] := '{}';
+BEGIN
+    FOREACH marker IN ARRAY expected_columns LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = split_part(marker, '.', 1)
+              AND column_name = split_part(marker, '.', 2)
+        ) THEN
+            missing := array_append(missing, marker);
+        END IF;
+    END LOOP;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'user_password_credentials_pkey' AND contype = 'p'
+    ) THEN
+        missing := array_append(missing, 'user_password_credentials_pkey');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'user_password_credentials_user_id_fkey'
+          AND contype = 'f'
+          AND pg_get_constraintdef(oid) LIKE '%ON DELETE CASCADE%'
+    ) THEN
+        missing := array_append(missing, 'user_password_credentials_user_id_fkey');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_user_password_credentials_set_updated_at'
+          AND tgrelid = 'user_password_credentials'::regclass
+          AND NOT tgisinternal
+    ) THEN
+        missing := array_append(missing, 'trg_user_password_credentials_set_updated_at');
+    END IF;
+
+    IF cardinality(missing) > 0 THEN
+        RAISE EXCEPTION 'user_password_credentials contract missing from the baseline: %', missing;
     END IF;
 END
 $guard$;

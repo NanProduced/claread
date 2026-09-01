@@ -154,9 +154,9 @@ def test_reset_and_checker_table_sets_reconcile_with_fresh_baseline() -> None:
         "dev reset misses baseline non-protected tables"
     )
 
-    assert len(baseline) == 55
+    assert len(baseline) == 56
     assert len(PROTECTED_KEEP_DICT_TABLES) == 4
-    assert len(expected_reset_set) == 51
+    assert len(expected_reset_set) == 52
 
 
 async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
@@ -184,7 +184,7 @@ async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
         await admin_conn.execute(BASELINE_SQL)
 
         assert await _schema_tables() == baseline
-        assert len(baseline) == 55
+        assert len(baseline) == 56
 
         # Sentinel rows: protected data must survive dev and full resets.
         await admin_conn.execute(
@@ -212,7 +212,7 @@ async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
         await admin_conn.execute(RESET_FULL_SQL.read_text(encoding="utf-8"))
         assert await _schema_tables() == set(PROTECTED_KEEP_DICT_TABLES)
 
-        # Replay the fresh baseline: exact 53-table set, protected rows intact.
+        # Replay the fresh baseline: exact 56-table set, protected rows intact.
         await admin_conn.execute(BASELINE_SQL)
         assert await _schema_tables() == baseline
         assert await admin_conn.fetchval("SELECT COUNT(*) FROM dict_entries") == 1

@@ -1724,6 +1724,26 @@ COMMENT ON COLUMN user_identities.created_at IS '记录创建时间。';
 
 COMMENT ON COLUMN user_identities.updated_at IS '记录最后更新时间。';
 
+CREATE TABLE user_password_credentials (
+    user_id uuid NOT NULL,
+    password_hash text NOT NULL,
+    password_changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+COMMENT ON TABLE user_password_credentials IS '用户密码凭证表，保存邮箱密码登录的密码哈希；一个用户最多一条凭证。';
+
+COMMENT ON COLUMN user_password_credentials.user_id IS '用户主键，同时作为外键指向 users(id)，删除用户时级联删除。';
+
+COMMENT ON COLUMN user_password_credentials.password_hash IS 'Argon2id 编码后的完整密码哈希字符串；本表只存哈希，绝不存明文。';
+
+COMMENT ON COLUMN user_password_credentials.password_changed_at IS '最近一次创建或重置密码的 UTC 时间。';
+
+COMMENT ON COLUMN user_password_credentials.created_at IS '记录创建时间。';
+
+COMMENT ON COLUMN user_password_credentials.updated_at IS '记录最后更新时间。';
+
 CREATE TABLE user_sessions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -2212,6 +2232,9 @@ ALTER TABLE ONLY user_credit_ledger
 ALTER TABLE ONLY user_identities
     ADD CONSTRAINT user_identities_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY user_password_credentials
+    ADD CONSTRAINT user_password_credentials_pkey PRIMARY KEY (user_id);
+
 ALTER TABLE ONLY user_sessions
     ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (id);
 
@@ -2536,6 +2559,8 @@ CREATE TRIGGER trg_user_credit_accounts_set_updated_at BEFORE UPDATE ON user_cre
 
 CREATE TRIGGER trg_user_identities_set_updated_at BEFORE UPDATE ON user_identities FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER trg_user_password_credentials_set_updated_at BEFORE UPDATE ON user_password_credentials FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TRIGGER trg_user_sessions_set_updated_at BEFORE UPDATE ON user_sessions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_users_set_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -2855,6 +2880,9 @@ ALTER TABLE ONLY user_credit_ledger
 
 ALTER TABLE ONLY user_identities
     ADD CONSTRAINT user_identities_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY user_password_credentials
+    ADD CONSTRAINT user_password_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY user_sessions
     ADD CONSTRAINT user_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;

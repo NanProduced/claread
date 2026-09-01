@@ -211,3 +211,34 @@ async def revoke_session(token: str) -> bool:
         )
 
     return "UPDATE 1" in result
+
+
+async def revoke_all_sessions(user_id: UUID) -> int:
+    """
+    撤销该用户全部 active session（退出所有设备 / 密码重置前置）。
+
+    只把 status='active' 的 session 置为 'revoked' 并写入 revoked_at；
+    expired / revoked 状态保持不变。单条 UPDATE 语句本身原子，无需显式事务。
+    数据库连接池未初始化时 fail-closed，抛出 RuntimeError，不静默返回 0。
+
+    Args:
+        user_id: 用户 ID
+
+    Returns:
+        实际撤销的 session 数量（查询成功但无 active session 时为 0）
+    """
+    if db_connection.DB_POOL is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with db_connection.DB_POOL.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            UPDATE user_sessions
+            SET status = 'revoked', revoked_at = NOW()
+            WHERE user_id = $1 AND status = 'active'
+            RETURNING id
+            """,
+            user_id,
+        )
+
+    return len(rows)

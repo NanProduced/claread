@@ -58,6 +58,7 @@ TRUNCATE TABLE
   user_credit_accounts,
   user_credit_ledger,
   user_identities,
+  user_password_credentials,
   user_sessions,
   users,
   vocabulary_book
