@@ -98,6 +98,7 @@ class EmailAuthService:
         *,
         ticket: str,
         raw_password: str,
+        client_ip: str | None = None,
     ) -> tuple[str, datetime]:
         safety = await evaluate_password_safety(raw_password)
         if safety in ("common", "compromised"):
@@ -115,6 +116,7 @@ class EmailAuthService:
             provider="email",
             provider_user_id=normalized_email,
             client_platform="web",
+            ip_address=client_ip,
         )
 
     async def login_with_password(
@@ -122,6 +124,7 @@ class EmailAuthService:
         *,
         email: str,
         raw_password: str,
+        client_ip: str | None = None,
     ) -> tuple[str, datetime]:
         try:
             normalized_email = normalize_email_address(email)
@@ -140,6 +143,7 @@ class EmailAuthService:
             provider="email",
             provider_user_id=normalized_email,
             client_platform="web",
+            ip_address=client_ip,
         )
 
     async def request_password_reset(
@@ -174,6 +178,7 @@ class EmailAuthService:
         *,
         ticket: str,
         raw_password: str,
+        client_ip: str | None = None,
     ) -> tuple[str, datetime]:
         safety = await evaluate_password_safety(raw_password)
         if safety in ("common", "compromised"):
@@ -194,4 +199,5 @@ class EmailAuthService:
             provider="email",
             provider_user_id=normalized_email,
             client_platform="web",
+            ip_address=client_ip,
         )

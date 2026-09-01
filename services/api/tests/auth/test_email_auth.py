@@ -216,6 +216,7 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
         result = await EmailAuthService(challenges).register_with_ticket(
             ticket="T" * 43,
             raw_password=RAW_PASSWORD,
+            client_ip="198.51.100.7",
         )
 
     assert result == ("session-token", expires_at)
@@ -225,6 +226,7 @@ async def test_register_checks_password_safety_before_consuming_ticket(safety_re
         provider="email",
         provider_user_id=NORMALIZED_EMAIL,
         client_platform="web",
+        ip_address="198.51.100.7",
     )
 
 
@@ -315,6 +317,7 @@ async def test_password_login_success_creates_web_session() -> None:
         result = await EmailAuthService(challenges).login_with_password(
             email=EMAIL,
             raw_password=RAW_PASSWORD,
+            client_ip="198.51.100.7",
         )
 
     assert result == ("session-token", expires_at)
@@ -325,6 +328,7 @@ async def test_password_login_success_creates_web_session() -> None:
         provider="email",
         provider_user_id=NORMALIZED_EMAIL,
         client_platform="web",
+        ip_address="198.51.100.7",
     )
 
 
@@ -406,6 +410,7 @@ async def test_reset_checks_safety_and_creates_session_after_atomic_update(
             "provider": "email",
             "provider_user_id": NORMALIZED_EMAIL,
             "client_platform": "web",
+            "ip_address": "198.51.100.7",
         }
         events.append("session")
         return "new-session-token", expires_at
@@ -423,6 +428,7 @@ async def test_reset_checks_safety_and_creates_session_after_atomic_update(
         result = await EmailAuthService(challenges).reset_with_ticket(
             ticket="R" * 43,
             raw_password=RAW_PASSWORD,
+            client_ip="198.51.100.7",
         )
 
     assert result == ("new-session-token", expires_at)
@@ -439,6 +445,7 @@ async def test_unsafe_reset_password_does_not_consume_ticket(safety_result: str)
             await EmailAuthService(challenges).reset_with_ticket(
                 ticket="R" * 43,
                 raw_password=RAW_PASSWORD,
+                client_ip="198.51.100.7",
             )
 
     assert error.value.code == safety_result
