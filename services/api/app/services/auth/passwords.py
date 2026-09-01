@@ -1,6 +1,6 @@
 """邮箱认证的密码安全原语（AUTH-F2A）。
 
-Spec: docs/superpowers/specs/2026-09-01-web-email-auth-redesign.md §5.2。
+行为：统一执行密码 NFC/长度/可编码性校验、Argon2id 哈希与安全校验。
 
 - Argon2id 由 argon2-cffi 提供，不自研密码学；
 - 密码先做 NFC 规范化，不 trim、不改变大小写；

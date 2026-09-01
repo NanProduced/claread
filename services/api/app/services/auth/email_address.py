@@ -1,6 +1,6 @@
 """邮箱认证的邮箱规范化原语（AUTH-F2A）。
 
-Spec: docs/superpowers/specs/2026-09-01-web-email-auth-redesign.md §5.1。
+行为：离线校验并规范化邮箱，同时保留身份语义相关的本地部分。
 
 邮箱的语法、Unicode/IDNA 与域名规范化全部交给 email-validator
 （check_deliverability=False，不做 DNS 或任何网络调用），并直接采用其

@@ -1,6 +1,6 @@
 """AUTH-F2A: email address normalization primitive tests.
 
-Spec: docs/superpowers/specs/2026-09-01-web-email-auth-redesign.md §5.1/§16.1
+Behavior locked by this suite:
 - syntax / Unicode / IDNA normalization delegated to email-validator with
   ``check_deliverability=False`` (no DNS, no network);
 - ``+tag``, Gmail dots and local-part case are preserved (no provider-specific

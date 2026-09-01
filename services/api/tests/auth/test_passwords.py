@@ -1,6 +1,6 @@
 """AUTH-F2A: password normalization and Argon2id hashing primitive tests.
 
-Spec: docs/superpowers/specs/2026-09-01-web-email-auth-redesign.md §5.2/§16.1
+Behavior locked by this suite:
 - NFC normalization, no trimming, no case changes;
 - length 12-128 code points measured after NFC, no composition rules;
 - Argon2id via argon2-cffi with random salt and needs_rehash on parameter
