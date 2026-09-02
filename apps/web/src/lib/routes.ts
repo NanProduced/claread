@@ -4,6 +4,8 @@ export const homeRoute = "/" as Route;
 export const aboutRoute = "/about" as Route;
 export const helpRoute = "/help" as Route;
 export const blogRoute = "/blog" as Route;
+export const termsRoute = "/terms" as Route;
+export const privacyRoute = "/privacy" as Route;
 export const dailyRoute = "/daily" as Route;
 export const shareDemoRoute = "/share/demo" as Route;
 
@@ -22,6 +24,8 @@ export const nextAllowlistPrefixes = [
   "/about",
   "/help",
   "/blog",
+  "/terms",
+  "/privacy",
   "/daily",
   "/share",
   "/app",

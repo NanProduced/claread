@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { BrandLockup } from "@/components/brand/BrandMarks";
 import { ProductStickerWall } from "./ProductStickerWall";
-import { homeRoute } from "@/lib/routes";
+import { homeRoute, privacyRoute, termsRoute } from "@/lib/routes";
 
 export function ProductFooter() {
   return (
@@ -22,10 +22,10 @@ export function ProductFooter() {
           <div className="flex gap-16 font-sans text-xs text-[#FAF9F6]/70">
             <div className="flex flex-col gap-3">
               <span className="font-semibold text-white/40 tracking-wider uppercase">法律条文</span>
-              <Link href="#/privacy" className="hover:text-white transition-colors">
+              <Link href={privacyRoute} className="hover:text-white transition-colors">
                 隐私政策
               </Link>
-              <Link href="#/terms" className="hover:text-white transition-colors">
+              <Link href={termsRoute} className="hover:text-white transition-colors">
                 服务条款
               </Link>
             </div>
@@ -47,7 +47,7 @@ export function ProductFooter() {
         </div>
 
         {/* Bottom Section */}
-        <div className="flex flex-col items-center justify-between gap-4 border-t border-white/5 pt-8 text-[11px] text-white/30 font-sans sm:flex-row">
+        <div className="flex flex-col items-center justify-between gap-4 border-t border-white/5 pt-8 text-xs text-white/30 font-sans sm:flex-row">
           <div className="flex items-center gap-1">
             <span>用 ☕ & 🧡 制作</span>
           </div>
