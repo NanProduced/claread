@@ -445,6 +445,7 @@ export function EmailAuthFlow() {
 		<EmailAuthScreen
 			mode={mode}
 			email={email}
+			otpFlow={otpFlow ?? undefined}
 			loading={loading}
 			error={error}
 			cooldownSeconds={cooldownSeconds}

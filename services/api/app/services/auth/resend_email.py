@@ -1,5 +1,6 @@
 """Bounded Resend adapter for email-auth verification codes."""
 
+import logging
 from html import escape
 from typing import Literal
 
@@ -10,6 +11,16 @@ from app.services.auth.email_address import normalize_email_address
 
 SendEmailResult = Literal["sent", "rejected", "uncertain"]
 _EmailPurpose = Literal["register", "password_reset"]
+_EmailOutcomeReason = Literal[
+    "http_rejected",
+    "request_timeout",
+    "request_error",
+    "http_conflict",
+    "http_server_error",
+    "http_redirect",
+    "http_unexpected",
+    "malformed_success",
+]
 
 _RESEND_EMAILS_URL = "https://api.resend.com/emails"
 _REQUEST_TIMEOUT_SECONDS = 5.0
@@ -25,6 +36,28 @@ _SERIF_FONT = "Georgia,'Songti SC','STSong','Noto Serif SC',serif"
 _WORDMARK_FONT = "'Bodoni 72',Didot,'Bodoni MT','Times New Roman',Georgia,serif"
 _WORDMARK_CJK_FONT = "'Songti SC',STSong,'Noto Serif SC','Source Han Serif SC',serif"
 _CODE_FONT = "ui-monospace,'SFMono-Regular',Consolas,monospace"
+logger = logging.getLogger(__name__)
+
+
+def _log_provider_outcome(
+    *,
+    outcome: SendEmailResult,
+    reason: _EmailOutcomeReason | None = None,
+    status_code: int | None = None,
+) -> None:
+    fields = ["event=email_provider_outcome", f"outcome={outcome}"]
+    extra: dict[str, object] = {"event": "email_provider_outcome", "outcome": outcome}
+    if reason is not None:
+        fields.append(f"reason={reason}")
+        extra["reason"] = reason
+    if status_code is not None:
+        fields.append(f"status_code={status_code}")
+        extra["status_code"] = status_code
+    logger.log(
+        logging.INFO if outcome == "sent" else logging.WARNING,
+        " ".join(fields),
+        extra=extra,
+    )
 
 
 def _purpose_copy(purpose: _EmailPurpose) -> tuple[str, str, str, str, str]:
@@ -203,15 +236,60 @@ async def send_verification_email(
                 },
                 json=payload,
             )
+    except httpx.TimeoutException:
+        _log_provider_outcome(outcome="uncertain", reason="request_timeout")
+        return "uncertain"
     except httpx.RequestError:
+        _log_provider_outcome(outcome="uncertain", reason="request_error")
         return "uncertain"
 
-    if 400 <= response.status_code < 500 and response.status_code != 409:
+    status_code = response.status_code
+    if 400 <= status_code < 500 and status_code != 409:
+        _log_provider_outcome(
+            outcome="rejected",
+            reason="http_rejected",
+            status_code=status_code,
+        )
         return "rejected"
-    if response.status_code != 200:
+    if status_code == 409:
+        _log_provider_outcome(
+            outcome="uncertain",
+            reason="http_conflict",
+            status_code=status_code,
+        )
+        return "uncertain"
+    if 500 <= status_code < 600:
+        _log_provider_outcome(
+            outcome="uncertain",
+            reason="http_server_error",
+            status_code=status_code,
+        )
+        return "uncertain"
+    if 300 <= status_code < 400:
+        _log_provider_outcome(
+            outcome="uncertain",
+            reason="http_redirect",
+            status_code=status_code,
+        )
+        return "uncertain"
+    if status_code != 200:
+        _log_provider_outcome(
+            outcome="uncertain",
+            reason="http_unexpected",
+            status_code=status_code,
+        )
         return "uncertain"
     try:
-        provider_id = response.json().get("id")
-    except (AttributeError, ValueError):
+        response_body = response.json()
+    except (AttributeError, TypeError, ValueError):
+        _log_provider_outcome(outcome="uncertain", reason="malformed_success")
         return "uncertain"
-    return "sent" if isinstance(provider_id, str) and provider_id.strip() else "uncertain"
+    if not isinstance(response_body, dict):
+        _log_provider_outcome(outcome="uncertain", reason="malformed_success")
+        return "uncertain"
+    provider_id = response_body.get("id")
+    if not isinstance(provider_id, str) or not provider_id.strip():
+        _log_provider_outcome(outcome="uncertain", reason="malformed_success")
+        return "uncertain"
+    _log_provider_outcome(outcome="sent")
+    return "sent"

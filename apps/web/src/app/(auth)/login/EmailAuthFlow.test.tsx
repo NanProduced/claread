@@ -131,8 +131,32 @@ describe("EmailAuthFlow", () => {
 		await waitFor(() => {
 			expect(screen.getByRole("heading", { name: "查看你的邮箱" })).toBeTruthy();
 		});
-		expect(screen.getByText(new RegExp(EMAIL))).toBeTruthy();
+		expect(screen.getByText(`我们已向 ${EMAIL} 发送 6 位验证码。`)).toBeTruthy();
 		expect(screen.getByRole("button", { name: "41 秒后可重发" })).toBeTruthy();
+	});
+
+	it("restores password reset OTP with account-enumeration-safe copy", async () => {
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () =>
+					jsonResponse({
+						ok: true,
+						step: "otp",
+						flow: "password_reset",
+						email: EMAIL,
+						resend_after: 0,
+					}),
+			}),
+		);
+		render(<EmailAuthFlow />);
+		await waitFor(() => {
+			expect(screen.getByRole("heading", { name: "查看你的邮箱" })).toBeTruthy();
+		});
+		expect(
+			screen.getByText("如果该邮箱已注册且邮件服务可用，你将收到 6 位验证码。"),
+		).toBeTruthy();
+		expect(screen.queryByText(new RegExp(EMAIL))).toBeNull();
 	});
 
 	it("restores set-password from flow-status", async () => {

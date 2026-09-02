@@ -23,6 +23,7 @@ pytestmark = [
 API_KEY = "re_test_private-key"
 CODE = "123456"
 CHALLENGE_ID = "A" * 32
+PROVIDER_ID = "provider-private-id"
 REGISTER_SUBJECT = "Claread 注册验证码"
 RESET_SUBJECT = "Claread 密码重置验证码"
 REGISTER_HEADING = "完成账号创建"
@@ -53,6 +54,34 @@ _BANNED_HTML = (
     "expires",
     "valid for",
 )
+
+
+def _assert_provider_outcome(
+    caplog: pytest.LogCaptureFixture,
+    expected: dict[str, object],
+) -> None:
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "email_provider_outcome"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    actual = {
+        key: getattr(record, key)
+        for key in ("event", "outcome", "reason", "status_code")
+        if hasattr(record, key)
+    }
+    assert actual == {"event": "email_provider_outcome", **expected}
+    message_fields = ["event=email_provider_outcome", f"outcome={expected['outcome']}"]
+    for key in ("reason", "status_code"):
+        if key in expected:
+            message_fields.append(f"{key}={expected[key]}")
+    assert record.getMessage() == " ".join(message_fields)
+    assert record.levelno == (logging.INFO if expected["outcome"] == "sent" else logging.WARNING)
+    assert record.args == ()
+    assert record.exc_info is None
+    assert record.exc_text is None
 
 
 def _settings() -> Settings:
@@ -156,13 +185,16 @@ def _assert_branded_bodies(
             assert excluded not in html
 
 
-async def test_register_email_uses_normalized_recipient_and_branded_chinese_contract() -> None:
+async def test_register_email_uses_normalized_recipient_and_branded_chinese_contract(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"id": "provider-id"})
+        return httpx.Response(200, json={"id": PROVIDER_ID})
 
+    caplog.set_level(logging.INFO)
     result = await send_verification_email(
         recipient="Reader@EXAMPLE.COM",
         purpose="register",
@@ -173,6 +205,8 @@ async def test_register_email_uses_normalized_recipient_and_branded_chinese_cont
     )
 
     assert result == "sent"
+    _assert_provider_outcome(caplog, {"outcome": "sent"})
+    assert PROVIDER_ID not in "\n".join(record.getMessage() for record in caplog.records)
     assert len(requests) == 1
     request = requests[0]
     _assert_transport_envelope(request, purpose="register")
@@ -287,7 +321,10 @@ async def test_invalid_inputs_fail_closed_without_a_request(field: str, value: s
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422, 429, 499])
-async def test_explicit_4xx_is_rejected_once(status_code: int) -> None:
+async def test_explicit_4xx_is_rejected_once(
+    status_code: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     requests = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -308,12 +345,32 @@ async def test_explicit_4xx_is_rejected_once(status_code: int) -> None:
     )
 
     assert result == "rejected"
+    _assert_provider_outcome(
+        caplog,
+        {"outcome": "rejected", "reason": "http_rejected", "status_code": status_code},
+    )
     assert requests == 1
 
 
-@pytest.mark.parametrize("status_code", [201, 204, 299, 300, 307, 308, 409, 500, 503, 599])
+@pytest.mark.parametrize(
+    ("status_code", "reason"),
+    [
+        (201, "http_unexpected"),
+        (204, "http_unexpected"),
+        (299, "http_unexpected"),
+        (300, "http_redirect"),
+        (307, "http_redirect"),
+        (308, "http_redirect"),
+        (409, "http_conflict"),
+        (500, "http_server_error"),
+        (503, "http_server_error"),
+        (599, "http_server_error"),
+    ],
+)
 async def test_non_definitive_status_is_uncertain_once_without_redirects(
     status_code: int,
+    reason: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     requests = 0
 
@@ -335,6 +392,10 @@ async def test_non_definitive_status_is_uncertain_once_without_redirects(
     )
 
     assert result == "uncertain"
+    _assert_provider_outcome(
+        caplog,
+        {"outcome": "uncertain", "reason": reason, "status_code": status_code},
+    )
     assert requests == 1
 
 
@@ -342,7 +403,10 @@ async def test_non_definitive_status_is_uncertain_once_without_redirects(
     "content",
     [b"not-json", b"{}", b'{"id":""}', b'{"id":123}', b"[]"],
 )
-async def test_malformed_200_is_uncertain_once(content: bytes) -> None:
+async def test_malformed_200_is_uncertain_once(
+    content: bytes,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     requests = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -360,12 +424,17 @@ async def test_malformed_200_is_uncertain_once(content: bytes) -> None:
     )
 
     assert result == "uncertain"
+    _assert_provider_outcome(caplog, {"outcome": "uncertain", "reason": "malformed_success"})
     assert requests == 1
 
 
-@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.ConnectError])
+@pytest.mark.parametrize(
+    ("error_type", "reason"),
+    [(httpx.ReadTimeout, "request_timeout"), (httpx.ConnectError, "request_error")],
+)
 async def test_request_error_is_uncertain_once_without_sensitive_logs(
     error_type: type[httpx.RequestError],
+    reason: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     requests = 0
@@ -391,6 +460,7 @@ async def test_request_error_is_uncertain_once_without_sensitive_logs(
     )
 
     assert result == "uncertain"
+    _assert_provider_outcome(caplog, {"outcome": "uncertain", "reason": reason})
     assert requests == 1
     logs = "\n".join(record.getMessage() for record in caplog.records)
     for sensitive in (API_KEY, recipient, CODE, CHALLENGE_ID, provider_message):
@@ -419,6 +489,10 @@ async def test_provider_failure_body_and_request_body_are_not_logged(
 
     assert result == "uncertain"
     assert len(requests) == 1
+    _assert_provider_outcome(
+        caplog,
+        {"outcome": "uncertain", "reason": "http_server_error", "status_code": 500},
+    )
     logs = "\n".join(record.getMessage() for record in caplog.records)
     for sensitive in (
         API_KEY,
@@ -428,6 +502,7 @@ async def test_provider_failure_body_and_request_body_are_not_logged(
         requests[0].content.decode(),
         f"Bearer {API_KEY}",
         provider_message,
+        PROVIDER_ID,
     ):
         assert sensitive not in logs
 

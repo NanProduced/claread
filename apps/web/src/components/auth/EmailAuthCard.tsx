@@ -20,10 +20,12 @@ export type EmailAuthMode =
 	| "forgot"
 	| "reset"
 	| "reset-success";
+type EmailAuthOtpFlow = "register" | "password_reset";
 
 export type EmailAuthCardProps = {
 	mode: EmailAuthMode;
 	email?: string;
+	otpFlow?: EmailAuthOtpFlow;
 	loading?: boolean;
 	error?: string | null;
 	cooldownSeconds?: number;
@@ -50,7 +52,10 @@ const FIELD_LABEL = "text-xs font-semibold text-muted-foreground";
 const LINK_BUTTON =
 	"focus-ring rounded-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-ink disabled:cursor-not-allowed disabled:text-muted-foreground/70 disabled:no-underline";
 
-const MODE_COPY: Record<EmailAuthMode, (email: string) => { title: string; description: string }> = {
+const MODE_COPY: Record<
+	EmailAuthMode,
+	(email: string, otpFlow?: EmailAuthOtpFlow) => { title: string; description: string }
+> = {
 	email: () => ({
 		title: "登录或创建账号",
 		description: "输入邮箱地址，继续使用 Claread。",
@@ -59,9 +64,14 @@ const MODE_COPY: Record<EmailAuthMode, (email: string) => { title: string; descr
 		title: "欢迎回来",
 		description: "输入密码以继续。",
 	}),
-	otp: (email) => ({
+	otp: (email, otpFlow) => ({
 		title: "查看你的邮箱",
-		description: email ? `我们已向 ${email} 发送 6 位验证码。` : "我们已向你的邮箱发送 6 位验证码。",
+		description:
+			otpFlow === "password_reset"
+				? "如果该邮箱已注册且邮件服务可用，你将收到 6 位验证码。"
+				: email
+					? `我们已向 ${email} 发送 6 位验证码。`
+					: "我们已向你的邮箱发送 6 位验证码。",
 	}),
 	"set-password": (email) => ({
 		title: "设置密码",
@@ -195,6 +205,7 @@ function SubmitButton({ label, loading }: { label: string; loading?: boolean }) 
 export function EmailAuthCard({
 	mode,
 	email = "",
+	otpFlow,
 	loading = false,
 	error = null,
 	cooldownSeconds = 0,
@@ -239,7 +250,7 @@ export function EmailAuthCard({
 
 	const activeError = localError ?? error;
 	const describedBy = activeError ? STATUS_ID : undefined;
-	const copy = MODE_COPY[mode](email);
+	const copy = MODE_COPY[mode](email, otpFlow);
 
 	function submitValidatedEmail(
 		event: React.FormEvent<HTMLFormElement>,

@@ -145,6 +145,26 @@ describe("EmailAuthCard — 密码登录", () => {
 });
 
 describe("EmailAuthCard — 邮箱验证码", () => {
+	it("keeps register OTP copy specific to the entered email", () => {
+		render(
+			<EmailAuthCard mode="otp" email="reader@example.com" otpFlow="register" />,
+		);
+
+		expect(screen.getByText("我们已向 reader@example.com 发送 6 位验证码。"))
+			.toBeTruthy();
+	});
+
+	it("uses an account-enumeration-safe copy for password reset OTP", () => {
+		render(
+			<EmailAuthCard mode="otp" email="reader@example.com" otpFlow="password_reset" />,
+		);
+
+		expect(
+			screen.getByText("如果该邮箱已注册且邮件服务可用，你将收到 6 位验证码。"),
+		).toBeTruthy();
+		expect(screen.queryByText(/reader@example\.com/)).toBeNull();
+	});
+
 	it("auto-submits a completed 6-digit code", async () => {
 		const user = userEvent.setup();
 		const onSubmitOtp = vi.fn();
