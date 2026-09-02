@@ -9,9 +9,9 @@ import pytest
 from app.api.routes.vocabulary import _vocab_row_to_response
 from app.database.json_compat import ensure_json_array, ensure_json_object
 from app.services.ai_usage.service import AIUsageEventCreate, record_ai_usage_event
-from app.services.credits import LedgerAttribution, reserve_points
 from app.services.auth.identity import get_or_create_user_by_identity
 from app.services.auth.profile import get_user_profile, update_user_profile
+from app.services.credits import LedgerAttribution, reserve_points
 from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
 from app.services.dictionary_ai.repository import insert_candidate_entry
 from app.services.feedback.service import submit_feedback
@@ -191,8 +191,8 @@ class TestJsonbWriteContracts:
 
         with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
             result = await get_or_create_user_by_identity(
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="jsonb-storage-contract@example.com",
                 auth_payload={"verified_by": "mock"},
             )
 
@@ -390,7 +390,7 @@ class TestJsonbWriteContracts:
 
     @pytest.mark.anyio
     async def test_candidate_entry_reading_record_anchor_defaults_to_none(self):
-        """C4: insert_candidate_entry must accept calls without reading_record anchor (legacy compat)."""
+        """C4: legacy calls may omit the reading-record anchor."""
         mock_conn = AsyncMock()
         mock_conn.fetchval.return_value = uuid4()
         mock_pool = _make_mock_pool(mock_conn)
