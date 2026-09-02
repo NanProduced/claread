@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 import pytest
@@ -22,13 +23,140 @@ pytestmark = [
 API_KEY = "re_test_private-key"
 CODE = "123456"
 CHALLENGE_ID = "A" * 32
+REGISTER_SUBJECT = "Claread 注册验证码"
+RESET_SUBJECT = "Claread 密码重置验证码"
+REGISTER_HEADING = "完成账号创建"
+RESET_HEADING = "重置账号密码"
+REGISTER_INTRO = "请在 Claread 输入以下验证码，完成账号创建。"
+RESET_INTRO = "请在 Claread 输入以下验证码，继续重置账号密码。"
+REGISTER_PREHEADER = "使用此验证码完成 Claread 账号创建。"
+RESET_PREHEADER = "使用此验证码重置你的 Claread 密码。"
+ONE_TIME_COPY = "验证码仅可使用一次，请尽快完成验证。"
+COMMON_SAFETY = "请勿将验证码告知任何人。"
+REGISTER_SAFETY = "如果不是你本人操作，忽略本邮件即可。"
+RESET_SAFETY = "如果不是你本人操作，忽略本邮件即可，你的密码不会因此发生变化。"
+AUTOMATED_COPY = "此邮件由 Claread 自动发送，请勿回复。"
+_BANNED_HTML = (
+    "<img",
+    "<a ",
+    "http://",
+    "https://",
+    "url(",
+    "@import",
+    "@font-face",
+    "fonts.google",
+    "gradient",
+    "utm_",
+    "有效期",
+    "分钟",
+    "小时",
+    "expires",
+    "valid for",
+)
 
 
 def _settings() -> Settings:
     return Settings(_env_file=None, resend_api_key=SecretStr(API_KEY))
 
 
-async def test_register_email_uses_normalized_recipient_and_fixed_english_contract() -> None:
+def _payload(request: httpx.Request) -> dict[str, object]:
+    body = json.loads(request.content)
+    assert isinstance(body, dict)
+    return body
+
+
+def _assert_transport_envelope(request: httpx.Request, *, purpose: str) -> None:
+    assert request.method == "POST"
+    assert str(request.url) == "https://api.resend.com/emails"
+    assert request.headers["Authorization"] == f"Bearer {API_KEY}"
+    assert request.headers["User-Agent"] == "Claread"
+    assert request.headers["Idempotency-Key"] == f"email-auth/{purpose}/{CHALLENGE_ID}"
+    assert request.extensions["timeout"] == {
+        "connect": 5.0,
+        "read": 5.0,
+        "write": 5.0,
+        "pool": 5.0,
+    }
+
+
+def _assert_branded_bodies(
+    payload: dict[str, object],
+    *,
+    subject: str,
+    heading: str,
+    intro: str,
+    preheader: str,
+    safety: str,
+    recipient: str,
+) -> None:
+    assert payload["from"] == "Claread透读 <login@auth.claread.com>"
+    assert payload["subject"] == subject
+    text = payload["text"]
+    html = payload["html"]
+    assert isinstance(text, str)
+    assert isinstance(html, str)
+    for required in (
+        heading,
+        intro,
+        ONE_TIME_COPY,
+        "安全提醒",
+        COMMON_SAFETY,
+        safety,
+        AUTOMATED_COPY,
+        "透读英文文章",
+    ):
+        assert required in text
+        assert required in html
+    assert text.startswith("Claread 透读\n")
+    assert f"一次性验证码：{CODE}" in text
+    assert 'aria-label="Claread 透读"' in html
+    assert "一次性验证码" in html
+    assert preheader in html
+    assert html.startswith("<!DOCTYPE html>")
+    assert 'lang="zh-CN"' in html
+    assert '<table role="presentation"' in html.lower()
+    assert "max-width:560px" in html.replace(" ", "")
+    assert "<h1" in html.lower()
+    for color in (
+        "#f6f3ec",
+        "#faf9f6",
+        "#111111",
+        "#eae7df",
+        "#155cff",
+        "#6b6e77",
+    ):
+        assert color in html.lower()
+    lowered_html = html.lower()
+    for font_name in ("bodoni 72", "didot", "bodoni mt", "times new roman", "georgia"):
+        assert font_name in lowered_html
+    for font_name in ("songti sc", "stsong", "noto serif sc"):
+        assert font_name in lowered_html
+    assert "border-radius:4px" in html.replace(" ", "").lower()
+    assert re.search(r"display\s*:\s*none", html, flags=re.IGNORECASE)
+    assert CODE in html
+    assert recipient not in text
+    assert recipient not in html
+    assert CHALLENGE_ID not in text
+    assert CHALLENGE_ID not in html
+    lowered = f"{text}\n{html}".lower()
+    for banned in _BANNED_HTML:
+        assert banned not in lowered
+    if subject == REGISTER_SUBJECT:
+        for excluded in (RESET_HEADING, RESET_INTRO, RESET_PREHEADER, RESET_SAFETY):
+            assert excluded not in text
+            assert excluded not in html
+    else:
+        for excluded in (
+            REGISTER_HEADING,
+            REGISTER_INTRO,
+            REGISTER_PREHEADER,
+            REGISTER_SAFETY,
+        ):
+            assert excluded not in text
+            assert excluded not in html
+
+
+async def test_register_email_uses_normalized_recipient_and_branded_chinese_contract() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -47,38 +175,22 @@ async def test_register_email_uses_normalized_recipient_and_fixed_english_contra
     assert result == "sent"
     assert len(requests) == 1
     request = requests[0]
-    assert request.method == "POST"
-    assert str(request.url) == "https://api.resend.com/emails"
-    assert request.headers["Authorization"] == f"Bearer {API_KEY}"
-    assert request.headers["User-Agent"] == "Claread"
-    assert request.headers["Idempotency-Key"] == f"email-auth/register/{CHALLENGE_ID}"
-    assert request.extensions["timeout"] == {
-        "connect": 5.0,
-        "read": 5.0,
-        "write": 5.0,
-        "pool": 5.0,
-    }
-    assert json.loads(request.content) == {
-        "from": "Claread <login@auth.claread.com>",
-        "to": ["Reader@example.com"],
-        "subject": "Your Claread verification code",
-        "text": (
-            "Your Claread verification code is: 123456\n\n"
-            "Do not share this code with anyone.\n"
-            "If you did not request this code, you can ignore this email.\n"
-            "This is an automated message. Please do not reply."
-        ),
-        "html": (
-            "<p>Your Claread verification code is:</p>"
-            "<p><strong>123456</strong></p>"
-            "<p>Do not share this code with anyone.</p>"
-            "<p>If you did not request this code, you can ignore this email.</p>"
-            "<p>This is an automated message. Please do not reply.</p>"
-        ),
-    }
+    _assert_transport_envelope(request, purpose="register")
+    payload = _payload(request)
+    assert payload["to"] == ["Reader@example.com"]
+    _assert_branded_bodies(
+        payload,
+        subject=REGISTER_SUBJECT,
+        heading=REGISTER_HEADING,
+        intro=REGISTER_INTRO,
+        preheader=REGISTER_PREHEADER,
+        safety=REGISTER_SAFETY,
+        recipient="Reader@EXAMPLE.COM",
+    )
+    assert "reply_to" not in payload
 
 
-async def test_password_reset_email_uses_fixed_english_contract() -> None:
+async def test_password_reset_email_uses_distinct_branded_chinese_contract() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -97,27 +209,18 @@ async def test_password_reset_email_uses_fixed_english_contract() -> None:
     assert result == "sent"
     assert len(requests) == 1
     request = requests[0]
-    assert request.headers["Idempotency-Key"] == (
-        f"email-auth/password_reset/{CHALLENGE_ID}"
+    _assert_transport_envelope(request, purpose="password_reset")
+    payload = _payload(request)
+    assert payload["to"] == ["reader@example.com"]
+    _assert_branded_bodies(
+        payload,
+        subject=RESET_SUBJECT,
+        heading=RESET_HEADING,
+        intro=RESET_INTRO,
+        preheader=RESET_PREHEADER,
+        safety=RESET_SAFETY,
+        recipient="reader@example.com",
     )
-    assert json.loads(request.content) == {
-        "from": "Claread <login@auth.claread.com>",
-        "to": ["reader@example.com"],
-        "subject": "Your Claread verification code",
-        "text": (
-            "Your Claread verification code is: 123456\n\n"
-            "Do not share this code with anyone.\n"
-            "If you did not request this code, you can ignore this email.\n"
-            "This is an automated message. Please do not reply."
-        ),
-        "html": (
-            "<p>Your Claread verification code is:</p>"
-            "<p><strong>123456</strong></p>"
-            "<p>Do not share this code with anyone.</p>"
-            "<p>If you did not request this code, you can ignore this email.</p>"
-            "<p>This is an automated message. Please do not reply.</p>"
-        ),
-    }
 
 
 async def test_non_empty_reply_to_is_included() -> None:

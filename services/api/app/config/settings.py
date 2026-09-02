@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     email_auth_enabled: bool = False
     email_auth_code_hmac_secret: SecretStr = SecretStr("")
     resend_api_key: SecretStr = SecretStr("")
-    resend_from: str = "Claread <login@auth.claread.com>"
+    resend_from: str = "Claread透读 <login@auth.claread.com>"
     resend_reply_to: str = ""
     email_auth_email_cooldown_seconds: int = Field(default=60, gt=0)
     email_auth_email_hourly_limit: int = Field(default=5, gt=0)

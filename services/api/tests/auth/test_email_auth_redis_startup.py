@@ -95,6 +95,15 @@ def test_env_example_contains_email_attempt_limit_defaults_once() -> None:
     assert len(assignments) == len(expected)
 
 
+def test_env_example_uses_bilingual_resend_sender_name() -> None:
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+
+    assert (
+        'RESEND_FROM="Claread透读 <login@auth.claread.com>"'
+        in env_example.read_text(encoding="utf-8").splitlines()
+    )
+
+
 @pytest.fixture
 def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAIL_AUTH_ENABLED", raising=False)
@@ -136,7 +145,7 @@ def test_email_auth_disabled_by_default(isolate_settings_env: None) -> None:
     assert settings.email_auth_attempt_limit == 5
     assert settings.email_auth_ip_attempt_limit == 30
     assert settings.resend_api_key.get_secret_value() == ""
-    assert settings.resend_from == "Claread <login@auth.claread.com>"
+    assert settings.resend_from == "Claread透读 <login@auth.claread.com>"
     assert settings.resend_reply_to == ""
 
 
