@@ -8,12 +8,14 @@ import { EmailAuthCard } from "./EmailAuthCard";
 afterEach(cleanup);
 
 describe("EmailAuthCard — 邮箱入口", () => {
-	it("renders the email entry with Google, sign-up and legal affordances", () => {
+	it("renders the email entry with explicit login/register intent and legal affordances", () => {
 		render(<EmailAuthCard mode="email" />);
 
 		expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
 		expect(screen.getByLabelText("邮箱地址")).toBeTruthy();
 		expect(screen.getByPlaceholderText("you@example.com")).toBeTruthy();
+		expect(screen.getByRole("radio", { name: "登录" })).toBeTruthy();
+		expect(screen.getByRole("radio", { name: "注册" })).toBeTruthy();
 
 		const google = screen.getByRole("button", { name: "使用 Google 登录" });
 		expect(google.hasAttribute("disabled")).toBe(true);
@@ -24,7 +26,7 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(screen.getByRole("button", { name: "隐私政策" })).toBeTruthy();
 	});
 
-	it("emits onSubmitEmail with a valid email", async () => {
+	it("emits onSubmitEmail with a valid email and the login intent by default", async () => {
 		const user = userEvent.setup();
 		const onSubmitEmail = vi.fn();
 		render(<EmailAuthCard mode="email" onSubmitEmail={onSubmitEmail} />);
@@ -33,7 +35,7 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 
 		expect(onSubmitEmail).toHaveBeenCalledTimes(1);
-		expect(onSubmitEmail).toHaveBeenCalledWith("reader@example.com");
+		expect(onSubmitEmail).toHaveBeenCalledWith("reader@example.com", "login");
 	});
 
 	it("blocks an invalid email with a local announcement", async () => {
@@ -48,14 +50,19 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(screen.getByRole("alert").textContent).toContain("有效的邮箱地址");
 	});
 
-	it("emits sign-up and legal UI actions without navigating", async () => {
+	it("switches to register intent and emits legal UI actions without navigating", async () => {
 		const user = userEvent.setup();
-		const onSignUp = vi.fn();
+		const onSubmitEmail = vi.fn();
 		const onLegalLink = vi.fn();
-		render(<EmailAuthCard mode="email" onSignUp={onSignUp} onLegalLink={onLegalLink} />);
+		render(<EmailAuthCard mode="email" onSubmitEmail={onSubmitEmail} onLegalLink={onLegalLink} />);
 
 		await user.click(screen.getByRole("button", { name: "注册" }));
-		expect(onSignUp).toHaveBeenCalledTimes(1);
+		expect(screen.getByRole("radio", { name: "注册" }).getAttribute("aria-checked")).toBe("true");
+		expect(screen.getByRole("radio", { name: "登录" }).getAttribute("aria-checked")).toBe("false");
+
+		await user.type(screen.getByLabelText("邮箱地址"), "reader@example.com");
+		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		expect(onSubmitEmail).toHaveBeenCalledWith("reader@example.com", "register");
 
 		await user.click(screen.getByRole("button", { name: "服务条款" }));
 		expect(onLegalLink).toHaveBeenCalledWith("terms");
@@ -70,6 +77,8 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(submit.hasAttribute("disabled")).toBe(true);
 		expect(submit.getAttribute("aria-busy")).toBe("true");
 		expect((screen.getByLabelText("邮箱地址") as HTMLInputElement).disabled).toBe(true);
+		expect(screen.getByRole("radio", { name: "注册" }).hasAttribute("disabled")).toBe(true);
+		expect(screen.getByRole("radio", { name: "登录" }).hasAttribute("disabled")).toBe(true);
 		expect(screen.getByRole("button", { name: "注册" }).hasAttribute("disabled")).toBe(true);
 		// 法律链接不是认证状态切换操作，loading 时保持可用。
 		expect(screen.getByRole("button", { name: "服务条款" }).hasAttribute("disabled")).toBe(false);
@@ -431,8 +440,9 @@ describe("EmailAuthCard — 重置成功", () => {
 		expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
 		expect(screen.getByRole("heading", { name: "密码已重置" })).toBeTruthy();
 		expect(
-			screen.getByText("新密码已生效，你已安全登录。正在进入 Claread…"),
+			screen.getByText("新密码已生效，你已安全登录。"),
 		).toBeTruthy();
+		expect(screen.queryByText(/正在进入/)).toBeNull();
 
 		await user.click(screen.getByRole("button", { name: "立即进入" }));
 		expect(onResetSuccessContinue).toHaveBeenCalledTimes(1);

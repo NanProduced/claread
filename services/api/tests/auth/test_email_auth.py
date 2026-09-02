@@ -15,6 +15,7 @@ from app.services.auth.email_auth import (
 )
 from app.services.auth.email_challenges import (
     ChallengeCreated,
+    ChallengeState,
     EmailAuthStateError,
     TicketIssued,
 )
@@ -40,36 +41,13 @@ def _challenge_service() -> AsyncMock:
     return service
 
 
-async def test_existing_password_starts_password_mode_without_challenge() -> None:
-    challenges = _challenge_service()
-    lookup = AsyncMock(return_value=EmailCredentialLookup(user_id=USER_ID, has_password=True))
-
-    with patch("app.services.auth.email_auth.lookup_email_account", lookup):
-        result = await EmailAuthService(challenges).start_email_auth(
-            email=EMAIL,
-            client_ip="203.0.113.10",
-        )
-
-    assert result.mode == "password"
-    assert result.challenge_id is None
-    assert result.resend_after is None
-    lookup.assert_awaited_once_with("User@example.com")
-    challenges.create_challenge.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    "account",
-    [None, EmailCredentialLookup(user_id=USER_ID, has_password=False)],
-)
-async def test_new_email_starts_register_challenge_and_sends_code(
-    account: EmailCredentialLookup | None,
-) -> None:
+async def test_start_always_issues_register_challenge_without_account_lookup() -> None:
     challenges = _challenge_service()
     created = ChallengeCreated(
         challenge_id="A" * 32, code="123456", expires_in=600, resend_after=73
     )
     challenges.create_challenge.return_value = created
-    lookup = AsyncMock(return_value=account)
+    lookup = AsyncMock()
     sender = AsyncMock(return_value="sent")
 
     with (
@@ -81,7 +59,8 @@ async def test_new_email_starts_register_challenge_and_sends_code(
             client_ip="203.0.113.10",
         )
 
-    assert result.mode == "register"
+    lookup.assert_not_awaited()
+    assert not hasattr(result, "mode")
     assert result.challenge_id == created.challenge_id
     assert result.expires_in == created.expires_in
     assert result.resend_after == 73
@@ -120,7 +99,7 @@ async def test_uncertain_delivery_keeps_challenge_and_returns_accepted_result() 
             client_ip="203.0.113.10",
         )
 
-    assert result.mode == "register"
+    assert not hasattr(result, "mode")
     assert result.challenge_id == created.challenge_id
     challenges.discard_challenge.assert_not_awaited()
 
@@ -174,9 +153,12 @@ async def test_rejected_delivery_discards_challenge_and_returns_stable_error() -
     challenges.discard_challenge.assert_awaited_once_with(created.challenge_id)
 
 
-async def test_verified_otp_returns_existing_one_time_ticket() -> None:
+async def test_verified_otp_reads_challenge_and_forwards_resolved_purpose() -> None:
     challenges = _challenge_service()
-    issued = TicketIssued(ticket="D" * 43)
+    challenges.read_challenge.return_value = ChallengeState(
+        purpose="password_reset", email=NORMALIZED_EMAIL
+    )
+    issued = TicketIssued(ticket="D" * 43, purpose="password_reset")
     challenges.verify_challenge.return_value = issued
 
     result = await EmailAuthService(challenges).verify_email_otp(
@@ -185,10 +167,105 @@ async def test_verified_otp_returns_existing_one_time_ticket() -> None:
     )
 
     assert result is issued
+    assert result.purpose == "password_reset"
+    challenges.read_challenge.assert_awaited_once_with("C" * 32)
     challenges.verify_challenge.assert_awaited_once_with(
         challenge_id="C" * 32,
         code="123456",
+        ticket_purpose="password_reset",
     )
+
+
+async def test_register_otp_verify_converts_existing_password_account_to_reset() -> None:
+    challenges = _challenge_service()
+    challenges.read_challenge.return_value = ChallengeState(
+        purpose="register", email=NORMALIZED_EMAIL
+    )
+    lookup = AsyncMock(return_value=EmailCredentialLookup(user_id=USER_ID, has_password=True))
+    challenges.verify_challenge.return_value = TicketIssued(
+        ticket="D" * 43, purpose="password_reset"
+    )
+
+    with patch("app.services.auth.email_auth.lookup_email_account", lookup):
+        result = await EmailAuthService(challenges).verify_email_otp(
+            challenge_id="C" * 32,
+            code="123456",
+        )
+
+    assert result.purpose == "password_reset"
+    lookup.assert_awaited_once_with(NORMALIZED_EMAIL)
+    challenges.verify_challenge.assert_awaited_once_with(
+        challenge_id="C" * 32,
+        code="123456",
+        ticket_purpose="password_reset",
+    )
+
+
+async def test_register_otp_verify_keeps_register_purpose_for_unknown_email() -> None:
+    challenges = _challenge_service()
+    challenges.read_challenge.return_value = ChallengeState(
+        purpose="register", email=NORMALIZED_EMAIL
+    )
+    lookup = AsyncMock(return_value=None)
+    challenges.verify_challenge.return_value = TicketIssued(
+        ticket="D" * 43, purpose="register"
+    )
+
+    with patch("app.services.auth.email_auth.lookup_email_account", lookup):
+        result = await EmailAuthService(challenges).verify_email_otp(
+            challenge_id="C" * 32,
+            code="123456",
+        )
+
+    assert result.purpose == "register"
+    lookup.assert_awaited_once_with(NORMALIZED_EMAIL)
+    challenges.verify_challenge.assert_awaited_once_with(
+        challenge_id="C" * 32,
+        code="123456",
+        ticket_purpose="register",
+    )
+
+
+async def test_password_reset_otp_verify_keeps_reset_purpose_without_account_lookup() -> None:
+    challenges = _challenge_service()
+    challenges.read_challenge.return_value = ChallengeState(
+        purpose="password_reset", email=NORMALIZED_EMAIL
+    )
+    lookup = AsyncMock()
+    challenges.verify_challenge.return_value = TicketIssued(
+        ticket="D" * 43, purpose="password_reset"
+    )
+
+    with patch("app.services.auth.email_auth.lookup_email_account", lookup):
+        result = await EmailAuthService(challenges).verify_email_otp(
+            challenge_id="C" * 32,
+            code="123456",
+        )
+
+    assert result.purpose == "password_reset"
+    lookup.assert_not_awaited()
+    challenges.verify_challenge.assert_awaited_once_with(
+        challenge_id="C" * 32,
+        code="123456",
+        ticket_purpose="password_reset",
+    )
+
+
+async def test_verify_otp_missing_challenge_fails_closed_without_lookup() -> None:
+    challenges = _challenge_service()
+    challenges.read_challenge.return_value = None
+    lookup = AsyncMock()
+
+    with patch("app.services.auth.email_auth.lookup_email_account", lookup):
+        with pytest.raises(EmailAuthStateError) as caught:
+            await EmailAuthService(challenges).verify_email_otp(
+                challenge_id="C" * 32,
+                code="123456",
+            )
+
+    assert caught.value.code == "invalid_or_expired_code"
+    lookup.assert_not_awaited()
+    challenges.verify_challenge.assert_not_awaited()
 
 
 @pytest.mark.parametrize("safety_result", ["ok", "hibp_unavailable"])

@@ -184,8 +184,15 @@ class ChallengeCreated:
 
 
 @dataclass(frozen=True, slots=True)
+class ChallengeState:
+    purpose: Purpose
+    email: str
+
+
+@dataclass(frozen=True, slots=True)
 class TicketIssued:
     ticket: str = field(repr=False)
+    purpose: Purpose
     expires_in: int = _TICKET_TTL_SECONDS
 
 
@@ -286,7 +293,24 @@ class EmailAuthChallengeService:
             raise EmailAuthStateError("backend_unavailable")
         return status == "discarded"
 
-    async def verify_challenge(self, *, challenge_id: str, code: str) -> TicketIssued:
+    async def read_challenge(self, challenge_id: str) -> ChallengeState | None:
+        """Return the challenge's purpose and email without its code material."""
+        if not self._is_token(challenge_id, _CHALLENGE_ID_LENGTH):
+            return None
+        state = await self._hgetall(f"{_CHALLENGE_KEY_PREFIX}{challenge_id}")
+        purpose = state.get("purpose")
+        email = state.get("email")
+        if purpose not in _PURPOSES or not email:
+            return None
+        return ChallengeState(purpose=cast(Purpose, purpose), email=email)
+
+    async def verify_challenge(
+        self,
+        *,
+        challenge_id: str,
+        code: str,
+        ticket_purpose: str | None = None,
+    ) -> TicketIssued:
         if not self._is_token(challenge_id, _CHALLENGE_ID_LENGTH):
             raise EmailAuthStateError("invalid_or_expired_code")
         challenge_key = f"{_CHALLENGE_KEY_PREFIX}{challenge_id}"
@@ -295,6 +319,7 @@ class EmailAuthChallengeService:
         email = state.get("email")
         if purpose not in _PURPOSES or not email:
             raise EmailAuthStateError("invalid_or_expired_code")
+        resolved_purpose = self._purpose(purpose if ticket_purpose is None else ticket_purpose)
 
         candidate = code if self._is_code(code) else "invalid"
         email_token = self._digest("email-key", email)
@@ -311,7 +336,7 @@ class EmailAuthChallengeService:
                 challenge_id,
                 self._digest("code", challenge_id, purpose, email, candidate),
                 _MAX_CODE_ATTEMPTS,
-                purpose,
+                resolved_purpose,
                 email,
                 _TICKET_TTL_SECONDS,
             ],
@@ -321,7 +346,7 @@ class EmailAuthChallengeService:
             raise EmailAuthStateError("invalid_or_expired_code")
         if status != "ok":
             raise EmailAuthStateError("backend_unavailable")
-        return TicketIssued(ticket=ticket)
+        return TicketIssued(ticket=ticket, purpose=resolved_purpose)
 
     async def consume_ticket(self, ticket: str, *, expected_purpose: str) -> str:
         purpose = self._purpose(expected_purpose)

@@ -20,6 +20,7 @@ export type EmailAuthMode =
 	| "forgot"
 	| "reset"
 	| "reset-success";
+export type EmailIntent = "login" | "register";
 type EmailAuthOtpFlow = "register" | "password_reset";
 
 export type EmailAuthCardProps = {
@@ -29,7 +30,7 @@ export type EmailAuthCardProps = {
 	loading?: boolean;
 	error?: string | null;
 	cooldownSeconds?: number;
-	onSubmitEmail?: (email: string) => void;
+	onSubmitEmail?: (email: string, intent: EmailIntent) => void;
 	onSubmitPassword?: (password: string) => void;
 	onSubmitOtp?: (code: string) => void;
 	onSubmitSetPassword?: (password: string) => void;
@@ -39,7 +40,6 @@ export type EmailAuthCardProps = {
 	onResendOtp?: () => void;
 	onBackToEmail?: () => void;
 	onForgotPassword?: () => void;
-	onSignUp?: () => void;
 	onLegalLink?: (doc: "terms" | "privacy") => void;
 };
 
@@ -87,7 +87,7 @@ const MODE_COPY: Record<
 	}),
 	"reset-success": () => ({
 		title: "密码已重置",
-		description: "新密码已生效，你已安全登录。正在进入 Claread…",
+		description: "新密码已生效，你已安全登录。",
 	}),
 };
 
@@ -219,10 +219,10 @@ export function EmailAuthCard({
 	onResendOtp,
 	onBackToEmail,
 	onForgotPassword,
-	onSignUp,
 	onLegalLink,
 }: EmailAuthCardProps) {
 	const [emailDraft, setEmailDraft] = useState(email);
+	const [intent, setIntent] = useState<EmailIntent>("login");
 	const [password, setPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [otpCode, setOtpCode] = useState("");
@@ -254,7 +254,7 @@ export function EmailAuthCard({
 
 	function submitValidatedEmail(
 		event: React.FormEvent<HTMLFormElement>,
-		emit?: (email: string) => void,
+		emit?: (email: string, intent: EmailIntent) => void,
 	) {
 		event.preventDefault();
 		const candidate = emailDraft.trim();
@@ -263,7 +263,7 @@ export function EmailAuthCard({
 			return;
 		}
 		setLocalError(null);
-		emit?.(candidate);
+		emit?.(candidate, intent);
 	}
 
 	function submitPasswordLogin(event: React.FormEvent<HTMLFormElement>) {
@@ -361,6 +361,49 @@ export function EmailAuthCard({
 					</div>
 
 					<AuthDivider>或</AuthDivider>
+
+					<div
+						role="radiogroup"
+						aria-label="邮箱认证方式"
+						className="grid grid-cols-2 gap-2"
+					>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={intent === "login"}
+							disabled={loading}
+							className={cn(
+								"focus-ring rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+								intent === "login"
+									? "border-primary bg-primary/10 text-ink"
+									: "border-hairline bg-surface text-muted-foreground hover:border-muted-foreground/40 hover:text-ink",
+							)}
+							onClick={() => {
+								setIntent("login");
+								setLocalError(null);
+							}}
+						>
+							登录
+						</button>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={intent === "register"}
+							disabled={loading}
+							className={cn(
+								"focus-ring rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+								intent === "register"
+									? "border-primary bg-primary/10 text-ink"
+									: "border-hairline bg-surface text-muted-foreground hover:border-muted-foreground/40 hover:text-ink",
+							)}
+							onClick={() => {
+								setIntent("register");
+								setLocalError(null);
+							}}
+						>
+							注册
+						</button>
+					</div>
 
 					<form
 						className="space-y-4"
@@ -510,7 +553,9 @@ export function EmailAuthCard({
 				<form
 					className="space-y-4"
 					noValidate
-					onSubmit={(event) => submitValidatedEmail(event, onSubmitForgot)}
+					onSubmit={(event) =>
+						submitValidatedEmail(event, (candidate) => onSubmitForgot?.(candidate))
+					}
 				>
 					<EmailField
 						id="email-auth-email"
@@ -554,7 +599,10 @@ export function EmailAuthCard({
 							type="button"
 							className={cn(LINK_BUTTON, "font-medium text-ink hover:text-ink/70")}
 							disabled={loading}
-							onClick={onSignUp}
+							onClick={() => {
+								setIntent("register");
+								setLocalError(null);
+							}}
 						>
 							注册
 						</button>

@@ -125,17 +125,18 @@ describe("email auth BFF", () => {
     vi.unstubAllEnvs();
   });
 
-  it("start password returns only safe mode", async () => {
+  it("start never reveals account state or a mode", async () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
-      data: { mode: "password", challenge_id: null, expires_in: null, resend_after: null },
+      data: { challenge_id: CHALLENGE_ID, expires_in: EXPIRES_IN, resend_after: RESEND_AFTER },
     });
 
     const result = await startEmailAuth({ email: EMAIL });
 
     expect(result.status).toBe(200);
-    expect(result.body).toEqual({ ok: true, mode: "password" });
-    expect(cookieJar.has(WEB_EMAIL_CHALLENGE_COOKIE)).toBe(false);
+    expect(result.body).toEqual({ ok: true, resend_after: RESEND_AFTER });
+    expect(result.body).not.toHaveProperty("mode");
+    expect(cookieJar.has(WEB_EMAIL_CHALLENGE_COOKIE)).toBe(true);
     assertNoSecrets(result.body);
     expect(startUpstreamEmailAuth).toHaveBeenCalledWith(EMAIL);
   });
@@ -144,7 +145,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -156,7 +156,6 @@ describe("email auth BFF", () => {
     expect(result.status).toBe(200);
     expect(result.body).toEqual({
       ok: true,
-      mode: "register",
       resend_after: RESEND_AFTER,
     });
     const stored = cookieJar.get(WEB_EMAIL_CHALLENGE_COOKIE);
@@ -175,7 +174,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -183,7 +181,7 @@ describe("email auth BFF", () => {
     });
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "register" },
     });
     await startEmailAuth({ email: EMAIL });
 
@@ -191,6 +189,7 @@ describe("email auth BFF", () => {
 
     expect(verifyUpstreamEmailOtp).toHaveBeenCalledWith(CHALLENGE_ID, CODE);
     expect(result.body).toEqual({ ok: true, next: "set-password" });
+    expect(result.body).not.toHaveProperty("purpose");
     expect(cookieJar.has(WEB_EMAIL_CHALLENGE_COOKIE)).toBe(false);
     expect(cookieJar.get(WEB_EMAIL_TICKET_COOKIE)?.options).toMatchObject({
       httpOnly: true,
@@ -201,11 +200,10 @@ describe("email auth BFF", () => {
     assertNoSecrets(result.body);
   });
 
-  it("register, password login and reset complete write session cookie only", async () => {
+  it("OTP verify reflects converted upstream purpose without exposing it to the browser", async () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -213,7 +211,59 @@ describe("email auth BFF", () => {
     });
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "password_reset" },
+    });
+    await startEmailAuth({ email: EMAIL });
+
+    const result = await verifyEmailOtp({ code: CODE });
+
+    expect(result.body).toEqual({ ok: true, next: "reset" });
+    expect(result.body).not.toHaveProperty("purpose");
+    expect(cookieJar.get(WEB_EMAIL_TICKET_COOKIE)?.value).toBeTruthy();
+    expect((await getEmailAuthFlowStatus()).body).toEqual({
+      ok: true,
+      step: "reset",
+      email: EMAIL,
+    });
+    assertNoSecrets(result.body);
+  });
+
+  it("flow-status keeps register contract uniform before verification", async () => {
+    startUpstreamEmailAuth.mockResolvedValue({
+      ok: true,
+      data: {
+        challenge_id: CHALLENGE_ID,
+        expires_in: EXPIRES_IN,
+        resend_after: RESEND_AFTER,
+      },
+    });
+    await startEmailAuth({ email: EMAIL });
+
+    const status = await getEmailAuthFlowStatus();
+
+    expect(status.body).toEqual({
+      ok: true,
+      step: "otp",
+      flow: "register",
+      email: EMAIL,
+      resend_after: RESEND_AFTER,
+    });
+    expect(JSON.stringify(status.body)).not.toContain("password_reset");
+    assertNoSecrets(status.body);
+  });
+
+  it("register, password login and reset complete write session cookie only", async () => {
+    startUpstreamEmailAuth.mockResolvedValue({
+      ok: true,
+      data: {
+        challenge_id: CHALLENGE_ID,
+        expires_in: EXPIRES_IN,
+        resend_after: RESEND_AFTER,
+      },
+    });
+    verifyUpstreamEmailOtp.mockResolvedValue({
+      ok: true,
+      data: { ticket: TICKET, expires_in: 900, purpose: "register" },
     });
     registerUpstreamEmail.mockResolvedValue({
       ok: true,
@@ -258,7 +308,7 @@ describe("email auth BFF", () => {
     });
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "password_reset" },
     });
     completeUpstreamEmailPasswordReset.mockResolvedValue({
       ok: true,
@@ -326,7 +376,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -363,7 +412,7 @@ describe("email auth BFF", () => {
   it("fail-closes malformed success payloads", async () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
-      data: { mode: "register", challenge_id: CHALLENGE_ID, expires_in: EXPIRES_IN },
+      data: { challenge_id: CHALLENGE_ID, expires_in: EXPIRES_IN },
     });
     const missingCooldown = await startEmailAuth({ email: EMAIL });
     expect(missingCooldown.status).toBe(503);
@@ -393,7 +442,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -410,7 +458,7 @@ describe("email auth BFF", () => {
     await startEmailAuth({ email: EMAIL });
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "register" },
     });
     await verifyEmailOtp({ code: CODE });
     const wrongPurpose = await completeEmailPasswordReset({ password: PASSWORD });
@@ -422,7 +470,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -448,7 +495,7 @@ describe("email auth BFF", () => {
 
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "register" },
     });
     await verifyEmailOtp({ code: CODE });
     expect((await getEmailAuthFlowStatus()).body).toEqual({
@@ -489,7 +536,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -500,11 +546,10 @@ describe("email auth BFF", () => {
     vi.unstubAllEnvs();
   });
 
-  it("replaces old ticket flow when starting register, reset, or password", async () => {
+  it("replaces old ticket flow when starting register or reset", async () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: CHALLENGE_ID,
         expires_in: EXPIRES_IN,
         resend_after: RESEND_AFTER,
@@ -512,7 +557,7 @@ describe("email auth BFF", () => {
     });
     verifyUpstreamEmailOtp.mockResolvedValue({
       ok: true,
-      data: { ticket: TICKET, expires_in: 900 },
+      data: { ticket: TICKET, expires_in: 900, purpose: "register" },
     });
     await startEmailAuth({ email: EMAIL });
     await verifyEmailOtp({ code: CODE });
@@ -526,7 +571,6 @@ describe("email auth BFF", () => {
     startUpstreamEmailAuth.mockResolvedValue({
       ok: true,
       data: {
-        mode: "register",
         challenge_id: nextChallenge,
         expires_in: EXPIRES_IN,
         resend_after: 41,
@@ -559,15 +603,6 @@ describe("email auth BFF", () => {
       email: EMAIL,
       resend_after: 19,
     });
-
-    startUpstreamEmailAuth.mockResolvedValue({
-      ok: true,
-      data: { mode: "password", challenge_id: null, expires_in: null, resend_after: null },
-    });
-    await startEmailAuth({ email: EMAIL });
-    expect(cookieJar.has(WEB_EMAIL_CHALLENGE_COOKIE)).toBe(false);
-    expect(cookieJar.has(WEB_EMAIL_TICKET_COOKIE)).toBe(false);
-    expect((await getEmailAuthFlowStatus()).body).toEqual({ ok: true, step: "idle" });
   });
 
   it("returns idle for malformed, expired, or incomplete flow cookies", async () => {

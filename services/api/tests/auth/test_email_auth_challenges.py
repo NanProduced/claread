@@ -17,6 +17,7 @@ from app.config.settings import Settings
 from app.services.auth import email_challenges as email_challenges_module
 from app.services.auth.email_challenges import (
     ChallengeCreated,
+    ChallengeState,
     EmailAuthChallengeService,
     EmailAuthStateError,
     TicketIssued,
@@ -419,6 +420,41 @@ async def test_concurrent_verify_issues_one_hidden_purpose_bound_ticket() -> Non
     assert issued[0].ticket not in ticket_key
     assert issued[0].ticket not in redis.state_text()
     assert issued[0].ticket not in repr(issued[0])
+
+
+async def test_verify_challenge_honors_ticket_purpose_override() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(redis, _settings())
+    created = await service.create_challenge(
+        email=EMAIL, purpose="register", client_ip=IP_ADDRESS
+    )
+
+    issued = await service.verify_challenge(
+        challenge_id=created.challenge_id,
+        code=created.code,
+        ticket_purpose="password_reset",
+    )
+
+    assert issued.purpose == "password_reset"
+    ticket_key = next(key for key in redis.keys() if ":ticket:v1:" in key)
+    assert redis.hashes[ticket_key]["purpose"] == "password_reset"
+    assert redis.hashes[ticket_key]["email"] == EMAIL
+    assert await service.consume_ticket(issued.ticket, expected_purpose="password_reset") == EMAIL
+
+
+async def test_read_challenge_exposes_purpose_and_email_without_code() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(redis, _settings())
+    created = await service.create_challenge(
+        email="Reader@EXAMPLE.com", purpose="register", client_ip=IP_ADDRESS
+    )
+
+    state = await service.read_challenge(created.challenge_id)
+
+    assert state == ChallengeState(purpose="register", email=EMAIL)
+    assert created.code not in repr(state)
+    assert created.code not in redis.state_text()
+    assert await service.read_challenge("invalid-shape") is None
 
 
 async def test_ticket_rejects_cross_purpose_then_concurrent_consume_succeeds_once() -> None:
@@ -832,6 +868,8 @@ async def test_missing_redis_fails_closed_for_every_public_transition() -> None:
         await service.discard_challenge("A" * 32)
     with pytest.raises(EmailAuthStateError) as verify_error:
         await service.verify_challenge(challenge_id="A" * 32, code=FIXED_CODE)
+    with pytest.raises(EmailAuthStateError) as read_error:
+        await service.read_challenge("A" * 32)
     with pytest.raises(EmailAuthStateError) as consume_error:
         await service.consume_ticket("B" * 43, expected_purpose="register")
     with pytest.raises(EmailAuthStateError) as attempt_error:
@@ -848,6 +886,7 @@ async def test_missing_redis_fails_closed_for_every_public_transition() -> None:
         create_error.value.code,
         discard_error.value.code,
         verify_error.value.code,
+        read_error.value.code,
         consume_error.value.code,
         attempt_error.value.code,
         clear_error.value.code,

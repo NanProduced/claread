@@ -9,7 +9,9 @@ from typing import Literal
 from app.services.auth.email_address import InvalidEmailAddressError, normalize_email_address
 from app.services.auth.email_challenges import (
     ChallengeCreated,
+    ChallengeState,
     EmailAuthChallengeService,
+    EmailAuthStateError,
     TicketIssued,
 )
 from app.services.auth.email_credentials import (
@@ -23,7 +25,6 @@ from app.services.auth.password_safety import evaluate_password_safety
 from app.services.auth.resend_email import send_verification_email
 from app.services.auth.session import create_session
 
-EmailEntryMode = Literal["password", "register"]
 EmailPurpose = Literal["register", "password_reset"]
 
 
@@ -37,10 +38,9 @@ class EmailAuthError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class EmailEntryResult:
-    mode: EmailEntryMode
-    challenge_id: str | None = field(default=None, repr=False)
-    expires_in: int | None = None
-    resend_after: int | None = None
+    challenge_id: str = field(repr=False)
+    expires_in: int
+    resend_after: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,10 +56,12 @@ class EmailAuthService:
         self._challenges = challenge_service
 
     async def start_email_auth(self, *, email: str, client_ip: str) -> EmailEntryResult:
+        """Explicit register entry: always issue a register challenge.
+
+        The account state is never consulted here, so the response cannot
+        reveal whether the email already exists.
+        """
         normalized_email = normalize_email_address(email)
-        account = await lookup_email_account(normalized_email)
-        if account is not None and account.has_password:
-            return EmailEntryResult(mode="password")
         challenge = await self._challenges.create_challenge(
             email=normalized_email,
             purpose="register",
@@ -67,7 +69,6 @@ class EmailAuthService:
         )
         await self._deliver_challenge(challenge, purpose="register", email=normalized_email)
         return EmailEntryResult(
-            mode="register",
             challenge_id=challenge.challenge_id,
             expires_in=challenge.expires_in,
             resend_after=challenge.resend_after,
@@ -91,10 +92,30 @@ class EmailAuthService:
             raise EmailAuthError("email_delivery_rejected")
 
     async def verify_email_otp(self, *, challenge_id: str, code: str) -> TicketIssued:
+        """Verify the code and bind the ticket to the resolved purpose.
+
+        A verified register code for an email that already owns a password is
+        converted to a password_reset ticket. The account lookup happens only
+        after the code has been presented, so the browser contract stays
+        uniform before verification.
+        """
+        state = await self._challenges.read_challenge(challenge_id)
+        if state is None:
+            raise EmailAuthStateError("invalid_or_expired_code")
+        ticket_purpose = await self._resolved_ticket_purpose(state)
         return await self._challenges.verify_challenge(
             challenge_id=challenge_id,
             code=code,
+            ticket_purpose=ticket_purpose,
         )
+
+    async def _resolved_ticket_purpose(self, state: ChallengeState) -> EmailPurpose:
+        if state.purpose != "register":
+            return state.purpose
+        account = await lookup_email_account(state.email)
+        if account is not None and account.has_password:
+            return "password_reset"
+        return "register"
 
     async def register_with_ticket(
         self,

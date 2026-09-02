@@ -17,10 +17,9 @@ class EmailStartRequest(BaseModel):
 
 
 class EmailStartResponse(BaseModel):
-    mode: Literal["password", "register"]
-    challenge_id: str | None = None
-    expires_in: int | None = None
-    resend_after: int | None = Field(default=None, gt=0)
+    challenge_id: str
+    expires_in: int
+    resend_after: int = Field(gt=0)
 
 
 class EmailOTPVerifyRequest(BaseModel):
@@ -34,6 +33,7 @@ class EmailOTPVerifyRequest(BaseModel):
 
 class EmailOTPVerifyResponse(BaseModel):
     ticket: str
+    purpose: Literal["register", "password_reset"]
     expires_in: int
 
 

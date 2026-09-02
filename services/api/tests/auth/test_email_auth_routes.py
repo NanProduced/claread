@@ -66,11 +66,15 @@ def service() -> Iterator[AsyncMock]:
     app.dependency_overrides.clear()
 
 
-def test_start_password_mode_uses_raw_email_and_trusted_client_host(
+def test_start_returns_register_challenge_without_mode_or_account_state(
     client: TestClient,
     service: AsyncMock,
 ) -> None:
-    service.start_email_auth.return_value = EmailEntryResult(mode="password")
+    service.start_email_auth.return_value = EmailEntryResult(
+        challenge_id=CHALLENGE_ID,
+        expires_in=600,
+        resend_after=73,
+    )
 
     response = client.post(
         "/auth/email/start",
@@ -80,11 +84,11 @@ def test_start_password_mode_uses_raw_email_and_trusted_client_host(
 
     assert response.status_code == 200
     assert response.json() == {
-        "mode": "password",
-        "challenge_id": None,
-        "expires_in": None,
-        "resend_after": None,
+        "challenge_id": CHALLENGE_ID,
+        "expires_in": 600,
+        "resend_after": 73,
     }
+    assert "mode" not in response.json()
     service.start_email_auth.assert_awaited_once_with(
         email=EMAIL,
         client_ip=CLIENT_IP,
@@ -96,7 +100,6 @@ def test_start_register_mode_returns_challenge_metadata(
     service: AsyncMock,
 ) -> None:
     service.start_email_auth.return_value = EmailEntryResult(
-        mode="register",
         challenge_id=CHALLENGE_ID,
         expires_in=600,
         resend_after=73,
@@ -106,18 +109,19 @@ def test_start_register_mode_returns_challenge_metadata(
 
     assert response.status_code == 200
     assert response.json() == {
-        "mode": "register",
         "challenge_id": CHALLENGE_ID,
         "expires_in": 600,
         "resend_after": 73,
     }
 
 
-def test_otp_verify_returns_one_time_ticket_only(
+def test_otp_verify_returns_one_time_ticket_and_purpose_only(
     client: TestClient,
     service: AsyncMock,
 ) -> None:
-    service.verify_email_otp.return_value = TicketIssued(ticket=TICKET, expires_in=900)
+    service.verify_email_otp.return_value = TicketIssued(
+        ticket=TICKET, expires_in=900, purpose="password_reset"
+    )
 
     response = client.post(
         "/auth/email/otp/verify",
@@ -125,7 +129,11 @@ def test_otp_verify_returns_one_time_ticket_only(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"ticket": TICKET, "expires_in": 900}
+    assert response.json() == {
+        "ticket": TICKET,
+        "expires_in": 900,
+        "purpose": "password_reset",
+    }
     service.verify_email_otp.assert_awaited_once_with(
         challenge_id=CHALLENGE_ID,
         code=CODE,
@@ -266,7 +274,9 @@ def test_email_domain_validation_stays_in_service_layer(
     client: TestClient,
     service: AsyncMock,
 ) -> None:
-    service.start_email_auth.return_value = EmailEntryResult(mode="password")
+    service.start_email_auth.return_value = EmailEntryResult(
+        challenge_id=CHALLENGE_ID, expires_in=600, resend_after=73
+    )
 
     response = client.post("/auth/email/start", json={"email": "not-an-email"})
 
@@ -498,7 +508,11 @@ def test_email_auth_service_reads_current_redis_from_connection_module(
     get_redis = AsyncMock(return_value=redis_client)
     challenge_factory = Mock()
     service = Mock()
-    service.start_email_auth = AsyncMock(return_value=EmailEntryResult(mode="password"))
+    service.start_email_auth = AsyncMock(
+        return_value=EmailEntryResult(
+            challenge_id=CHALLENGE_ID, expires_in=600, resend_after=73
+        )
+    )
 
     with (
         patch("app.api.routes.email_auth.get_settings", return_value=settings),

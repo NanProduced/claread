@@ -187,11 +187,10 @@ describe("EmailAuthFlow", () => {
 		});
 	});
 
-	it("logs in with password and refreshes before a safe redirect", async () => {
+	it("logs in with password directly from email without calling start", async () => {
 		const user = userEvent.setup();
 		const fetchMock = mockFetchByUrl({
 			"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-			"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 			"POST /api/web/auth/email/password/login": async () => jsonResponse({ ok: true }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
@@ -209,16 +208,21 @@ describe("EmailAuthFlow", () => {
 		expect(navigationMock.refresh.mock.invocationCallOrder[0]).toBeLessThan(
 			navigationMock.push.mock.invocationCallOrder[0],
 		);
+		const calledPaths = fetchMock.mock.calls.map(([input]) =>
+			new URL(String(input), "http://localhost").pathname,
+		);
+		expect(calledPaths).not.toContain("/api/web/auth/email/start");
+		expect(calledPaths).not.toContain("/api/web/auth/email/password-reset/request");
 		assertNoCredentials(logs);
 		expect(storageSet).not.toHaveBeenCalled();
 	});
 
-	it("walks register → OTP → set-password → redirect", async () => {
+	it("registers through the explicit register intent into OTP", async () => {
 		const user = userEvent.setup();
 		const fetchMock = mockFetchByUrl({
 			"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
 			"POST /api/web/auth/email/start": async () =>
-				jsonResponse({ ok: true, mode: "register", resend_after: 73 }),
+				jsonResponse({ ok: true, resend_after: 73 }),
 			"POST /api/web/auth/email/otp/verify": async () =>
 				jsonResponse({ ok: true, next: "set-password" }),
 			"POST /api/web/auth/email/register": async () => jsonResponse({ ok: true }),
@@ -226,6 +230,7 @@ describe("EmailAuthFlow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await waitFor(() => screen.getByRole("button", { name: "73 秒后可重发" }));
@@ -240,11 +245,50 @@ describe("EmailAuthFlow", () => {
 		});
 	});
 
+	it("restores register OTP with uniform copy that never hints at account state", async () => {
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () =>
+					jsonResponse({
+						ok: true,
+						step: "otp",
+						flow: "register",
+						email: EMAIL,
+						resend_after: 41,
+					}),
+			}),
+		);
+		render(<EmailAuthFlow />);
+		await waitFor(() => {
+			expect(screen.getByRole("heading", { name: "查看你的邮箱" })).toBeTruthy();
+		});
+		expect(screen.getByText(`我们已向 ${EMAIL} 发送 6 位验证码。`)).toBeTruthy();
+		expect(screen.queryByText(/如果该邮箱已注册/)).toBeNull();
+		expect(screen.queryByText(/密码重置/)).toBeNull();
+		assertNoCredentials(logs);
+	});
+
+	it("navigates to /terms and /privacy from the legal links", async () => {
+		const user = userEvent.setup();
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
+			}),
+		);
+		render(<EmailAuthFlow />);
+		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("button", { name: "服务条款" }));
+		expect(navigationMock.push).toHaveBeenCalledWith("/terms");
+		await user.click(screen.getByRole("button", { name: "隐私政策" }));
+		expect(navigationMock.push).toHaveBeenCalledWith("/privacy");
+	});
+
 	it("keeps password reset success visible until the user continues", async () => {
 		const user = userEvent.setup();
 		const fetchMock = mockFetchByUrl({
 			"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-			"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 			"POST /api/web/auth/email/password-reset/request": async () =>
 				jsonResponse({ ok: true, status: "accepted", resend_after: 19 }),
 			"POST /api/web/auth/email/otp/verify": async () => jsonResponse({ ok: true, next: "reset" }),
@@ -271,6 +315,8 @@ describe("EmailAuthFlow", () => {
 			await Promise.resolve();
 		});
 		expect(screen.getByRole("heading", { name: "密码已重置" })).toBeTruthy();
+		expect(screen.getByText("新密码已生效，你已安全登录。")).toBeTruthy();
+		expect(screen.queryByText(/正在进入/)).toBeNull();
 		expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
 		await vi.advanceTimersByTimeAsync(5000);
 		expect(navigationMock.refresh).not.toHaveBeenCalled();
@@ -327,12 +373,13 @@ describe("EmailAuthFlow", () => {
 						{ status: 429, headers: { "Retry-After": "1" } },
 					);
 				}
-				return jsonResponse({ ok: true, mode: "register", resend_after: 1 });
+				return jsonResponse({ ok: true, resend_after: 1 });
 			},
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await waitFor(() => screen.getByRole("button", { name: "1 秒后可重发" }));
@@ -353,19 +400,20 @@ describe("EmailAuthFlow", () => {
 			"POST /api/web/auth/email/start": async () => {
 				startCalls += 1;
 				await new Promise((resolve) => setTimeout(resolve, 50));
-				return jsonResponse({ ok: true, mode: "password" });
+				return jsonResponse({ ok: true, resend_after: 1 });
 			},
 			"POST /api/web/auth/email/cancel": async () => jsonResponse({ ok: true }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
-		await waitFor(() => screen.getByRole("button", { name: "忘记密码？" }));
+		await waitFor(() => screen.getByRole("heading", { name: "查看你的邮箱" }));
 		expect(startCalls).toBe(1);
-		await user.click(screen.getByRole("button", { name: "使用其他邮箱" }));
+		await user.click(screen.getByRole("button", { name: "返回登录" }));
 		await waitFor(() => screen.getByRole("heading", { name: "登录或创建账号" }));
 	});
 
@@ -379,6 +427,7 @@ describe("EmailAuthFlow", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await waitFor(() => screen.getByRole("alert"));
@@ -392,7 +441,6 @@ describe("EmailAuthFlow", () => {
 		navigationMock.search = new URLSearchParams("next=https://evil.example/phish");
 		const fetchMock = mockFetchByUrl({
 			"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-			"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 			"POST /api/web/auth/email/password/login": async () => jsonResponse({ ok: true }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
@@ -415,7 +463,6 @@ describe("EmailAuthFlow", () => {
 			"fetch",
 			mockFetchByUrl({
 				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-				"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 			}),
 		);
 		const { container } = render(<EmailAuthFlow />);
@@ -461,11 +508,9 @@ describe("EmailAuthFlow", () => {
 	});
 
 	it.each([
-		["missing ok", { mode: "password" }],
-		["missing mode", { ok: true }],
-		["unknown mode", { ok: true, mode: "magic" }],
-		["register missing resend_after", { ok: true, mode: "register" }],
-		["register resend_after string", { ok: true, mode: "register", resend_after: "73" }],
+		["missing ok", { resend_after: 73 }],
+		["missing resend_after", { ok: true }],
+		["resend_after string", { ok: true, resend_after: "73" }],
 	] as const)("rejects malformed start (%s) without switching mode", async (_name, body) => {
 		const user = userEvent.setup();
 		vi.stubGlobal(
@@ -477,6 +522,7 @@ describe("EmailAuthFlow", () => {
 		);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await waitFor(() => screen.getByRole("alert"));
@@ -499,12 +545,13 @@ describe("EmailAuthFlow", () => {
 			mockFetchByUrl({
 				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
 				"POST /api/web/auth/email/start": async () =>
-					jsonResponse({ ok: true, mode: "register", resend_after: 73 }),
+					jsonResponse({ ok: true, resend_after: 73 }),
 				"POST /api/web/auth/email/otp/verify": async () => jsonResponse(body),
 			}),
 		);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
+		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
 		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
 		await waitFor(() => screen.getByRole("heading", { name: "查看你的邮箱" }));
@@ -527,7 +574,6 @@ describe("EmailAuthFlow", () => {
 			"fetch",
 			mockFetchByUrl({
 				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-				"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 				"POST /api/web/auth/email/password-reset/request": async () => jsonResponse(body),
 			}),
 		);
@@ -555,7 +601,6 @@ describe("EmailAuthFlow", () => {
 			"fetch",
 			mockFetchByUrl({
 				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
-				"POST /api/web/auth/email/start": async () => jsonResponse({ ok: true, mode: "password" }),
 				"POST /api/web/auth/email/password/login": async () => jsonResponse(body),
 			}),
 		);

@@ -1,12 +1,12 @@
 export type EmailStartResponseDto = {
-  mode: "password" | "register";
-  challenge_id?: string | null;
-  expires_in?: number | null;
-  resend_after?: number | null;
+  challenge_id: string;
+  expires_in: number;
+  resend_after: number;
 };
 
 export type EmailOtpVerifyResponseDto = {
   ticket: string;
+  purpose: "register" | "password_reset";
   expires_in: number;
 };
 

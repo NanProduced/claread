@@ -47,8 +47,7 @@ type CookieOptions = {
 };
 
 type SuccessBody =
-  | { ok: true; mode: "password" }
-  | { ok: true; mode: "register"; resend_after: number }
+  | { ok: true; resend_after: number }
   | { ok: true; next: "set-password" | "reset" }
   | { ok: true; status: "accepted"; resend_after: number }
   | { ok: true; step: "otp"; flow: FlowPurpose; email: string; resend_after: number }
@@ -435,13 +434,6 @@ export async function startEmailAuth(body: unknown): Promise<EmailBffResult> {
   if (!upstream.ok) {
     return parseUpstreamError(upstream);
   }
-  if (upstream.data.mode === "password") {
-    await clearFlowCookies();
-    return { status: 200, body: { ok: true, mode: "password" } };
-  }
-  if (upstream.data.mode !== "register") {
-    return unavailable();
-  }
   const challengeId = upstream.data.challenge_id;
   const expiresIn = upstream.data.expires_in;
   const resendAfter = upstream.data.resend_after;
@@ -460,7 +452,7 @@ export async function startEmailAuth(body: unknown): Promise<EmailBffResult> {
     expiresIn,
     resendAfter,
   );
-  return { status: 200, body: { ok: true, mode: "register", resend_after: resendAfter } };
+  return { status: 200, body: { ok: true, resend_after: resendAfter } };
 }
 
 export async function verifyEmailOtp(body: unknown): Promise<EmailBffResult> {
@@ -478,13 +470,19 @@ export async function verifyEmailOtp(body: unknown): Promise<EmailBffResult> {
   }
   const ticket = upstream.data.ticket;
   const expiresIn = upstream.data.expires_in;
-  if (typeof ticket !== "string" || !TICKET_RE.test(ticket) || !isPositiveInt(expiresIn)) {
+  const purpose = upstream.data.purpose;
+  if (
+    typeof ticket !== "string" ||
+    !TICKET_RE.test(ticket) ||
+    !isPositiveInt(expiresIn) ||
+    (purpose !== "register" && purpose !== "password_reset")
+  ) {
     return unavailable();
   }
-  await writeTicketCookie(ticket, challenge.p, challenge.email, expiresIn);
+  await writeTicketCookie(ticket, purpose, challenge.email, expiresIn);
   return {
     status: 200,
-    body: { ok: true, next: challenge.p === "register" ? "set-password" : "reset" },
+    body: { ok: true, next: purpose === "register" ? "set-password" : "reset" },
   };
 }
 

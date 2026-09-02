@@ -5,8 +5,14 @@ import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { EmailAuthScreen } from "@/components/auth/EmailAuthScreen";
-import type { EmailAuthMode } from "@/components/auth/EmailAuthCard";
-import { appReadRoute, isAllowedIntent, isAllowedNextPath } from "@/lib/routes";
+import type { EmailAuthMode, EmailIntent } from "@/components/auth/EmailAuthCard";
+import {
+	appReadRoute,
+	isAllowedIntent,
+	isAllowedNextPath,
+	privacyRoute,
+	termsRoute,
+} from "@/lib/routes";
 import {
 	NETWORK_ERROR_MESSAGE,
 	SERVER_UNAVAILABLE_MESSAGE,
@@ -89,13 +95,7 @@ function parseFlowStatus(
 
 function parseStart(body: Record<string, unknown>) {
 	requireOk(body);
-	if (body.mode === "password") {
-		return { mode: "password" as const };
-	}
-	if (body.mode === "register") {
-		return { mode: "register" as const, resend_after: requireResendAfter(body.resend_after) };
-	}
-	throw new Error(SAFE_ERROR);
+	return { resend_after: requireResendAfter(body.resend_after) };
 }
 
 function parseOtpNext(body: Record<string, unknown>) {
@@ -296,7 +296,15 @@ export function EmailAuthFlow() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	function handleSubmitEmail(nextEmail: string) {
+	function handleSubmitEmail(nextEmail: string, intent: EmailIntent) {
+		if (intent === "login") {
+			// 显式登录不查询账号存在性：直接进入密码页。
+			setEmail(nextEmail);
+			setMode("password");
+			setOtpFlow(null);
+			applyCooldown(0);
+			return;
+		}
 		void run(async () => {
 			const { body } = await request(
 				START,
@@ -309,12 +317,6 @@ export function EmailAuthFlow() {
 			);
 			const started = parseStart(body);
 			setEmail(nextEmail);
-			if (started.mode === "password") {
-				setMode("password");
-				setOtpFlow(null);
-				applyCooldown(0);
-				return;
-			}
 			setMode("otp");
 			setOtpFlow("register");
 			applyCooldown(started.resend_after);
@@ -411,7 +413,7 @@ export function EmailAuthFlow() {
 			handleSubmitForgot(email);
 			return;
 		}
-		handleSubmitEmail(email);
+		handleSubmitEmail(email, "register");
 	}
 
 	function handleBackToEmail() {
@@ -441,6 +443,7 @@ export function EmailAuthFlow() {
 			onResendOtp={handleResendOtp}
 			onBackToEmail={handleBackToEmail}
 			onForgotPassword={handleForgotPassword}
+			onLegalLink={(doc) => router.push(doc === "terms" ? termsRoute : privacyRoute)}
 		/>
 	);
 }

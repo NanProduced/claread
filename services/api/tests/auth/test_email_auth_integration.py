@@ -411,7 +411,7 @@ def test_email_auth_register_login_reset_chain(
         )
         first_challenge_at = time.monotonic()
         responses.append(json.dumps(start))
-        assert start["mode"] == "register"
+        assert "mode" not in start
         assert isinstance(start["challenge_id"], str)
         assert sender.codes and sender.purposes == ["register"]
         register_code = sender.codes[-1]

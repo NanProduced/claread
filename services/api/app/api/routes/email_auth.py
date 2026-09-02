@@ -137,7 +137,6 @@ async def email_start(
         service.start_email_auth(email=body.email, client_ip=_client_ip(request))
     )
     return EmailStartResponse(
-        mode=result.mode,
         challenge_id=result.challenge_id,
         expires_in=result.expires_in,
         resend_after=result.resend_after,
@@ -152,7 +151,11 @@ async def email_otp_verify(
     result = await _run(
         service.verify_email_otp(challenge_id=body.challenge_id, code=body.code)
     )
-    return EmailOTPVerifyResponse(ticket=result.ticket, expires_in=result.expires_in)
+    return EmailOTPVerifyResponse(
+        ticket=result.ticket,
+        purpose=result.purpose,
+        expires_in=result.expires_in,
+    )
 
 
 @router.post("/register", response_model=EmailSessionResponse)

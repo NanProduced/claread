@@ -13,7 +13,6 @@ type OtpFlow = "register" | "password_reset";
 
 type MockState =
   | { step: "idle" }
-  | { step: "password"; email: string }
   | { step: "otp"; flow: OtpFlow; email: string; cooldownUntil: number }
   | { step: "set-password" | "reset"; flow: OtpFlow; email: string };
 
@@ -29,7 +28,7 @@ function readBody(route: Route, field: string): string {
   return value;
 }
 
-async function installEmailAuthMock(page: Page, registeredEmail = REGISTERED_EMAIL) {
+async function installEmailAuthMock(page: Page) {
   let state: MockState = { step: "idle" };
 
   const cooldownRemaining = () =>
@@ -103,26 +102,20 @@ async function installEmailAuthMock(page: Page, registeredEmail = REGISTERED_EMA
           return;
         }
         startOtp("register", email);
-        await fulfill(route, { ok: true, mode: "register", resend_after: COOLDOWN_SECONDS });
+        await fulfill(route, { ok: true, resend_after: COOLDOWN_SECONDS });
         return;
       }
       if (state.step !== "idle") {
         throw new Error(`Unexpected start state ${state.step}`);
       }
-      if (email === registeredEmail) {
-        state = { step: "password", email };
-        await fulfill(route, { ok: true, mode: "password" });
-        return;
-      }
       startOtp("register", email);
-      await fulfill(route, { ok: true, mode: "register", resend_after: COOLDOWN_SECONDS });
+      await fulfill(route, { ok: true, resend_after: COOLDOWN_SECONDS });
       return;
     }
 
     if (path === "/api/web/auth/email/password/login") {
-      const email = readBody(route, "email");
       const password = readBody(route, "password");
-      if (state.step !== "password" || state.email !== email || password !== LOGIN_PASSWORD) {
+      if (password !== LOGIN_PASSWORD) {
         throw new Error("Unexpected password login state");
       }
       state = { step: "idle" };
@@ -146,8 +139,6 @@ async function installEmailAuthMock(page: Page, registeredEmail = REGISTERED_EMA
           );
           return;
         }
-      } else if (state.step !== "password" || state.email !== email) {
-        throw new Error("Unexpected password reset request state");
       }
       startOtp("password_reset", email);
       await fulfill(route, {
@@ -222,6 +213,7 @@ test.describe("offline email auth browser coverage", () => {
     await page.goto("/login?next=/daily");
 
     await expect(page.getByRole("heading", { name: "登录或创建账号" })).toBeVisible();
+    await page.getByRole("radio", { name: "注册" }).click();
     await page.getByLabel("邮箱地址").fill(NEW_EMAIL);
     await page.getByRole("button", { name: "使用邮箱继续" }).click();
 
@@ -280,6 +272,7 @@ test.describe("offline email auth browser coverage", () => {
     await installEmailAuthMock(page);
     await page.goto("/login?next=/daily");
 
+    await page.getByRole("radio", { name: "注册" }).click();
     await page.getByLabel("邮箱地址").fill(RECOVERY_EMAIL);
     await page.getByRole("button", { name: "使用邮箱继续" }).click();
     await expect(page.getByRole("heading", { name: "查看你的邮箱" })).toBeVisible();
