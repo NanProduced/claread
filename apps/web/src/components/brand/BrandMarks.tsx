@@ -20,14 +20,26 @@ export function BrandLockup({
   priority = false,
 }: BrandLockupProps) {
   const mark = (
-    <Image
-      src="/brand/claread-horizontal-bilingual.png"
-      alt="Claread 透读"
-      width={328}
-      height={96}
-      priority={priority}
-      className={cx("h-auto w-44 sm:w-56", imageClassName)}
-    />
+    <span role="img" aria-label="Claread 透读" className="block">
+      <Image
+        src="/brand/claread-horizontal-bilingual.png"
+        alt=""
+        aria-hidden="true"
+        width={328}
+        height={96}
+        priority={priority}
+        className={cx("h-auto w-44 sm:w-56 dark:hidden", imageClassName)}
+      />
+      <Image
+        src="/brand/claread-horizontal-bilingual-reversed.png"
+        alt=""
+        aria-hidden="true"
+        width={328}
+        height={96}
+        priority={priority}
+        className={cx("hidden h-auto w-44 sm:w-56 dark:block", imageClassName)}
+      />
+    </span>
   );
 
   if (!href) {
@@ -48,14 +60,30 @@ type ApertureWatermarkProps = {
 
 export function ApertureWatermark({ className, size = 320 }: ApertureWatermarkProps) {
   return (
-    <Image
-      src="/brand/claread-icon-fullcolor.png"
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-      className={cx("brand-aperture-mark pointer-events-none select-none", className)}
-    />
+    <>
+      <Image
+        src="/brand/claread-icon-fullcolor.png"
+        alt=""
+        aria-hidden="true"
+        width={size}
+        height={size}
+        className={cx(
+          "brand-aperture-mark pointer-events-none select-none dark:hidden",
+          className,
+        )}
+      />
+      <Image
+        src="/brand/claread-icon-reversed.png"
+        alt=""
+        aria-hidden="true"
+        width={size}
+        height={size}
+        className={cx(
+          "brand-aperture-mark pointer-events-none hidden select-none dark:block",
+          className,
+        )}
+      />
+    </>
   );
 }
 
@@ -78,7 +106,15 @@ export function ClareadStamp({ className, label = "CLAREAD EDITION" }: ClareadSt
         aria-hidden="true"
         width={18}
         height={18}
-        className="brand-aperture-mark h-4 w-4"
+        className="brand-aperture-mark h-4 w-4 dark:hidden"
+      />
+      <Image
+        src="/brand/claread-icon-reversed.png"
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        className="brand-aperture-mark hidden h-4 w-4 dark:block"
       />
       <span>{label}</span>
     </div>

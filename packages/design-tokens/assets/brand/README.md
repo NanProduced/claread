@@ -40,8 +40,10 @@ icons/
   app-icon.png
   claread-app-logo-dark.png
   claread-icon-fullcolor.png
+  claread-icon-reversed.png
 logos/
   claread-horizontal-bilingual.png
+  claread-horizontal-bilingual-reversed.png
   claread-logo.png
   claread-primary-fullcolor.png
   claread-primary-reversed.png
