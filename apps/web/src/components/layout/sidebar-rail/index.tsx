@@ -80,7 +80,6 @@ export interface SidebarRailProps {
   onSidebarLock?: () => void;
   onSidebarClose?: () => void;
   userName?: string;
-  userContact?: string;
   userPlanLabel?: string;
   recentRecords?: ReadingRecordListItemVm[];
 }
@@ -94,7 +93,6 @@ export function SidebarRail({
   onSidebarLock,
   onSidebarClose,
   userName: userNameProp,
-  userContact: userContactProp,
   userPlanLabel: userPlanLabelProp,
   recentRecords = [],
 }: SidebarRailProps) {
@@ -114,7 +112,6 @@ export function SidebarRail({
   const newReadActive = isSidebarActive(pathname, newReadItem.href);
   const NewReadIcon = newReadItem.icon;
   const userName = userNameProp?.trim() || fallbackUserName;
-  const userContact = userContactProp?.trim();
   const userPlanLabel = userPlanLabelProp?.trim() || fallbackUserPlan;
   const userInitial = userName.trim().slice(0, 1).toUpperCase() || "C";
   const recentList = recentRecords.slice(0, 10);
@@ -150,9 +147,6 @@ export function SidebarRail({
       <div className="px-3 py-2">
         <div className="truncate text-[0.8125rem] font-semibold leading-5 text-ink">
           {userName}
-        </div>
-        <div className="truncate text-[0.75rem] leading-5 text-subtle">
-          {userContact ?? "未绑定联系方式"}
         </div>
       </div>
       <DropdownMenuSeparator />

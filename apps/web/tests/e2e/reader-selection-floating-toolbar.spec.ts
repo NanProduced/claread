@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { makeAnalysisProgressDto } from "../../src/test/fixtures/reader-analysis-progress";
+
 /**
  * Reader selection floating toolbar — real native-selection e2e.
  *
@@ -20,7 +22,8 @@ import { expect, test, type Page } from "@playwright/test";
  * translation block (non-source) negative case and a cross-anchor selection.
  *
  * BFF routes are mocked at the network layer via page.route — no backend
- * dependency. Auth uses CLAREAD_PHONE_AUTH_PROVIDER=mock (code 888888).
+ * dependency. Auth is established with a direct `claread_web_session`
+ * cookie, the same low-level helper the offline email-auth spec uses.
  */
 
 const RECORD_ID = "sel-toolbar-rec-1";
@@ -403,6 +406,7 @@ function makeSnapshot() {
     parsed_decisions: [],
     user_assets: [],
     ask_supplements: [],
+    analysis_progress: makeAnalysisProgressDto(),
   };
 }
 
@@ -475,36 +479,12 @@ async function mockBff(page: Page) {
 }
 
 async function loginAndNavigate(page: Page) {
-  await page.route("**/api/web/auth/phone/request-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ ok: true, message: "mock" }),
-    });
-  });
-
-  await page.route("**/api/web/auth/phone/verify-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: {
-        "set-cookie":
-          "claread_web_phone=13800138000; Path=/; SameSite=Lax; HttpOnly",
-      },
-      body: JSON.stringify({
-        ok: true,
-        phone: "13800138000",
-        message: "ok",
-      }),
-    });
-  });
-
   const targetPath = `/app/reader/${RECORD_ID}`;
-  await page.goto(`/login?next=${encodeURIComponent(targetPath)}`);
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
+  await page.goto("/");
+  await page.context().addCookies([
+    { name: "claread_web_session", value: "e2e-session", path: "/", domain: "127.0.0.1" },
+  ]);
+  await page.goto(targetPath);
   await page.waitForURL(`**${targetPath}`);
 
   // Wait for the Plate surface to mount and source text to render.

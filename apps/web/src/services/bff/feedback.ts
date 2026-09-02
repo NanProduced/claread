@@ -210,15 +210,12 @@ export async function submitFeedbackFromWeb(
 
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能提交真实反馈，请使用真实登录会话后再试。"
-          : "请先登录后再提交反馈。",
+      message: "请先登录后再提交反馈。",
     };
   }
 
@@ -282,7 +279,7 @@ export async function listFeedbackFromWeb(
 ): Promise<WebFeedbackListResult> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
@@ -338,7 +335,7 @@ export async function deleteFeedbackFromWeb(
 ): Promise<WebFeedbackDeleteResult> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,

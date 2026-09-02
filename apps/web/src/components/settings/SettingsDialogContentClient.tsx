@@ -94,7 +94,6 @@ function renderSection(
       <AccountSection
         nickname={data.accountData.nickname}
         displayFallback={data.accountData.displayFallback}
-        phone={data.accountData.phone}
         status={data.accountData.status}
         avatarText={data.accountData.avatarText}
       />

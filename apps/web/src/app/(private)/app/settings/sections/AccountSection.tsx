@@ -9,7 +9,6 @@ import { NicknameEditor } from "../NicknameEditor";
 const statusLabel: Record<ProfileBffStatus, string> = {
   ready: "已连接",
   unauthenticated: "会话过期",
-  limited_debug: "调试受限",
   upstream_unavailable: "服务不可用",
   upstream_error: "读取失败",
 };
@@ -17,7 +16,6 @@ const statusLabel: Record<ProfileBffStatus, string> = {
 interface AccountSectionProps {
   nickname: string;
   displayFallback: string;
-  phone: string | undefined;
   status: ProfileBffStatus;
   avatarText: string;
 }
@@ -25,11 +23,10 @@ interface AccountSectionProps {
 export function AccountSection({
   nickname,
   displayFallback,
-  phone,
   status,
   avatarText,
 }: AccountSectionProps) {
-  const needsReauth = status === "unauthenticated" || status === "limited_debug";
+  const needsReauth = status === "unauthenticated";
 
   return (
     <div className="divide-y divide-hairline">
@@ -47,10 +44,6 @@ export function AccountSection({
         <h3 id="account-login-heading" className="text-sm font-medium text-ink">登录信息</h3>
         <dl className="mt-4 divide-y divide-hairline text-sm">
           <div className="flex min-h-12 items-center justify-between gap-6 py-3 first:pt-0">
-            <dt className="text-muted-foreground">账号</dt>
-            <dd className="text-right text-ink">{phone || "Web User"}</dd>
-          </div>
-          <div className="flex min-h-12 items-center justify-between gap-6 py-3 last:pb-0">
             <dt className="text-muted-foreground">状态</dt>
             <dd className="text-right text-muted-foreground">{statusLabel[status]}</dd>
           </div>

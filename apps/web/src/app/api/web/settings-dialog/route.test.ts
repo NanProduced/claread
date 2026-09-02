@@ -18,7 +18,6 @@ describe("GET /api/web/settings-dialog", () => {
         accountData: {
           nickname: "Alice",
           displayFallback: "Alice",
-          phone: "13800138000",
           status: "ready",
           avatarText: "A",
         },
@@ -39,7 +38,6 @@ describe("GET /api/web/settings-dialog", () => {
       accountData: {
         nickname: "Alice",
         displayFallback: "Alice",
-        phone: "13800138000",
         status: "ready",
         avatarText: "A",
       },
@@ -59,7 +57,6 @@ describe("GET /api/web/settings-dialog", () => {
         accountData: {
           nickname: "Carol",
           displayFallback: "Carol",
-          phone: "13700000000",
           status: "ready",
           avatarText: "C",
         },
@@ -169,7 +166,6 @@ describe("GET /api/web/settings-dialog", () => {
         accountData: {
           nickname: "Alice",
           displayFallback: "Alice",
-          phone: "13800138000",
           status: "ready",
           avatarText: "A",
         },

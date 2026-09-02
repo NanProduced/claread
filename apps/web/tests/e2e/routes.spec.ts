@@ -1,38 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function loginAsDebugUser(page: Page) {
-  await page.route("**/api/web/auth/phone/request-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        message: "本地调试验证码已生成，请使用 888888。",
-      }),
-    });
-  });
-
-  await page.route("**/api/web/auth/phone/verify-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: {
-        "set-cookie": "claread_web_phone=13800138000; Path=/; SameSite=Lax; HttpOnly",
-      },
-      body: JSON.stringify({
-        ok: true,
-        phone: "13800138000",
-        message: "已进入本地调试登录态；未配置 FastAPI debug session，真实账户数据不可用。",
-      }),
-    });
-  });
-
-  await page.goto("/login?next=/app/read");
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await expect(page.getByText("本地调试验证码已生成，请使用 888888。")).toBeVisible();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
+  await page.goto("/");
+  await page.context().addCookies([
+    { name: "claread_web_session", value: "e2e-session", path: "/", domain: "127.0.0.1" },
+  ]);
+  await page.goto("/app/read");
   await page.waitForURL((url) => url.pathname === "/app/read");
 }
 

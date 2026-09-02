@@ -278,12 +278,8 @@ async function requireSession(): Promise<
 > {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return authRequired(
-      session.kind === "mock_phone"
-        ? "当前登录态无法提交文章，请使用完整登录会话。"
-        : "请先登录后再提交文章。",
-    );
+  if (session.kind === "anonymous") {
+    return authRequired("请先登录后再提交文章。");
   }
 
   return { ok: true, sessionToken: session.sessionToken };

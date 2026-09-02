@@ -1,10 +1,18 @@
 import { execFile } from "node:child_process";
-import { randomInt, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, test, type Page } from "@playwright/test";
+
+import {
+  apiPythonPath,
+  cleanupRealProductSession,
+  fixtureEmail,
+  provisionRealProductSession,
+  repoRoot,
+  type ProvisionedSession,
+} from "./real-product-session";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,34 +38,20 @@ function asString(value: unknown, label: string): string {
   return String(value);
 }
 
-function repoRoot(): string {
-  const configuredRoot = process.env.CLAREAD_E2E_API_REPO_ROOT?.trim();
-  const candidates = [
-    configuredRoot ? resolve(configuredRoot) : null,
-    resolve(process.cwd()),
-    resolve(process.cwd(), "..", ".."),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  const root = candidates.find((candidate) =>
-    existsSync(resolve(candidate, "services", "api", "pyproject.toml")),
-  );
-  if (!root) {
-    throw new Error(
-      "Unable to locate the Claread API worktree; set CLAREAD_E2E_API_REPO_ROOT",
-    );
-  }
-  return root;
-}
-
-function fixturePhone(): string {
-  return `199${randomInt(0, 100_000_000).toString().padStart(8, "0")}`;
-}
-
-async function loginWithPhoneAuth(page: Page, phone: string) {
-  await page.goto("/login?next=%2Fapp%2Fread");
-  await page.getByLabel("手机号").fill(phone);
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
+async function installSessionCookie(page: Page, session: ProvisionedSession) {
+  await page.goto("/");
+  await page.context().addCookies([
+    {
+      name: "claread_web_session",
+      value: session.sessionToken,
+      domain: "127.0.0.1",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: false,
+    },
+  ]);
+  await page.goto("/app/read");
   await page.waitForURL((url) => url.pathname === "/app/read");
 }
 
@@ -120,11 +114,7 @@ async function runFixtureHelper(args: string[]): Promise<JsonBody> {
     "tests",
     "reader_stable_order_real_product_fixture.py",
   );
-  const python = resolve(
-    apiRoot,
-    ".venv",
-    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-  );
+  const python = apiPythonPath();
   const { stdout, stderr } = await execFileAsync(python, [helper, ...args], {
     cwd: apiRoot,
     env: { ...process.env },
@@ -216,9 +206,9 @@ test.describe("Stable Document display order (self-provisioned real product reco
     test.setTimeout(180_000);
     expect(process.env.CLAREAD_FASTAPI_BASE_URL).toBe("http://127.0.0.1:8010");
     await page.setViewportSize({ width: 1280, height: 900 });
-    const phone = fixturePhone();
+    const email = fixtureEmail();
     let recordId: string | null = null;
-    let ownsPhone = false;
+    let ownsEmailSession = false;
     let testFailure: unknown = null;
     const consoleProblems: string[] = [];
     const externalRequests: string[] = [];
@@ -238,15 +228,12 @@ test.describe("Stable Document display order (self-provisioned real product reco
     });
 
     try {
-      const preflight = await runFixtureHelper(["preflight", "--phone", phone]);
-      console.log(`[stable-order-fixture-preflight] ${JSON.stringify(preflight)}`);
-      expect(preflight.status).toBe("PASS");
-      expect(preflight.provider).toBe("phone");
-      expect(preflight.phone).toBe(`+86${phone}`);
-      expect(preflight.identity_count).toBe(0);
-      ownsPhone = true;
+      const provision = await provisionRealProductSession(email);
+      console.log("[stable-order-session-provision] complete");
+      expect(provision.sessionToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+      ownsEmailSession = true;
 
-      await loginWithPhoneAuth(page, phone);
+      await installSessionCookie(page, provision);
       recordId = await createLiveRecord(page);
       const fixture = await runFixtureHelper(["build", recordId]);
       console.log(`[stable-order-fixture-build] ${JSON.stringify(fixture)}`);
@@ -310,13 +297,14 @@ test.describe("Stable Document display order (self-provisioned real product reco
         pageCloseFailure = error;
       }
 
-      if (ownsPhone) {
+      if (ownsEmailSession) {
         try {
-          const cleanupArgs = ["cleanup", "--phone", phone];
-          if (recordId !== null) cleanupArgs.push("--record-id", recordId);
-          const cleanup = await runFixtureHelper(cleanupArgs);
-          console.log(`[stable-order-fixture-cleanup] ${JSON.stringify(cleanup)}`);
-          expect(cleanup.residual_total, "fixture residual rows").toBe(0);
+          const cleanup = await cleanupRealProductSession(
+            email,
+            recordId ?? undefined,
+          );
+          console.log(`[stable-order-session-cleanup] ${JSON.stringify(cleanup)}`);
+          expect(cleanup.residualTotal, "fixture residual rows").toBe(0);
         } catch (error) {
           cleanupFailure = error;
         }

@@ -93,7 +93,6 @@ const SUCCESS_DATA = {
   accountData: {
     nickname: "Alice",
     displayFallback: "Alice",
-    phone: "13800000000",
     status: "ready",
     avatarText: "A",
   },

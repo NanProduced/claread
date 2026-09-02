@@ -11,39 +11,12 @@ const READ_PATH = "/app/read";
 // Mock BFF helpers（与 reader-plate-smoke.spec.ts 同模式）
 // ---------------------------------------------------------------------------
 
-async function loginWithMockPhone(page: Page, nextPath = READ_PATH) {
-  await page.route("**/api/web/auth/phone/request-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        message: "本地调试验证码已生成，请使用 888888。",
-      }),
-    });
-  });
-
-  await page.route("**/api/web/auth/phone/verify-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: {
-        "set-cookie":
-          "claread_web_phone=13800138000; Path=/; SameSite=Lax; HttpOnly",
-      },
-      body: JSON.stringify({
-        ok: true,
-        phone: "13800138000",
-        message: "已进入本地调试登录态。",
-      }),
-    });
-  });
-
-  await page.goto(`/login?next=${encodeURIComponent(nextPath)}`);
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
+async function loginWithSessionCookie(page: Page, nextPath = READ_PATH) {
+  await page.goto("/");
+  await page.context().addCookies([
+    { name: "claread_web_session", value: "e2e-session", path: "/", domain: "127.0.0.1" },
+  ]);
+  await page.goto(nextPath);
   await page.waitForURL(`**${nextPath}`);
 }
 
@@ -120,7 +93,7 @@ test.describe("提交路径非阻断", () => {
   }) => {
     const captured: CapturedSubmit[] = [];
     await mockSubmitEndpoint(page, captured);
-    await loginWithMockPhone(page);
+    await loginWithSessionCookie(page);
 
     await pasteText(
       page,

@@ -116,21 +116,6 @@ describe("ReadingRecordSection", () => {
     expect(loginLink?.getAttribute("href")).toBe("/login");
   });
 
-  it("renders limited_debug state without login CTA", () => {
-    render(
-      <ReadingRecordSection
-        readingRecords={[]}
-        status="limited_debug"
-        message="当前登录态无法访问阅读记录，请使用完整登录会话。"
-      />,
-    );
-
-    expect(
-      screen.getByText("当前登录态无法访问阅读记录，请使用完整登录会话。"),
-    ).toBeTruthy();
-    expect(screen.queryByText("去登录")).toBeNull();
-  });
-
   it("renders items with title, date and quiet status treatment", () => {
     render(
       <ReadingRecordSection

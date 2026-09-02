@@ -1,9 +1,12 @@
 """Deterministic fixture lifecycle for the stable-order real-product E2E.
 
-The browser creates the user and Reading Record through the real product path.
+The web spec provisions an isolated email identity + email/web session
+through ``web_real_product_session_fixture.py`` (production identity/session
+primitives) and creates the Reading Record through the real product path.
 This test-only helper opts that record into the existing fake job namespace,
-runs the real Reader orchestration/persistence/snapshot seams, verifies the
-stable-order contract, and can precisely remove the run-owned user graph.
+runs the real Reader orchestration/persistence/snapshot seams, and verifies
+the stable-order contract. User-graph cleanup with 0-residual proof is owned
+by the shared session fixture helper.
 """
 
 from __future__ import annotations
@@ -11,7 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 from dataclasses import asdict, replace
 from datetime import timedelta
 from typing import Any
@@ -62,55 +64,10 @@ _ENHANCEMENT_JOB_TYPES = (
     "build_grammar_bundle",
     "build_grammar_bundle_window",
 )
-_TASK_OWNED_TABLES = (
-    "users",
-    "user_identities",
-    "user_sessions",
-    "reading_records",
-    "original_inputs",
-    "candidate_reading_documents",
-    "confirmed_source_documents",
-    "reading_bases",
-    "reading_units",
-    "anchor_segments",
-    "stable_reading_documents",
-    "stable_document_blocks",
-    "parsed_decisions",
-    "enhancement_layers",
-    "reader_runs",
-    "reader_jobs",
-    "reader_events",
-    "reader_event_sequences",
-    "reader_job_events",
-    "reader_runtime_spans",
-    "ai_usage_events",
-    "ai_model_execution_journal",
-    "layer_analysis_plans",
-    "analysis_windows",
-    "dict_ai_candidate_entries",
-    "source_artifacts",
-    "reader_article_rag_index_runs",
-    "favorite_records",
-    "user_credit_accounts",
-    "user_credit_ledger",
-)
 
 
 def _fail(message: str) -> None:
     raise AssertionError(message)
-
-
-def _normalize_phone(phone: str) -> str:
-    # Legacy lookup key for pre-existing phone identities; phone auth itself
-    # has been removed from the API, so this only ever matches legacy rows.
-    cleaned = re.sub(r"[\s-]", "", phone)
-    if cleaned.startswith("+86"):
-        national = cleaned[3:]
-    elif cleaned.startswith("86") and len(cleaned) == 13:
-        national = cleaned[2:]
-    else:
-        national = cleaned
-    return f"+86{national}"
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -923,249 +880,16 @@ async def _build(record_id: UUID) -> dict[str, Any]:
         await close_db()
 
 
-async def _preflight(phone: str) -> dict[str, Any]:
-    normalized_phone = _normalize_phone(phone)
-    settings = get_settings()
-    pool = await init_db(
-        settings.database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
-        pool_timeout=settings.database_pool_timeout,
-        max_inactive_connection_lifetime=settings.database_max_inactive_connection_lifetime,
-    )
-    try:
-        async with pool.acquire() as conn:
-            existing = await conn.fetch(
-                """
-                SELECT id, user_id FROM user_identities
-                WHERE provider = 'phone' AND provider_user_id = $1
-                ORDER BY id
-                """,
-                normalized_phone,
-            )
-        if existing:
-            _fail(
-                "phone preflight refused an existing identity: "
-                f"phone={normalized_phone} identity_ids={_string_ids(existing)} "
-                f"user_ids={[str(row['user_id']) for row in existing]}"
-            )
-        return {
-            "status": "PASS",
-            "provider": "phone",
-            "phone": normalized_phone,
-            "identity_count": 0,
-        }
-    finally:
-        await close_db()
-
-
-async def _residual_counts(
-    conn: asyncpg.Connection,
-    *,
-    user_id: UUID,
-    record_id: UUID | None,
-    manifest: dict[str, Any],
-) -> dict[str, int]:
-    residual = await _load_manifest(
-        conn,
-        record_id=record_id,
-        user_id=user_id,
-        scope_manifest=manifest,
-    )
-    return {
-        table_name: int(_json_object(entry).get("count", 0))
-        for table_name, entry in _json_object(residual.get("tables")).items()
-    }
-
-
-async def _cleanup(phone: str, record_id: UUID | None) -> dict[str, Any]:
-    normalized_phone = _normalize_phone(phone)
-    settings = get_settings()
-    pool = await init_db(
-        settings.database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
-        pool_timeout=settings.database_pool_timeout,
-        max_inactive_connection_lifetime=settings.database_max_inactive_connection_lifetime,
-    )
-    try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                identity_user_id = await conn.fetchval(
-                    """
-                    SELECT user_id FROM user_identities
-                    WHERE provider = 'phone' AND provider_user_id = $1
-                    """,
-                    normalized_phone,
-                )
-                record = (
-                    await conn.fetchrow(
-                        "SELECT user_id FROM reading_records WHERE id = $1 FOR UPDATE",
-                        record_id,
-                    )
-                    if record_id is not None
-                    else None
-                )
-                record_user_id = record["user_id"] if record is not None else None
-                if (
-                    identity_user_id is not None
-                    and record_user_id is not None
-                    and identity_user_id != record_user_id
-                ):
-                    _fail("cleanup phone identity does not own the requested record")
-                user_id = identity_user_id or record_user_id
-                if user_id is None:
-                    residual_counts = {table_name: 0 for table_name in _TASK_OWNED_TABLES}
-                    return {
-                        "phone": normalized_phone,
-                        "record_id": str(record_id) if record_id is not None else None,
-                        "deleted_user": False,
-                        "manifest": {"tables": {}, "populated_tables": {}},
-                        "residual_counts": residual_counts,
-                        "residual_total": 0,
-                    }
-                owned_records = await conn.fetch(
-                    "SELECT id FROM reading_records WHERE user_id = $1 ORDER BY id FOR UPDATE",
-                    user_id,
-                )
-                owned_record_ids = [UUID(str(row["id"])) for row in owned_records]
-                if record_id is None and len(owned_record_ids) == 1:
-                    record_id = owned_record_ids[0]
-                if any(value != record_id for value in owned_record_ids):
-                    _fail(f"cleanup user owns unexpected records: {owned_record_ids}")
-                identity_count = int(
-                    await conn.fetchval(
-                        "SELECT COUNT(*) FROM user_identities WHERE user_id = $1",
-                        user_id,
-                    )
-                )
-                if identity_count != 1:
-                    _fail(f"cleanup user owns unexpected identities: {identity_count}")
-                manifest = await _load_manifest(
-                    conn,
-                    record_id=record_id,
-                    user_id=user_id,
-                )
-                protected_dict = _json_object(
-                    _json_object(manifest.get("tables")).get("dict_ai_candidate_entries")
-                )
-                if int(protected_dict.get("count", 0)) != 0:
-                    _fail(
-                        "cleanup refused because the fixture touched "
-                        f"dict_ai_candidate_entries: {protected_dict}"
-                    )
-                job_ids = [UUID(value) for value in manifest.get("job_ids", [])]
-                run_ids = [UUID(value) for value in manifest.get("run_ids", [])]
-                layer_ids = [UUID(value) for value in manifest.get("layer_ids", [])]
-                usage_ids = [UUID(value) for value in manifest.get("usage_event_ids", [])]
-                journal_ids = [UUID(value) for value in manifest.get("journal_ids", [])]
-                span_ids = [UUID(value) for value in manifest.get("runtime_span_ids", [])]
-                trace_ids = [UUID(value) for value in manifest.get("trace_ids", [])]
-                await conn.execute(
-                    """
-                    DELETE FROM ai_model_execution_journal
-                    WHERE reader_job_id = ANY($1::uuid[])
-                       OR reader_run_id = ANY($2::uuid[])
-                       OR ai_usage_event_id = ANY($3::uuid[])
-                       OR id = ANY($4::uuid[])
-                    """,
-                    job_ids,
-                    run_ids,
-                    usage_ids,
-                    journal_ids,
-                )
-                await conn.execute(
-                    """
-                    DELETE FROM ai_usage_events
-                    WHERE user_id = $1 OR reading_record_id = $2
-                       OR reader_job_id = ANY($3::uuid[])
-                       OR reader_run_id = ANY($4::uuid[])
-                       OR enhancement_layer_id = ANY($5::uuid[])
-                       OR id = ANY($6::uuid[])
-                    """,
-                    user_id,
-                    record_id,
-                    job_ids,
-                    run_ids,
-                    layer_ids,
-                    usage_ids,
-                )
-                await conn.execute(
-                    """
-                    DELETE FROM reader_runtime_spans
-                    WHERE reading_record_id = $1
-                       OR reader_job_id = ANY($2::uuid[])
-                       OR reader_run_id = ANY($3::uuid[])
-                       OR ai_usage_event_id = ANY($4::uuid[])
-                       OR trace_id = ANY($5::uuid[])
-                       OR id = ANY($6::uuid[])
-                    """,
-                    record_id,
-                    job_ids,
-                    run_ids,
-                    usage_ids,
-                    trace_ids,
-                    span_ids,
-                )
-                if record_id is not None:
-                    # Remove base-scoped children before jobs/runs so their SET NULL
-                    # paths cannot race the composite reading_bases CASCADE.
-                    await conn.execute(
-                        "DELETE FROM parsed_decisions WHERE reading_record_id = $1",
-                        record_id,
-                    )
-                    await conn.execute(
-                        "DELETE FROM enhancement_layers WHERE reading_record_id = $1",
-                        record_id,
-                    )
-                    await conn.execute(
-                        "DELETE FROM reader_jobs WHERE reading_record_id = $1",
-                        record_id,
-                    )
-                    await conn.execute(
-                        "DELETE FROM reader_runs WHERE reading_record_id = $1",
-                        record_id,
-                    )
-                await conn.execute("DELETE FROM users WHERE id = $1", user_id)
-
-            residual_counts = await _residual_counts(
-                conn,
-                user_id=user_id,
-                record_id=record_id,
-                manifest=manifest,
-            )
-            residual_total = sum(residual_counts.values())
-            if residual_total != 0:
-                _fail(f"fixture cleanup left residual rows: {residual_counts}")
-            return {
-                "phone": normalized_phone,
-                "record_id": str(record_id) if record_id is not None else None,
-                "deleted_user": True,
-                "manifest": manifest,
-                "residual_counts": residual_counts,
-                "residual_total": residual_total,
-            }
-    finally:
-        await close_db()
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
-    preflight_parser = subparsers.add_parser("preflight")
-    preflight_parser.add_argument("--phone", required=True)
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("record_id", type=UUID)
-    cleanup_parser = subparsers.add_parser("cleanup")
-    cleanup_parser.add_argument("--phone", required=True)
-    cleanup_parser.add_argument("--record-id", type=UUID)
     args = parser.parse_args()
-    if args.command == "preflight":
-        result = asyncio.run(_preflight(args.phone))
-    elif args.command == "build":
+    if args.command == "build":
         result = asyncio.run(_build(args.record_id))
     else:
-        result = asyncio.run(_cleanup(args.phone, args.record_id))
+        raise SystemExit(f"unknown command: {args.command}")
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 

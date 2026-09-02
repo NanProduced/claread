@@ -121,17 +121,6 @@ export async function getReviewQueue(limit?: number): Promise<ReviewQueueVm> {
     };
   }
 
-  if (session.kind === "mock_phone") {
-    return {
-      state: "limited_debug",
-      items: [],
-      total: 0,
-      limit: normalizedLimit,
-      status: 401,
-      message: "当前登录态不能访问真实账户数据，请使用真实登录会话后查看复习队列。",
-    };
-  }
-
   const upstreamResult = await getUpstreamDueReviewVocabulary(
     session.sessionToken,
     normalizedLimit,
@@ -177,15 +166,12 @@ export async function submitReviewItem(
 
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能访问真实账户数据，请使用真实登录会话后提交复习。"
-          : "请先登录后再提交真实复习。",
+      message: "请先登录后再提交真实复习。",
     };
   }
 

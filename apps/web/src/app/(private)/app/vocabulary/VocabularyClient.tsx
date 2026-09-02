@@ -31,7 +31,6 @@ type FilterMode = "all" | "learning" | "mastered";
 const statusTitle: Record<VocabularyBffStatus, string> = {
   ready: "还没有生词",
   unauthenticated: "会话已过期",
-  limited_debug: "调试态受限",
   upstream_unavailable: "生词本服务不可用",
   upstream_error: "读取生词本失败",
 };

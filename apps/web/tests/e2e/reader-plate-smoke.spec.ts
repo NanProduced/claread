@@ -1,12 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { makeAnalysisProgressDto } from "../../src/test/fixtures/reader-analysis-progress";
+
 /**
  * Smoke test for the Web Reader Plate read-only surface.
  *
- * The page requires a real authenticated session to call the BFF, but the
- * BFF rejects `mock_phone` sessions. To keep this a self-contained browser
- * smoke (no real backend required), we mock the BFF routes at the network
- * layer — same pattern used by `analysis-loading-state.spec.ts`.
+ * The page requires a real authenticated session to call the BFF. To keep
+ * this a self-contained browser smoke (no real backend required), we mock
+ * the BFF routes at the network layer and establish the session with a
+ * direct `claread_web_session` cookie — the same low-level helper the
+ * offline email-auth spec uses.
  */
 
 const RECORD_ID = "smoke-record-1";
@@ -309,42 +312,17 @@ function makeSnapshot() {
     ask_supplements: [],
     user_assets: [],
     parsed_decisions: [],
+    analysis_progress: makeAnalysisProgressDto(),
     value: makeSnapshotValue(),
   };
 }
 
-async function loginWithMockPhone(page: Page, nextPath = `/app/reader/${RECORD_ID}`) {
-  await page.route("**/api/web/auth/phone/request-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        message: "本地调试验证码已生成，请使用 888888。",
-      }),
-    });
-  });
-
-  await page.route("**/api/web/auth/phone/verify-code", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: {
-        "set-cookie": "claread_web_phone=13800138000; Path=/; SameSite=Lax; HttpOnly",
-      },
-      body: JSON.stringify({
-        ok: true,
-        phone: "13800138000",
-        message: "已进入本地调试登录态。",
-      }),
-    });
-  });
-
-  await page.goto(`/login?next=${encodeURIComponent(nextPath)}`);
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
+async function loginWithSessionCookie(page: Page, nextPath = `/app/reader/${RECORD_ID}`) {
+  await page.goto("/");
+  await page.context().addCookies([
+    { name: "claread_web_session", value: "e2e-session", path: "/", domain: "127.0.0.1" },
+  ]);
+  await page.goto(nextPath);
   await page.waitForURL(`**${nextPath}`);
 }
 
@@ -381,7 +359,7 @@ test("reader plate smoke: record_id query loads an existing snapshot directly", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await mockReaderPlateRoutes(page);
 
-  await loginWithMockPhone(page, `/app/reader/${RECORD_ID}`);
+  await loginWithSessionCookie(page, `/app/reader/${RECORD_ID}`);
 
   await expect(page.getByText("A scarce few can turn passion into a stable income.", { exact: true })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "译文" })).toBeVisible();

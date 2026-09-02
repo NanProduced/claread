@@ -11,7 +11,7 @@ export async function POST(_request: Request, context: OpenedRouteContext) {
   const { recordId } = await context.params;
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return NextResponse.json(
       {
         ok: false,

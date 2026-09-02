@@ -12,7 +12,6 @@ import type { QuotaVm } from "@/types/view/QuotaVm";
 export type ProfileBffStatus =
   | "ready"
   | "unauthenticated"
-  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -64,21 +63,18 @@ function projectQuota(dto: QuotaResponseDto, userId: string): QuotaVm {
 
 function unauthenticatedResult(session: WebSession): ProfileSettingsVm {
   return {
-    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
+    status: "unauthenticated",
     session: projectSession(session),
     profile: null,
     quota: null,
-    message:
-      session.kind === "mock_phone"
-        ? "当前登录态未连接真实账户，请使用真实登录会话后查看账户和额度。"
-        : "当前会话已过期，请重新登录。",
+    message: "当前会话已过期，请重新登录。",
   };
 }
 
 export async function getProfileSettings(): Promise<ProfileSettingsVm> {
   const webSession = await getWebSession();
 
-  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+  if (webSession.kind === "anonymous") {
     return unauthenticatedResult(webSession);
   }
 
@@ -128,7 +124,7 @@ export async function updateProfileNickname(
 ): Promise<UpdateNicknameBffResult> {
   const webSession = await getWebSession();
 
-  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+  if (webSession.kind === "anonymous") {
     return {
       ok: false,
       httpStatus: 401,
@@ -173,7 +169,7 @@ export interface CloudSettingsBffResult {
 export async function getCloudSettings(): Promise<CloudSettingsBffResult> {
   const webSession = await getWebSession();
 
-  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+  if (webSession.kind === "anonymous") {
     return { ok: false, httpStatus: 401, settings: null };
   }
 
@@ -202,7 +198,7 @@ export async function updateProfileSettings(
 ): Promise<UpdateNicknameBffResult> {
   const webSession = await getWebSession();
 
-  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+  if (webSession.kind === "anonymous") {
     return {
       ok: false,
       httpStatus: 401,
@@ -265,8 +261,8 @@ export type SettingsDialogProjectionResult =
  * request just to render the "用量与积分" placeholder.
  *
  * Status semantics:
- *   - anonymous / mock_phone → 401 with safe message, no upstream call;
- *   - missing nickname → falls back to session phone, then "Web User";
+ *   - anonymous → 401 with safe message, no upstream call;
+ *   - missing nickname → falls back to "Web User";
  *   - missing settings → falls back to default reading defaults;
  *   - `canEdit` is `true` only when status is "ready".
  *
@@ -276,15 +272,12 @@ export type SettingsDialogProjectionResult =
 export async function getSettingsDialogProjection(): Promise<SettingsDialogProjectionResult> {
   const webSession = await getWebSession();
 
-  if (webSession.kind === "anonymous" || webSession.kind === "mock_phone") {
+  if (webSession.kind === "anonymous") {
     return {
       ok: false,
       httpStatus: 401,
       data: null,
-      message:
-        webSession.kind === "mock_phone"
-          ? "当前登录态未连接真实账户，请使用真实登录会话后查看账户。"
-          : "当前会话已过期，请重新登录。",
+      message: "当前会话已过期，请重新登录。",
     };
   }
 
@@ -305,8 +298,7 @@ export async function getSettingsDialogProjection(): Promise<SettingsDialogProje
   const profile = projectProfile(sessionResult.data);
   const status: ProfileBffStatus = "ready";
 
-  const sessionPhone = "phone" in webSession ? webSession.phone : undefined;
-  const displayName = profile.nickname || sessionPhone || "Web User";
+  const displayName = profile.nickname || "Web User";
   const realNickname = profile.nickname || "";
   const avatarText = displayName.trim().slice(0, 1).toUpperCase() || "U";
 
@@ -317,7 +309,6 @@ export async function getSettingsDialogProjection(): Promise<SettingsDialogProje
     accountData: {
       nickname: realNickname,
       displayFallback: displayName,
-      phone: sessionPhone,
       status,
       avatarText,
     },

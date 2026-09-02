@@ -4,9 +4,9 @@ import { cookies } from "next/headers";
 import type { Route } from "next";
 import { appReadRoute, loginRoute } from "@/lib/routes";
 
+import { logoutUpstreamSession } from "@/services/api/auth";
+
 export const WEB_SESSION_COOKIE = "claread_web_session";
-export const WEB_PHONE_COOKIE = "claread_web_phone";
-export const WEB_PHONE_CHALLENGE_COOKIE = "claread_phone_login_challenge";
 export const WEB_EMAIL_CHALLENGE_COOKIE = "claread_email_challenge";
 export const WEB_EMAIL_TICKET_COOKIE = "claread_email_ticket";
 export const WEB_EMAIL_FLOW_COOKIE_PATH = "/api/web/auth/email";
@@ -16,17 +16,11 @@ export type WebSession =
       kind: "authenticated";
       sessionToken: string;
       source: "cookie";
-      phone?: string;
     }
   | {
       kind: "debug";
       sessionToken: string;
       source: "env";
-    }
-  | {
-      kind: "mock_phone";
-      source: "mock";
-      phone: string;
     }
   | {
       kind: "anonymous";
@@ -38,21 +32,18 @@ export type ProjectedWebSessionState = "signed_in" | "signed_out" | "limited_deb
 export interface ProjectedWebSession {
   state: ProjectedWebSessionState;
   source: WebSession["source"];
-  phone?: string;
   hasAppAccess: boolean;
 }
 
 export async function getWebSession(): Promise<WebSession> {
   const cookieStore = await cookies();
   const cookieToken = cookieStore.get(WEB_SESSION_COOKIE)?.value;
-  const phone = cookieStore.get(WEB_PHONE_COOKIE)?.value;
 
   if (cookieToken) {
     return {
       kind: "authenticated",
       sessionToken: cookieToken,
       source: "cookie",
-      phone,
     };
   }
 
@@ -63,14 +54,6 @@ export async function getWebSession(): Promise<WebSession> {
       kind: "debug",
       sessionToken: debugToken,
       source: "env",
-    };
-  }
-
-  if (phone) {
-    return {
-      kind: "mock_phone",
-      source: "mock",
-      phone,
     };
   }
 
@@ -89,7 +72,6 @@ export function projectSession(session: WebSession) {
           ? "signed_out"
           : "limited_debug",
     source: session.source,
-    phone: "phone" in session ? session.phone : undefined,
     hasAppAccess: session.kind !== "anonymous",
   } satisfies ProjectedWebSession;
 }
@@ -120,4 +102,15 @@ export function appCtaForSession(session: ProjectedWebSession): {
     href: loginRoute(appReadRoute),
     label: "登录",
   };
+}
+
+export async function clearWebAuthCookies(): Promise<void> {
+  const cookieStore = await cookies();
+  const sessionToken = cookieStore.get(WEB_SESSION_COOKIE)?.value;
+
+  if (sessionToken) {
+    await logoutUpstreamSession(sessionToken);
+  }
+
+  cookieStore.delete(WEB_SESSION_COOKIE);
 }

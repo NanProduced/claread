@@ -21,7 +21,6 @@ import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 export type VocabularyBffStatus =
   | "ready"
   | "unauthenticated"
-  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -90,17 +89,14 @@ function unauthenticatedResult(
   options: Required<GetVocabularyOptions>,
 ): VocabularyBffResult {
   return {
-    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
+    status: "unauthenticated",
     items: [],
     total: 0,
     page: options.page,
     limit: options.limit,
     dueCount: 0,
     session: projectSession(session),
-    message:
-      session.kind === "mock_phone"
-        ? "当前登录态不能访问真实账户数据，请使用真实登录会话后查看生词本。"
-        : "当前会话已过期，请重新登录。",
+    message: "当前会话已过期，请重新登录。",
   };
 }
 
@@ -385,7 +381,7 @@ export async function getVocabularyList(
   const MAX_PAGES = 20
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return unauthenticatedResult(session, { page: 1, limit: PAGE_LIMIT });
   }
 
@@ -469,15 +465,12 @@ export async function addVocabularyFromWeb(body: unknown): Promise<AddVocabulary
 
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能写入真实生词本，请使用真实登录会话后再试。"
-          : "请先登录后加入生词本。",
+      message: "请先登录后加入生词本。",
     };
   }
 
@@ -531,15 +524,12 @@ export async function getVocabularyLookupMatch(
 
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能访问真实生词本状态，请使用真实登录会话后重试。"
-          : "请先登录后查看生词本状态。",
+      message: "请先登录后查看生词本状态。",
     };
   }
 
@@ -601,15 +591,12 @@ export async function updateVocabularyFromWeb(
 ): Promise<{ ok: true; item: VocabularyItemVm } | { ok: false; status: number; code: string; message: string }> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能修改真实生词本，请使用真实登录会话后再试。"
-          : "请先登录后修改生词本。",
+      message: "请先登录后修改生词本。",
     };
   }
 
@@ -642,15 +629,12 @@ export async function deleteVocabularyFromWeb(
 ): Promise<{ ok: true; deleted: boolean } | { ok: false; status: number; code: string; message: string }> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       ok: false,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能删除真实生词本条目，请使用真实登录会话后再试。"
-          : "请先登录后删除生词本条目。",
+      message: "请先登录后删除生词本条目。",
     };
   }
 

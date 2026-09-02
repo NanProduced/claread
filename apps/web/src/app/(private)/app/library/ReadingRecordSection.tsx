@@ -145,19 +145,6 @@ export function ReadingRecordSection({
     );
   }
 
-  if (status === "limited_debug") {
-    return (
-      <section className="px-1 py-10">
-        <div className="flex items-start gap-3 text-[0.85rem] text-amber-800/90">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            {safeMessage(message, "调试登录态无法访问阅读记录，请使用完整登录会话后再试。")}
-          </p>
-        </div>
-      </section>
-    );
-  }
-
   if (status !== "ready") {
     return (
       <section className="px-1 py-10">

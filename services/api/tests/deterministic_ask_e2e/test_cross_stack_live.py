@@ -18,7 +18,7 @@ at a non-deterministic upstream fails immediately (see
 
 Scenarios (handoff spec D):
 
-1. login + fixture record + default thread via real API/PG;
+1. isolated email session + fixture record + default thread via real API/PG;
 2. send → SSE over canonical routes terminates with a legal v2
    ``message.completed`` carrying the deterministic answer;
 3. article citation is bound to the real record (navigate API resolves a
@@ -33,21 +33,27 @@ Scenarios (handoff spec D):
 BFF-layer tests are opt-in: they run ONLY when
 ``CLAREAD_ASK_E2E_WEB_BASE`` is explicitly set to a Web server whose
 upstream is the deterministic API (proven via model-options before any
-Ask POST). They use a real ``claread_web_session`` cookie obtained
-through the BFF phone-auth flow (upstream FastAPI mock provider, code
-888888).
+Ask POST). They reuse the API bootstrap's real ``claread_web_session``
+cookie; the BFF bootstrap calls no authentication API.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
 from collections.abc import Iterator
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
+
+from tests.web_real_product_session_fixture import (
+    cleanup_real_product_session,
+    provision_real_product_session,
+)
 
 from .models import (
     DETERMINISTIC_ARTICLE_ANSWER,
@@ -67,7 +73,6 @@ API_BASE = os.environ.get("CLAREAD_ASK_E2E_API_BASE", "http://127.0.0.1:8010").r
 # must point at a Web server whose upstream is the deterministic API —
 # the BFF preflight proves it via model-options before any Ask POST.
 WEB_BASE = os.environ.get("CLAREAD_ASK_E2E_WEB_BASE", "").rstrip("/")
-PHONE = os.environ.get("CLAREAD_ASK_E2E_PHONE", "13800138000")
 
 EXECUTION_V2 = "reader_record_ask_agentic_v2"
 
@@ -144,10 +149,30 @@ def assert_completed_is_deterministic_v2(payload: dict, *, thread_id: str) -> No
 
 @pytest.fixture(scope="module")
 def api_ctx() -> Iterator[dict[str, Any]]:
-    with httpx.Client(base_url=API_BASE, timeout=60) as client:
-        # Fail-closed bootstrap: the deterministic guard preflight runs
-        # BEFORE any auth or business write (see preflight.py).
-        yield bootstrap_deterministic_api_context(client, phone=PHONE)
+    email = f"claread-ask-e2e-{uuid.uuid4().hex}@example.invalid"
+    provision_attempted = False
+    record_id: UUID | None = None
+
+    def provision_session(value: str) -> dict[str, Any]:
+        nonlocal provision_attempted
+        provision_attempted = True
+        return asyncio.run(provision_real_product_session(value))
+
+    try:
+        with httpx.Client(base_url=API_BASE, timeout=60) as client:
+            # Fail-closed bootstrap: the deterministic guard preflight runs
+            # BEFORE email/session provisioning or any business write.
+            context = bootstrap_deterministic_api_context(
+                client,
+                email=email,
+                provision_session=provision_session,
+            )
+            record_id = UUID(context["record_id"])
+            yield context
+    finally:
+        if provision_attempted:
+            cleanup = asyncio.run(cleanup_real_product_session(email, record_id))
+            assert cleanup["residual_total"] == 0
 
 
 @pytest.fixture(scope="module")
@@ -535,11 +560,11 @@ def web_ctx(api_ctx) -> Iterator[dict[str, Any]]:
             "server whose upstream is the deterministic API"
         )
     with httpx.Client(base_url=WEB_BASE, timeout=60) as client:
-        # Fail-closed BFF bootstrap: BFF login, then the deterministic
-        # upstream proof (model-options) BEFORE any BFF Ask POST.
+        # Fail-closed BFF bootstrap: reuse the API session cookie, then prove
+        # the deterministic upstream before any BFF Ask POST.
         yield bootstrap_deterministic_bff_context(
             client,
-            phone=PHONE,
+            session_token=api_ctx["session_token"],
             record_id=api_ctx["record_id"],
         )
 

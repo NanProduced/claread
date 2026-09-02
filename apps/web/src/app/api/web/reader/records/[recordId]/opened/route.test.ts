@@ -26,21 +26,6 @@ describe('POST /api/web/reader/records/:recordId/opened', () => {
     expect(upstreamMock).not.toHaveBeenCalled();
   });
 
-  it('returns 401 for mock_phone sessions', async () => {
-    sessionMock.mockResolvedValue({
-      kind: 'mock_phone',
-      source: 'mock',
-      phone: '13800138000',
-    });
-
-    const res = await POST({} as never, {
-      params: Promise.resolve({ recordId: 'rr_1' }),
-    });
-
-    expect(res.status).toBe(401);
-    expect(upstreamMock).not.toHaveBeenCalled();
-  });
-
   it('proxies to upstream and returns the DTO on authenticated session', async () => {
     sessionMock.mockResolvedValue({
       kind: 'authenticated',

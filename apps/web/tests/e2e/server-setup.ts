@@ -133,11 +133,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     );
   }
 
-  const phoneAuthProvider =
-    process.env.CLAREAD_E2E_REAL_PRODUCT === "1" ? "fastapi" : "mock";
   const child = startServer({
     ...process.env,
-    CLAREAD_PHONE_AUTH_PROVIDER: phoneAuthProvider,
     CLAREAD_E2E_TEST: "1",
   });
 

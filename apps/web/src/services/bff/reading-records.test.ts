@@ -91,19 +91,6 @@ describe("reading-records BFF list", () => {
     expect(listUpstreamReadingRecords).not.toHaveBeenCalled();
   });
 
-  it("rejects mock_phone sessions with limited_debug", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await getReadingRecordListFromWeb();
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
-    expect(listUpstreamReadingRecords).not.toHaveBeenCalled();
-  });
-
   it("maps upstream 401 to upstream_auth_failed", async () => {
     vi.mocked(listUpstreamReadingRecords).mockResolvedValue({
       ok: false,
@@ -410,19 +397,6 @@ describe("reading-records BFF delete", () => {
     vi.mocked(getWebSession).mockResolvedValue(mockSession);
   });
 
-  it("rejects mock_phone sessions without calling upstream", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await deleteReaderRecordFromWeb("rec-1");
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
-    expect(deleteReaderRecord).not.toHaveBeenCalled();
-  });
-
   it("returns ok with the full delete DTO", async () => {
     vi.mocked(deleteReaderRecord).mockResolvedValue({
       ok: true,
@@ -517,19 +491,6 @@ describe("reading-records BFF manual recovery", () => {
     const result = await recoverReaderRecordFromWeb("rec-1");
 
     expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
-    expect(recoverReaderRecordUpstream).not.toHaveBeenCalled();
-  });
-
-  it("rejects mock_phone sessions without calling upstream", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await recoverReaderRecordFromWeb("rec-1");
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "limited_debug" });
     expect(recoverReaderRecordUpstream).not.toHaveBeenCalled();
   });
 

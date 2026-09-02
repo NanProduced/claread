@@ -24,10 +24,14 @@ Test-only module; never imported from ``app/**``.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
+
+from tests.web_real_product_session_fixture import provision_real_product_session
 
 from .models import FIXTURE_ARTICLE_TEXT
 
@@ -51,9 +55,6 @@ GUARD_REPORT_PATH = "/__deterministic_guard__/provider-calls"
 # must complete before the first such request is issued.
 BUSINESS_WRITE_PREFIXES = ("/auth/", "/reader/")
 
-PHONE_AUTH_CODE = "888888"
-
-
 class PreflightFailed(AssertionError):
     """A runtime could not be proven deterministic; fail closed."""
 
@@ -70,7 +71,7 @@ def assert_deterministic_api_preflight(client: httpx.Client) -> dict[str, Any]:
     except httpx.HTTPError as exc:
         raise PreflightFailed(
             f"API preflight: deterministic guard report is unreachable at "
-            f"{GUARD_REPORT_PATH} ({exc!r}); refusing to run against an "
+            f"{GUARD_REPORT_PATH}; refusing to run against an "
             "unproven runtime"
         ) from exc
     if response.status_code != 200:
@@ -88,19 +89,19 @@ def assert_deterministic_api_preflight(client: httpx.Client) -> dict[str, Any]:
         ) from exc
     if report.get("installed") is not True:
         raise PreflightFailed(
-            "API preflight: deterministic provider guard is not installed "
-            f"(report={report!r}); refusing to run against a "
+            "API preflight: deterministic provider guard is not installed; "
+            "refusing to run against a "
             "non-deterministic runtime"
         )
     if report.get("blocked_call_count") != 0:
         raise PreflightFailed(
             "API preflight: deterministic guard already recorded blocked "
-            f"provider calls (report={report!r}); refusing to continue"
+            "provider calls; refusing to continue"
         )
     if report.get("blocked_attempts") != []:
         raise PreflightFailed(
             "API preflight: deterministic guard already recorded blocked "
-            f"provider attempts (report={report!r}); refusing to continue"
+            "provider attempts; refusing to continue"
         )
     return report
 
@@ -124,7 +125,7 @@ def assert_deterministic_bff_upstream(
     except httpx.HTTPError as exc:
         raise PreflightFailed(
             f"BFF preflight: model-options is unreachable at {path} "
-            f"({exc!r}); cannot prove the BFF points at the deterministic "
+            "cannot prove the BFF points at the deterministic "
             "runtime; refusing to send any Ask message"
         ) from exc
     if response.status_code != 200:
@@ -154,7 +155,7 @@ def assert_deterministic_bff_upstream(
     if not isinstance(items, list):
         raise PreflightFailed(
             "BFF preflight: model-options items is not a list "
-            f"(payload={payload!r}); refusing to send any Ask message"
+            "refusing to send any Ask message"
         )
     deterministic_items = [
         item
@@ -164,8 +165,7 @@ def assert_deterministic_bff_upstream(
     if not deterministic_items:
         raise PreflightFailed(
             f"BFF preflight: model option {DETERMINISTIC_OPTION_KEY!r} is "
-            f"absent from the BFF model list (items={items!r}); refusing "
-            "to send any Ask message"
+            "absent from the BFF model list; refusing to send any Ask message"
         )
     model_name = deterministic_items[0].get("model_name")
     if model_name != DETERMINISTIC_MODEL_NAME:
@@ -177,29 +177,33 @@ def assert_deterministic_bff_upstream(
     return payload
 
 
+def _provision_email_session(email: str) -> dict[str, Any]:
+    return asyncio.run(provision_real_product_session(email))
+
+
 def bootstrap_deterministic_api_context(
     client: httpx.Client,
     *,
-    phone: str,
+    email: str,
     article_text: str = FIXTURE_ARTICLE_TEXT,
+    provision_session: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Live ``api_ctx`` fixture body: preflight, then auth + record + thread.
+    """Live ``api_ctx`` fixture body: preflight, then email session + writes.
 
     The guard preflight is deliberately the FIRST request — before any
-    auth or business write — so a wrong API_BASE fails closed with zero
-    side effects.
+    identity/session provisioning or business write — so a wrong API_BASE
+    fails closed with zero side effects.
     """
     assert_deterministic_api_preflight(client)
 
-    r = client.post("/auth/phone/request-code", json={"phone": phone})
-    assert r.status_code == 200, r.text
-    r = client.post("/auth/phone/verify-code", json={"phone": phone, "code": PHONE_AUTH_CODE})
-    assert r.status_code == 200, r.text
-    token = r.json()["session_token"]
+    session = (provision_session or _provision_email_session)(email)
+    token = session.get("session_token")
+    if not isinstance(token, str) or not token:
+        raise PreflightFailed("API bootstrap: email session fixture returned no session token")
     client.headers["Authorization"] = f"Bearer {token}"
 
     r = client.get("/health/ready")
-    assert r.status_code == 200, r.text
+    assert r.status_code == 200
 
     r = client.post(
         "/reader/records/input",
@@ -210,18 +214,20 @@ def bootstrap_deterministic_api_context(
             "client_record_id": str(uuid.uuid4()),
         },
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 200
     submit = r.json()
-    assert submit.get("outcome") == "stable_document_ready", submit
+    assert submit.get("outcome") == "stable_document_ready", (
+        "API input did not return a stable document"
+    )
     record_id = submit["reading_record_id"]
 
     r = client.post(f"/reader/records/{record_id}/ask/threads/default", json={})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 200
     thread_id = r.json()["id"]
 
     return {
         "client": client,
-        "token": token,
+        "session_token": token,
         "record_id": record_id,
         "thread_id": thread_id,
     }
@@ -230,28 +236,19 @@ def bootstrap_deterministic_api_context(
 def bootstrap_deterministic_bff_context(
     client: httpx.Client,
     *,
-    phone: str,
+    session_token: str,
     record_id: str,
 ) -> dict[str, Any]:
-    """Live ``web_ctx`` fixture body: BFF login, then upstream preflight.
+    """Live ``web_ctx`` fixture body: inject session, then upstream preflight.
 
-    The BFF phone-auth login itself is not proof of anything (a wrong
-    BFF's upstream may also accept phone auth); the deterministic proof
-    is the model-options check, which must pass before any BFF Ask POST.
+    The API bootstrap owns the identity/session. The BFF receives the same
+    token directly, and the deterministic model-options proof must pass
+    before any BFF Ask POST.
     """
-    r = client.post("/api/web/auth/phone/request-code", json={"phone": phone})
-    assert r.status_code == 200, r.text
-    r = client.post(
-        "/api/web/auth/phone/verify-code",
-        json={"phone": phone, "code": PHONE_AUTH_CODE},
-    )
-    assert r.status_code == 200, r.text
-    assert "claread_web_session" in client.cookies, (
-        "BFF must establish a real claread_web_session cookie"
-    )
+    client.cookies.set("claread_web_session", session_token, path="/")
     r = client.get("/api/web/session")
-    assert r.status_code == 200, r.text
-    assert r.json()["state"] == "signed_in", r.text
+    assert r.status_code == 200
+    assert r.json()["state"] == "signed_in"
 
     # Deterministic proof BEFORE any BFF Ask POST is allowed.
     assert_deterministic_bff_upstream(client, record_id)

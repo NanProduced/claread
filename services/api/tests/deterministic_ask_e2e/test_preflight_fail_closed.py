@@ -42,7 +42,8 @@ from .preflight import (
 )
 
 API_ROOT = Path(__file__).resolve().parents[2]
-PHONE = "13800138000"
+FIXTURE_EMAIL = "deterministic-e2e@example.invalid"
+SESSION_TOKEN = "deterministic-session-token"
 RECORD_ID = "11111111-2222-4333-8444-555555555555"
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -132,10 +133,6 @@ def wrong_api_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "ok"})
     if path == GUARD_REPORT_PATH:
         return httpx.Response(404, json={"detail": "Not Found"})
-    if path == "/auth/phone/request-code":
-        return httpx.Response(200, json={})
-    if path == "/auth/phone/verify-code":
-        return httpx.Response(200, json={"session_token": "wrong-runtime-token"})
     if path == "/reader/records/input":
         return httpx.Response(
             200,
@@ -159,18 +156,10 @@ def bff_handler(
     model_options: dict | None = None,
     on_ask_post: Callable[[], None] | None = None,
 ) -> Handler:
-    """A Web BFF whose login works; the upstream proof is ``model_options``."""
+    """A Web BFF whose session lookup works; proof is ``model_options``."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/api/web/auth/phone/request-code":
-            return httpx.Response(200, json={})
-        if path == "/api/web/auth/phone/verify-code":
-            response = httpx.Response(200, json={})
-            response.headers["set-cookie"] = (
-                "claread_web_session=bff-session; Path=/; HttpOnly"
-            )
-            return response
         if path == "/api/web/session":
             return httpx.Response(200, json={"state": "signed_in"})
         if path == f"/api/web/reader/records/{RECORD_ID}/ask/model-options":
@@ -203,6 +192,14 @@ def _ask_posts(requests: list[str]) -> list[str]:
     ]
 
 
+def _session_provisioner(calls: list[str]) -> Callable[[str], dict[str, str]]:
+    def provision(email: str) -> dict[str, str]:
+        calls.append(email)
+        return {"session_token": SESSION_TOKEN, "user_id": "deterministic-user"}
+
+    return provision
+
+
 # ---------------------------------------------------------------------------
 # RED: the fail-open defects
 # ---------------------------------------------------------------------------
@@ -211,9 +208,15 @@ def _ask_posts(requests: list[str]) -> list[str]:
 def test_wrong_api_base_fails_before_first_business_write():
     """A healthy non-deterministic API must be rejected before any write."""
     transport = RecordingTransport(wrong_api_handler)
+    provision_calls: list[str] = []
     with httpx.Client(transport=transport, base_url="http://wrong-api.test") as client:
         with pytest.raises(PreflightFailed):
-            bootstrap_deterministic_api_context(client, phone=PHONE)
+            bootstrap_deterministic_api_context(
+                client,
+                email=FIXTURE_EMAIL,
+                provision_session=_session_provisioner(provision_calls),
+            )
+    assert provision_calls == [], "wrong API provenance must not provision a session"
     assert _business_writes(transport.requests) == [], (
         "business writes happened before the preflight failure: "
         f"{transport.requests}"
@@ -227,7 +230,9 @@ def test_wrong_bff_upstream_fails_before_ask_post():
     )
     with httpx.Client(transport=transport, base_url="http://wrong-bff.test") as client:
         with pytest.raises(PreflightFailed):
-            bootstrap_deterministic_bff_context(client, phone=PHONE, record_id=RECORD_ID)
+            bootstrap_deterministic_bff_context(
+                client, session_token=SESSION_TOKEN, record_id=RECORD_ID
+            )
     assert _ask_posts(transport.requests) == [], (
         "BFF Ask POSTs happened before the preflight failure: "
         f"{transport.requests}"
@@ -266,11 +271,17 @@ def test_live_module_web_base_requires_explicit_opt_in():
 
 def test_deterministic_api_bootstraps_end_to_end():
     transport = RecordingTransport(deterministic_api_handler)
+    provision_calls: list[str] = []
     with httpx.Client(transport=transport, base_url="http://deterministic.test") as client:
-        ctx = bootstrap_deterministic_api_context(client, phone=PHONE)
+        ctx = bootstrap_deterministic_api_context(
+            client,
+            email=FIXTURE_EMAIL,
+            provision_session=_session_provisioner(provision_calls),
+        )
     assert ctx["record_id"] == RECORD_ID
     assert ctx["thread_id"] == "thread-wrong"
-    assert ctx["client"].headers["Authorization"] == "Bearer wrong-runtime-token"
+    assert provision_calls == [FIXTURE_EMAIL]
+    assert ctx["client"].headers["Authorization"] == f"Bearer {SESSION_TOKEN}"
     # The guard report is the FIRST request — before auth, before writes.
     assert transport.requests[0] == f"GET {GUARD_REPORT_PATH}"
     assert _business_writes(transport.requests), "bootstrap should have written"
@@ -287,7 +298,10 @@ def test_deterministic_bff_bootstraps_and_allows_ask_post():
         bff_handler(model_options=_model_options(), on_ask_post=on_ask_post)
     )
     with httpx.Client(transport=transport, base_url="http://deterministic-bff.test") as client:
-        ctx = bootstrap_deterministic_bff_context(client, phone=PHONE, record_id=RECORD_ID)
+        ctx = bootstrap_deterministic_bff_context(
+            client, session_token=SESSION_TOKEN, record_id=RECORD_ID
+        )
+        assert client.cookies.get("claread_web_session") == SESSION_TOKEN
         # After the preflight passed, the Ask POST is allowed.
         r = ctx["client"].post(
             f"/api/web/reader/records/{RECORD_ID}/ask/threads/thread-1/messages/stream",
@@ -296,6 +310,11 @@ def test_deterministic_bff_bootstraps_and_allows_ask_post():
         assert r.status_code == 200
     assert ask_posts == ["ask"]
     assert _ask_posts(transport.requests)
+    assert transport.requests[:2] == [
+        "GET /api/web/session",
+        f"GET /api/web/reader/records/{RECORD_ID}/ask/model-options",
+    ]
+    assert not any("/api/web/auth/" in request for request in transport.requests)
 
 
 # ---------------------------------------------------------------------------

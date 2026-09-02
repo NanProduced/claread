@@ -6,6 +6,14 @@ import { resolve } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  apiPythonPath,
+  cleanupRealProductSession,
+  fixtureEmail,
+  installRealProductSession,
+  repoRoot,
+} from "./real-product-session";
+
 const execFileAsync = promisify(execFile);
 const MARKDOWN_FENCE = String.fromCharCode(96).repeat(3);
 
@@ -75,24 +83,6 @@ const NOTION_HTML_SOURCE = `
 <p>Trailing prose must remain visible after every structured block.</p>
 `.trim();
 
-function repoRoot(): string {
-  const configuredRoot = process.env.CLAREAD_E2E_API_REPO_ROOT?.trim();
-  const cwdCandidates = [
-    configuredRoot ? resolve(configuredRoot) : null,
-    resolve(process.cwd()),
-    resolve(process.cwd(), "..", ".."),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  const root = cwdCandidates.find((candidate) =>
-    existsSync(resolve(candidate, "services", "api", "pyproject.toml")),
-  );
-  if (!root) {
-    throw new Error(
-      "Unable to locate Claread repository root for G5 helper; set CLAREAD_E2E_API_REPO_ROOT to the integration API worktree",
-    );
-  }
-  return root;
-}
-
 async function pasteNotionDualMime(
   page: Page,
   html: string,
@@ -111,15 +101,6 @@ async function pasteNotionDualMime(
   await page.keyboard.press("Control+V");
 }
 
-async function loginWithPhoneAuth(page: Page) {
-  await page.goto("/login?next=%2Fapp%2Fread");
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL((url) => url.pathname === "/app/read");
-}
-
 async function runDeterministicFakePipeline(recordId: string, source: string) {
   const root = repoRoot();
   const apiRoot = resolve(root, "services", "api");
@@ -128,11 +109,7 @@ async function runDeterministicFakePipeline(recordId: string, source: string) {
     "tests",
     "reader_markdown_g5_fake_runner.py",
   );
-  const python = resolve(
-    apiRoot,
-    ".venv",
-    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-  );
+  const python = apiPythonPath();
   const expectedHash = createHash("sha256").update(source, "utf8").digest("hex");
   const { stdout, stderr } = await execFileAsync(
     python,
@@ -158,11 +135,22 @@ async function runDeterministicFakePipeline(recordId: string, source: string) {
 }
 
 test.describe("Reader Markdown Structured Source G5 real product path", () => {
+  let email: string;
+
+  test.beforeEach(() => {
+    email = fixtureEmail();
+  });
+
+  test.afterEach(async () => {
+    const cleanup = await cleanupRealProductSession(email);
+    expect(cleanup.residualTotal, "real-product session residual rows").toBe(0);
+  });
+
   test("/app/read -> real FastAPI/PostgreSQL -> fake enhancement -> reload keeps structure", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await loginWithPhoneAuth(page);
+    await installRealProductSession(page, email, "/app/read");
     await expect(page.getByRole("heading", { name: "Bring it to Claread." })).toBeVisible();
 
     await pasteNotionDualMime(page, NOTION_HTML_SOURCE, MARKDOWN_SOURCE);

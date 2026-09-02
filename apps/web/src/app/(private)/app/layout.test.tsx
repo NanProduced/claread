@@ -16,11 +16,6 @@ vi.mock('@/components/layout/recent-reading-context', () => ({
   RecentReadingProvider: (props: unknown) => providerMock(props as { initialItems: unknown[]; children: React.ReactNode }),
 }));
 
-const sessionMock = vi.fn();
-vi.mock('@/services/bff/session', () => ({
-  getProjectedWebSession: () => sessionMock(),
-}));
-
 vi.mock('@/components/layout', () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div data-testid="appshell">{children}</div>,
 }));
@@ -46,7 +41,6 @@ import AppShellLayout from './layout';
 describe('AppShellLayout', () => {
   it('passes initialItems to RecentReadingProvider on success', async () => {
     recentMock.mockResolvedValue({ ok: true, items: [{ id: 'r1' }], total: 1, limit: 10 });
-    sessionMock.mockResolvedValue({ phone: '13800000000' });
     const element = await AppShellLayout({ children: null });
     const html = renderToString(element);
     expect(html).toContain('data-testid="provider"');
@@ -55,7 +49,6 @@ describe('AppShellLayout', () => {
 
   it('passes [] when BFF returns failure', async () => {
     recentMock.mockResolvedValue({ ok: false, status: 503, code: 'upstream_unavailable', message: '' });
-    sessionMock.mockResolvedValue({ phone: null });
     const element = await AppShellLayout({ children: null });
     const html = renderToString(element);
     expect(html).toContain('data-items="[]"');
@@ -63,7 +56,6 @@ describe('AppShellLayout', () => {
 
   it('renders children inside the AppShell', async () => {
     recentMock.mockResolvedValue({ ok: true, items: [], total: 0, limit: 10 });
-    sessionMock.mockResolvedValue({ phone: '13800000000' });
     const element = await AppShellLayout({
       children: <div data-testid="children-content">Children</div>,
     });
@@ -73,7 +65,6 @@ describe('AppShellLayout', () => {
 
   it('wraps the AppShell in SettingsDialogProvider so any nested client component can open Settings', async () => {
     recentMock.mockResolvedValue({ ok: true, items: [], total: 0, limit: 10 });
-    sessionMock.mockResolvedValue({ phone: '13800000000' });
     const element = await AppShellLayout({
       children: <div data-testid="children-content">Children</div>,
     });

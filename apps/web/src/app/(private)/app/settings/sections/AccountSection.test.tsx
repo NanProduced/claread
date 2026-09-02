@@ -24,7 +24,6 @@ describe("AccountSection", () => {
   const baseProps = {
     nickname: "Alice",
     displayFallback: "Alice Display",
-    phone: "13800000000",
     avatarText: "A",
   };
 
@@ -54,10 +53,9 @@ describe("AccountSection", () => {
     expect(screen.getByText("会话")).toBeTruthy();
   });
 
-  it("renders the phone number with status label for ready status", () => {
+  it("renders the ready status label", () => {
     render(<AccountSection {...baseProps} status="ready" />);
 
-    expect(screen.getByText("13800000000")).toBeTruthy();
     expect(screen.getByText("已连接")).toBeTruthy();
   });
 
@@ -82,18 +80,5 @@ describe("AccountSection", () => {
     expect(link.closest("a")?.getAttribute("href")).toContain("/login");
     expect(link.closest("a")?.getAttribute("href")).toContain("next=");
     expect(screen.queryByTestId("logout-button")).toBeNull();
-  });
-
-  it("renders the re-login link when status is limited_debug", () => {
-    render(<AccountSection {...baseProps} status="limited_debug" />);
-
-    expect(screen.getByText("重新登录")).toBeTruthy();
-    expect(screen.queryByTestId("logout-button")).toBeNull();
-  });
-
-  it("falls back to 'Web User' label when phone is missing", () => {
-    render(<AccountSection {...baseProps} phone={undefined} status="ready" />);
-
-    expect(screen.getByText("Web User")).toBeTruthy();
   });
 });

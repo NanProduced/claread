@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { clearWebAuthCookies } from "@/services/bff/phone-auth";
+import { clearWebAuthCookies } from "@/services/bff/session";
 
 export async function POST() {
   await clearWebAuthCookies();

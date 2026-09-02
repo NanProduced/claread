@@ -6,7 +6,7 @@ const sessionMock = vi.fn();
 vi.mock("@/services/bff/session", () => ({
   getWebSession: () => sessionMock(),
   projectSession: (session: unknown) => {
-    const s = (session ?? {}) as { kind?: string; phone?: string };
+    const s = (session ?? {}) as { kind?: string };
     return {
       state:
         s.kind === "authenticated"
@@ -15,7 +15,6 @@ vi.mock("@/services/bff/session", () => ({
             ? "signed_out"
             : "limited_debug",
       source: "mock",
-      phone: s.phone,
       hasAppAccess: true,
     };
   },
@@ -48,7 +47,6 @@ describe("getSettingsDialogProjection", () => {
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: "13800138000",
     });
     sessionMeMock.mockResolvedValue({
       ok: true,
@@ -81,7 +79,6 @@ describe("getSettingsDialogProjection", () => {
     expect(result.data.accountData).toEqual({
       nickname: "Alice",
       displayFallback: "Alice",
-      phone: "13800138000",
       status: "ready",
       avatarText: "A",
     });
@@ -97,7 +94,6 @@ describe("getSettingsDialogProjection", () => {
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: "13800138000",
     });
     sessionMeMock.mockResolvedValue({
       ok: true,
@@ -136,7 +132,6 @@ describe("getSettingsDialogProjection", () => {
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: "13800138000",
     });
     sessionMeMock.mockResolvedValue({
       ok: true,
@@ -155,12 +150,11 @@ describe("getSettingsDialogProjection", () => {
     expect(quotaMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to phone display name when nickname is empty", async () => {
+  it("falls back to 'Web User' display name when nickname is empty", async () => {
     sessionMock.mockResolvedValue({
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: "13900000000",
     });
     sessionMeMock.mockResolvedValue({
       ok: true,
@@ -181,8 +175,8 @@ describe("getSettingsDialogProjection", () => {
       throw new Error("expected success arm");
     }
     expect(result.data.accountData.nickname).toBe("");
-    expect(result.data.accountData.displayFallback).toBe("13900000000");
-    expect(result.data.accountData.avatarText).toBe("1");
+    expect(result.data.accountData.displayFallback).toBe("Web User");
+    expect(result.data.accountData.avatarText).toBe("W");
     // missing settings -> default reading defaults
     expect(result.data.preferencesData.readingGoal).toBe("daily_reading");
     expect(result.data.preferencesData.readingVariant).toBe("intermediate_reading");
@@ -205,32 +199,11 @@ describe("getSettingsDialogProjection", () => {
     expect(quotaMock).not.toHaveBeenCalled();
   });
 
-  it("returns 401 with null data for mock_phone sessions without upstream calls", async () => {
-    sessionMock.mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await getSettingsDialogProjection();
-
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      throw new Error("expected error arm");
-    }
-    expect(result.httpStatus).toBe(401);
-    expect(result.data).toBeNull();
-    expect(result.message).toBeTruthy();
-    expect(sessionMeMock).not.toHaveBeenCalled();
-    expect(quotaMock).not.toHaveBeenCalled();
-  });
-
   it("maps upstream 5xx session/me failure to 503 with safe message and null data", async () => {
     sessionMock.mockResolvedValue({
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: undefined,
     });
     sessionMeMock.mockResolvedValue({
       ok: false,
@@ -256,7 +229,6 @@ describe("getSettingsDialogProjection", () => {
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: undefined,
     });
     sessionMeMock.mockResolvedValue({
       ok: false,
@@ -281,7 +253,6 @@ describe("getSettingsDialogProjection", () => {
       kind: "authenticated",
       sessionToken: "tok",
       source: "cookie",
-      phone: undefined,
     });
     sessionMeMock.mockResolvedValue({
       ok: false,

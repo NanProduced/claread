@@ -560,17 +560,14 @@ export async function lookupDictAIForWeb(
 ): Promise<WebDictAIResult | WebDictAIErrorResult> {
   const session = await getWebSession();
 
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
+  if (session.kind === "anonymous") {
     return {
       kind: "error",
       query: body.query,
       mode: body.mode,
       status: 401,
       code: "auth_required",
-      message:
-        session.kind === "mock_phone"
-          ? "当前登录态不能使用真实 AI 查词，请使用真实登录会话后再试。"
-          : "请先登录后再使用 AI 查词。",
+      message: "请先登录后再使用 AI 查词。",
     };
   }
 

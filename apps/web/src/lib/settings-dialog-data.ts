@@ -23,7 +23,6 @@ import type { ProfileBffStatus } from "@/services/bff/profile";
 export interface SettingsDialogAccountData {
   nickname: string;
   displayFallback: string;
-  phone: string | undefined;
   status: ProfileBffStatus;
   avatarText: string;
 }

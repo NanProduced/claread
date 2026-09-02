@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { WEB_PHONE_COOKIE, WEB_SESSION_COOKIE } from "@/services/bff/session";
+import { WEB_SESSION_COOKIE } from "@/services/bff/session";
 import {
   intentAllowlist,
   isAllowedNextPath,
@@ -10,7 +10,7 @@ import {
 } from "@/lib/routes";
 
 function hasWebSession(request: NextRequest) {
-  if (request.cookies.has(WEB_SESSION_COOKIE) || request.cookies.has(WEB_PHONE_COOKIE)) {
+  if (request.cookies.has(WEB_SESSION_COOKIE)) {
     return true;
   }
 

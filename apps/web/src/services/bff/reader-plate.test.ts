@@ -109,11 +109,6 @@ describe("reader-plate BFF source preview auth and metadata", () => {
 
   it.each([
     { kind: "anonymous" as const, source: "none" as const },
-    {
-      kind: "mock_phone" as const,
-      source: "mock" as const,
-      phone: "13800138000",
-    },
   ])("returns an empty 401 without upstream access for $kind", async (session) => {
     vi.mocked(getWebSession).mockResolvedValue(session);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -917,19 +912,6 @@ describe("reader-plate BFF submit", () => {
     expect(submitUpstreamReaderPlainText).not.toHaveBeenCalled();
   });
 
-  it("rejects mock_phone sessions with auth_required", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await submitReaderPlainTextFromWeb({ plainText: "Hello." });
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
-    expect(submitUpstreamReaderPlainText).not.toHaveBeenCalled();
-  });
-
   it("maps upstream 401 to upstream_auth_failed", async () => {
     vi.mocked(submitUpstreamReaderPlainText).mockResolvedValue({
       ok: false,
@@ -1199,18 +1181,6 @@ describe("reader-plate BFF events polling", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getWebSession).mockResolvedValue(mockSession);
-  });
-
-  it("rejects mock_phone sessions", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await pollReaderEventsFromWeb("rec_1", { afterSequence: 0 });
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
   });
 
   it("maps upstream 500 to upstream_unavailable", async () => {
@@ -1960,18 +1930,6 @@ describe("reader-plate BFF candidate document read", () => {
 
     expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
     expect(getUpstreamReaderCandidateDocument).not.toHaveBeenCalled();
-  });
-
-  it("rejects mock_phone sessions with auth_required", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await getReaderCandidateDocumentFromWeb("rec_1");
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
   });
 
   it("200 full_text returns typed DTO with no internal leaks", async () => {
@@ -2909,21 +2867,6 @@ describe("reader-plate BFF section translation", () => {
 
     expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
     expect(submitUpstreamReaderSectionTranslation).not.toHaveBeenCalled();
-  });
-
-  it("rejects mock_phone sessions with auth_required", async () => {
-    vi.mocked(getWebSession).mockResolvedValue({
-      kind: "mock_phone",
-      source: "mock",
-      phone: "13800138000",
-    });
-
-    const result = await submitReaderSectionTranslationFromWeb("rec_1", {
-      startUnitId: "u1",
-      endUnitId: "u2",
-    });
-
-    expect(result).toMatchObject({ ok: false, status: 401, code: "auth_required" });
   });
 
   it("forwards full range witness (anchors + audit-only fields) to upstream", async () => {

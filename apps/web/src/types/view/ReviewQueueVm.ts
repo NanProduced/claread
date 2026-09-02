@@ -4,7 +4,6 @@ export type ReviewQueueState =
   | "ready"
   | "empty"
   | "anonymous"
-  | "limited_debug"
   | "upstream_unavailable"
   | "error";
 

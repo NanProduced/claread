@@ -210,21 +210,6 @@ describe("LibraryClient", () => {
     expect(loginLink?.getAttribute("href")).toBe("/login");
   });
 
-  it("shows debug state without login CTA when BFF returns limited_debug", () => {
-    render(
-      <LibraryClient
-        readingRecords={[]}
-        readingRecordsStatus="limited_debug"
-        readingRecordsMessage="当前登录态无法访问阅读记录，请使用完整登录会话。"
-      />,
-    );
-
-    expect(
-      screen.getByText("当前登录态无法访问阅读记录，请使用完整登录会话。"),
-    ).toBeTruthy();
-    expect(screen.queryByText("去登录")).toBeNull();
-  });
-
   it("shows generic error state without raw code for upstream_unavailable", () => {
     render(
       <LibraryClient

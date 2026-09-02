@@ -25,7 +25,6 @@ type ReadingRecordUserAssetStatus =
   | "created"
   | "invalid_request"
   | "unauthenticated"
-  | "limited_debug"
   | "upstream_unavailable"
   | "upstream_error";
 
@@ -56,17 +55,14 @@ type ReadingRecordUserAssetResult<T> =
 
 const userAnnotationColorValues = new Set<string>(USER_ANNOTATION_COLORS);
 
-function authError(session: WebSession): {
-  status: "unauthenticated" | "limited_debug";
+function authError(): {
+  status: "unauthenticated";
   message: string;
   httpStatus: number;
 } {
   return {
-    status: session.kind === "mock_phone" ? "limited_debug" : "unauthenticated",
-    message:
-      session.kind === "mock_phone"
-        ? "当前登录态不能写入真实阅读资产，请使用真实登录会话后再试。"
-        : "请先登录后使用阅读资产。",
+    status: "unauthenticated",
+    message: "请先登录后使用阅读资产。",
     httpStatus: 401,
   };
 }
@@ -172,8 +168,8 @@ async function authenticatedSession(): Promise<
   | ReadingRecordUserAssetError
 > {
   const session = await getWebSession();
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    const error = authError(session);
+  if (session.kind === "anonymous") {
+    const error = authError();
     return {
       ok: false,
       status: error.status,

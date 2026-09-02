@@ -5,7 +5,7 @@ import {
   deleteFavoriteByTargetKey,
   listFavorites,
 } from "@/services/api/favorites";
-import { getWebSession, type WebSession } from "@/services/bff/session";
+import { getWebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
 import type { FavoriteTargetType } from "@claread/contracts";
 
@@ -43,15 +43,12 @@ function badRequest(message: string): FavoriteBffResult {
   return { ok: false, status: 400, code: "bad_request", message };
 }
 
-function authError(session: WebSession): FavoriteBffResult {
+function authError(): FavoriteBffResult {
   return {
     ok: false,
     status: 401,
     code: "auth_required",
-    message:
-      session.kind === "mock_phone"
-        ? "当前登录态不能访问真实收藏，请使用真实登录会话后操作。"
-        : "请先登录后再操作收藏。",
+    message: "请先登录后再操作收藏。",
   };
 }
 
@@ -89,8 +86,8 @@ async function getFavoriteState(
   targetKey: string,
 ): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return authError(session);
+  if (session.kind === "anonymous") {
+    return authError();
   }
 
   const upstreamResult = await listFavorites(session.sessionToken);
@@ -109,8 +106,8 @@ async function favoriteTarget(
   payload: Record<string, unknown>,
 ): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return authError(session);
+  if (session.kind === "anonymous") {
+    return authError();
   }
 
   const upstreamResult = await createFavorite(session.sessionToken, {
@@ -130,8 +127,8 @@ async function unfavoriteTarget(
   targetKey: string,
 ): Promise<FavoriteBffResult> {
   const session = await getWebSession();
-  if (session.kind === "anonymous" || session.kind === "mock_phone") {
-    return authError(session);
+  if (session.kind === "anonymous") {
+    return authError();
   }
 
   const upstreamResult = await deleteFavoriteByTargetKey(

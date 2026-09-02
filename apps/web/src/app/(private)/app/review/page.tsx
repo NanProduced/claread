@@ -15,7 +15,6 @@ const stateTitle: Record<ReviewQueueVm["state"], string> = {
   ready: "待复习",
   empty: "暂无待复习",
   anonymous: "会话已过期",
-  limited_debug: "调试态受限",
   upstream_unavailable: "复习服务不可用",
   error: "复习队列读取失败",
 };

@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  cleanupRealProductSession,
+  fixtureEmail,
+  installRealProductSession,
+} from "./real-product-session";
+
 const FIXTURE_ARTICLE_TEXT =
   "Riverside Library was founded in 1998 by Maria Chen. " +
   "It began as a single reading room above a tea shop on Harbour Street. " +
@@ -221,13 +227,8 @@ async function readCapturedSseBody(page: Page, path: string): Promise<string> {
   }, path);
 }
 
-async function loginWithPhoneAuth(page: Page) {
-  await page.goto("/login?next=%2Fapp%2Fread");
-  await page.getByLabel("手机号").fill("13800138000");
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL((url) => url.pathname === "/app/read");
+async function loginWithEmailSession(page: Page, email: string) {
+  await installRealProductSession(page, email, "/app/read");
 }
 
 async function createLiveRecord(page: Page): Promise<string> {
@@ -301,6 +302,17 @@ function citationIds(message: JsonBody): string[] {
 }
 
 test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
+  let email: string;
+
+  test.beforeEach(() => {
+    email = fixtureEmail();
+  });
+
+  test.afterEach(async () => {
+    const cleanup = await cleanupRealProductSession(email);
+    expect(cleanup.residualTotal, "real-product session residual rows").toBe(0);
+  });
+
   test("real composer sends, retries, cites, navigates securely, and cold-loads identically", async ({
     page,
   }) => {
@@ -371,7 +383,7 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
       }
     });
 
-    await loginWithPhoneAuth(page);
+    await loginWithEmailSession(page, email);
     const recordId = await createLiveRecord(page);
     await waitForRecordSnapshot(page, recordId);
     await page.goto(`/app/reader/${recordId}`);

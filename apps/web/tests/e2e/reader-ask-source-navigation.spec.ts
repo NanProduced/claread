@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  cleanupRealProductSession,
+  fixtureEmail,
+  installRealProductSession,
+} from "./real-product-session";
+
 /**
  * Live product acceptance for the Ask article-citation source navigation
  * chain: citation detail → 定位原文 → secure navigate BFF (record + message
@@ -28,9 +34,8 @@ const FIXTURE_QUESTION =
   "Who founded Riverside Library and where did it begin? " +
   "谁创立了 Riverside Library，它最初在哪里？";
 
-// Dedicated acceptance-round user so cleanup can delete the whole account
-// without touching shared fixture data.
-const ACCEPTANCE_PHONE = "13911112222";
+// Each test provisions an isolated email identity + session so cleanup can
+// delete the whole account without touching shared fixture data.
 
 type JsonBody = Record<string, unknown>;
 
@@ -155,13 +160,8 @@ async function readCapturedSseBody(page: Page, path: string): Promise<string> {
   }, path);
 }
 
-async function loginWithPhoneAuth(page: Page) {
-  await page.goto("/login?next=%2Fapp%2Fread");
-  await page.getByLabel("手机号").fill(ACCEPTANCE_PHONE);
-  await page.getByRole("button", { name: "发送验证码" }).click();
-  await page.getByLabel("验证码").fill("888888");
-  await page.getByRole("button", { name: "登录并继续" }).click();
-  await page.waitForURL((url) => url.pathname === "/app/read");
+async function loginWithEmailSession(page: Page, email: string) {
+  await installRealProductSession(page, email, "/app/read");
 }
 
 async function createLiveRecord(page: Page): Promise<string> {
@@ -358,6 +358,17 @@ async function scrollReaderToBottom(page: Page): Promise<void> {
 }
 
 test.describe("Ask article citation source navigation (live deterministic)", () => {
+  let email: string;
+
+  test.beforeEach(() => {
+    email = fixtureEmail();
+  });
+
+  test.afterEach(async () => {
+    const cleanup = await cleanupRealProductSession(email);
+    expect(cleanup.residualTotal, "real-product session residual rows").toBe(0);
+  });
+
   test("desktop: citation 定位原文 scrolls to the real anchor, survives reload, fails safely on mismatch", async ({
     page,
   }) => {
@@ -372,7 +383,7 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
     expect(guardBefore.blocked_call_count).toBe(0);
     expect(guardBefore.blocked_attempts).toEqual([]);
 
-    await loginWithPhoneAuth(page);
+    await loginWithEmailSession(page, email);
     const recordId = await createLiveRecord(page);
     await waitForRecordSnapshot(page, recordId);
     await page.goto(`/app/reader/${recordId}`);
@@ -497,7 +508,7 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
     expect(guardBefore.installed).toBe(true);
     expect(guardBefore.blocked_call_count).toBe(0);
 
-    await loginWithPhoneAuth(page);
+    await loginWithEmailSession(page, email);
     const recordId = await createLiveRecord(page);
     await waitForRecordSnapshot(page, recordId);
     await page.goto(`/app/reader/${recordId}`);

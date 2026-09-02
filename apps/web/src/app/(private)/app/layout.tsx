@@ -3,25 +3,22 @@ import { RecentReadingProvider } from "@/components/layout/recent-reading-contex
 import { CloudPreferencesSync } from "@/components/providers/CloudPreferencesSync";
 import { SettingsDialogProvider } from "@/components/settings/SettingsDialogProvider";
 import { getReadingRecordListFromWeb } from "@/services/bff/reading-records";
-import { getProjectedWebSession } from "@/services/bff/session";
 
 export default async function AppShellLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [session, recentResult] = await Promise.all([
-    getProjectedWebSession(),
-    // Sidebar recent list: hidden records stay out (recent_only=true).
-    getReadingRecordListFromWeb({ limit: 10, recentOnly: true }),
-  ]);
+  const recentResult = await getReadingRecordListFromWeb({
+    limit: 10,
+    recentOnly: true,
+  });
   const recentRecords = recentResult.ok ? recentResult.items : [];
-  const userContact = session.phone;
 
   return (
     <RecentReadingProvider initialItems={recentRecords}>
       <SettingsDialogProvider>
-        <AppShell userName="Claread" userContact={userContact} userPlanLabel="Free">
+        <AppShell userName="Claread" userPlanLabel="Free">
           <CloudPreferencesSync />
           {children}
         </AppShell>

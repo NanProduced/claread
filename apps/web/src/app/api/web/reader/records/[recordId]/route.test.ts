@@ -56,23 +56,6 @@ describe("DELETE /api/web/reader/records/:recordId", () => {
     expect(body).toMatchObject({ ok: true, status: "already_deleted" });
   });
 
-  it("maps BFF limited_debug to 401", async () => {
-    bffMock.mockResolvedValue({
-      ok: false,
-      status: 401,
-      code: "limited_debug",
-      message: "当前登录态无法继续操作，请使用完整登录会话。",
-    });
-
-    const res = await DELETE({} as never, {
-      params: Promise.resolve({ recordId: "rr_1" }),
-    });
-
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ ok: false, code: "limited_debug" });
-  });
-
   it("maps BFF upstream_auth_failed to 401", async () => {
     bffMock.mockResolvedValue({
       ok: false,

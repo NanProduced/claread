@@ -18,7 +18,6 @@ export interface AppShellProps {
   children: React.ReactNode;
   variant?: AppShellVariant;
   userName?: string;
-  userContact?: string;
   userPlanLabel?: string;
 }
 
@@ -26,7 +25,6 @@ export function AppShell({
   children,
   variant: variantProp,
   userName,
-  userContact,
   userPlanLabel,
 }: AppShellProps) {
   const pathname = usePathname();
@@ -107,7 +105,6 @@ export function AppShell({
           onSidebarLock={lockSidebar}
           onSidebarClose={closeSidebar}
           userName={userName}
-          userContact={userContact}
           userPlanLabel={userPlanLabel}
         />
         <ScrollArea

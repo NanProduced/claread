@@ -78,7 +78,6 @@ const validData: SettingsDialogData = {
   accountData: {
     nickname: "Alice",
     displayFallback: "Alice",
-    phone: "13800000000",
     status: "ready",
     avatarText: "A",
   },
@@ -98,7 +97,6 @@ describe("SettingsDialogContentClient", () => {
     expect(props).toEqual({
       nickname: "Alice",
       displayFallback: "Alice",
-      phone: "13800000000",
       status: "ready",
       avatarText: "A",
     });
@@ -193,7 +191,6 @@ describe("SettingsDialogContentClient", () => {
     const props = accountMock.mock.calls[0][0] as Record<string, unknown>;
     expect(props.nickname).toBe(validData.accountData.nickname);
     expect(props.displayFallback).toBe(validData.accountData.displayFallback);
-    expect(props.phone).toBe(validData.accountData.phone);
     expect(props.status).toBe(validData.accountData.status);
     expect(props.avatarText).toBe(validData.accountData.avatarText);
   });
