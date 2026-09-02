@@ -40,6 +40,7 @@ class EmailEntryResult:
     mode: EmailEntryMode
     challenge_id: str | None = field(default=None, repr=False)
     expires_in: int | None = None
+    resend_after: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class EmailResetRequestResult:
     status: Literal["accepted"]
     challenge_id: str = field(repr=False)
     expires_in: int
+    resend_after: int
 
 
 class EmailAuthService:
@@ -68,6 +70,7 @@ class EmailAuthService:
             mode="register",
             challenge_id=challenge.challenge_id,
             expires_in=challenge.expires_in,
+            resend_after=challenge.resend_after,
         )
 
     async def _deliver_challenge(
@@ -184,6 +187,7 @@ class EmailAuthService:
             status="accepted",
             challenge_id=challenge.challenge_id,
             expires_in=challenge.expires_in,
+            resend_after=challenge.resend_after,
         )
 
     async def reset_with_ticket(

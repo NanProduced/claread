@@ -83,6 +83,7 @@ def test_start_password_mode_uses_raw_email_and_trusted_client_host(
         "mode": "password",
         "challenge_id": None,
         "expires_in": None,
+        "resend_after": None,
     }
     service.start_email_auth.assert_awaited_once_with(
         email=EMAIL,
@@ -98,6 +99,7 @@ def test_start_register_mode_returns_challenge_metadata(
         mode="register",
         challenge_id=CHALLENGE_ID,
         expires_in=600,
+        resend_after=73,
     )
 
     response = client.post("/auth/email/start", json={"email": EMAIL})
@@ -107,6 +109,7 @@ def test_start_register_mode_returns_challenge_metadata(
         "mode": "register",
         "challenge_id": CHALLENGE_ID,
         "expires_in": 600,
+        "resend_after": 73,
     }
 
 
@@ -199,6 +202,7 @@ def test_password_reset_request_keeps_generic_accepted_contract(
         status="accepted",
         challenge_id=CHALLENGE_ID,
         expires_in=600,
+        resend_after=73,
     )
 
     response = client.post(
@@ -212,6 +216,7 @@ def test_password_reset_request_keeps_generic_accepted_contract(
         "status": "accepted",
         "challenge_id": CHALLENGE_ID,
         "expires_in": 600,
+        "resend_after": 73,
     }
     service.request_password_reset.assert_awaited_once_with(
         email=EMAIL,

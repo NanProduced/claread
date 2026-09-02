@@ -52,6 +52,7 @@ async def test_existing_password_starts_password_mode_without_challenge() -> Non
 
     assert result.mode == "password"
     assert result.challenge_id is None
+    assert result.resend_after is None
     lookup.assert_awaited_once_with("User@example.com")
     challenges.create_challenge.assert_not_awaited()
 
@@ -64,7 +65,9 @@ async def test_new_email_starts_register_challenge_and_sends_code(
     account: EmailCredentialLookup | None,
 ) -> None:
     challenges = _challenge_service()
-    created = ChallengeCreated(challenge_id="A" * 32, code="123456", expires_in=600)
+    created = ChallengeCreated(
+        challenge_id="A" * 32, code="123456", expires_in=600, resend_after=73
+    )
     challenges.create_challenge.return_value = created
     lookup = AsyncMock(return_value=account)
     sender = AsyncMock(return_value="sent")
@@ -81,6 +84,7 @@ async def test_new_email_starts_register_challenge_and_sends_code(
     assert result.mode == "register"
     assert result.challenge_id == created.challenge_id
     assert result.expires_in == created.expires_in
+    assert result.resend_after == 73
     assert not hasattr(result, "code")
     assert created.challenge_id not in repr(result)
     challenges.create_challenge.assert_awaited_once_with(
@@ -98,7 +102,9 @@ async def test_new_email_starts_register_challenge_and_sends_code(
 
 async def test_uncertain_delivery_keeps_challenge_and_returns_accepted_result() -> None:
     challenges = _challenge_service()
-    created = ChallengeCreated(challenge_id="B" * 32, code="654321", expires_in=600)
+    created = ChallengeCreated(
+        challenge_id="B" * 32, code="654321", expires_in=600, resend_after=73
+    )
     challenges.create_challenge.return_value = created
     sender = AsyncMock(return_value="uncertain")
 
@@ -121,7 +127,9 @@ async def test_uncertain_delivery_keeps_challenge_and_returns_accepted_result() 
 
 async def test_non_rejected_sender_failure_keeps_challenge() -> None:
     challenges = _challenge_service()
-    created = ChallengeCreated(challenge_id="F" * 32, code="654321", expires_in=600)
+    created = ChallengeCreated(
+        challenge_id="F" * 32, code="654321", expires_in=600, resend_after=73
+    )
     challenges.create_challenge.return_value = created
     sender = AsyncMock(side_effect=RuntimeError("transport failed"))
 
@@ -143,7 +151,9 @@ async def test_non_rejected_sender_failure_keeps_challenge() -> None:
 
 async def test_rejected_delivery_discards_challenge_and_returns_stable_error() -> None:
     challenges = _challenge_service()
-    created = ChallengeCreated(challenge_id="C" * 32, code="654321", expires_in=600)
+    created = ChallengeCreated(
+        challenge_id="C" * 32, code="654321", expires_in=600, resend_after=73
+    )
     challenges.create_challenge.return_value = created
     sender = AsyncMock(return_value="rejected")
 
@@ -478,7 +488,9 @@ async def test_password_reset_request_hides_lookup_and_delivery_state(
     delivery: str,
 ) -> None:
     challenges = _challenge_service()
-    created = ChallengeCreated(challenge_id="E" * 32, code="123456", expires_in=600)
+    created = ChallengeCreated(
+        challenge_id="E" * 32, code="123456", expires_in=600, resend_after=73
+    )
     challenges.create_challenge.return_value = created
     lookup = AsyncMock()
     sender = AsyncMock(return_value=delivery)
@@ -496,6 +508,7 @@ async def test_password_reset_request_hides_lookup_and_delivery_state(
         status="accepted",
         challenge_id=created.challenge_id,
         expires_in=created.expires_in,
+        resend_after=73,
     )
     lookup.assert_not_awaited()
     challenges.create_challenge.assert_awaited_once_with(

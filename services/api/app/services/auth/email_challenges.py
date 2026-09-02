@@ -179,6 +179,7 @@ class EmailAuthStateError(RuntimeError):
 class ChallengeCreated:
     challenge_id: str
     code: str = field(repr=False)
+    resend_after: int
     expires_in: int = _CHALLENGE_TTL_SECONDS
 
 
@@ -257,7 +258,11 @@ class EmailAuthChallengeService:
             )
         if status != "ok":
             raise EmailAuthStateError("backend_unavailable")
-        return ChallengeCreated(challenge_id=challenge_id, code=code)
+        return ChallengeCreated(
+            challenge_id=challenge_id,
+            code=code,
+            resend_after=self._email_cooldown_seconds,
+        )
 
     async def discard_challenge(self, challenge_id: str) -> bool:
         if not self._is_token(challenge_id, _CHALLENGE_ID_LENGTH):

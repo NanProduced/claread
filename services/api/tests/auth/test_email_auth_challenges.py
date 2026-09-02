@@ -340,6 +340,22 @@ async def test_create_challenge_is_ttl_bound_deidentified_and_never_stores_code(
     assert HMAC_SECRET not in repr(service)
 
 
+async def test_create_challenge_returns_configured_resend_after() -> None:
+    redis = FakeRedis()
+    service = EmailAuthChallengeService(
+        redis, _settings(email_auth_email_cooldown_seconds=73)
+    )
+
+    created = await service.create_challenge(
+        email=EMAIL,
+        purpose="register",
+        client_ip=IP_ADDRESS,
+    )
+
+    assert created.resend_after == 73
+    assert created.expires_in == 600
+
+
 async def test_stale_discard_cleans_old_hash_without_deleting_replacement() -> None:
     redis = FakeRedis()
     service = EmailAuthChallengeService(redis, _settings())

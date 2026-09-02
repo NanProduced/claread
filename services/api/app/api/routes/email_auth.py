@@ -140,6 +140,7 @@ async def email_start(
         mode=result.mode,
         challenge_id=result.challenge_id,
         expires_in=result.expires_in,
+        resend_after=result.resend_after,
     )
 
 
@@ -199,6 +200,7 @@ async def email_password_reset_request(
         status=result.status,
         challenge_id=result.challenge_id,
         expires_in=result.expires_in,
+        resend_after=result.resend_after,
     )
 
 
