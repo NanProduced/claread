@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import asdict, replace
 from datetime import timedelta
 from typing import Any
@@ -28,7 +29,6 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
 )
-from app.services.auth.phone import normalize_phone
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -98,6 +98,19 @@ _TASK_OWNED_TABLES = (
 
 def _fail(message: str) -> None:
     raise AssertionError(message)
+
+
+def _normalize_phone(phone: str) -> str:
+    # Legacy lookup key for pre-existing phone identities; phone auth itself
+    # has been removed from the API, so this only ever matches legacy rows.
+    cleaned = re.sub(r"[\s-]", "", phone)
+    if cleaned.startswith("+86"):
+        national = cleaned[3:]
+    elif cleaned.startswith("86") and len(cleaned) == 13:
+        national = cleaned[2:]
+    else:
+        national = cleaned
+    return f"+86{national}"
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -911,7 +924,7 @@ async def _build(record_id: UUID) -> dict[str, Any]:
 
 
 async def _preflight(phone: str) -> dict[str, Any]:
-    normalized_phone = normalize_phone(phone)
+    normalized_phone = _normalize_phone(phone)
     settings = get_settings()
     pool = await init_db(
         settings.database_url,
@@ -966,7 +979,7 @@ async def _residual_counts(
 
 
 async def _cleanup(phone: str, record_id: UUID | None) -> dict[str, Any]:
-    normalized_phone = normalize_phone(phone)
+    normalized_phone = _normalize_phone(phone)
     settings = get_settings()
     pool = await init_db(
         settings.database_url,

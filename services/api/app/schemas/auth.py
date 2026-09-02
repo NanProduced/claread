@@ -14,20 +14,6 @@ class WeChatLoginRequest(BaseModel):
     code: str = Field(min_length=1)
 
 
-class PhoneCodeRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
-
-
-class PhoneVerifyRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
-    code: str = Field(min_length=4, max_length=12)
-
-
-class PhoneBindRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
-    code: str = Field(min_length=4, max_length=12)
-
-
 class WeChatBindRequest(BaseModel):
     code: str = Field(min_length=1)
 
@@ -46,12 +32,6 @@ class WeChatLoginResponse(BaseModel):
     user_id: str
     session_token: str
     expires_at: str
-
-
-class PhoneCodeResponse(BaseModel):
-    ok: bool
-    message: str
-    normalized_phone: str | None = None
 
 
 class IdentityBindResponse(BaseModel):

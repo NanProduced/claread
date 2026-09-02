@@ -35,8 +35,8 @@ class TestGetOrCreateUserByIdentity:
 
         with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
             result = await get_or_create_user_by_identity(
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result.user_id == existing_user_id
@@ -54,8 +54,8 @@ class TestGetOrCreateUserByIdentity:
 
         with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
             result = await get_or_create_user_by_identity(
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
                 auth_payload={"verified_by": "mock"},
             )
 
@@ -111,8 +111,8 @@ class TestGetOrCreateUserByIdentity:
         with patch("app.services.auth.identity.db_connection.DB_POOL", None):
             with pytest.raises(RuntimeError):
                 await get_or_create_user_by_identity(
-                    provider="phone",
-                    provider_user_id="+8613800138000",
+                    provider="email",
+                    provider_user_id="user@example.com",
                 )
 
 
@@ -127,8 +127,8 @@ class TestBindIdentityToUser:
         with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
             result = await bind_identity_to_user(
                 user_id=user_id,
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result == "created"
@@ -144,8 +144,8 @@ class TestBindIdentityToUser:
         with patch("app.services.auth.identity.db_connection.DB_POOL", mock_pool):
             result = await bind_identity_to_user(
                 user_id=user_id,
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result == "already_bound"
@@ -163,8 +163,8 @@ class TestBindIdentityToUser:
             with pytest.raises(IdentityConflictError) as exc_info:
                 await bind_identity_to_user(
                     user_id=user_id,
-                    provider="phone",
-                    provider_user_id="+8613800138000",
+                    provider="email",
+                    provider_user_id="user@example.com",
                 )
 
         assert exc_info.value.existing_user_id == other_user_id
@@ -295,8 +295,8 @@ class TestGetOrCreateUserByIdentityTransaction:
 
         with patch("app.services.auth.identity.db_connection.DB_POOL", _recording_pool(conn)):
             result = await get_or_create_user_by_identity(
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result.user_id == new_user_id
@@ -329,8 +329,8 @@ class TestGetOrCreateUserByIdentityTransaction:
 
         with patch("app.services.auth.identity.db_connection.DB_POOL", _recording_pool(conn)):
             result = await get_or_create_user_by_identity(
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result.created is False
@@ -343,8 +343,8 @@ class TestGetOrCreateUserByIdentityTransaction:
         with patch("app.services.auth.identity.db_connection.DB_POOL", _recording_pool(conn)):
             with pytest.raises(RuntimeError, match="lookup exploded"):
                 await get_or_create_user_by_identity(
-                    provider="phone",
-                    provider_user_id="+8613800138000",
+                    provider="email",
+                    provider_user_id="user@example.com",
                 )
 
         assert conn.events[0] == ("tx", "begin")
@@ -361,8 +361,8 @@ class TestBindIdentityToUserTransaction:
         with patch("app.services.auth.identity.db_connection.DB_POOL", _recording_pool(conn)):
             result = await bind_identity_to_user(
                 user_id=user_id,
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result == "created"
@@ -376,8 +376,8 @@ class TestBindIdentityToUserTransaction:
         with patch("app.services.auth.identity.db_connection.DB_POOL", _recording_pool(conn)):
             result = await bind_identity_to_user(
                 user_id=user_id,
-                provider="phone",
-                provider_user_id="+8613800138000",
+                provider="email",
+                provider_user_id="user@example.com",
             )
 
         assert result == "already_bound"
@@ -393,8 +393,8 @@ class TestBindIdentityToUserTransaction:
             with pytest.raises(IdentityConflictError):
                 await bind_identity_to_user(
                     user_id=user_id,
-                    provider="phone",
-                    provider_user_id="+8613800138000",
+                    provider="email",
+                    provider_user_id="user@example.com",
                 )
 
         assert conn.events[0] == ("tx", "begin")

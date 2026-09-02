@@ -14,13 +14,6 @@ from app.services.auth.session import (
     revoke_session,
     validate_session,
 )
-from app.services.auth.phone import (
-    PhoneAuthError,
-    bind_phone_to_user,
-    get_or_create_user_by_phone,
-    request_phone_code,
-    verify_phone_code,
-)
 from app.services.auth.wechat import WeChatAPIError, WeChatSession, code2session
 
 __all__ = [
@@ -35,10 +28,5 @@ __all__ = [
     "revoke_session",
     "revoke_all_sessions",
     "get_or_create_user_by_wechat",
-    "PhoneAuthError",
-    "request_phone_code",
-    "verify_phone_code",
-    "get_or_create_user_by_phone",
-    "bind_phone_to_user",
     "get_current_user",
 ]

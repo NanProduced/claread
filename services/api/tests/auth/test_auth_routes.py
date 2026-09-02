@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.auth.identity import IdentityConflictError
-from app.services.auth.phone import PhoneCodeResult
 from app.services.auth.session import SessionInfo
 from app.services.auth.wechat import WeChatAPIError
 
@@ -65,7 +64,7 @@ class TestWeChatLogin:
         assert response.status_code == 422
 
     def test_login_wechat_error_returns_502(self, client: TestClient) -> None:
-        """微信接口返回 errcode → 502 Bad Gateway"""
+        """微信接口返回 errcode → 502 Bad Gateway，且不回显 Provider 错误内容。"""
         with patch("app.api.routes.auth.code2session") as mock_code2session:
             mock_code2session.side_effect = WeChatAPIError(40029, "invalid code")
 
@@ -75,11 +74,12 @@ class TestWeChatLogin:
             )
 
         assert response.status_code == 502
-        assert "WeChat service error" in response.json()["detail"]
-        assert "invalid code" in response.json()["detail"]
+        assert response.json()["detail"] == "WeChat service error"
+        assert "invalid code" not in response.text
+        assert "40029" not in response.text
 
     def test_login_wechat_http_error_returns_502(self, client: TestClient) -> None:
-        """微信服务 5xx / 非 JSON 响应 → 502 Bad Gateway"""
+        """微信服务 5xx / 非 JSON 响应 → 502 Bad Gateway，不回显 Provider 内容。"""
 
         with patch("app.api.routes.auth.code2session") as mock_code2session:
             mock_code2session.side_effect = WeChatAPIError(-2, "HTTP 503: upstream error")
@@ -90,7 +90,9 @@ class TestWeChatLogin:
             )
 
         assert response.status_code == 502
-        assert "upstream error" in response.json()["detail"]
+        assert response.json()["detail"] == "WeChat service error"
+        assert "upstream error" not in response.text
+        assert "503" not in response.text
 
     def test_login_identity_conflict_returns_409(self, client: TestClient) -> None:
         """unionid 已归属其他用户时返回显式冲突，不静默合并。"""
@@ -132,134 +134,6 @@ class TestWeChatLogin:
             headers={"content-type": "application/json"},
         )
         assert response.status_code == 422  # validation error
-
-
-class TestPhoneLogin:
-    """POST /auth/phone/*"""
-
-    def test_request_code_success(self, client: TestClient) -> None:
-        with patch("app.api.routes.auth.request_phone_code") as mock_request:
-            mock_request.return_value = PhoneCodeResult(
-                normalized_phone="+8613800138000",
-                message="Mock verification code generated. Use 888888.",
-            )
-
-            response = client.post(
-                "/auth/phone/request-code",
-                json={"phone": "13800138000"},
-            )
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "ok": True,
-            "message": "Mock verification code generated. Use 888888.",
-            "normalized_phone": "+8613800138000",
-        }
-
-    def test_verify_code_success_creates_web_session(self, client: TestClient) -> None:
-        user_id = uuid4()
-        token = "phone_session_token"
-        expires_at = datetime.now(UTC)
-
-        with patch("app.api.routes.auth.verify_phone_code") as mock_verify:
-            mock_verify.return_value = PhoneCodeResult(
-                normalized_phone="+8613800138000",
-                message="Mock verification code accepted.",
-            )
-
-            with patch("app.api.routes.auth.get_or_create_user_by_phone") as mock_get_user:
-                mock_get_user.return_value = user_id
-
-                with patch("app.api.routes.auth.create_session") as mock_create:
-                    mock_create.return_value = (token, expires_at)
-
-                    response = client.post(
-                        "/auth/phone/verify-code",
-                        json={"phone": "13800138000", "code": "888888"},
-                    )
-
-        assert response.status_code == 200
-        assert response.json()["user_id"] == str(user_id)
-        assert response.json()["session_token"] == token
-        mock_get_user.assert_called_once_with("+8613800138000")
-        assert mock_create.call_args.kwargs["provider"] == "phone"
-        assert mock_create.call_args.kwargs["provider_user_id"] == "+8613800138000"
-        assert mock_create.call_args.kwargs["client_platform"] == "web"
-
-    def test_phone_bind_success(self, client: TestClient) -> None:
-        user_id = uuid4()
-        session_id = uuid4()
-
-        with patch("app.services.auth.dependencies.validate_session") as mock_validate:
-            mock_validate.return_value = SessionInfo(
-                user_id=user_id,
-                session_id=session_id,
-                expires_at=datetime.now(UTC),
-                client_platform="web",
-            )
-
-            with patch("app.api.routes.auth.verify_phone_code") as mock_verify:
-                mock_verify.return_value = PhoneCodeResult(
-                    normalized_phone="+8613800138000",
-                    message="Mock verification code accepted.",
-                )
-
-                with patch("app.api.routes.auth.bind_phone_to_user") as mock_bind:
-                    mock_bind.return_value = "created"
-
-                    response = client.post(
-                        "/auth/phone/bind",
-                        json={"phone": "13800138000", "code": "888888"},
-                        headers={"Authorization": "Bearer web_token"},
-                    )
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "ok": True,
-            "provider": "phone",
-            "status": "created",
-            "user_id": str(user_id),
-        }
-        mock_bind.assert_called_once_with(
-            user_id=user_id,
-            normalized_phone="+8613800138000",
-        )
-
-    def test_phone_bind_conflict_returns_409(self, client: TestClient) -> None:
-        user_id = uuid4()
-        other_user_id = uuid4()
-        session_id = uuid4()
-
-        with patch("app.services.auth.dependencies.validate_session") as mock_validate:
-            mock_validate.return_value = SessionInfo(
-                user_id=user_id,
-                session_id=session_id,
-                expires_at=datetime.now(UTC),
-                client_platform="web",
-            )
-
-            with patch("app.api.routes.auth.verify_phone_code") as mock_verify:
-                mock_verify.return_value = PhoneCodeResult(
-                    normalized_phone="+8613800138000",
-                    message="Mock verification code accepted.",
-                )
-
-                with patch("app.api.routes.auth.bind_phone_to_user") as mock_bind:
-                    mock_bind.side_effect = IdentityConflictError(
-                        "phone",
-                        "+8613800138000",
-                        other_user_id,
-                    )
-
-                    response = client.post(
-                        "/auth/phone/bind",
-                        json={"phone": "13800138000", "code": "888888"},
-                        headers={"Authorization": "Bearer web_token"},
-                    )
-
-        assert response.status_code == 409
-        assert response.json()["detail"]["error"] == "identity_conflict"
-        assert response.json()["detail"]["provider"] == "phone"
 
 
 class TestWeChatBind:

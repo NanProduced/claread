@@ -99,7 +99,6 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 - Source Preview 的 Web 消费走 BFF `/api/web/reader/records/[recordId]/source-preview` 受控二进制流代理；presigned URL 是敏感临时交付值，不得直接写入普通 DOM。交付安全合同见 `apps/web/docs/design/surface-read-intake-content-check.md`。
 - `POST /reader/records/{record_id}/recovery` 是 failed Reading Record 的手动恢复入口：要求认证；无请求 body（trigger 由服务端固定为 `manual`，客户端不能传递或伪造 trigger）；HTTP 200 outcomes 为 `recovery_started` / `nothing_to_recover`；response 字段仅 `record_id`、`outcome`、`previous_product_state`、`next_product_state`、`record_generation`、`successor_job_count`，不暴露 base/job/run/event 内部 ID；404 = 不存在或非 owner，409 = 当前状态不可恢复，503 = 后端暂不可用。Web 经 BFF `POST /api/web/reader/records/[recordId]/recovery` 接入，同样无 body。
 - `/dict`、`/dict/entry` 和 `POST /dict/ai` 都声明了 response model。
-- 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
 - `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。
 - `POST /dict/ai` 当前按固定价格结算：`context_explain` 与 `missing_fallback` 都是每次 `5` 点；真实 token usage 只用于审计，不直接映射用户侧扣点。
 - Ask Claread 的正式用户侧入口是 `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream`；要求登录态、默认绑定当前文章线程、SSE 流式输出。请求体公开 shape 为 `content`、可选 `entry_action`、可选 `focus_anchors`（`anchor` 单数仅作旧单选兼容入口）、可选 `model`、可选 `web_search_mode` 和幂等用 `client_submission_id`；上下文装配由服务端 ContextEnvelope 决定，前端不拼装上下文细节。

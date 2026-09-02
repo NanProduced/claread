@@ -62,28 +62,28 @@ async def code2session(code: str) -> WeChatSession:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, params=params)
-    except (httpx.TimeoutException, httpx.ConnectError) as e:
-        logger.warning("WeChat network error: %s", e)
-        raise WeChatAPIError(-3, f"Network error: {e}") from e
+    except (httpx.TimeoutException, httpx.ConnectError):
+        logger.warning("wechat event=code2session category=network_error status=failed")
+        raise WeChatAPIError(-3, "Network error") from None
 
     # 非 200 状态码（5xx 网关错误等）直接抛 502
     try:
         resp.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        logger.warning("WeChat HTTP error: %s [%s]", e, e.response.status_code)
-        raise WeChatAPIError(-2, f"HTTP {e.response.status_code}: upstream error") from e
+    except httpx.HTTPStatusError:
+        logger.warning("wechat event=code2session category=http_error status=failed")
+        raise WeChatAPIError(-2, "HTTP upstream error") from None
 
     # 响应体解析失败（HTML / 错误页等）
     try:
         data = resp.json()
     except Exception:
-        logger.warning("WeChat non-JSON response: %s", resp.text[:200])
+        logger.warning("wechat event=code2session category=invalid_response status=failed")
         raise WeChatAPIError(-2, "Invalid JSON response from WeChat") from None
 
     errcode = data.get("errcode")
 
     if errcode and errcode != 0:
-        logger.warning("WeChat code2session failed: %s", data)
+        logger.warning("wechat event=code2session category=upstream_error status=failed")
         raise WeChatAPIError(errcode, data.get("errmsg", "unknown error"))
 
     openid: str | None = data.get("openid")
@@ -91,6 +91,7 @@ async def code2session(code: str) -> WeChatSession:
     unionid: str | None = data.get("unionid")
 
     if not openid or not session_key:
+        logger.warning("wechat event=code2session category=invalid_response status=failed")
         raise WeChatAPIError(-1, "Missing openid or session_key in response")
 
     return WeChatSession(openid=openid, session_key=session_key, unionid=unionid)
