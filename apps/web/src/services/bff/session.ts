@@ -7,6 +7,9 @@ import { appReadRoute, loginRoute } from "@/lib/routes";
 export const WEB_SESSION_COOKIE = "claread_web_session";
 export const WEB_PHONE_COOKIE = "claread_web_phone";
 export const WEB_PHONE_CHALLENGE_COOKIE = "claread_phone_login_challenge";
+export const WEB_EMAIL_CHALLENGE_COOKIE = "claread_email_challenge";
+export const WEB_EMAIL_TICKET_COOKIE = "claread_email_ticket";
+export const WEB_EMAIL_FLOW_COOKIE_PATH = "/api/web/auth/email";
 
 export type WebSession =
   | {
