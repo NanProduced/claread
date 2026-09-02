@@ -81,6 +81,15 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(alert.textContent).toContain("尝试次数过多");
 		expect(alert.className).toContain("text-feedback-error");
 	});
+
+	it("syncs a later email prop into the draft without remounting", () => {
+		const { rerender } = render(<EmailAuthCard mode="forgot" email="" />);
+		expect((screen.getByLabelText("邮箱地址") as HTMLInputElement).value).toBe("");
+		rerender(<EmailAuthCard mode="forgot" email="reader@example.com" />);
+		expect((screen.getByLabelText("邮箱地址") as HTMLInputElement).value).toBe(
+			"reader@example.com",
+		);
+	});
 });
 
 describe("EmailAuthCard — 密码登录", () => {
@@ -209,6 +218,17 @@ describe("EmailAuthCard — 邮箱验证码", () => {
 		expect(resend.hasAttribute("disabled")).toBe(true);
 	});
 
+	it("displays cooldown from props without an internal timer", () => {
+		vi.useFakeTimers();
+		const { rerender } = render(<EmailAuthCard mode="otp" cooldownSeconds={45} />);
+		expect(screen.getByRole("button", { name: "45 秒后可重发" })).toBeTruthy();
+		vi.advanceTimersByTime(2000);
+		expect(screen.getByRole("button", { name: "45 秒后可重发" })).toBeTruthy();
+		rerender(<EmailAuthCard mode="otp" cooldownSeconds={73} />);
+		expect(screen.getByRole("button", { name: "73 秒后可重发" })).toBeTruthy();
+		vi.useRealTimers();
+	});
+
 	it("enables resend once no cooldown remains", async () => {
 		const user = userEvent.setup();
 		const onResendOtp = vi.fn();
@@ -223,6 +243,44 @@ describe("EmailAuthCard — 邮箱验证码", () => {
 
 		expect(screen.getByRole("button", { name: "重新发送" }).hasAttribute("disabled")).toBe(true);
 		expect(screen.getByRole("button", { name: "返回登录" }).hasAttribute("disabled")).toBe(true);
+	});
+
+	it("clears password, confirm, otp, local error and submit guard when mode changes", async () => {
+		const user = userEvent.setup();
+		const onSubmitOtp = vi.fn();
+		const { rerender } = render(<EmailAuthCard mode="email" />);
+
+		await user.type(screen.getByLabelText("邮箱地址"), "not-an-email");
+		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		expect(screen.getByRole("alert").textContent).toContain("有效的邮箱地址");
+
+		rerender(<EmailAuthCard mode="password" email="reader@example.com" />);
+		expect(screen.queryByRole("alert")).toBeNull();
+		await user.type(screen.getByLabelText("密码"), "stale-password");
+
+		rerender(
+			<EmailAuthCard
+				mode="set-password"
+				email="reader@example.com"
+				onSubmitSetPassword={vi.fn()}
+			/>,
+		);
+		expect((screen.getByLabelText("新密码") as HTMLInputElement).value).toBe("");
+		expect((screen.getByLabelText("确认密码") as HTMLInputElement).value).toBe("");
+
+		rerender(<EmailAuthCard mode="otp" email="reader@example.com" onSubmitOtp={onSubmitOtp} />);
+		await user.click(screen.getByLabelText("第 1 位，共 6 位"));
+		await user.keyboard("483920");
+		expect(onSubmitOtp).toHaveBeenCalledTimes(1);
+
+		rerender(<EmailAuthCard mode="password" email="reader@example.com" />);
+		expect((screen.getByLabelText("密码") as HTMLInputElement).value).toBe("");
+
+		rerender(<EmailAuthCard mode="otp" email="reader@example.com" onSubmitOtp={onSubmitOtp} />);
+		expect((screen.getByLabelText("第 1 位，共 6 位") as HTMLInputElement).value).toBe("");
+		await user.click(screen.getByLabelText("第 1 位，共 6 位"));
+		await user.keyboard("483920");
+		expect(onSubmitOtp).toHaveBeenCalledTimes(2);
 	});
 });
 

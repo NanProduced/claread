@@ -203,37 +203,26 @@ export function EmailAuthCard({
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [otpCode, setOtpCode] = useState("");
 	const [localError, setLocalError] = useState<string | null>(null);
-	const [cooldown, setCooldown] = useState(cooldownSeconds);
+	const [seenEmail, setSeenEmail] = useState(email);
+	const [seenMode, setSeenMode] = useState(mode);
 	const lastSubmittedOtpRef = useRef<string | null>(null);
 
-	useEffect(() => {
+	if (email !== seenEmail) {
+		setSeenEmail(email);
 		setEmailDraft(email);
-	}, [email]);
-
-	useEffect(() => {
-		setLocalError(null);
+	}
+	if (mode !== seenMode) {
+		setSeenMode(mode);
 		setPassword("");
 		setConfirmPassword("");
 		setOtpCode("");
-		lastSubmittedOtpRef.current = null;
-	}, [mode]);
+		setLocalError(null);
+	}
 
-	useEffect(() => {
-		setCooldown(cooldownSeconds);
-	}, [cooldownSeconds]);
-
-	// 外部错误到达后，允许用户用同一验证码重试。
+	// 外部错误或步骤切换后，允许用户用同一验证码重试。
 	useEffect(() => {
 		lastSubmittedOtpRef.current = null;
-	}, [error]);
-
-	useEffect(() => {
-		if (cooldown <= 0) {
-			return;
-		}
-		const timer = setTimeout(() => setCooldown((current) => Math.max(0, current - 1)), 1000);
-		return () => clearTimeout(timer);
-	}, [cooldown]);
+	}, [error, mode]);
 
 	const activeError = localError ?? error;
 	const describedBy = activeError ? STATUS_ID : undefined;
@@ -418,10 +407,10 @@ export function EmailAuthCard({
 						<button
 							type="button"
 							className={LINK_BUTTON}
-							disabled={cooldown > 0 || loading}
+							disabled={cooldownSeconds > 0 || loading}
 							onClick={onResendOtp}
 						>
-							{cooldown > 0 ? `${cooldown} 秒后可重发` : "重新发送"}
+							{cooldownSeconds > 0 ? `${cooldownSeconds} 秒后可重发` : "重新发送"}
 						</button>
 					</div>
 					<button
