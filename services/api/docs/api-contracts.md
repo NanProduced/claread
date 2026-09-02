@@ -36,6 +36,21 @@
 | Daily Reader | `GET /daily-reader` | 往期精读列表 |
 | Daily Reader | `GET /daily-reader/{article_id}` | 精读详情 |
 
+## Web 邮箱认证接口
+
+Web 浏览器只调用同源 Next.js BFF `/api/web/auth/email/**`；BFF 再调用以下 FastAPI 接口。登录页要求用户显式选择“登录”或“注册”：密码登录直接调用 password login，不调用 start；注册才通过 start 创建邮箱 OTP challenge。账号存在性在 OTP verify 请求内部由服务端解析；只有验证码校验成功，ticket 与 purpose 才返回 BFF 并投影下一步。用户提交 OTP 前的浏览器合同保持一致。
+
+| 领域 | 接口 | 说明 |
+|------|------|------|
+| Email Auth | `POST /auth/email/start` | 显式注册入口；创建并发送 register OTP challenge |
+| Email Auth | `POST /auth/email/otp/verify` | 请求内部解析账号状态与目标 purpose；OTP 成功才签发并返回短期 ticket 与 purpose |
+| Email Auth | `POST /auth/email/register` | 消费 register ticket，设置密码并创建 Web session |
+| Email Auth | `POST /auth/email/password/login` | 邮箱密码登录；不创建 OTP challenge |
+| Email Auth | `POST /auth/email/password-reset/request` | 请求密码重置 challenge；响应保持统一的 `accepted` 合同 |
+| Email Auth | `POST /auth/email/password-reset/complete` | 消费 password reset ticket，重置密码、撤销旧 session 并创建新 session |
+
+FastAPI 上游响应中的 `challenge_id`、`ticket`、`purpose` 和 `session_token` 只由 BFF 服务端处理。challenge、ticket 与登录 session 均写入 HttpOnly Cookie；普通浏览器 JSON 和认证日志不暴露这些值。
+
 ## Web 接入接口（Reader orchestration 主链）
 
 Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF `/api/web/reader/**` 代理接入。

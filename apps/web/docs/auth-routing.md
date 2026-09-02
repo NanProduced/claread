@@ -26,9 +26,13 @@ Public reading is allowed. Saving, adding vocabulary, writing personal notes, an
 
 | Route | Meaning |
 | --- | --- |
-| `/login` | Web phone login entry |
+| `/login` | Explicit Web email login / registration entry |
 
 `/login` is not part of the app shell. It is a dedicated auth boundary.
+
+The first screen requires an explicit `login` or `register` intent. Login proceeds directly to email/password submission and never calls `/api/web/auth/email/start`; registration calls `start` to create an email OTP challenge. Password reset has its own request and completion path. The browser can enter set-password or reset only after OTP verification succeeds.
+
+All browser auth calls stay on the same-origin Next.js BFF. Challenge IDs, tickets, purposes, and session tokens are held in HttpOnly cookies or server-only upstream calls; ordinary browser JSON and auth logs do not expose them. Terms and Privacy remain navigable from the login surface. A successful password reset stays on its confirmation screen until the user presses the fixed `/app/read` action.
 
 ### Private App Routes
 
@@ -72,8 +76,10 @@ The Web session contract exposes exactly three product states:
 - `signed_in`
 - `limited_debug`
 
-`limited_debug` is a development-only constrained state. It is not treated as a fully signed-in personal account, and UI must describe it as limited.
+`limited_debug` is a development-only constrained state created only by an explicitly injected `CLAREAD_WEB_DEBUG_SESSION_TOKEN`. It is independent of all login providers, is not treated as a fully signed-in personal account, and UI must describe it as limited. A `signed_out` request never falls back into this state.
 
 ## Backend Boundary
 
 `proxy.ts` is only an early browser guard. It does not replace BFF or upstream authorization. Web BFF handlers must continue to validate session state before touching user records, vocabulary, feedback, annotations, favorites, review, or reader orchestration data.
+
+`OWNER_DECISION_REQUIRED`: production HTTPS, same-origin BFF deployment, and trusted reverse-proxy/IP handling must be confirmed together before launch.

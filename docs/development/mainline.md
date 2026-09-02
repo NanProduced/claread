@@ -9,7 +9,7 @@
 Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 - 微信小程序仍是稳定客户端，继续作为回归约束。
-- Web 已形成可用产品基线，通过 Next.js BFF 接入真实 FastAPI 链路，不再依赖产品路径 mock/demo fixture。公共区、认证区和私有区路由已完整覆盖，command palette 已实现。
+- Web 已形成可用产品基线，通过同源 Next.js BFF 接入真实 FastAPI 链路，不再依赖产品路径 mock/demo fixture。认证区使用显式邮箱注册、密码登录与密码重置，认证状态由 HttpOnly Cookie 保存；公共区、认证区和私有区路由已完整覆盖，command palette 已实现。
 - Daily Reader 的固定生产 workflow 与公开刊物 surface 已完成本轮收口：选题多样性、质量闸门/单次 refinement、模型路由与 usage 观测、日审 API、响应式精读页、学习模式和登录返回收藏均已入基线；真实 provider 与连续生产验收仍是上线门禁。
 - Web Reader 标注体系已收口：SelectionToolbar、单句内 `text_range`、跨句/跨段 `multi_text` 高亮/笔记和 Ask Claread 显式引用已接入；高亮冲突已统一走后端 resolver 合并，SelectionToolbar 已收口为"一级高亮 + inline 颜色条"的单层工具条。
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
@@ -19,7 +19,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Reader 当前生产链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）、`analysis_results.render_scene_json` 事实源、旧 Reader 产品页与 BFF route、旧 Directus Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability 已物理删除。旧 `analysis_*` 表的精确状态（legacy 孤儿表 / legacy 仍被只读引用表 / 新链在用表 `analysis_windows` 与 `layer_analysis_plans`）见 `docs/architecture/workflow-history.md`；残留本地库的旧表 DROP 尚未完成。计费写账闭环、统一监测和 Console / Eval 治理化控制面尚未实现。
 - Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除，Console / Eval 治理化控制面尚未实现。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
-- 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。
+- 本地开发基线使用 PostgreSQL、Redis、词典数据，以及隔离的 email identity/session fixture；产品/E2E 测试不依赖认证 provider mock。
 
 当前基线验证命令见 `docs/operations/testing.md`。
 
@@ -91,6 +91,9 @@ Claread Console 当前只保留通用 metadata 展示 module；旧 Eval Center�
 
 以下事项仍需产品、业务和技术评估，不在本文做决定性描述：
 
+- `OWNER_DECISION_REQUIRED`：生产 HTTPS、同源 BFF 部署与可信反向代理/IP 处理边界。
+- `OWNER_DECISION_REQUIRED`：Resend 发信域名的 DKIM/SPF/DMARC 线上事实。
+- `OWNER_DECISION_REQUIRED`：HIBP 不可用时是否采用 fail-open 政策。
 - Academic workflow 后续是否复用 learning orchestration runtime，还是单独设计 academic orchestrator。
 - LangGraph、PydanticAI、自建 DB 状态机和 worker / SSE broker 的最终职责划分，以及是否升级或替换底层框架。
 - Stable Reading Base、Reading Units、Navigation Skeleton、Semantic Outline、Enhancement Layer、Parsed Decision 的最终 schema 和 API 版本化方式。

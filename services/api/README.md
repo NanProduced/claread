@@ -104,6 +104,7 @@ uv run mypy app
 
 - `DATABASE_URL`
 - `REDIS_URL`
+- 邮箱认证：`EMAIL_AUTH_ENABLED`、`EMAIL_AUTH_CODE_HMAC_SECRET`、`RESEND_API_KEY`、`RESEND_FROM`、`RESEND_REPLY_TO` 与 `EMAIL_AUTH_*` 限流配置
 - `WECHAT_APP_ID`
 - `WECHAT_APP_SECRET`
 - Reader 文件上传 OSS：
@@ -165,6 +166,12 @@ Daily Reader 的 workflow、reading unit 语义和后续收口项见 `services/a
 - `POST /reader/records/{record_id}/candidate-documents/{candidate_document_id}/confirm`
 - `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream`
 - `POST /auth/wechat/login`
+- `POST /auth/email/start`
+- `POST /auth/email/otp/verify`
+- `POST /auth/email/register`
+- `POST /auth/email/password/login`
+- `POST /auth/email/password-reset/request`
+- `POST /auth/email/password-reset/complete`
 - `GET /auth/session/me`
 - `PATCH /auth/profile`
 - `GET /vocabulary`
@@ -187,6 +194,6 @@ Daily Reader 的 workflow、reading unit 语义和后续收口项见 `services/a
 - 不用云端 UUID 替代客户端稳定 ID。
 - 不为 Web 复制一套业务后端。
 - 客户端差异通过 adapter、render profile、capability profile 处理。
-- Web 登录是新的 auth adapter，不替换小程序登录流程。
+- Web 使用邮箱注册、密码登录和密码重置 auth adapter；这不替换小程序的微信登录流程。
 - `users.id` 是 Claread 内部用户主键；微信小程序 openid、未来 Web 微信 openid 都写入 `user_identities`，不直挂到 `users`。
 - 微信 `unionid` 可空；同一非空 `unionid` 的多个微信 identity 必须归属同一 `user_id`，跨用户冲突进入显式账号合并流程。

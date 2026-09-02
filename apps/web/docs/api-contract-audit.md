@@ -26,10 +26,15 @@ Browser -> Next.js BFF / RSC -> FastAPI internal API
 | `GET /auth/session/me` | ✅ `SessionInfoResponse` | 🟢 稳定 | BFF 上游可复用；浏览器侧由 `/api/web/session` 等 Web endpoint 投影 |
 | `PATCH /auth/profile` | ✅ `ProfileUpdateResponse` | 🟢 稳定 | BFF 上游可复用 |
 | `POST /auth/session/logout` | ✅ `LogoutResponse` | 🟢 稳定 | BFF 清除 httpOnly cookie 后调用上游登出 |
-| `POST /auth/phone/request-code` | ✅ `PhoneCodeResponse` | 🟢 已落地 | Web 登录入口；开发期 mock code `888888`，生产 provider 使用阿里云 Dypnsapi |
-| `POST /auth/phone/verify-code` | ✅ `WeChatLoginResponse` 兼容形状 | 🟢 已落地 | 验证手机号验证码，创建 `provider=phone` identity 和 `client_platform=web` session；BFF 写入 httpOnly cookie |
-| `POST /auth/phone/bind` | ✅ `IdentityBindResponse` | 🟢 已落地 | 登录用户绑定手机号身份；冲突返回 409，不静默合并 |
+| `POST /auth/email/start` | ✅ `EmailStartResponse` | 🟢 稳定 | 仅供显式注册创建邮箱 OTP challenge；不查询账号存在性 |
+| `POST /auth/email/otp/verify` | ✅ `EmailOTPVerifyResponse` | 🟢 稳定 | OTP 成功后签发 register / password_reset ticket；purpose 只由 BFF 服务端消费 |
+| `POST /auth/email/register` | ✅ `EmailSessionResponse` | 🟢 稳定 | 消费 register ticket、设置密码并创建 email/Web session |
+| `POST /auth/email/password/login` | ✅ `EmailSessionResponse` | 🟢 稳定 | 显式密码登录入口，不调用 start |
+| `POST /auth/email/password-reset/request` | ✅ `EmailPasswordResetResponse` | 🟢 稳定 | 返回统一 accepted 合同并创建 password reset challenge |
+| `POST /auth/email/password-reset/complete` | ✅ `EmailSessionResponse` | 🟢 稳定 | 消费 password reset ticket、重置密码并创建新 session |
 | `POST /auth/wechat/bind` | ✅ `IdentityBindResponse` | 🟢 已落地 | 登录用户绑定微信小程序身份；冲突返回 409，不静默合并 |
+
+Web 浏览器只访问同源 `/api/web/auth/email/*`。challenge、ticket、purpose 与 session token 保存在 HttpOnly Cookie 或 server-only 调用中，不进入普通浏览器 JSON 或认证日志。登录页先要求显式“登录 / 注册”意图；OTP 验证前不向浏览器暴露账号是否存在。
 
 微信身份归属规则：`openid` 按 provider/app 隔离，`unionid` 可空但一旦出现，应作为跨微信应用归属线索。同一非空 `unionid` 下允许存在多个 provider/openid identity，但必须归属同一个 Claread `user_id`；如果同 `unionid` 或同 provider identity 已归属其他 `user_id`，API 返回 409，由显式账号合并流程处理。
 
@@ -163,8 +168,8 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | 枚举 | 当前值 | Web 扩展建议 |
 |------|--------|-------------|
 | `SourceType` | `user_input / daily_article / imported / ocr` | 新增 `web_clip` 或 `url_import`（Web 端粘贴 URL 导入） |
-| `client_platform` (session) | `wechat_miniprogram` | 新增 `web` |
-| `provider` (identity) | `wechat_miniprogram` | 新增 `phone`，后续新增 `wechat_open` |
+| `client_platform` (session) | `wechat_miniprogram / web` | 当前两端分别使用自己的 auth adapter |
+| `provider` (identity) | `wechat_miniprogram / email` | 后续可评估 `wechat_open` |
 
 ## 错误态审计
 
@@ -196,7 +201,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 
 ### ✅ 已补齐的 Web 首期阻塞项
 
-1. **手机号验证码登录**：`POST /auth/phone/request-code`、`POST /auth/phone/verify-code` 已落地，Web BFF 同源端点负责写入 httpOnly cookie。
+1. **邮箱认证**：注册、OTP 验证、密码登录与密码重置的六个 FastAPI 端点已落地；Web BFF 同源端点负责 HttpOnly Cookie 和安全投影。
 2. **Web baseline 用户资产**：Reader 收藏、生词写入、句子级批注、Settings 反馈已通过 Web BFF 接入真实后端。
 3. **记录删除**：Library 已通过 Web BFF 调用 `DELETE /records/{record_id}`。
 
@@ -219,7 +224,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 ### 🟢 可选增强（后续优化）
 
 6. **SSE / WebSocket 任务进度推送** — 替代轮询，Web 可选
-7. **微信开放平台登录/绑定** — 后续打通手机号账号与微信身份
+7. **微信开放平台登录/绑定** — 后续接入现有 Claread 用户与 identity 体系，冲突仍走显式合并
 8. **CORS / 同源代理配置** — 若浏览器直连 FastAPI，开发环境需要支持 Next.js 本地端口；采用 Next.js BFF 后，生产优先走服务端上游调用和同源 Web endpoint，减少浏览器跨域面
 
 ## 小程序 DTO 与后端 Schema 对齐状态
@@ -253,7 +258,8 @@ apps/web/src/
 └── services/
     └── api/
         ├── upstream.ts         # server-only FastAPI fetch 封装 + auth/error 处理
-        ├── auth.ts             # 手机号登录、登出、session 投影
+        ├── auth.ts             # 登出与 session 上游
+        ├── email-auth.ts       # 邮箱注册、密码登录与密码重置上游
         ├── analysis.ts         # 分析任务 API
         ├── records.ts          # 记录 API
         ├── dict.ts             # 词典 API
@@ -268,7 +274,7 @@ adapter 层职责：
 
 当前已落地的第一步：
 - `services/api/upstream.ts`、`services/api/tasks.ts` 和 `services/api/records.ts` 只在服务端调用 FastAPI。
-- `services/bff/session.ts` 支持 httpOnly cookie 预留和开发期 `CLAREAD_WEB_DEBUG_SESSION_TOKEN`；用户可见页面不再依赖 mock 数据回退。
+- `services/bff/email-auth.ts` 通过 HttpOnly Cookie 隔离邮箱 challenge、ticket 与 session token；`services/bff/session.ts` 只在非生产环境显式注入 `CLAREAD_WEB_DEBUG_SESSION_TOKEN` 时投影 `limited_debug`，用户可见页面不依赖 mock 数据回退。
 - `app/api/web/session` 和 `app/api/web/reader/[recordId]` 提供 Web BFF 投影接口。
 - `app/api/web/analysis/submit` 和 `app/api/web/analysis/tasks/[taskId]` 提供真实解析任务提交与状态轮询投影。
 - `/app/reader/[recordId]` Server Component 直接复用同一 BFF reader 服务，不让浏览器直连 FastAPI。

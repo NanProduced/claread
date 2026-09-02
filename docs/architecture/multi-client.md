@@ -133,7 +133,9 @@ Reader orchestration 的调试摘要通过 `reader_events` 和 `reader_runtime_s
 wx.login -> /auth/wechat/login -> Claread session_token
 ```
 
-Web 端当前优先使用手机号验证码登录，后续可评估微信开放平台 OAuth2 或其他身份提供方。
+Web 端使用显式“登录 / 注册”邮箱入口，支持密码登录、邮箱 OTP 注册和密码重置。浏览器只调用同源 Next.js BFF：密码登录不创建 challenge，注册才发送 OTP；账号存在性与目标分支在 OTP verify 请求内部由服务端解析，只有验证码校验成功，ticket 与 purpose 才返回 BFF，并由 BFF 投影下一步。用户提交 OTP 前的浏览器合同保持一致。challenge、ticket、purpose 与 session token 不进入普通浏览器 JSON 或认证日志，认证状态通过 HttpOnly Cookie 保存。
+
+微信小程序仍使用 `/auth/wechat/login`，与 Web 邮箱 adapter 并行。开发期 `limited_debug` 只来自非生产环境显式注入的 debug session，与身份 provider 无关；未登录状态不会通过 fallback 获得该能力。
 
 后端不应把微信 `openid` 当业务用户主键。统一模型：
 

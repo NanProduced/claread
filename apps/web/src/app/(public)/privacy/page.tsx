@@ -59,7 +59,7 @@ const sections: readonly LegalDocumentSection[] = [
     title: "必要 Cookie",
     content: (
       <p>
-        Web 端使用必要的 HttpOnly Cookie 保存登录 session，以及邮箱或手机号验证流程所需的挑战、票据等状态。它们用于维持登录、完成验证和防止流程被滥用；浏览器脚本不能直接读取这些 Cookie。Cookie 的路径、有效期、Secure 和 SameSite 行为由当前服务配置决定，具体清单和正式通知文案仍需在上线前补齐。
+        Web 端通过同源 Next.js BFF 使用必要的 HttpOnly Cookie 保存登录 session，以及邮箱验证流程所需的挑战、票据等状态。它们用于维持登录、完成验证和防止流程被滥用；challenge、ticket 和 session token 不进入普通浏览器 JSON 或认证日志，浏览器脚本也不能直接读取这些 Cookie。Cookie 的路径、有效期、Secure 和 SameSite 行为由当前服务配置决定，具体清单和正式通知文案仍需在上线前补齐。
       </p>
     ),
   },
@@ -153,9 +153,12 @@ const sections: readonly LegalDocumentSection[] = [
     content: (
       <>
         <p>
-          本页不虚构运营主体、地址或邮箱。正式版前，Owner 必须补充并核验以下事实：
+          本页不虚构运营主体、地址或邮箱。以下均属于 OWNER_DECISION_REQUIRED，正式版前必须补充并核验：
         </p>
         <ul className="list-disc space-y-2 pl-5">
+          <li>生产 HTTPS、同源 BFF 与可信反向代理/IP 处理边界；</li>
+          <li>Resend 发信域名的 DKIM/SPF/DMARC 线上事实；</li>
+          <li>HIBP 不可用时是否采用 fail-open 政策；</li>
           <li>运营主体及地址；</li>
           <li>support/privacy 邮箱；</li>
           <li>目标年龄与未成年人策略；</li>

@@ -142,9 +142,9 @@ cd apps/web
 pnpm exec vitest run
 ```
 
-Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
+Web smoke 应覆盖显式邮箱注册、密码登录、密码重置、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。邮箱 journey 还应验证 Terms/Privacy 可导航，以及密码重置成功页不自动跳转、用户按钮固定进入 `/app/read`。
 
-仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。Vitest 与 Playwright 是独立验证入口，不得用其中一个替代另一个；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
+仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。只有四条需要真实 session 的 Reader/Ask real-product Playwright spec（`reader-markdown-g5-real-product.spec.ts`、`reader-ask-v2-live-real-product.spec.ts`、`reader-stable-order-real-product.spec.ts`、`reader-ask-source-navigation.spec.ts`）和 deterministic Ask cross-stack（`services/api/tests/deterministic_ask_e2e/test_cross_stack_live.py`）使用 test-only email identity/session fixture，并在结束后清理该用户图；其他离线或页面级 E2E 不由此推定使用同一 fixture。Vitest 与 Playwright 是独立验证入口，不得用其中一个替代另一个；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
 
 Playwright 默认独占 `127.0.0.1:3200`，端口被其他工作树占用时可先设置 `$env:CLAREAD_E2E_PORT = '3210'`；runner 仍会拒绝复用或终止未知进程。
 

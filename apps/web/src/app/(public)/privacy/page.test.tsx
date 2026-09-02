@@ -49,9 +49,15 @@ describe("隐私政策草案页", () => {
       "设备信息",
       "必要日志",
       "HttpOnly",
+      "同源 Next.js BFF",
+      "普通浏览器 JSON",
       "Resend",
+      "DKIM/SPF/DMARC",
       "HIBP",
+      "fail-open",
       "k-anonymity",
+      "可信反向代理",
+      "OWNER_DECISION_REQUIRED",
       "境外处理",
       "访问、更正、删除和注销",
       "未成年人",
@@ -61,6 +67,7 @@ describe("隐私政策草案页", () => {
     }
 
     expect(documentText).not.toContain("Google");
+    expect(documentText).not.toContain("手机号");
     expect(documentText).toContain("不等于“绝对安全”");
     expect(documentText).not.toContain("完全合规");
   });

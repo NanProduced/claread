@@ -91,7 +91,9 @@
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
 | 提交问题反馈 | 已接入：设置页 + Reader 五类 scope 反馈闭环与记录查看 | 已接入基础反馈 | `/feedback` | feedback scope/type 已进入跨端共享语义，后续再评估 contracts 固化 |
-| 查看登录状态 | 已接入：Web session cookie + BFF，设置页可编辑昵称 | 已接入：小程序 session token | `user_sessions`、`/auth/profile` | provider 差异不影响业务用户 |
+| 注册、登录与密码重置 | 已接入：显式邮箱注册、密码登录和密码重置，浏览器只访问同源 BFF | 已接入：`/auth/wechat/login` | `user_identities`、`user_sessions`、`/auth/email/*`、`/auth/wechat/login` | 两端共享业务用户，不共享登录 UI 或 provider adapter |
+| 查看登录状态 | 已接入：HttpOnly Web session cookie + BFF，设置页可编辑昵称 | 已接入：小程序 session token | `user_sessions`、`/auth/profile` | provider 差异不影响业务用户 |
+| 开发期受限 session | 端内能力：仅显式注入时投影为 `limited_debug` | 不适用 | 不创建新的身份 provider | `signed_out` 不得 fallback 为调试状态 |
 | 查看配额/积分 | 已接入：设置页配额摘要 + 积分明细 | 已接入 profile/credit detail | `/me/quota`、`/me/credit/ledger` | UI 展示分叉，数据共享 |
 | 设置默认透读 | 已接入：Web 读写 `default_reading_goal` / `default_reading_variant` | 已接入 | `/auth/profile.settings` | 共享默认项已收敛到 profile settings |
 | Web 偏好云端同步 | 端内能力：主题、Reader mode、字体、字号已同步到 `settings.web_preferences` | 不适用 | `/auth/profile.settings` | 保持与小程序 `reading_preferences` 命名空间隔离 |

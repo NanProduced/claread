@@ -85,17 +85,20 @@ uv sync
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-本地手机号登录默认 mock provider（`PHONE_AUTH_PROVIDER="mock"`、`PHONE_MOCK_VERIFICATION_CODE="888888"`），可拿到真实 Claread session token。
+Reader Web 产品路径使用邮箱认证；开发期也可显式注入一个已有的本地 Claread session token，投影为独立的 `limited_debug` 受限状态。
 
-### 2. 获取本地 session token
+### 2. 选择邮箱登录或显式 debug session
 
 ```powershell
-$phone = "13800138000"
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/auth/phone/request-code" -ContentType "application/json" -Body (@{ phone = $phone } | ConvertTo-Json)
-$session = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/auth/phone/verify-code" -ContentType "application/json" -Body (@{ phone = $phone; code = "888888" } | ConvertTo-Json)
+# 产品路径：启动 Web 后访问 http://127.0.0.1:3000/login，显式选择邮箱登录或注册。
+# 仅本地调试且已经有可用 Claread session token 时，才显式注入：
+$env:CLAREAD_WEB_DEBUG_SESSION_TOKEN = "<existing local Claread session token>"
+
+# 后文若要直接调用 FastAPI，再在当前终端单独持有同一已有 token：
+$sessionToken = "<existing local Claread session token>"
 ```
 
-返回 `user_id` / `session_token` / `expires_at`。注入 Web dev 进程：`$env:CLAREAD_WEB_DEBUG_SESSION_TOKEN = $session.session_token`。
+邮箱密码登录不会调用 start；显式注册才创建邮箱 OTP challenge，密码重置走独立流程。浏览器只访问同源 Next.js BFF，challenge、ticket 与 session token 由 HttpOnly Cookie 保存，不进入普通浏览器 JSON。debug session 不创建身份 provider，也不能由 `signed_out` fallback 获得。
 
 ### 3. 启动 Web
 
@@ -104,7 +107,7 @@ pnpm install
 pnpm reader:web   # 或 pnpm --dir apps/web run dev
 ```
 
-Web dev server 默认 `http://127.0.0.1:3000`。常用环境变量：`CLAREAD_FASTAPI_BASE_URL`、`CLAREAD_PHONE_AUTH_PROVIDER=mock`、`CLAREAD_WEB_DEBUG_SESSION_TOKEN`。注意：Reader records BFF 拒绝 `anonymous` 和 `mock_phone` 会话；允许完整 Web session 或 debug session。
+Web dev server 默认 `http://127.0.0.1:3000`。常用环境变量：`CLAREAD_FASTAPI_BASE_URL`、`CLAREAD_WEB_DEBUG_SESSION_TOKEN`。Reader records BFF 拒绝 `anonymous`；允许邮箱认证建立的完整 Web session，或非生产环境显式注入的 debug session。
 
 ### 4. 启动 worker
 
@@ -249,7 +252,7 @@ uv run python scripts/check_reader_schema_health.py          # 或 --json
 ### 路径 B：直接调后端 API
 
 ```powershell
-$headers = @{ Authorization = "Bearer $($session.session_token)" }
+$headers = @{ Authorization = "Bearer $sessionToken" }
 $submit = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/reader/records/input" -Headers $headers -ContentType "application/json" -Body (@{
   source_type = "plain_text"
   text = "Claread lets developers inspect one reading record at a time."
