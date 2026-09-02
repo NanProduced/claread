@@ -46,11 +46,17 @@ async function installEmailAuthMock(page: Page, registeredEmail = REGISTERED_EMA
     };
   };
 
-  const fulfill = (route: Route, body: Record<string, unknown>, status = 200) =>
+  const fulfill = (
+    route: Route,
+    body: Record<string, unknown>,
+    status = 200,
+    headers?: Record<string, string>,
+  ) =>
     route.fulfill({
       status,
       contentType: "application/json",
       body: JSON.stringify(body),
+      headers,
     });
 
   await page.route("**/api/web/auth/email/**", async (route) => {
@@ -179,7 +185,9 @@ async function installEmailAuthMock(page: Page, registeredEmail = REGISTERED_EMA
         throw new Error("Unexpected password reset completion state");
       }
       state = { step: "idle" };
-      await fulfill(route, { ok: true });
+      await fulfill(route, { ok: true }, 200, {
+        "set-cookie": "claread_web_session=e2e-session; Path=/; HttpOnly; SameSite=Lax",
+      });
       return;
     }
 
@@ -252,14 +260,20 @@ test.describe("offline email auth browser coverage", () => {
     await page.getByRole("button", { name: "发送验证码" }).click();
 
     await expect(page.getByRole("heading", { name: "查看你的邮箱" })).toBeVisible();
-    await expect(page.getByText(`我们已向 ${REGISTERED_EMAIL} 发送 6 位验证码。`)).toBeVisible();
+    await expect(
+      page.getByText("如果该邮箱已注册且邮件服务可用，你将收到 6 位验证码。"),
+    ).toBeVisible();
     await fillOtp(page);
     await expect(page.getByRole("heading", { name: "设置新密码" })).toBeVisible();
 
     await page.getByLabel("新密码").fill(RESET_PASSWORD);
     await page.getByLabel("确认密码").fill(RESET_PASSWORD);
     await page.getByRole("button", { name: "重置密码" }).click();
-    await page.waitForURL((url) => url.pathname === "/daily");
+    await expect(page.getByRole("heading", { name: "密码已重置" })).toBeVisible();
+    await page.waitForTimeout(1800);
+    await expect(page.getByRole("heading", { name: "密码已重置" })).toBeVisible();
+    await page.getByRole("button", { name: "立即进入" }).click();
+    await page.waitForURL((url) => url.pathname === "/app/read");
   });
 
   test("refresh restores OTP and password setup with email and restarts cooldown", async ({ page }) => {

@@ -27,7 +27,6 @@ const RESET_COMPLETE = "/api/web/auth/email/password-reset/complete";
 const CANCEL = "/api/web/auth/email/cancel";
 const FALLBACK_ROUTE = appReadRoute;
 const SAFE_ERROR = "登录暂时不可用，请稍后重试。";
-const RESET_SUCCESS_DELAY_MS = 1500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -172,7 +171,6 @@ export function EmailAuthFlow() {
 	const [cooldownSeconds, setCooldownSeconds] = useState(0);
 	const [cooldownEpoch, setCooldownEpoch] = useState(0);
 	const inFlight = useRef(false);
-	const resetRedirectTimer = useRef<number | null>(null);
 	const hasNavigated = useRef(false);
 
 	useEffect(() => {
@@ -185,41 +183,25 @@ export function EmailAuthFlow() {
 		return () => window.clearTimeout(timer);
 	}, [cooldownSeconds, cooldownEpoch]);
 
-	useEffect(() => {
-		return () => {
-			if (resetRedirectTimer.current !== null) {
-				window.clearTimeout(resetRedirectTimer.current);
-			}
-		};
-	}, []);
-
 	function applyCooldown(seconds: unknown) {
 		const value = isPositiveInt(seconds) ? seconds : 0;
 		setCooldownSeconds(value);
 		setCooldownEpoch((epoch) => epoch + 1);
 	}
 
-	function finishSession() {
+	function finishSession(destination?: Route) {
 		if (hasNavigated.current) {
 			return;
 		}
 		hasNavigated.current = true;
-		if (resetRedirectTimer.current !== null) {
-			window.clearTimeout(resetRedirectTimer.current);
-			resetRedirectTimer.current = null;
-		}
 		router.refresh();
-		const nextRoute = safeNextRoute(searchParams.get("next"));
-		const intent = safeIntent(searchParams.get("intent"));
+		const nextRoute = destination ?? safeNextRoute(searchParams.get("next"));
+		const intent = destination ? null : safeIntent(searchParams.get("intent"));
 		router.push((intent ? `${nextRoute}?intent=${encodeURIComponent(intent)}` : nextRoute) as Route);
 	}
 
 	function showResetSuccess() {
 		setMode("reset-success");
-		resetRedirectTimer.current = window.setTimeout(() => {
-			resetRedirectTimer.current = null;
-			finishSession();
-		}, RESET_SUCCESS_DELAY_MS);
 	}
 
 	async function request(
@@ -455,7 +437,7 @@ export function EmailAuthFlow() {
 			onSubmitSetPassword={handleSubmitSetPassword}
 			onSubmitForgot={handleSubmitForgot}
 			onSubmitReset={handleSubmitReset}
-			onResetSuccessContinue={finishSession}
+			onResetSuccessContinue={() => finishSession(FALLBACK_ROUTE)}
 			onResendOtp={handleResendOtp}
 			onBackToEmail={handleBackToEmail}
 			onForgotPassword={handleForgotPassword}
