@@ -12,7 +12,14 @@ import { AuthDivider } from "./AuthDivider";
 import { GoogleIcon } from "./GoogleIcon";
 import { OtpInput } from "./OtpInput";
 
-export type EmailAuthMode = "email" | "password" | "otp" | "set-password" | "forgot" | "reset";
+export type EmailAuthMode =
+	| "email"
+	| "password"
+	| "otp"
+	| "set-password"
+	| "forgot"
+	| "reset"
+	| "reset-success";
 
 export type EmailAuthCardProps = {
 	mode: EmailAuthMode;
@@ -26,6 +33,7 @@ export type EmailAuthCardProps = {
 	onSubmitSetPassword?: (password: string) => void;
 	onSubmitForgot?: (email: string) => void;
 	onSubmitReset?: (password: string) => void;
+	onResetSuccessContinue?: () => void;
 	onResendOtp?: () => void;
 	onBackToEmail?: () => void;
 	onForgotPassword?: () => void;
@@ -66,6 +74,10 @@ const MODE_COPY: Record<EmailAuthMode, (email: string) => { title: string; descr
 	reset: () => ({
 		title: "设置新密码",
 		description: "为你的账号设置新密码。",
+	}),
+	"reset-success": () => ({
+		title: "密码已重置",
+		description: "新密码已生效，你已安全登录。正在进入 Claread…",
 	}),
 };
 
@@ -192,6 +204,7 @@ export function EmailAuthCard({
 	onSubmitSetPassword,
 	onSubmitForgot,
 	onSubmitReset,
+	onResetSuccessContinue,
 	onResendOtp,
 	onBackToEmail,
 	onForgotPassword,
@@ -292,13 +305,30 @@ export function EmailAuthCard({
 	}
 
 	const passwordRequirementHint = <span className="text-xs text-subtle">12–128 个字符</span>;
+	const authHeader = (
+		<header className="space-y-1.5">
+			<h1 className="text-2xl font-semibold tracking-tight text-ink">{copy.title}</h1>
+			<p className="text-sm leading-6 text-muted-foreground">{copy.description}</p>
+		</header>
+	);
 
 	return (
 		<div className="w-full space-y-6">
-			<header className="space-y-1.5">
-				<h1 className="text-2xl font-semibold tracking-tight text-ink">{copy.title}</h1>
-				<p className="text-sm leading-6 text-muted-foreground">{copy.description}</p>
-			</header>
+			{mode === "reset-success" ? (
+				<div role="status" aria-live="polite" className="space-y-6">
+					{authHeader}
+					<Button
+						type="button"
+						size="lg"
+						className="w-full max-md:min-h-11"
+						onClick={onResetSuccessContinue}
+					>
+						立即进入
+					</Button>
+				</div>
+			) : (
+				authHeader
+			)}
 
 			{mode === "email" ? (
 				<>

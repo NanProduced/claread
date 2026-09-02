@@ -396,3 +396,25 @@ describe("EmailAuthCard — 重置密码", () => {
 		expect(screen.getByRole("alert").textContent).toContain("验证码已过期");
 	});
 });
+
+describe("EmailAuthCard — 重置成功", () => {
+	it("announces the reset success state and emits immediate entry", async () => {
+		const user = userEvent.setup();
+		const onResetSuccessContinue = vi.fn();
+		render(
+			<EmailAuthCard
+				mode="reset-success"
+				onResetSuccessContinue={onResetSuccessContinue}
+			/>,
+		);
+
+		expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
+		expect(screen.getByRole("heading", { name: "密码已重置" })).toBeTruthy();
+		expect(
+			screen.getByText("新密码已生效，你已安全登录。正在进入 Claread…"),
+		).toBeTruthy();
+
+		await user.click(screen.getByRole("button", { name: "立即进入" }));
+		expect(onResetSuccessContinue).toHaveBeenCalledTimes(1);
+	});
+});

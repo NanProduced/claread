@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -216,7 +216,7 @@ describe("EmailAuthFlow", () => {
 		});
 	});
 
-	it("walks forgot → OTP → reset → redirect", async () => {
+	it("walks forgot → OTP → reset → success state before redirect", async () => {
 		const user = userEvent.setup();
 		const fetchMock = mockFetchByUrl({
 			"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
@@ -240,10 +240,82 @@ describe("EmailAuthFlow", () => {
 		await user.type(screen.getByLabelText("新密码"), PASSWORD);
 		await user.type(screen.getByLabelText("确认密码"), PASSWORD);
 		await user.click(screen.getByRole("button", { name: "重置密码" }));
-		await waitFor(() => {
-			expect(navigationMock.refresh).toHaveBeenCalled();
-			expect(navigationMock.push).toHaveBeenCalledWith("/app/read");
+		await waitFor(() => screen.getByRole("heading", { name: "密码已重置" }));
+		expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
+		expect(navigationMock.refresh).not.toHaveBeenCalled();
+		expect(navigationMock.push).not.toHaveBeenCalled();
+		await waitFor(
+			() => {
+				expect(navigationMock.refresh).toHaveBeenCalledTimes(1);
+				expect(navigationMock.push).toHaveBeenCalledTimes(1);
+				expect(navigationMock.push).toHaveBeenCalledWith("/app/read");
+			},
+			{ timeout: 2500 },
+		);
+	});
+
+	it("allows immediate entry once and clears the delayed redirect", async () => {
+		const user = userEvent.setup();
+		navigationMock.search = new URLSearchParams("next=/daily&intent=save");
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () =>
+					jsonResponse({ ok: true, step: "reset", email: EMAIL }),
+				"POST /api/web/auth/email/password-reset/complete": async () => jsonResponse({ ok: true }),
+			}),
+		);
+		const { unmount } = render(<EmailAuthFlow />);
+		await waitFor(() => screen.getByRole("heading", { name: "设置新密码" }));
+		await user.type(screen.getByLabelText("新密码"), PASSWORD);
+		await user.type(screen.getByLabelText("确认密码"), PASSWORD);
+		vi.useFakeTimers();
+		fireEvent.click(screen.getByRole("button", { name: "重置密码" }));
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
 		});
+		expect(screen.getByRole("heading", { name: "密码已重置" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "立即进入" }));
+		fireEvent.click(screen.getByRole("button", { name: "立即进入" }));
+		expect(navigationMock.refresh).toHaveBeenCalledTimes(1);
+		expect(navigationMock.push).toHaveBeenCalledTimes(1);
+		expect(navigationMock.push).toHaveBeenCalledWith("/daily?intent=save");
+
+		await vi.advanceTimersByTimeAsync(1500);
+		expect(navigationMock.push).toHaveBeenCalledTimes(1);
+		unmount();
+	});
+
+	it("does not redirect after the success state is unmounted", async () => {
+		const user = userEvent.setup();
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () =>
+					jsonResponse({ ok: true, step: "reset", email: EMAIL }),
+				"POST /api/web/auth/email/password-reset/complete": async () => jsonResponse({ ok: true }),
+			}),
+		);
+		const { unmount } = render(<EmailAuthFlow />);
+		await waitFor(() => screen.getByRole("heading", { name: "设置新密码" }));
+		await user.type(screen.getByLabelText("新密码"), PASSWORD);
+		await user.type(screen.getByLabelText("确认密码"), PASSWORD);
+		vi.useFakeTimers();
+		fireEvent.click(screen.getByRole("button", { name: "重置密码" }));
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(screen.getByRole("heading", { name: "密码已重置" })).toBeTruthy();
+
+		unmount();
+		await vi.advanceTimersByTimeAsync(1500);
+		expect(navigationMock.refresh).not.toHaveBeenCalled();
+		expect(navigationMock.push).not.toHaveBeenCalled();
 	});
 
 	it("applies 429 retry_after and resets cooldown when resend returns the same duration", async () => {
