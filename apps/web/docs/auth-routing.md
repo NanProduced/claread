@@ -1,6 +1,6 @@
 # Web Auth Routing
 
-> **Status**: `CURRENT` | **Last updated**: 2026-08-08
+> **Status**: `CURRENT` | **Last updated**: 2026-09-03
 
 This document defines Claread Web's route boundary and login redirect contract.
 
@@ -26,11 +26,12 @@ Public reading is allowed. Saving, adding vocabulary, writing personal notes, an
 
 | Route | Meaning |
 | --- | --- |
-| `/login` | Explicit Web email login / registration entry |
+| `/login` | Explicit Web email login and password-reset entry |
+| `/signup` | Explicit Web email registration entry |
 
-`/login` is not part of the app shell. It is a dedicated auth boundary.
+`/login` and `/signup` are not part of the app shell. Each presents one primary task and links to the other route from the card footer.
 
-The first screen requires an explicit `login` or `register` intent. Login proceeds directly to email/password submission and never calls `/api/web/auth/email/start`; registration calls `start` to create an email OTP challenge. Password reset has its own request and completion path. The browser can enter set-password or reset only after OTP verification succeeds.
+Login proceeds directly to email/password submission and never calls `/api/web/auth/email/start`; registration calls `start` to create an email OTP challenge. Password reset has its own request and completion path. The browser can enter set-password or reset only after OTP verification succeeds.
 
 All browser auth calls stay on the same-origin Next.js BFF. Challenge IDs, tickets, purposes, and session tokens are held in HttpOnly cookies or server-only upstream calls; ordinary browser JSON and auth logs do not expose them. Terms and Privacy remain navigable from the login surface. A successful password reset stays on its confirmation screen until the user presses the fixed `/app/read` action.
 

@@ -210,20 +210,20 @@ async function expectNoAuthStorage(page: Page) {
 test.describe("offline email auth browser coverage", () => {
   test("new email completes OTP and password setup", async ({ page }) => {
     await installEmailAuthMock(page);
-    await page.goto("/login?next=/daily");
+    await page.goto("/signup?next=/daily");
 
-    await expect(page.getByRole("heading", { name: "登录或创建账号" })).toBeVisible();
-    await page.getByRole("radio", { name: "注册" }).click();
+    await expect(page.getByRole("heading", { name: "创建 Claread 账号" })).toBeVisible();
+    await expect(page.getByRole("radio")).toHaveCount(0);
     await page.getByLabel("邮箱地址").fill(NEW_EMAIL);
-    await page.getByRole("button", { name: "使用邮箱继续" }).click();
+    await page.getByRole("button", { name: "发送验证码" }).click();
 
     await expect(page.getByRole("heading", { name: "查看你的邮箱" })).toBeVisible();
     await expect(page.getByText(`我们已向 ${NEW_EMAIL} 发送 6 位验证码。`)).toBeVisible();
     await fillOtp(page);
     await expect(page.getByRole("heading", { name: "设置密码" })).toBeVisible();
 
-    await page.getByLabel("新密码").fill(NEW_PASSWORD);
-    await page.getByLabel("确认密码").fill(NEW_PASSWORD);
+    await page.getByLabel("新密码", { exact: true }).fill(NEW_PASSWORD);
+    await page.getByLabel("确认密码", { exact: true }).fill(NEW_PASSWORD);
     await page.getByRole("button", { name: "设置密码" }).click();
     await page.waitForURL((url) => url.pathname === "/daily");
   });
@@ -235,7 +235,7 @@ test.describe("offline email auth browser coverage", () => {
     await page.getByLabel("邮箱地址").fill(REGISTERED_EMAIL);
     await page.getByRole("button", { name: "使用邮箱继续" }).click();
     await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
-    await page.getByLabel("密码").fill(LOGIN_PASSWORD);
+    await page.getByLabel("密码", { exact: true }).fill(LOGIN_PASSWORD);
     await page.getByRole("button", { name: "登录" }).click();
     await page.waitForURL((url) => url.pathname === "/daily");
     await expectNoAuthStorage(page);
@@ -258,8 +258,8 @@ test.describe("offline email auth browser coverage", () => {
     await fillOtp(page);
     await expect(page.getByRole("heading", { name: "设置新密码" })).toBeVisible();
 
-    await page.getByLabel("新密码").fill(RESET_PASSWORD);
-    await page.getByLabel("确认密码").fill(RESET_PASSWORD);
+    await page.getByLabel("新密码", { exact: true }).fill(RESET_PASSWORD);
+    await page.getByLabel("确认密码", { exact: true }).fill(RESET_PASSWORD);
     await page.getByRole("button", { name: "重置密码" }).click();
     await expect(page.getByRole("heading", { name: "密码已重置" })).toBeVisible();
     await page.waitForTimeout(1800);
@@ -270,11 +270,10 @@ test.describe("offline email auth browser coverage", () => {
 
   test("refresh restores OTP and password setup with email and restarts cooldown", async ({ page }) => {
     await installEmailAuthMock(page);
-    await page.goto("/login?next=/daily");
+    await page.goto("/signup?next=/daily");
 
-    await page.getByRole("radio", { name: "注册" }).click();
     await page.getByLabel("邮箱地址").fill(RECOVERY_EMAIL);
-    await page.getByRole("button", { name: "使用邮箱继续" }).click();
+    await page.getByRole("button", { name: "发送验证码" }).click();
     await expect(page.getByRole("heading", { name: "查看你的邮箱" })).toBeVisible();
     await expect(page.getByText(`我们已向 ${RECOVERY_EMAIL} 发送 6 位验证码。`)).toBeVisible();
     await expect(page.getByRole("button", { name: "1 秒后可重发" })).toBeVisible();
@@ -293,8 +292,8 @@ test.describe("offline email auth browser coverage", () => {
     await expect(page.getByRole("heading", { name: "设置密码" })).toBeVisible();
     await expect(page.getByText(`为 ${RECOVERY_EMAIL} 设置登录密码。`)).toBeVisible();
 
-    await page.getByLabel("新密码").fill(NEW_PASSWORD);
-    await page.getByLabel("确认密码").fill(NEW_PASSWORD);
+    await page.getByLabel("新密码", { exact: true }).fill(NEW_PASSWORD);
+    await page.getByLabel("确认密码", { exact: true }).fill(NEW_PASSWORD);
     await page.getByRole("button", { name: "设置密码" }).click();
     await page.waitForURL((url) => url.pathname === "/daily");
     await expectNoAuthStorage(page);

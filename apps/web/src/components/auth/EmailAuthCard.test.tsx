@@ -8,14 +8,15 @@ import { EmailAuthCard } from "./EmailAuthCard";
 afterEach(cleanup);
 
 describe("EmailAuthCard — 邮箱入口", () => {
-	it("renders the email entry with explicit login/register intent and legal affordances", () => {
-		render(<EmailAuthCard mode="email" />);
+	it("renders login as one focused task without an auth-mode selector", () => {
+		const { container } = render(<EmailAuthCard mode="email" />);
 
-		expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
+		expect(screen.getByRole("heading", { name: "登录 Claread" })).toBeTruthy();
 		expect(screen.getByLabelText("邮箱地址")).toBeTruthy();
 		expect(screen.getByPlaceholderText("you@example.com")).toBeTruthy();
-		expect(screen.getByRole("radio", { name: "登录" })).toBeTruthy();
-		expect(screen.getByRole("radio", { name: "注册" })).toBeTruthy();
+		expect(container.querySelector('[data-slot="input-group-addon"]')).toBeNull();
+		expect(screen.queryByRole("radiogroup")).toBeNull();
+		expect(screen.queryByRole("radio")).toBeNull();
 
 		const google = screen.getByRole("button", { name: "使用 Google 登录" });
 		expect(google.hasAttribute("disabled")).toBe(true);
@@ -50,19 +51,32 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(screen.getByRole("alert").textContent).toContain("有效的邮箱地址");
 	});
 
-	it("switches to register intent and emits legal UI actions without navigating", async () => {
+	it("renders signup as one focused task and emits route-switch and legal actions", async () => {
 		const user = userEvent.setup();
 		const onSubmitEmail = vi.fn();
+		const onSwitchIntent = vi.fn();
 		const onLegalLink = vi.fn();
-		render(<EmailAuthCard mode="email" onSubmitEmail={onSubmitEmail} onLegalLink={onLegalLink} />);
+		render(
+			<EmailAuthCard
+				mode="email"
+				intent="register"
+				onSubmitEmail={onSubmitEmail}
+				onSwitchIntent={onSwitchIntent}
+				onLegalLink={onLegalLink}
+			/>,
+		);
 
-		await user.click(screen.getByRole("button", { name: "注册" }));
-		expect(screen.getByRole("radio", { name: "注册" }).getAttribute("aria-checked")).toBe("true");
-		expect(screen.getByRole("radio", { name: "登录" }).getAttribute("aria-checked")).toBe("false");
+		expect(screen.getByRole("heading", { name: "创建 Claread 账号" })).toBeTruthy();
+		expect(screen.getByText("输入邮箱地址，我们将发送 6 位验证码。")).toBeTruthy();
+		expect(screen.queryByRole("radiogroup")).toBeNull();
+		expect(screen.getByText("已有账号？")).toBeTruthy();
 
 		await user.type(screen.getByLabelText("邮箱地址"), "reader@example.com");
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		expect(onSubmitEmail).toHaveBeenCalledWith("reader@example.com", "register");
+
+		await user.click(screen.getByRole("button", { name: "登录" }));
+		expect(onSwitchIntent).toHaveBeenCalledWith("login");
 
 		await user.click(screen.getByRole("button", { name: "服务条款" }));
 		expect(onLegalLink).toHaveBeenCalledWith("terms");
@@ -77,8 +91,6 @@ describe("EmailAuthCard — 邮箱入口", () => {
 		expect(submit.hasAttribute("disabled")).toBe(true);
 		expect(submit.getAttribute("aria-busy")).toBe("true");
 		expect((screen.getByLabelText("邮箱地址") as HTMLInputElement).disabled).toBe(true);
-		expect(screen.getByRole("radio", { name: "注册" }).hasAttribute("disabled")).toBe(true);
-		expect(screen.getByRole("radio", { name: "登录" }).hasAttribute("disabled")).toBe(true);
 		expect(screen.getByRole("button", { name: "注册" }).hasAttribute("disabled")).toBe(true);
 		// 法律链接不是认证状态切换操作，loading 时保持可用。
 		expect(screen.getByRole("button", { name: "服务条款" }).hasAttribute("disabled")).toBe(false);
@@ -102,6 +114,29 @@ describe("EmailAuthCard — 邮箱入口", () => {
 });
 
 describe("EmailAuthCard — 密码登录", () => {
+	it("reveals and hides the password without submitting", async () => {
+		const user = userEvent.setup();
+		const onSubmitPassword = vi.fn();
+		render(
+			<EmailAuthCard mode="password" email="reader@example.com" onSubmitPassword={onSubmitPassword} />,
+		);
+
+		const password = screen.getByLabelText("密码") as HTMLInputElement;
+		const reveal = screen.getByRole("button", { name: "显示密码" });
+		expect(password.type).toBe("password");
+		expect(reveal.getAttribute("aria-pressed")).toBe("false");
+
+		await user.click(reveal);
+		expect(password.type).toBe("text");
+		expect(screen.getByRole("button", { name: "隐藏密码" }).getAttribute("aria-pressed")).toBe(
+			"true",
+		);
+		expect(onSubmitPassword).not.toHaveBeenCalled();
+
+		await user.click(screen.getByRole("button", { name: "隐藏密码" }));
+		expect(password.type).toBe("password");
+	});
+
 	it("shows the account email and emits the password", async () => {
 		const user = userEvent.setup();
 		const onSubmitPassword = vi.fn();
@@ -267,6 +302,16 @@ describe("EmailAuthCard — 邮箱验证码", () => {
 		expect(onResendOtp).toHaveBeenCalledTimes(1);
 	});
 
+	it("labels the register OTP back action as changing email", async () => {
+		const user = userEvent.setup();
+		const onBackToEmail = vi.fn();
+		render(<EmailAuthCard mode="otp" otpFlow="register" onBackToEmail={onBackToEmail} />);
+
+		await user.click(screen.getByRole("button", { name: "更换邮箱" }));
+		expect(onBackToEmail).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("button", { name: "返回登录" })).toBeNull();
+	});
+
 	it("disables resend and back while loading", () => {
 		render(<EmailAuthCard mode="otp" cooldownSeconds={0} loading />);
 
@@ -314,6 +359,22 @@ describe("EmailAuthCard — 邮箱验证码", () => {
 });
 
 describe("EmailAuthCard — 设置密码", () => {
+	it("reveals the new and confirmation passwords independently", async () => {
+		const user = userEvent.setup();
+		render(<EmailAuthCard mode="set-password" />);
+
+		const newPassword = screen.getByLabelText("新密码") as HTMLInputElement;
+		const confirmation = screen.getByLabelText("确认密码") as HTMLInputElement;
+		await user.click(screen.getByRole("button", { name: "显示新密码" }));
+
+		expect(newPassword.type).toBe("text");
+		expect(confirmation.type).toBe("password");
+
+		await user.click(screen.getByRole("button", { name: "显示确认密码" }));
+		expect(newPassword.type).toBe("text");
+		expect(confirmation.type).toBe("text");
+	});
+
 	it("shows the password requirement next to the field", () => {
 		render(<EmailAuthCard mode="set-password" />);
 		expect(screen.getByText("12–128 个字符")).toBeTruthy();

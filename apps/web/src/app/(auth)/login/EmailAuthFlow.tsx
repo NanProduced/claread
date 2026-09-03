@@ -10,7 +10,9 @@ import {
 	appReadRoute,
 	isAllowedIntent,
 	isAllowedNextPath,
+	loginRoute,
 	privacyRoute,
+	signupRoute,
 	termsRoute,
 } from "@/lib/routes";
 import {
@@ -160,7 +162,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 	}
 }
 
-export function EmailAuthFlow() {
+export function EmailAuthFlow({ initialIntent = "login" }: { initialIntent?: EmailIntent }) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const [mode, setMode] = useState<EmailAuthMode>("email");
@@ -425,15 +427,25 @@ export function EmailAuthFlow() {
 		}, SAFE_ERROR);
 	}
 
+	function handleSwitchIntent(nextIntent: EmailIntent) {
+		const next = searchParams.get("next");
+		const intent = searchParams.get("intent");
+		router.push(
+			nextIntent === "register" ? signupRoute(next, intent) : loginRoute(next, intent),
+		);
+	}
+
 	return (
 		<EmailAuthScreen
 			mode={mode}
+			intent={initialIntent}
 			email={email}
 			otpFlow={otpFlow ?? undefined}
 			loading={loading}
 			error={error}
 			cooldownSeconds={cooldownSeconds}
 			onSubmitEmail={handleSubmitEmail}
+			onSwitchIntent={handleSwitchIntent}
 			onSubmitPassword={handleSubmitPassword}
 			onSubmitOtp={handleSubmitOtp}
 			onSubmitSetPassword={handleSubmitSetPassword}

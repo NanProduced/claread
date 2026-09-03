@@ -5,7 +5,7 @@
 当前 Web 已形成可用产品基线，采用三段式路由边界：
 
 - 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/share/:shareId`
-- 认证区：`/login`
+- 认证区：`/login`、`/signup`
 - 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/settings/feedback`、`/app/settings/ledger`、`/app/reader/:recordId`
 
 `/app` 只作为私有入口并立即落到 `/app/read`。
@@ -53,7 +53,7 @@ $env:CLAREAD_FASTAPI_BASE_URL="http://127.0.0.1:8000"
 $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN="<dev session token>"
 ```
 
-`/login` 提供显式“登录 / 注册”邮箱意图。密码登录直接调用同源 BFF `/api/web/auth/email/password/login`，不会创建 OTP challenge；注册通过 `/api/web/auth/email/start` 发送邮箱 OTP，密码重置使用独立的 request / complete 流程。OTP 验证成功后，BFF 才把流程投影为设置密码或重置密码。
+`/login` 与 `/signup` 分别提供单一的邮箱登录和注册入口，并通过底部文字链接互相切换。密码登录直接调用同源 BFF `/api/web/auth/email/password/login`，不会创建 OTP challenge；注册通过 `/api/web/auth/email/start` 发送邮箱 OTP，密码重置使用独立的 request / complete 流程。OTP 验证成功后，BFF 才把流程投影为设置密码或重置密码。
 
 浏览器不直接调用 FastAPI 邮箱端点。challenge、ticket 和 session token 只在 Next.js BFF 服务端处理并写入 HttpOnly Cookie，不进入普通浏览器 JSON 或认证日志。`CLAREAD_WEB_DEBUG_SESSION_TOKEN` 只在非生产环境显式注入独立的 `limited_debug` 受限 session；它与任何登录 provider 无关，未设置时 `signed_out` 不会自动获得调试访问。
 

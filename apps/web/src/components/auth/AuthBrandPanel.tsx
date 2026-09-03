@@ -40,7 +40,7 @@ export function AuthBrandPanel() {
 				<FloatingPaths position={-1} />
 			</div>
 
-			<BrandLockup href={null} className="relative" />
+			<BrandLockup href={null} className="relative" priority />
 
 			<div className="relative z-10 mt-auto space-y-6">
 				<p className="text-sm font-medium text-ink">Read deeply, understand clearly.</p>

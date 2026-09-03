@@ -11,6 +11,8 @@ export const shareDemoRoute = "/share/demo" as Route;
 
 export const loginPath = "/login";
 export const loginRouteBase = "/login" as Route;
+export const signupPath = "/signup";
+export const signupRouteBase = "/signup" as Route;
 
 export const appReadRoute = "/app/read" as Route;
 export const appLibraryRoute = "/app/library" as Route;
@@ -72,9 +74,14 @@ export function isAppReaderPath(pathname: string): boolean {
   return matchesRoutePrefix(pathWithoutSearch(pathname), [appReaderRouteBase]);
 }
 
-export function loginRoute(nextPath?: string | null, intent?: string | null): Route {
+function authRoute(
+  path: string,
+  base: Route,
+  nextPath?: string | null,
+  intent?: string | null,
+): Route {
   if (!nextPath && !intent) {
-    return loginRouteBase;
+    return base;
   }
 
   const params = new URLSearchParams();
@@ -88,6 +95,14 @@ export function loginRoute(nextPath?: string | null, intent?: string | null): Ro
   }
 
   return params.size > 0
-    ? (`${loginPath}?${params.toString()}` as Route)
-    : loginRouteBase;
+    ? (`${path}?${params.toString()}` as Route)
+    : base;
+}
+
+export function loginRoute(nextPath?: string | null, intent?: string | null): Route {
+  return authRoute(loginPath, loginRouteBase, nextPath, intent);
+}
+
+export function signupRoute(nextPath?: string | null, intent?: string | null): Route {
+  return authRoute(signupPath, signupRouteBase, nextPath, intent);
 }

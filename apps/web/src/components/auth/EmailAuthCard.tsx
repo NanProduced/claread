@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AtSign, CircleAlert, Loader2 } from "lucide-react";
+import { CircleAlert, Eye, EyeOff, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 
 import { AuthDivider } from "./AuthDivider";
 import { GoogleIcon } from "./GoogleIcon";
@@ -25,12 +24,14 @@ type EmailAuthOtpFlow = "register" | "password_reset";
 
 export type EmailAuthCardProps = {
 	mode: EmailAuthMode;
+	intent?: EmailIntent;
 	email?: string;
 	otpFlow?: EmailAuthOtpFlow;
 	loading?: boolean;
 	error?: string | null;
 	cooldownSeconds?: number;
 	onSubmitEmail?: (email: string, intent: EmailIntent) => void;
+	onSwitchIntent?: (intent: EmailIntent) => void;
 	onSubmitPassword?: (password: string) => void;
 	onSubmitOtp?: (code: string) => void;
 	onSubmitSetPassword?: (password: string) => void;
@@ -57,8 +58,8 @@ const MODE_COPY: Record<
 	(email: string, otpFlow?: EmailAuthOtpFlow) => { title: string; description: string }
 > = {
 	email: () => ({
-		title: "登录或创建账号",
-		description: "输入邮箱地址，继续使用 Claread。",
+		title: "登录 Claread",
+		description: "输入邮箱地址以继续。",
 	}),
 	password: () => ({
 		title: "欢迎回来",
@@ -130,6 +131,9 @@ function PlainField({
 	placeholder,
 	trailing,
 }: FieldProps) {
+	const isPassword = type === "password";
+	const [passwordVisible, setPasswordVisible] = useState(false);
+
 	return (
 		<div className="space-y-2">
 			<div className="flex items-center justify-between gap-3">
@@ -138,17 +142,36 @@ function PlainField({
 				</label>
 				{trailing}
 			</div>
-			<Input
-				id={id}
-				type={type}
-				autoComplete={autoComplete}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				disabled={disabled}
-				placeholder={placeholder}
-				aria-invalid={invalid || undefined}
-				aria-describedby={describedBy}
-			/>
+			<div className="relative">
+				<Input
+					id={id}
+					type={isPassword && passwordVisible ? "text" : type}
+					autoComplete={autoComplete}
+					value={value}
+					onChange={(event) => onChange(event.target.value)}
+					disabled={disabled}
+					placeholder={placeholder}
+					aria-invalid={invalid || undefined}
+					aria-describedby={describedBy}
+					className={isPassword ? "pr-10" : undefined}
+				/>
+				{isPassword ? (
+					<button
+						type="button"
+						aria-label={`${passwordVisible ? "隐藏" : "显示"}${label}`}
+						aria-pressed={passwordVisible}
+						className="focus-ring absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={disabled}
+						onClick={() => setPasswordVisible((visible) => !visible)}
+					>
+						{passwordVisible ? (
+							<EyeOff aria-hidden="true" className="size-4" />
+						) : (
+							<Eye aria-hidden="true" className="size-4" />
+						)}
+					</button>
+				) : null}
+			</div>
 		</div>
 	);
 }
@@ -159,23 +182,18 @@ function EmailField(props: Omit<FieldProps, "label" | "type" | "autoComplete" | 
 			<label htmlFor={props.id} className={FIELD_LABEL}>
 				邮箱地址
 			</label>
-			<InputGroup>
-				<InputGroupInput
-					id={props.id}
-					type="email"
-					inputMode="email"
-					autoComplete="email"
-					placeholder="you@example.com"
-					value={props.value}
-					onChange={(event) => props.onChange(event.target.value)}
-					disabled={props.disabled}
-					aria-invalid={props.invalid || undefined}
-					aria-describedby={props.describedBy}
-				/>
-				<InputGroupAddon align="inline-start">
-					<AtSign aria-hidden="true" />
-				</InputGroupAddon>
-			</InputGroup>
+			<Input
+				id={props.id}
+				type="email"
+				inputMode="email"
+				autoComplete="email"
+				placeholder="you@example.com"
+				value={props.value}
+				onChange={(event) => props.onChange(event.target.value)}
+				disabled={props.disabled}
+				aria-invalid={props.invalid || undefined}
+				aria-describedby={props.describedBy}
+			/>
 		</div>
 	);
 }
@@ -204,12 +222,14 @@ function SubmitButton({ label, loading }: { label: string; loading?: boolean }) 
  */
 export function EmailAuthCard({
 	mode,
+	intent = "login",
 	email = "",
 	otpFlow,
 	loading = false,
 	error = null,
 	cooldownSeconds = 0,
 	onSubmitEmail,
+	onSwitchIntent,
 	onSubmitPassword,
 	onSubmitOtp,
 	onSubmitSetPassword,
@@ -222,7 +242,6 @@ export function EmailAuthCard({
 	onLegalLink,
 }: EmailAuthCardProps) {
 	const [emailDraft, setEmailDraft] = useState(email);
-	const [intent, setIntent] = useState<EmailIntent>("login");
 	const [password, setPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [otpCode, setOtpCode] = useState("");
@@ -250,7 +269,13 @@ export function EmailAuthCard({
 
 	const activeError = localError ?? error;
 	const describedBy = activeError ? STATUS_ID : undefined;
-	const copy = MODE_COPY[mode](email, otpFlow);
+	const copy =
+		mode === "email" && intent === "register"
+			? {
+					title: "创建 Claread 账号",
+					description: "输入邮箱地址，我们将发送 6 位验证码。",
+				}
+			: MODE_COPY[mode](email, otpFlow);
 
 	function submitValidatedEmail(
 		event: React.FormEvent<HTMLFormElement>,
@@ -362,49 +387,6 @@ export function EmailAuthCard({
 
 					<AuthDivider>或</AuthDivider>
 
-					<div
-						role="radiogroup"
-						aria-label="邮箱认证方式"
-						className="grid grid-cols-2 gap-2"
-					>
-						<button
-							type="button"
-							role="radio"
-							aria-checked={intent === "login"}
-							disabled={loading}
-							className={cn(
-								"focus-ring rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-								intent === "login"
-									? "border-primary bg-primary/10 text-ink"
-									: "border-hairline bg-surface text-muted-foreground hover:border-muted-foreground/40 hover:text-ink",
-							)}
-							onClick={() => {
-								setIntent("login");
-								setLocalError(null);
-							}}
-						>
-							登录
-						</button>
-						<button
-							type="button"
-							role="radio"
-							aria-checked={intent === "register"}
-							disabled={loading}
-							className={cn(
-								"focus-ring rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-								intent === "register"
-									? "border-primary bg-primary/10 text-ink"
-									: "border-hairline bg-surface text-muted-foreground hover:border-muted-foreground/40 hover:text-ink",
-							)}
-							onClick={() => {
-								setIntent("register");
-								setLocalError(null);
-							}}
-						>
-							注册
-						</button>
-					</div>
-
 					<form
 						className="space-y-4"
 						noValidate
@@ -421,7 +403,10 @@ export function EmailAuthCard({
 							invalid={Boolean(activeError)}
 							describedBy={describedBy}
 						/>
-						<SubmitButton label="使用邮箱继续" loading={loading} />
+						<SubmitButton
+							label={intent === "register" ? "发送验证码" : "使用邮箱继续"}
+							loading={loading}
+						/>
 					</form>
 				</>
 			) : null}
@@ -503,7 +488,7 @@ export function EmailAuthCard({
 						disabled={loading}
 						onClick={onBackToEmail}
 					>
-						返回登录
+						{otpFlow === "register" ? "更换邮箱" : "返回登录"}
 					</button>
 				</form>
 			) : null}
@@ -517,6 +502,7 @@ export function EmailAuthCard({
 					}
 				>
 					<PlainField
+						key={`${mode}-new-password`}
 						id="email-auth-new-password"
 						label="新密码"
 						type="password"
@@ -532,6 +518,7 @@ export function EmailAuthCard({
 						trailing={passwordRequirementHint}
 					/>
 					<PlainField
+						key={`${mode}-confirm-password`}
 						id="email-auth-confirm-password"
 						label="确认密码"
 						type="password"
@@ -594,17 +581,17 @@ export function EmailAuthCard({
 			{mode === "email" ? (
 				<div className="space-y-4">
 					<p className="text-center text-sm text-muted-foreground">
-						还没有账号？{" "}
+						{intent === "register" ? "已有账号？" : "还没有账号？"}{" "}
 						<button
 							type="button"
 							className={cn(LINK_BUTTON, "font-medium text-ink hover:text-ink/70")}
 							disabled={loading}
 							onClick={() => {
-								setIntent("register");
 								setLocalError(null);
+								onSwitchIntent?.(intent === "register" ? "login" : "register");
 							}}
 						>
-							注册
+							{intent === "register" ? "登录" : "注册"}
 						</button>
 					</p>
 					<p className="text-xs leading-5 text-muted-foreground">

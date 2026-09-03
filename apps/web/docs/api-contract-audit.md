@@ -34,7 +34,7 @@ Browser -> Next.js BFF / RSC -> FastAPI internal API
 | `POST /auth/email/password-reset/complete` | ✅ `EmailSessionResponse` | 🟢 稳定 | 消费 password reset ticket、重置密码并创建新 session |
 | `POST /auth/wechat/bind` | ✅ `IdentityBindResponse` | 🟢 已落地 | 登录用户绑定微信小程序身份；冲突返回 409，不静默合并 |
 
-Web 浏览器只访问同源 `/api/web/auth/email/*`。challenge、ticket、purpose 与 session token 保存在 HttpOnly Cookie 或 server-only 调用中，不进入普通浏览器 JSON 或认证日志。登录页先要求显式“登录 / 注册”意图；OTP 验证前不向浏览器暴露账号是否存在。
+Web 浏览器只访问同源 `/api/web/auth/email/*`。challenge、ticket、purpose 与 session token 保存在 HttpOnly Cookie 或 server-only 调用中，不进入普通浏览器 JSON 或认证日志。`/login` 与 `/signup` 分别表达登录和注册意图；OTP 验证前不向浏览器暴露账号是否存在。
 
 微信身份归属规则：`openid` 按 provider/app 隔离，`unionid` 可空但一旦出现，应作为跨微信应用归属线索。同一非空 `unionid` 下允许存在多个 provider/openid identity，但必须归属同一个 Claread `user_id`；如果同 `unionid` 或同 provider identity 已归属其他 `user_id`，API 返回 409，由显式账号合并流程处理。
 

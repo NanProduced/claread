@@ -1,6 +1,6 @@
 # Web 实施计划
 
-> **状态**: `CURRENT` | **最后更新**: 2026-08-14
+> **状态**: `CURRENT` | **最后更新**: 2026-09-03
 
 本文记录 Claread Web 当前稳定实施边界，只保留已确认的产品与技术合同。
 
@@ -9,7 +9,7 @@
 Claread Web 现在采用三段式路由结构：
 
 - 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/share/:shareId`
-- 认证区：`/login`
+- 认证区：`/login`、`/signup`
 - 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/settings/feedback`、`/app/settings/ledger`、`/app/reader/:recordId`
 
 `/app` 只作为私有入口并立即落到 `/app/read`。旧私有路径 `/read`、`/library`、`/vocabulary`、`/review`、`/settings`、`/reader/:id` 已从产品合同中删除，不保留兼容层。
@@ -18,10 +18,10 @@ Claread Web 现在采用三段式路由结构：
 
 - Web 基于 Next.js App Router，使用单一顶层 root layout。
 - 公共区、认证区、私有区通过 route groups 组织代码，但真实边界由 URL 分区定义。
-- 私有区统一挂载 `AppShell`；`/login` 不再通过 app shell 特判逃逸。
+- 私有区统一挂载 `AppShell`；`/login`、`/signup` 不再通过 app shell 特判逃逸。
 - 路由 contract 已集中到 `src/lib/routes.ts`，页面、导航、登录回跳和 BFF 页面 URL 均从这里取值。
 - 登录态投影统一为 `signed_out`、`signed_in`、`limited_debug` 三态。
-- 邮箱入口要求显式选择“登录 / 注册”：密码登录不创建 OTP challenge，注册才发送邮箱 OTP；密码重置使用独立流程。
+- `/login` 与 `/signup` 分别承载单一的邮箱登录和注册任务，通过底部文字链接切换；密码登录不创建 OTP challenge，注册才发送邮箱 OTP；密码重置使用独立流程。
 - challenge、ticket、purpose 与 session token 只由同源 Next.js BFF 服务端处理并写入 HttpOnly Cookie，不进入普通浏览器 JSON 或认证日志。
 - 显式注入的开发期 debug session 只表现为 `limited_debug`，与登录 provider 无关，也不伪装成正式已登录。
 - `proxy.ts` 只拦截 `/app/*`，同时保留 BFF/server-side session 校验。
@@ -53,7 +53,7 @@ Claread Web 现在采用三段式路由结构：
 | 历史记录 | `/app/library` | `GET /api/web/reader/records` | 已接入 |
 | Ask Claread | `/app/reader/:recordId` | `ask/threads`、`ask/threads/[threadId]/messages/stream`、citations navigate、model-options BFF | 已接入 |
 | 词典查词 | Reader | `/api/web/dict/lookup` / `/dict/entry` / `/dict/ai` | 已接入 |
-| 登录与配额 | `/login`、`/app/settings` | `/api/web/session`、`/api/web/auth/email/*`、`/api/web/profile`；`/app/settings/ledger` 展示积分流水 | 已接入 |
+| 登录与配额 | `/login`、`/signup`、`/app/settings` | `/api/web/session`、`/api/web/auth/email/*`、`/api/web/profile`；`/app/settings/ledger` 展示积分流水 | 已接入 |
 | 收藏 | Reader | `/api/web/reader/records/[recordId]/favorite` | 已接入 |
 | 生词本 | `/app/vocabulary` | `/api/web/vocabulary`、`/api/web/vocabulary/[id]` | 已接入 |
 | 生词复习 | `/app/review` | `/api/web/review/items`、`/api/web/review/items/[id]/submit` | 已接入 |
@@ -68,7 +68,8 @@ Claread Web 现在采用三段式路由结构：
 | `/` | P1 | 正式公共首页与产品入口 |
 | `/daily` | P1 | 每日精读入口和列表 |
 | `/daily/:articleId` | P1 | 公开每日精读详情 |
-| `/login` | P1 | 显式邮箱登录、注册与密码重置入口 |
+| `/login` | P1 | 显式邮箱登录与密码重置入口 |
+| `/signup` | P1 | 显式邮箱注册入口 |
 | `/app/read` | P0 | 粘贴即解读与最近记录入口 |
 | `/app/reader/:recordId` | P0 | 核心 Reader |
 | `/app/library` | P0 | 阅读记录 |

@@ -31,7 +31,7 @@ describe("Login page shell", () => {
 		render(<LoginPage />);
 
 		await waitFor(() => {
-			expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
+			expect(screen.getByRole("heading", { name: "登录 Claread" })).toBeTruthy();
 		});
 		expect(screen.getByLabelText("邮箱地址")).toBeTruthy();
 		expect(screen.queryByLabelText("密码")).toBeNull();
@@ -40,7 +40,7 @@ describe("Login page shell", () => {
 
 	it("keeps the decorative panel desktop-only and the brand mobile-visible", async () => {
 		const { container } = render(<LoginPage />);
-		await waitFor(() => screen.getByRole("heading", { name: "登录或创建账号" }));
+		await waitFor(() => screen.getByRole("heading", { name: "登录 Claread" }));
 
 		const panel = container.querySelector('[data-slot="auth-brand-panel"]');
 		expect(panel).not.toBeNull();

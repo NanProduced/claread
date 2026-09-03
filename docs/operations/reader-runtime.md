@@ -87,10 +87,10 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Reader Web 产品路径使用邮箱认证；开发期也可显式注入一个已有的本地 Claread session token，投影为独立的 `limited_debug` 受限状态。
 
-### 2. 选择邮箱登录或显式 debug session
+### 2. 选择邮箱认证或显式 debug session
 
 ```powershell
-# 产品路径：启动 Web 后访问 http://127.0.0.1:3000/login，显式选择邮箱登录或注册。
+# 产品路径：邮箱登录访问 http://127.0.0.1:3000/login，注册访问 http://127.0.0.1:3000/signup。
 # 仅本地调试且已经有可用 Claread session token 时，才显式注入：
 $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN = "<existing local Claread session token>"
 

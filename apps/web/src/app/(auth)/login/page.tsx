@@ -6,8 +6,8 @@ import { EmailAuthFlow } from "./EmailAuthFlow";
 
 export default function LoginPage() {
 	return (
-		<Suspense fallback={<EmailAuthScreen mode="email" />}>
-			<EmailAuthFlow />
+		<Suspense fallback={<EmailAuthScreen mode="email" intent="login" />}>
+			<EmailAuthFlow initialIntent="login" />
 		</Suspense>
 	);
 }

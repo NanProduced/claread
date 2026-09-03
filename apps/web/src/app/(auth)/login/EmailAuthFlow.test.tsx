@@ -109,7 +109,7 @@ describe("EmailAuthFlow", () => {
 		);
 		render(<EmailAuthFlow />);
 		await waitFor(() => {
-			expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
+			expect(screen.getByRole("heading", { name: "登录 Claread" })).toBeTruthy();
 		});
 	});
 
@@ -228,11 +228,10 @@ describe("EmailAuthFlow", () => {
 			"POST /api/web/auth/email/register": async () => jsonResponse({ ok: true }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("button", { name: "73 秒后可重发" }));
 		pasteOtp(CODE);
 		await waitFor(() => screen.getByLabelText("新密码"));
@@ -283,6 +282,35 @@ describe("EmailAuthFlow", () => {
 		expect(navigationMock.push).toHaveBeenCalledWith("/terms");
 		await user.click(screen.getByRole("button", { name: "隐私政策" }));
 		expect(navigationMock.push).toHaveBeenCalledWith("/privacy");
+	});
+
+	it("switches to the dedicated signup route and preserves safe auth context", async () => {
+		const user = userEvent.setup();
+		navigationMock.search = new URLSearchParams("next=/daily&intent=save");
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
+			}),
+		);
+		render(<EmailAuthFlow />);
+		await waitFor(() => screen.getByRole("button", { name: "注册" }));
+		await user.click(screen.getByRole("button", { name: "注册" }));
+		expect(navigationMock.push).toHaveBeenCalledWith("/signup?next=%2Fdaily&intent=save");
+	});
+
+	it("switches back to the dedicated login route", async () => {
+		const user = userEvent.setup();
+		vi.stubGlobal(
+			"fetch",
+			mockFetchByUrl({
+				"GET /api/web/auth/email/flow-status": () => jsonResponse({ ok: true, step: "idle" }),
+			}),
+		);
+		render(<EmailAuthFlow initialIntent="register" />);
+		await waitFor(() => screen.getByRole("button", { name: "登录" }));
+		await user.click(screen.getByRole("button", { name: "登录" }));
+		expect(navigationMock.push).toHaveBeenCalledWith("/login");
 	});
 
 	it("keeps password reset success visible until the user continues", async () => {
@@ -377,11 +405,10 @@ describe("EmailAuthFlow", () => {
 			},
 		});
 		vi.stubGlobal("fetch", fetchMock);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("button", { name: "1 秒后可重发" }));
 		await waitFor(() => screen.getByRole("button", { name: "重新发送" }), { timeout: 2500 });
 		await user.click(screen.getByRole("button", { name: "重新发送" }));
@@ -405,16 +432,15 @@ describe("EmailAuthFlow", () => {
 			"POST /api/web/auth/email/cancel": async () => jsonResponse({ ok: true }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("heading", { name: "查看你的邮箱" }));
 		expect(startCalls).toBe(1);
-		await user.click(screen.getByRole("button", { name: "返回登录" }));
-		await waitFor(() => screen.getByRole("heading", { name: "登录或创建账号" }));
+		await user.click(screen.getByRole("button", { name: "更换邮箱" }));
+		await waitFor(() => screen.getByRole("heading", { name: "创建 Claread 账号" }));
 	});
 
 	it("shows a safe error for non-JSON and malformed responses", async () => {
@@ -425,11 +451,10 @@ describe("EmailAuthFlow", () => {
 				new Response("<html>nope</html>", { status: 502, headers: { "content-type": "text/html" } }),
 		});
 		vi.stubGlobal("fetch", fetchMock);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("alert"));
 		expect(screen.getByRole("alert").textContent).toMatch(/请稍后重试/);
 		assertNoCredentials(logs);
@@ -499,7 +524,7 @@ describe("EmailAuthFlow", () => {
 		);
 		render(<EmailAuthFlow />);
 		await waitFor(() => screen.getByRole("alert"));
-		expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
+		expect(screen.getByRole("heading", { name: "登录 Claread" })).toBeTruthy();
 		expect(screen.getByRole("alert").textContent).toBe("登录暂时不可用，请稍后重试。");
 		expect(screen.queryByRole("heading", { name: "查看你的邮箱" })).toBeNull();
 		expect(screen.queryByRole("heading", { name: "设置密码" })).toBeNull();
@@ -520,13 +545,12 @@ describe("EmailAuthFlow", () => {
 				"POST /api/web/auth/email/start": async () => jsonResponse(body),
 			}),
 		);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("alert"));
-		expect(screen.getByRole("heading", { name: "登录或创建账号" })).toBeTruthy();
+		expect(screen.getByRole("heading", { name: "创建 Claread 账号" })).toBeTruthy();
 		expect(screen.getByRole("alert").textContent).toBe("登录暂时不可用，请稍后重试。");
 		expect(screen.queryByLabelText("密码")).toBeNull();
 		expect(screen.queryByRole("group", { name: "一次性验证码" })).toBeNull();
@@ -549,11 +573,10 @@ describe("EmailAuthFlow", () => {
 				"POST /api/web/auth/email/otp/verify": async () => jsonResponse(body),
 			}),
 		);
-		render(<EmailAuthFlow />);
+		render(<EmailAuthFlow initialIntent="register" />);
 		await waitFor(() => screen.getByLabelText("邮箱地址"));
-		await user.click(screen.getByRole("radio", { name: "注册" }));
 		await user.type(screen.getByLabelText("邮箱地址"), EMAIL);
-		await user.click(screen.getByRole("button", { name: "使用邮箱继续" }));
+		await user.click(screen.getByRole("button", { name: "发送验证码" }));
 		await waitFor(() => screen.getByRole("heading", { name: "查看你的邮箱" }));
 		pasteOtp(CODE);
 		await waitFor(() => screen.getByRole("alert"));

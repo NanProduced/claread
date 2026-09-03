@@ -53,7 +53,7 @@ export function EmailAuthScreen(props: EmailAuthScreenProps) {
 
 				<div className="mx-auto w-full max-w-sm">
 					<div data-slot="auth-brand-mobile" className="mb-10 lg:hidden">
-						<BrandLockup href={null} />
+						<BrandLockup href={null} priority />
 					</div>
 					<EmailAuthCard {...props} />
 				</div>
